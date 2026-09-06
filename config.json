@@ -1,0 +1,45 @@
+{
+  "api": {
+    "api_key_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAQ3Kbh/guNkq3TksGu+kxpQAAAAAoAAAAQQBlAHQAaABlAHIARABlAHMAawB0AG8AcABTAGUAYwByAGUAdAAAABBmAAAAAQAAIAAAAJE0rovK0sHVa2bJnr2L7MCoQmDCIxA++RNA/YRHc8GvAAAAAA6AAAAAAgAAIAAAACJqYrw6nKEpona/X07ukjKZeL4WdB1Dim1l5zgvFS7aQAAAAP3lBMNs4lDUVTD0EB6Xw3UKjhkLsX3NPeYP8869rJTu4LKjRGTLF5jy+wLeIUIn0Ml9VboGVIwsaTm+kQsxs3FAAAAApixvtxOJmpUJ0NvVmWwBGbKzyusKlqYsfvUsCR4jL5syd9JeFEKtpocGCd5m0p7C5PYeK+2wBBlWMipnBhwzXQ==",
+    "agent_name": "Aether",
+    "model_id": "gemini-2.5-flash-native-audio-latest",
+    "stt_endpoint": "gemini-live-native",
+    "tts_endpoint": "gemini-live-native",
+    "pro_model_id": "gemini-2.5-pro",
+    "temperature": 1.0,
+    "voice_name": "Aoede",
+    "system_instruction": "You are [Agent Name], a fast, knowledgeable desktop voice assistant. You have Google Search available to check real-time facts, weather, news, and details. When asked for live information, search the web and answer conversationally and concisely. If the user says 'stop', '[Agent Name] stop', or tells you to stop speaking, halt immediately. Always keep answers brief (1-3 sentences) unless asked to elaborate."
+  },
+  "audio": {
+    "mode": "always_on",
+    "safe_phrase": "Aether stop",
+    "software_gate": true,
+    "input_device_index": 38,
+    "input_device_name": "[38] Microphone (2- Razer Seiren V3 Chroma) (Windows WASAPI) (48000Hz)",
+    "output_device_index": 35,
+    "output_device_name": "[35] Speakers (THX Spatial) (Windows WASAPI) (48000Hz)",
+    "input_sample_rate": 16000,
+    "output_sample_rate": 24000
+  },
+  "vision": {
+    "enabled": true,
+    "fps": 1,
+    "endpoint": "live-stream",
+    "resolution": [
+      768,
+      768
+    ],
+    "jpeg_quality": 70
+  },
+  "security": {
+    "app_whitelist": [
+      "chrome.exe",
+      "notepad.exe",
+      "winword.exe",
+      "excel.exe",
+      "spotify.exe",
+      "blender.exe"
+    ],
+    "require_verbal_confirmation": true
+  }
+}
