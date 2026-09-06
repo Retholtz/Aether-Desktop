@@ -27,11 +27,24 @@ class GuiBridge:
         self._config = self._load_config()
         self._engine = AetherEngine(
             config_getter=self.get_raw_config,
-            on_event=self._on_engine_event
+            on_event=self._on_engine_event,
+            on_whitelist_update=self.update_whitelist
         )
 
     def set_window(self, window):
         self._window = window
+
+    def update_whitelist(self, new_whitelist: list) -> dict:
+        """Updates security app_whitelist in config, persists to disk, and pushes config_updated event."""
+        try:
+            self._config.setdefault("security", {})["app_whitelist"] = new_whitelist
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2)
+            self._on_engine_event("config_updated", self._config)
+            return {"success": True}
+        except Exception as e:
+            print(f"[WHITELIST UPDATE ERROR] {e}")
+            return {"success": False, "error": str(e)}
 
     def _load_config(self) -> dict:
         if os.path.exists(self._config_path):

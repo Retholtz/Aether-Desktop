@@ -544,6 +544,16 @@ window.aetherUI = {
       this.updateLiveUserBubble(data.text);
     } else if (type === "chat_event") {
       this.renderChatBubble(data);
+    } else if (type === "config_updated") {
+      if (data && data.security && Array.isArray(data.security.app_whitelist)) {
+        const input = document.getElementById("whitelistInput");
+        if (input) {
+          input.value = data.security.app_whitelist.join(", ");
+        }
+        if (this.currentConfig && this.currentConfig.security) {
+          this.currentConfig.security.app_whitelist = data.security.app_whitelist;
+        }
+      }
     }
   },
 

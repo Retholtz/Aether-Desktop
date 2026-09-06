@@ -10,6 +10,75 @@ from google.genai import types
 
 from core.audio_stream import AudioPipeline
 from core.security import unprotect_secret
+from core.app_launcher import DesktopAppLauncher
+
+# Gemini Live Tool Declarations for Desktop Automation
+LAUNCH_APPLICATION_DECLARATION = {
+    "name": "launch_application",
+    "description": (
+        "Launches an installed Windows desktop application (e.g. Google Chrome, Notepad, Word, "
+        "Excel, Calculator, Spotify, Blender, File Explorer) if permitted by the user's security whitelist."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "app_name": {
+                "type": "STRING",
+                "description": "The name or executable of the application to launch (e.g. 'chrome', 'notepad', 'calc', 'winword', 'excel', 'spotify', 'blender', 'explorer')."
+            }
+        },
+        "required": ["app_name"]
+    }
+}
+
+CLOSE_APPLICATION_DECLARATION = {
+    "name": "close_application",
+    "description": "Closes or terminates a running Windows desktop application if permitted by the user's security whitelist.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "app_name": {
+                "type": "STRING",
+                "description": "The name or executable of the program to close (e.g. 'chrome', 'notepad', 'calc', 'winword', 'excel', 'spotify')."
+            }
+        },
+        "required": ["app_name"]
+    }
+}
+
+ADD_TO_WHITELIST_DECLARATION = {
+    "name": "add_to_whitelist",
+    "description": (
+        "Adds an application (e.g. calculator, calc.exe, steam, discord, paint) to the user's security whitelist "
+        "so that it can be launched. Call this when the user asks to add, permit, or allow a program on the whitelist, "
+        "or when an application was blocked and the user instructs to add it or allow it."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "app_name": {
+                "type": "STRING",
+                "description": "The name or executable of the application to add to the whitelist (e.g. 'calculator', 'calc.exe', 'steam', 'discord')."
+            }
+        },
+        "required": ["app_name"]
+    }
+}
+
+REMOVE_FROM_WHITELIST_DECLARATION = {
+    "name": "remove_from_whitelist",
+    "description": "Removes an application from the user's security whitelist.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "app_name": {
+                "type": "STRING",
+                "description": "The name or executable of the application to remove from the whitelist."
+            }
+        },
+        "required": ["app_name"]
+    }
+}
 
 # The 30 Gemini Live prebuilt voices - Alphabetized
 RAW_GEMINI_VOICES = [
@@ -51,9 +120,17 @@ class AetherEngine:
     Manages the Gemini Multimodal Live API session, Audio Pipeline,
     speech/text streaming, barge-in, voice kill phrase detection, and GUI events.
     """
-    def __init__(self, config_getter: Callable[[], dict], on_event: Callable[[str, dict], None]):
+    def __init__(
+        self,
+        config_getter: Callable[[], dict],
+        on_event: Callable[[str, dict], None],
+        on_whitelist_update: Optional[Callable[[list], dict]] = None,
+        config_path: str = "config.json"
+    ):
         self.config_getter = config_getter
         self.on_event = on_event
+        self.on_whitelist_update = on_whitelist_update
+        self.config_path = config_path
         self.is_running = False
         self.audio: Optional[AudioPipeline] = None
         self.session = None
@@ -61,6 +138,7 @@ class AetherEngine:
         self._text_queue = asyncio.Queue()
         self.current_turn_text = ""
         self.current_user_speech = ""
+        self.last_blocked_app = ""
 
     def notify(self, event_type: str, data: dict):
         if self.on_event:
@@ -136,6 +214,138 @@ class AetherEngine:
                 async for response in session.receive():
                     if not self.is_running:
                         break
+
+                    # 0. Handle Tool Calls from Model
+                    tool_call = getattr(response, "tool_call", None)
+                    if tool_call is not None and tool_call.function_calls:
+                        function_responses = []
+                        current_cfg = self.config_getter()
+                        whitelist = current_cfg.get("security", {}).get("app_whitelist", [])
+
+                        for fc in tool_call.function_calls:
+                            fn_name = fc.name
+                            fn_args = fc.args or {}
+                            fc_id = fc.id
+                            print(f"[TOOL CALL] Function: {fn_name}, Args: {fn_args}, ID: {fc_id}")
+
+                            if fn_name == "launch_application":
+                                app_name = fn_args.get("app_name", "")
+                                result = DesktopAppLauncher.launch_app(app_name, whitelist)
+                                if result.get("status") == "success":
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Desktop Hook",
+                                        "content": f"[LAUNCHED] {result.get('executable', app_name)}"
+                                    })
+                                else:
+                                    self.last_blocked_app = result.get("executable") or app_name
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Desktop Hook",
+                                        "content": f"[BLOCKED] {result.get('error', 'Failed to launch application.')}"
+                                    })
+                                function_responses.append(types.FunctionResponse(
+                                    id=fc_id,
+                                    name=fn_name,
+                                    response=result
+                                ))
+
+                            elif fn_name == "close_application":
+                                app_name = fn_args.get("app_name", "")
+                                result = DesktopAppLauncher.close_app(app_name, whitelist)
+                                if result.get("status") == "success":
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Desktop Hook",
+                                        "content": f"[CLOSED] {result.get('executable', app_name)}"
+                                    })
+                                else:
+                                    if result.get("status") == "blocked":
+                                        self.last_blocked_app = result.get("executable") or app_name
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Desktop Hook",
+                                        "content": f"[WARNING] {result.get('error', result.get('message', 'Failed to close application.'))}"
+                                    })
+                                function_responses.append(types.FunctionResponse(
+                                    id=fc_id,
+                                    name=fn_name,
+                                    response=result
+                                ))
+
+                            elif fn_name == "add_to_whitelist":
+                                app_name = (fn_args.get("app_name") or "").strip()
+                                if (not app_name or app_name.lower() in ("it", "that", "this", "the app", "the program")) and self.last_blocked_app:
+                                    app_name = self.last_blocked_app
+
+                                result = DesktopAppLauncher.add_to_whitelist(app_name, whitelist)
+                                if result.get("status") in ("success", "already_allowed"):
+                                    updated_whitelist = result.get("whitelist", whitelist)
+                                    whitelist = updated_whitelist
+                                    current_cfg.setdefault("security", {})["app_whitelist"] = updated_whitelist
+                                    if self.on_whitelist_update:
+                                        self.on_whitelist_update(updated_whitelist)
+                                    else:
+                                        try:
+                                            with open(self.config_path, "w", encoding="utf-8") as f:
+                                                json.dump(current_cfg, f, indent=2)
+                                            self.notify("config_updated", current_cfg)
+                                        except Exception as e:
+                                            print(f"[WHITELIST PERSIST ERROR] {e}")
+
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Security Hook",
+                                        "content": f"[WHITELIST] Added {result.get('executable', app_name)} to allowed applications."
+                                    })
+                                else:
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Security Hook",
+                                        "content": f"[WHITELIST] {result.get('message', 'Failed to add application.')}"
+                                    })
+                                function_responses.append(types.FunctionResponse(
+                                    id=fc_id,
+                                    name=fn_name,
+                                    response=result
+                                ))
+
+                            elif fn_name == "remove_from_whitelist":
+                                app_name = (fn_args.get("app_name") or "").strip()
+                                result = DesktopAppLauncher.remove_from_whitelist(app_name, whitelist)
+                                if result.get("status") == "success":
+                                    updated_whitelist = result.get("whitelist", whitelist)
+                                    whitelist = updated_whitelist
+                                    current_cfg.setdefault("security", {})["app_whitelist"] = updated_whitelist
+                                    if self.on_whitelist_update:
+                                        self.on_whitelist_update(updated_whitelist)
+                                    else:
+                                        try:
+                                            with open(self.config_path, "w", encoding="utf-8") as f:
+                                                json.dump(current_cfg, f, indent=2)
+                                            self.notify("config_updated", current_cfg)
+                                        except Exception as e:
+                                            print(f"[WHITELIST PERSIST ERROR] {e}")
+
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Security Hook",
+                                        "content": f"[WHITELIST] Removed {result.get('executable', app_name)} from allowed applications."
+                                    })
+                                else:
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Security Hook",
+                                        "content": f"[WHITELIST] {result.get('message', 'Failed to remove application.')}"
+                                    })
+                                function_responses.append(types.FunctionResponse(
+                                    id=fc_id,
+                                    name=fn_name,
+                                    response=result
+                                ))
+
+                        if function_responses:
+                            await session.send_tool_response(function_responses=function_responses)
 
                     server_content = getattr(response, "server_content", None)
                     if server_content is None:
@@ -260,6 +470,7 @@ class AetherEngine:
                 })
 
     async def _run(self):
+        self.is_running = True
         config = self.config_getter()
         api_cfg = config.get("api", {})
         audio_cfg = config.get("audio", {})
@@ -310,7 +521,16 @@ class AetherEngine:
             f"Under NO circumstances should you ever call yourself 'Aether', 'Gemini', or any name other than '{agent_name}'.\n"
             f"Whenever asked about your identity, name, or who you are, you must ALWAYS explicitly state that your name is {agent_name}.\n\n"
         )
-        system_instruction_text = strict_identity + templated_instruction
+        desktop_tools_directive = (
+            "DESKTOP APPLICATION CONTROL & SECURITY WHITELIST:\n"
+            "You have tools to interact directly with the user's Windows desktop and security whitelist:\n"
+            "- When the user asks you to open, launch, or start an application (e.g. 'Open Chrome', 'Launch Notepad', 'Open Excel', 'Start Calculator', 'Open Spotify', 'Open Blender', 'Open Word'), you MUST call the `launch_application` tool with `app_name`.\n"
+            "- When the user asks you to close, kill, or terminate an application (e.g. 'Close Chrome', 'Close Notepad'), you MUST call the `close_application` tool with `app_name`.\n"
+            "- If an application is blocked by the security whitelist and the user asks to add or allow it (e.g. 'Please add it to the whitelist', 'Add calculator to the whitelist', 'Allow it', 'Add it'), you MUST call the `add_to_whitelist` tool with `app_name`.\n"
+            "- If the user asks to remove an application from the whitelist, call the `remove_from_whitelist` tool with `app_name`.\n"
+            "- After the tool completes, provide a brief, polite confirmation (1-2 sentences, e.g. 'Opening Chrome now', 'I have closed Notepad', or 'I\\'ve added Calculator to your whitelist. Would you like me to open it now?'). If an application is blocked by the whitelist, politely explain that it is not on the whitelist and let the user know they can ask you to add it or add it in Settings.\n\n"
+        )
+        system_instruction_text = strict_identity + desktop_tools_directive + templated_instruction
 
         audio_mode = audio_cfg.get("mode", "always_on")
         kill_phrase = audio_cfg.get("safe_phrase", f"{agent_name} stop").strip()
@@ -351,10 +571,20 @@ class AetherEngine:
             if kill_phrase:
                 system_instruction_text += f"\nImportant: If the user says '{kill_phrase}' or 'stop', halt speaking immediately."
 
+            live_tools = [
+                types.Tool(google_search=types.GoogleSearch()),
+                types.Tool(function_declarations=[
+                    LAUNCH_APPLICATION_DECLARATION,
+                    CLOSE_APPLICATION_DECLARATION,
+                    ADD_TO_WHITELIST_DECLARATION,
+                    REMOVE_FROM_WHITELIST_DECLARATION
+                ])
+            ]
+
             live_config = types.LiveConnectConfig(
                 response_modalities=["AUDIO"],
                 temperature=temperature,
-                tools=[types.Tool(google_search=types.GoogleSearch())],
+                tools=live_tools,
                 input_audio_transcription=types.AudioTranscriptionConfig(),
                 output_audio_transcription=types.AudioTranscriptionConfig(),
                 speech_config=types.SpeechConfig(

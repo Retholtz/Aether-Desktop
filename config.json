@@ -38,7 +38,8 @@
       "winword.exe",
       "excel.exe",
       "spotify.exe",
-      "blender.exe"
+      "blender.exe",
+      "calc.exe"
     ],
     "require_verbal_confirmation": true
   }
