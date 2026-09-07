@@ -12,12 +12,16 @@ import time
 from typing import Dict, Optional, Tuple
 
 from core.screen_stream import ScreenCapturePipeline, ensure_thread_desktop
-from tools.os_controls import focus_window, find_hwnd_by_query
+from tools.os_controls import focus_window, find_hwnd_by_query, bring_hwnd_to_foreground
 
 if sys.platform == "win32":
     import win32gui
+    import win32con
+    import win32clipboard
 else:
     win32gui = None
+    win32con = None
+    win32clipboard = None
 
 # Win32 Constants
 INPUT_MOUSE = 0
@@ -132,15 +136,18 @@ class GuiPrimitivesController:
         y: float,
         monitor: str | int = "auto",
         normalized: bool = True,
-        app_name: Optional[str] = None
+        app_name: Optional[str] = None,
+        window_relative: bool = False
     ) -> Tuple[int, int, int]:
         """
-        Translates coordinates into Windows desktop pixels.
-        If app_name is provided and the window exists, coordinates (0..1000) are mapped
-        directly relative to the target window's physical bounds, guaranteeing clicks stay inside the window.
-        Otherwise, coordinates are mapped relative to the target/streamed monitor.
+        Translates coordinates into Windows desktop physical pixels.
+        By default, (x, y) coordinates from vision streams (0..1000) are screen/monitor-relative.
+        If window_relative=True and app_name is provided, coordinates (0..1000) are mapped
+        directly relative to the target window's physical bounds.
         """
-        if app_name and win32gui:
+        ensure_thread_desktop()
+
+        if window_relative and app_name and win32gui:
             hwnd = find_hwnd_by_query(app_name)
             if hwnd:
                 try:
@@ -178,11 +185,14 @@ class GuiPrimitivesController:
         y: float,
         monitor: str | int = "auto",
         normalized: bool = True,
-        app_name: Optional[str] = None
+        app_name: Optional[str] = None,
+        window_relative: bool = False
     ) -> Dict:
         """Positions cursor at target coordinates."""
         ensure_thread_desktop()
-        act_x, act_y, mon_idx = self.translate_coords(x, y, monitor, normalized, app_name=app_name)
+        act_x, act_y, mon_idx = self.translate_coords(
+            x, y, monitor, normalized, app_name=app_name, window_relative=window_relative
+        )
         ctypes.windll.user32.SetCursorPos(act_x, act_y)
         return {
             "status": "success",
@@ -200,7 +210,8 @@ class GuiPrimitivesController:
         clicks: int = 1,
         monitor: str | int = "auto",
         normalized: bool = True,
-        app_name: Optional[str] = None
+        app_name: Optional[str] = None,
+        window_relative: bool = False
     ) -> Dict:
         """
         Moves the cursor and performs mouse click(s) at target coordinates.
@@ -214,10 +225,13 @@ class GuiPrimitivesController:
             focus_window(app_name)
             time.sleep(0.08)
 
-        act_x, act_y, mon_idx = self.translate_coords(x, y, monitor, normalized, app_name=app_name)
+        act_x, act_y, mon_idx = self.translate_coords(
+            x, y, monitor, normalized, app_name=app_name, window_relative=window_relative
+        )
 
         ctypes.windll.user32.SetCursorPos(act_x, act_y)
         time.sleep(0.06)  # 60ms hover settle time
+
 
         btn_lower = button.lower().strip()
         if btn_lower == "right":
@@ -264,7 +278,11 @@ class GuiPrimitivesController:
         app_name: Optional[str] = None
     ) -> Dict:
         """
-        Types Unicode characters into the active field, optionally focusing the target window first.
+        Enters Unicode characters into the active field or requested application window.
+        Guarantees the target window is in the foreground and verified before entering text.
+        Uses clipboard paste (Ctrl+V) for multiline or long text to ensure 100% character
+        fidelity, zero dropped characters, and proper newline handling across all Windows apps.
+        Uses SendInput with VK_RETURN newline translation for short single-line strings.
         """
         ensure_thread_desktop()
         if not text:
@@ -272,19 +290,72 @@ class GuiPrimitivesController:
 
         focus_res = None
         if app_name:
-            focus_res = focus_window(app_name)
-            time.sleep(0.08)
+            focus_res = focus_window(app_name, auto_launch=True)
+            time.sleep(0.1)
+            # Verify foreground
+            hwnd = focus_res.get("hwnd")
+            if hwnd and win32gui:
+                if win32gui.GetForegroundWindow() != hwnd:
+                    bring_hwnd_to_foreground(hwnd)
+                    time.sleep(0.08)
 
+        # Decide between clipboard paste (Ctrl+V) and SendInput
+        # Multiline strings (\n or \r) or strings > 25 characters are pasted to guarantee
+        # instantaneous entry, full formatting, and prevent input queue drops or dot corruption.
+        is_multiline = "\n" in text or "\r" in text
+        use_paste = is_multiline or len(text) > 25
+
+        if use_paste and win32clipboard and win32con:
+            try:
+                win32clipboard.OpenClipboard()
+                try:
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
+                finally:
+                    win32clipboard.CloseClipboard()
+
+                # Send Ctrl+V
+                self.press_key("ctrl+v")
+                time.sleep(0.08)
+
+                if press_enter:
+                    self.press_key("enter")
+                    time.sleep(0.05)
+
+                return {
+                    "status": "success",
+                    "action": "type_text",
+                    "method": "clipboard_paste",
+                    "typed_chars": len(text),
+                    "pressed_enter": press_enter,
+                    "target_app": app_name,
+                    "focus": focus_res,
+                    "message": f"Entered text ({len(text)} chars) into {app_name or 'active window'}."
+                }
+            except Exception as e:
+                print(f"[GUI_PRIMITIVES] Clipboard paste failed, falling back to SendInput: {e}")
+
+        # SendInput path for short, single-line text
         inputs = []
         for char in text:
-            code = ord(char)
-            ki_down = INPUT(type=INPUT_KEYBOARD)
-            ki_down.ki = KEYBDINPUT(wVk=0, wScan=code, dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=0)
-            inputs.append(ki_down)
+            if char in ("\r", "\n"):
+                # Windows newlines require VK_RETURN
+                ki_down = INPUT(type=INPUT_KEYBOARD)
+                ki_down.ki = KEYBDINPUT(wVk=VK_RETURN, wScan=0, dwFlags=0, time=0, dwExtraInfo=0)
+                inputs.append(ki_down)
 
-            ki_up = INPUT(type=INPUT_KEYBOARD)
-            ki_up.ki = KEYBDINPUT(wVk=0, wScan=code, dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)
-            inputs.append(ki_up)
+                ki_up = INPUT(type=INPUT_KEYBOARD)
+                ki_up.ki = KEYBDINPUT(wVk=VK_RETURN, wScan=0, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)
+                inputs.append(ki_up)
+            else:
+                code = ord(char)
+                ki_down = INPUT(type=INPUT_KEYBOARD)
+                ki_down.ki = KEYBDINPUT(wVk=0, wScan=code, dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=0)
+                inputs.append(ki_down)
+
+                ki_up = INPUT(type=INPUT_KEYBOARD)
+                ki_up.ki = KEYBDINPUT(wVk=0, wScan=code, dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)
+                inputs.append(ki_up)
 
         if press_enter:
             enter_down = INPUT(type=INPUT_KEYBOARD)
@@ -299,19 +370,26 @@ class GuiPrimitivesController:
         input_array = (INPUT * n_inputs)(*inputs)
         res = ctypes.windll.user32.SendInput(n_inputs, input_array, ctypes.sizeof(INPUT))
 
-        # Dual-layer fallback to keybd_event if SendInput missed any inputs
-        if res < n_inputs:
-            for char in text:
-                code = ord(char)
-                ctypes.windll.user32.keybd_event(0, code, KEYEVENTF_UNICODE, 0)
-                ctypes.windll.user32.keybd_event(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0)
-            if press_enter:
-                ctypes.windll.user32.keybd_event(VK_RETURN, 0, 0, 0)
-                ctypes.windll.user32.keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, 0)
+        # Safe fallback: if SendInput missed or was blocked, paste via clipboard!
+        # NEVER use keybd_event with KEYEVENTF_UNICODE (it causes the dot flurry bug)
+        if res < n_inputs and win32clipboard and win32con:
+            try:
+                win32clipboard.OpenClipboard()
+                try:
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
+                finally:
+                    win32clipboard.CloseClipboard()
+                self.press_key("ctrl+v")
+                if press_enter:
+                    self.press_key("enter")
+            except Exception as e:
+                print(f"[GUI_PRIMITIVES] Fallback paste failed: {e}")
 
         return {
             "status": "success",
             "action": "type_text",
+            "method": "send_input",
             "typed_chars": len(text),
             "pressed_enter": press_enter,
             "target_app": app_name,

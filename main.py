@@ -9,7 +9,8 @@ import os
 import sys
 import threading
 
-from core.screen_stream import ensure_thread_desktop
+from core.screen_stream import ensure_thread_desktop, init_dpi_awareness
+init_dpi_awareness()
 ensure_thread_desktop()
 
 from core.gui_bridge import GuiBridge

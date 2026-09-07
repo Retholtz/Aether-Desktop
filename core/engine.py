@@ -84,8 +84,10 @@ class AetherEngine:
             screen_pipeline=self.screen_pipeline,
             on_event=self.notify,
             whitelist_getter=self._get_whitelist,
-            whitelist_updater=self._update_whitelist
+            whitelist_updater=self._update_whitelist,
+            config_getter=self.config_getter
         )
+
 
     def _get_whitelist(self) -> list:
         cfg = self.config_getter()
@@ -416,9 +418,10 @@ class AetherEngine:
             "- Real-Time Vision: You continuously receive video frames of the user's desktop (with multi-monitor tracking). You can see open windows, buttons, search bars, and text on screen.\n"
             "- Launching Applications & Browser Profiles: When asked to open/launch an application (e.g. 'Open Chrome', 'Launch Notepad', 'Open Word', 'Open Excel'), call `launch_application(app_name=...)`. When asked to sign in or use a specific browser user/profile (e.g. 'Open Chrome and sign in as Michael', 'Launch Chrome as Traci', 'Open Chrome as Noah'), call `launch_application(app_name='chrome', profile='Michael')` (or 'Traci', 'Noah', etc.). This launches directly into that user profile natively without showing the profile picker dialog.\n"
             "- Deterministic In-Browser Search & Omnibox Navigation: When asked to search or navigate in an open browser (e.g. 'search for News today', 'open MSN.com', 'go to YouTube', 'look up weather in Chrome'), ALWAYS call `navigate_browser(query_or_url=..., app_name='chrome')`. NEVER attempt to guess or click mouse coordinates on the search bar or address bar—`navigate_browser` uses deterministic Win32 window focus and Ctrl+L omnibox navigation!\n"
-            "- Deterministic Win32 Window Management: When asked to maximize, minimize, restore, or focus a window (e.g. 'Maximize Chrome', 'Minimize Spotify', 'Restore Notepad', 'Focus Excel', 'Bring Chrome to front'), ALWAYS call `maximize_window(app_name)`, `minimize_window(app_name)`, `restore_window(app_name)`, or `focus_window(app_name)`. NEVER attempt to click title bars, top-right corners, or maximize icons with mouse coordinates.\n"
-            "- Mouse Clicking: When asked to click on a button, icon, link, or coordinate inside an application or screen, call `mouse_click(x, y, app_name=optional)` using normalized 0-1000 coordinates. When clicking inside an application (such as Chrome or Notepad), always pass `app_name` so coordinates map accurately relative to the window's physical bounds.\n"
-            "- Typing: When asked to type text into a focused field or application, call `type_text(text, press_enter=True/False, app_name=optional)`.\n"
+            "- Precision Visual Element & Link Clicking: When asked to click on a link (e.g. 'Click on the first link', 'Click the Wikipedia link'), button (e.g. 'Click Submit', 'Click Sign In', 'Click Search', 'Close popup'), or any visible element/text by description, ALWAYS call `find_and_click_element(target_description=..., app_name='chrome' or optional)`. This uses AI visual grounding on a high-res snapshot to locate the element's exact bounding box and clicks dead center without guessing coordinates!\n"
+            "- Coordinate Clicking: If you need to click a specific desktop screen coordinate, call `mouse_click(x, y, app_name=optional)` with 0-1000 normalized screen coordinates.\n"
+
+            "- Writing & Typing: When asked to write or type text into an application (e.g. 'write a synopsis in Notepad', 'type this into Word', 'write notes in Notepad'), ALWAYS specify app_name (e.g. `type_text(text=..., app_name='notepad')`). The application will automatically be brought to the foreground, confirmed in focus, and the text will be entered cleanly with full formatting and newlines.\n"
             "- Keyboard Shortcuts: When asked to press keys or shortcuts (e.g. new tab, enter, escape, select all), call `press_key(key_combo)`.\n"
             "- Scrolling: When asked to scroll a page or list, call `scroll_page(direction, amount)`.\n"
             "- Screen Inspection: When you need a high-detail snapshot of a specific display, call `capture_screen_snapshot(monitor)`.\n"
@@ -463,6 +466,7 @@ class AetherEngine:
 
         try:
             client = genai.Client(api_key=api_key)
+            self.dispatcher.genai_client = client
 
             if kill_phrase:
                 system_instruction_text += f"\nImportant: If the user says '{kill_phrase}' or 'stop', halt speaking immediately."

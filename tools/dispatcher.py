@@ -5,9 +5,15 @@ enforcing complete exception isolation so tool faults cannot block or crash the 
 """
 
 import asyncio
+import os
+import re
 from typing import Callable, Dict, List, Optional
 
+from google import genai
+from google.genai import types
+
 from core.screen_stream import ScreenCapturePipeline
+from security.crypto import unprotect_secret
 from security.whitelist import WhitelistValidator
 from tools.os_controls import (
     maximize_window,
@@ -19,6 +25,7 @@ from tools.os_controls import (
 )
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
+
 
 
 # Gemini Live Tool Declarations for Desktop Automation
@@ -164,24 +171,56 @@ REMOVE_FROM_WHITELIST_DECLARATION = {
     }
 }
 
+FIND_AND_CLICK_ELEMENT_DECLARATION = {
+    "name": "find_and_click_element",
+    "description": (
+        "Uses high-precision visual grounding AI to locate and click on any visual element, webpage link, "
+        "button, icon, input field, or text label on the screen or inside an application. "
+        "ALWAYS use this tool when asked to click a link (e.g. 'Click on the first link', 'Click the Wikipedia link'), "
+        "click a button (e.g. 'Click Submit', 'Click Sign In', 'Click Search', 'Close popup'), or click any named UI element on screen."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "target_description": {
+                "type": "STRING",
+                "description": "The visual element, link, or text to find and click (e.g. 'first link in search results', 'Wikipedia link', 'Search button', 'Restore button', 'Settings icon')."
+            },
+            "app_name": {
+                "type": "STRING",
+                "description": "Optional application window to focus and inspect (e.g. 'chrome', 'notepad')."
+            },
+            "button": {
+                "type": "STRING",
+                "description": "Mouse button: 'left', 'right', or 'middle'. Default is 'left'."
+            },
+            "clicks": {
+                "type": "INTEGER",
+                "description": "Number of clicks: 1 for single click, 2 for double click. Default is 1."
+            }
+        },
+        "required": ["target_description"]
+    }
+}
+
 MOUSE_CLICK_DECLARATION = {
     "name": "mouse_click",
     "description": (
-        "Clicks on a button, icon, link, or coordinate on the desktop screen. "
-        "Use normalized coordinates from 0 to 1000 based on what you see in the vision stream "
-        "(0,0 is top-left, 1000,1000 is bottom-right). If targeting an element inside an application window "
-        "(such as Chrome or Notepad), pass app_name to map coordinates accurately inside that window."
+        "Clicks on a specific coordinate on the desktop screen. "
+        "Use normalized coordinates from 0 to 1000 based on what you see in the desktop vision stream "
+        "(0,0 is top-left of the screen, 1000,1000 is bottom-right of the screen). "
+        "Pass app_name to bring the target application to the foreground before clicking."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "x": {
                 "type": "NUMBER",
-                "description": "The X coordinate (0-1000 normalized across the screen or window width)."
+                "description": "The X coordinate (0-1000 normalized across the screen width)."
             },
             "y": {
                 "type": "NUMBER",
-                "description": "The Y coordinate (0-1000 normalized across the screen or window height)."
+                "description": "The Y coordinate (0-1000 normalized across the screen height)."
             },
             "button": {
                 "type": "STRING",
@@ -197,18 +236,20 @@ MOUSE_CLICK_DECLARATION = {
             },
             "app_name": {
                 "type": "STRING",
-                "description": "Optional name of the target application window (e.g. 'chrome', 'notepad'). When provided, (x, y) coordinates are mapped directly within the window's physical bounds, guaranteeing clicks stay inside the window."
+                "description": "Optional name of the target application window (e.g. 'chrome', 'notepad') to focus before clicking."
             }
         },
         "required": ["x", "y"]
     }
 }
 
+
 TYPE_TEXT_DECLARATION = {
     "name": "type_text",
     "description": (
-        "Types text into the active focused field or specified application window. "
-        "Supports all Unicode characters and symbols. Set press_enter=true to submit the text or search query."
+        "Enters text into the active focused field or specified application window (e.g. 'notepad', 'word', 'chrome'). "
+        "When app_name is provided, automatically verifies and brings the target window to the foreground before typing. "
+        "Supports all Unicode characters, symbols, and multiline text. Set press_enter=true to submit the text or search query."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -223,7 +264,7 @@ TYPE_TEXT_DECLARATION = {
             },
             "app_name": {
                 "type": "STRING",
-                "description": "Optional application to bring to focus before typing (e.g. 'notepad', 'word', 'chrome', 'excel')."
+                "description": "Optional application to bring to focus before typing (e.g. 'notepad', 'word', 'chrome', 'excel'). If omitted, types into the currently active or last launched window."
             }
         },
         "required": ["text"]
@@ -350,6 +391,7 @@ def get_all_tool_declarations() -> List[dict]:
         ADD_TO_WHITELIST_DECLARATION,
         REMOVE_FROM_WHITELIST_DECLARATION,
         NAVIGATE_BROWSER_DECLARATION,
+        FIND_AND_CLICK_ELEMENT_DECLARATION,
         MOUSE_CLICK_DECLARATION,
         TYPE_TEXT_DECLARATION,
         PRESS_KEY_DECLARATION,
@@ -371,6 +413,8 @@ class ToolDispatcher:
         on_event: Optional[Callable[[str, dict], None]] = None,
         whitelist_getter: Optional[Callable[[], List[str]]] = None,
         whitelist_updater: Optional[Callable[[List[str]], dict]] = None,
+        config_getter: Optional[Callable[[], dict]] = None,
+        genai_client = None,
     ):
         self.screen_pipeline = screen_pipeline or ScreenCapturePipeline()
         self.gui_controller = GuiPrimitivesController(self.screen_pipeline)
@@ -378,7 +422,11 @@ class ToolDispatcher:
         self.on_event = on_event
         self.whitelist_getter = whitelist_getter or (lambda: [])
         self.whitelist_updater = whitelist_updater
+        self.config_getter = config_getter or (lambda: {})
+        self.genai_client = genai_client
         self.last_blocked_app = ""
+        self.last_target_app = ""
+
 
     def notify(self, event_type: str, data: dict):
         if self.on_event:
@@ -387,7 +435,114 @@ class ToolDispatcher:
             except Exception as e:
                 print(f"[DISPATCHER NOTIFY ERROR] {e}")
 
+    async def find_and_click_element(
+        self,
+        target_description: str,
+        app_name: Optional[str] = None,
+        button: str = "left",
+        clicks: int = 1
+    ) -> dict:
+        """
+        Takes a crisp high-resolution snapshot, queries visual grounding AI
+        to detect the exact 2D bounding box for target_description,
+        and clicks dead-center on the target.
+        """
+        clean_target = str(target_description).strip()
+        if not clean_target:
+            return {"status": "error", "message": "target_description cannot be empty."}
+
+        # 1. Focus application window if specified
+        if app_name:
+            focus_window(app_name)
+            await asyncio.sleep(0.12)
+
+        # 2. Capture crisp high-resolution snapshot (1920 max_dim provides crystal clear text rendering)
+        jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target="auto", max_dim=1920, quality=90)
+        mon_rect = meta.get("monitor_rect", {"left": 0, "top": 0, "width": 2560, "height": 1600})
+
+        # 3. Determine visual grounding model from config
+        cfg = self.config_getter() if self.config_getter else {}
+        v_endpoint = cfg.get("vision", {}).get("endpoint", "gemini-3.8-flash-snapshot")
+        if "pro" in str(v_endpoint).lower():
+            grounding_model = "gemini-3.1-pro-preview"
+        else:
+            grounding_model = "gemini-3.8-flash"
+
+        # 4. Resolve GenAI client
+        client = self.genai_client
+        if not client:
+            encrypted_key = cfg.get("api", {}).get("api_key_encrypted", "")
+            api_key = unprotect_secret(encrypted_key) if encrypted_key else os.environ.get("GEMINI_API_KEY", "")
+            if not api_key:
+                return {"status": "error", "message": "Gemini API key is not configured."}
+            client = genai.Client(api_key=api_key)
+
+        prompt = (
+            f"Locate the 2D bounding box of: '{clean_target}'.\n"
+            "Return a JSON list with 'box_2d' in [ymin, xmin, ymax, xmax] normalized from 0 to 1000 "
+            "relative to the image boundaries (0 is top/left, 1000 is bottom/right).\n"
+            "Format: [{\"box_2d\": [ymin, xmin, ymax, xmax], \"label\": \"description\"}]"
+        )
+
+        try:
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=grounding_model,
+                contents=[
+                    types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
+                    prompt
+                ]
+            )
+            resp_text = response.text or ""
+        except Exception as e:
+            return {"status": "error", "message": f"Visual grounding failed with {grounding_model}: {e}"}
+
+        # 5. Extract bounding box
+        box = None
+        m = re.search(r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]", resp_text)
+        if m:
+            box = [int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))]
+        else:
+            return {
+                "status": "not_found",
+                "message": f"Could not find visual element '{clean_target}' on screen.",
+                "model_response": resp_text
+            }
+
+        ymin, xmin, ymax, xmax = box
+        center_x_norm = (xmin + xmax) / 2.0
+        center_y_norm = (ymin + ymax) / 2.0
+
+        # 6. Click at center coordinates
+        click_res = self.gui_controller.click(
+            x=center_x_norm,
+            y=center_y_norm,
+            button=button,
+            clicks=clicks,
+            monitor="auto",
+            normalized=True,
+            app_name=app_name,
+            window_relative=False
+        )
+
+        phys_x, phys_y = click_res.get("coords", (int(center_x_norm), int(center_y_norm)))
+        msg = f"Located '{clean_target}' at screen ({phys_x}, {phys_y}) (box: {box}) via {grounding_model} and clicked."
+        self.notify("chat_event", {
+            "type": "tool",
+            "name": "Precision Vision",
+            "content": f"🎯 [CLICK TARGET] '{clean_target}' -> ({phys_x}, {phys_y}) via {grounding_model}"
+        })
+        return {
+            "status": "success",
+            "target": clean_target,
+            "box_2d": box,
+            "coords": (phys_x, phys_y),
+            "model_used": grounding_model,
+            "message": msg
+        }
+
     async def dispatch(self, fn_name: str, fn_args: dict) -> dict:
+
         """
         Executes the named function with the given arguments.
         Enforces complete exception isolation so no tool failure can crash the main WebSocket session.
@@ -400,6 +555,8 @@ class ToolDispatcher:
             # -------------------------------------------------------------
             if fn_name == "maximize_window":
                 app_name = str(args.get("app_name", "")).strip()
+                if app_name:
+                    self.last_target_app = app_name
                 result = maximize_window(app_name)
                 self.notify("chat_event", {
                     "type": "tool",
@@ -420,6 +577,8 @@ class ToolDispatcher:
 
             elif fn_name == "restore_window":
                 app_name = str(args.get("app_name", "")).strip()
+                if app_name:
+                    self.last_target_app = app_name
                 result = restore_window(app_name)
                 self.notify("chat_event", {
                     "type": "tool",
@@ -430,6 +589,8 @@ class ToolDispatcher:
 
             elif fn_name == "focus_window":
                 app_name = str(args.get("app_name") or args.get("window_name") or "").strip()
+                if app_name:
+                    self.last_target_app = app_name
                 result = focus_window(app_name)
                 self.notify("chat_event", {
                     "type": "tool",
@@ -443,6 +604,8 @@ class ToolDispatcher:
             # -------------------------------------------------------------
             elif fn_name == "launch_application":
                 app_name = str(args.get("app_name", "")).strip()
+                if app_name:
+                    self.last_target_app = app_name
                 target = args.get("target", None)
                 profile = args.get("profile", None)
                 whitelist = self.whitelist_getter()
@@ -534,6 +697,8 @@ class ToolDispatcher:
             elif fn_name == "navigate_browser":
                 query_or_url = str(args.get("query_or_url", "")).strip()
                 app_name = str(args.get("app_name", "chrome")).strip() or "chrome"
+                if app_name:
+                    self.last_target_app = app_name
                 whitelist = self.whitelist_getter()
                 result = navigate_browser(query_or_url, app_name=app_name, whitelist=whitelist)
                 self.notify("chat_event", {
@@ -544,15 +709,32 @@ class ToolDispatcher:
                 return result
 
             # -------------------------------------------------------------
-            # Tier 2: Low-Level GUI Primitives
+            # Tier 2: Low-Level GUI Primitives & Precision Vision Grounding
             # -------------------------------------------------------------
+            elif fn_name == "find_and_click_element":
+                target_description = str(args.get("target_description", "")).strip()
+                app_name = args.get("app_name", None)
+                if app_name:
+                    self.last_target_app = app_name
+                button = str(args.get("button", "left"))
+                clicks = int(args.get("clicks", 1))
+                return await self.find_and_click_element(
+                    target_description=target_description,
+                    app_name=app_name,
+                    button=button,
+                    clicks=clicks
+                )
+
             elif fn_name == "mouse_click":
+
                 x = float(args.get("x", 500))
                 y = float(args.get("y", 500))
                 button = str(args.get("button", "left"))
                 clicks = int(args.get("clicks", 1))
                 monitor = args.get("monitor", "auto")
                 app_name = args.get("app_name", None)
+                if app_name:
+                    self.last_target_app = app_name
                 result = self.gui_controller.click(x=x, y=y, button=button, clicks=clicks, monitor=monitor, normalized=True, app_name=app_name)
                 target_desc = f"window '{app_name}'" if app_name else f"Monitor {result.get('monitor', 1)}"
                 self.notify("chat_event", {
@@ -565,7 +747,9 @@ class ToolDispatcher:
             elif fn_name == "type_text":
                 text = str(args.get("text", ""))
                 press_enter = bool(args.get("press_enter", False))
-                app_name = args.get("app_name", None)
+                app_name = args.get("app_name", None) or self.last_target_app or None
+                if app_name:
+                    self.last_target_app = app_name
                 result = self.gui_controller.type_text(text=text, press_enter=press_enter, app_name=app_name)
                 self.notify("chat_event", {
                     "type": "tool",

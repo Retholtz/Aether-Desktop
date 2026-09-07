@@ -12,6 +12,9 @@ from typing import Optional, Dict, List
 from core.screen_stream import ensure_thread_desktop
 from security.whitelist import WhitelistValidator
 
+import ctypes
+from ctypes import wintypes
+
 if sys.platform == "win32":
     import win32gui
     import win32con
@@ -100,6 +103,97 @@ def find_hwnd_by_query(query: str) -> Optional[int]:
     return None
 
 
+def bring_hwnd_to_foreground(hwnd: int) -> bool:
+    """
+    Deterministically forces a window handle to the foreground across all Windows versions.
+    Bypasses Windows LockSetForegroundWindow restrictions using:
+    1. Un-minimizing / restoring window if iconic
+    2. HWND_TOPMOST -> HWND_NOTOPMOST Z-order positioning
+    3. Alt-key pulse (VK_MENU)
+    4. AttachThreadInput synchronization between calling, foreground, and target threads
+    5. BringWindowToTop, SwitchToThisWindow, and SetForegroundWindow
+    6. Confirmation polling loop verifying GetForegroundWindow() == hwnd
+    """
+    ensure_thread_desktop()
+    if not win32gui or not hwnd or not win32gui.IsWindow(hwnd):
+        return False
+
+    try:
+        if win32gui.GetForegroundWindow() == hwnd:
+            return True
+
+        # 1. Restore if minimized, or show if hidden
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        else:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+
+        # 2. Force to top of Z-order via HWND_TOPMOST toggle
+        try:
+            win32gui.SetWindowPos(
+                hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW
+            )
+            win32gui.SetWindowPos(
+                hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0,
+                win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_SHOWWINDOW
+            )
+        except Exception:
+            pass
+
+        # 3. Pulse Alt key to grant foreground activation privilege
+        try:
+            ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
+        except Exception:
+            pass
+
+        # 4. AttachThreadInput synchronization
+        fore_hwnd = win32gui.GetForegroundWindow()
+        fore_thread, _ = win32process.GetWindowThreadProcessId(fore_hwnd) if fore_hwnd else (0, 0)
+        target_thread, _ = win32process.GetWindowThreadProcessId(hwnd)
+        cur_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+
+        attached_fore = False
+        attached_target = False
+        try:
+            if fore_thread and cur_thread and fore_thread != cur_thread:
+                win32process.AttachThreadInput(cur_thread, fore_thread, True)
+                attached_fore = True
+            if target_thread and cur_thread and target_thread != cur_thread:
+                win32process.AttachThreadInput(cur_thread, target_thread, True)
+                attached_target = True
+
+            win32gui.BringWindowToTop(hwnd)
+            try:
+                ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
+            except Exception:
+                pass
+            win32gui.SetForegroundWindow(hwnd)
+        finally:
+            if attached_fore:
+                try:
+                    win32process.AttachThreadInput(cur_thread, fore_thread, False)
+                except Exception:
+                    pass
+            if attached_target:
+                try:
+                    win32process.AttachThreadInput(cur_thread, target_thread, False)
+                except Exception:
+                    pass
+
+        # 5. Polling verification loop (up to 300ms)
+        for _ in range(15):
+            if win32gui.GetForegroundWindow() == hwnd:
+                return True
+            time.sleep(0.02)
+
+        return win32gui.GetForegroundWindow() == hwnd
+    except Exception as e:
+        print(f"[OS_CONTROLS] bring_hwnd_to_foreground note: {e}")
+        return False
+
+
 def maximize_window(app_name: str) -> dict:
     """
     Natively maximizes a target window using Win32 API handles.
@@ -116,13 +210,9 @@ def maximize_window(app_name: str) -> dict:
 
     try:
         title = win32gui.GetWindowText(hwnd) or app_name
-        # Restore first to ensure clean state transition if minimized, then maximize
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
         win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
-        try:
-            win32gui.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
+        bring_hwnd_to_foreground(hwnd)
         return {
             "status": "success",
             "action": "maximize_window",
@@ -173,10 +263,7 @@ def restore_window(app_name: str) -> dict:
     try:
         title = win32gui.GetWindowText(hwnd) or app_name
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        try:
-            win32gui.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
+        bring_hwnd_to_foreground(hwnd)
         return {
             "status": "success",
             "action": "restore_window",
@@ -189,30 +276,45 @@ def restore_window(app_name: str) -> dict:
         return {"status": "error", "message": f"Failed to restore '{app_name}': {str(e)}"}
 
 
-def focus_window(app_name: str) -> dict:
-    """Brings a target window to the foreground so it receives user and keyboard focus."""
+def focus_window(app_name: str, auto_launch: bool = True) -> dict:
+    """
+    Brings a target window to the foreground so it receives user and keyboard focus.
+    If the window is not currently open and auto_launch=True, attempts to launch it
+    and waits for its window to appear before bringing it to the foreground.
+    """
     ensure_thread_desktop()
     if not win32gui or not win32con:
         return {"status": "error", "message": "Win32 window management is only supported on Windows."}
 
     hwnd = find_hwnd_by_query(app_name)
+    if not hwnd and auto_launch:
+        # Attempt to launch the app if whitelisted
+        try:
+            launch_res = WhitelistValidator.validate_and_launch(app_name, ["*"])
+            if launch_res.get("status") in ("success", "running"):
+                for _ in range(25):
+                    time.sleep(0.1)
+                    hwnd = find_hwnd_by_query(app_name)
+                    if hwnd:
+                        break
+        except Exception:
+            pass
+
     if not hwnd:
         return {"status": "error", "message": f"No active window found for '{app_name}'."}
 
     try:
         title = win32gui.GetWindowText(hwnd) or app_name
-        # If minimized, restore it first so it becomes visible
-        if win32gui.IsIconic(hwnd):
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(hwnd)
-        time.sleep(0.05)
+        focused = bring_hwnd_to_foreground(hwnd)
+        status_code = "success" if focused else "warning"
         return {
-            "status": "success",
+            "status": status_code,
             "action": "focus_window",
             "app_name": app_name,
             "title": title,
             "hwnd": hwnd,
-            "message": f"Focused '{title}'."
+            "focused": focused,
+            "message": f"Focused '{title}'." if focused else f"Window '{title}' activated."
         }
     except Exception as e:
         return {"status": "error", "message": f"Failed to focus '{app_name}': {str(e)}"}

@@ -1,11 +1,11 @@
 {
   "api": {
-    "api_key_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAQ3Kbh/guNkq3TksGu+kxpQAAAAAoAAAAQQBlAHQAaABlAHIARABlAHMAawB0AG8AcABTAGUAYwByAGUAdAAAABBmAAAAAQAAIAAAAJE0rovK0sHVa2bJnr2L7MCoQmDCIxA++RNA/YRHc8GvAAAAAA6AAAAAAgAAIAAAACJqYrw6nKEpona/X07ukjKZeL4WdB1Dim1l5zgvFS7aQAAAAP3lBMNs4lDUVTD0EB6Xw3UKjhkLsX3NPeYP8869rJTu4LKjRGTLF5jy+wLeIUIn0Ml9VboGVIwsaTm+kQsxs3FAAAAApixvtxOJmpUJ0NvVmWwBGbKzyusKlqYsfvUsCR4jL5syd9JeFEKtpocGCd5m0p7C5PYeK+2wBBlWMipnBhwzXQ==",
+    "api_key_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA5wIwXxjcSEGJrFG6y5dlIgAAAAAoAAAAQQBlAHQAaABlAHIARABlAHMAawB0AG8AcABTAGUAYwByAGUAdAAAABBmAAAAAQAAIAAAAJbcD7Cqbdy+LkBaM/J/y29rdt2MpEhDGcU3qQWcJogxAAAAAA6AAAAAAgAAIAAAAP8BhTJUTwAYFSOlzlRN3zX89tod/zoR456157ohK2j8QAAAANZbZBts/RYYu53VXCeVNs4Lpr9ZBhpGqCYcfgOWC86mjWjZgmL9dGk8l46NlSGyunpe43Scf/QkdOKg+pKDKZxAAAAAIiyYKduWKiGaqaweAvvJnu6Q45tfJ6PtTtAix/JczyrcBoqBmEpynAnp2lORmr0CynQbqq0RwOTli7kMQ4BQMw==",
     "agent_name": "Aether",
     "model_id": "gemini-2.5-flash-native-audio-latest",
     "stt_endpoint": "gemini-live-native",
     "tts_endpoint": "gemini-live-native",
-    "pro_model_id": "gemini-2.5-pro",
+    "pro_model_id": "gemini-3.1-pro-preview",
     "temperature": 1.0,
     "voice_name": "Aoede",
     "system_instruction": "You are [Agent Name], a fast, knowledgeable desktop voice assistant. You have Google Search available to check real-time facts, weather, news, and details. When asked for live information, search the web and answer conversationally and concisely. If the user says 'stop', '[Agent Name] stop', or tells you to stop speaking, halt immediately. Always keep answers brief (1-3 sentences) unless asked to elaborate."
@@ -14,18 +14,18 @@
     "mode": "always_on",
     "safe_phrase": "Aether stop",
     "software_gate": true,
-    "input_device_index": 38,
-    "input_device_name": "[38] Microphone (2- Razer Seiren V3 Chroma) (Windows WASAPI) (48000Hz)",
-    "output_device_index": 35,
-    "output_device_name": "[35] Speakers (THX Spatial) (Windows WASAPI) (48000Hz)",
+    "input_device_index": 33,
+    "input_device_name": "[33] Microphone (Realtek HD Audio Mic input) (Windows WDM-KS) (48000Hz)",
+    "output_device_index": 20,
+    "output_device_name": "[20] Headphones (2- Realtek(R) Audio) (Windows WASAPI) (48000Hz)",
     "input_sample_rate": 16000,
     "output_sample_rate": 24000
   },
   "vision": {
     "enabled": true,
-    "fps": 1,
+    "fps": 2,
     "monitor": "auto",
-    "endpoint": "live-stream",
+    "endpoint": "gemini-3.8-flash-snapshot",
     "resolution": [
       768,
       768

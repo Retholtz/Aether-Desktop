@@ -207,8 +207,11 @@ class WhitelistValidator:
             if clean_t and not (clean_t.startswith("http://") or clean_t.startswith("https://") or clean_t.startswith("file://")) and not os.path.exists(clean_t):
                 final_target = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_t)}"
 
-        # 4. Handle browser profile flags
+        # 4. Handle browser profile flags & clean session flags
         extra_args = []
+        if target_exe.lower() in ("chrome.exe", "msedge.exe", "brave.exe"):
+            extra_args.append("--disable-session-crashed-bubble")
+
         resolved_profile_name = None
         if profile and target_exe.lower() in ("chrome.exe", "msedge.exe"):
             prof_clean = str(profile).strip().lower()
