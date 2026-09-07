@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -12,7 +13,7 @@ from google.genai import types
 from core.screen_stream import ScreenCapturePipeline, ensure_thread_desktop
 ensure_thread_desktop()
 
-from core.audio_stream import AudioPipeline
+from core.audio_stream import AudioPipeline, resolve_valid_audio_devices
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 
@@ -51,6 +52,48 @@ RAW_GEMINI_VOICES = [
 ]
 GEMINI_VOICES = sorted(RAW_GEMINI_VOICES, key=lambda x: x["name"])
 
+try:
+    import edge_tts
+    import miniaudio
+except ImportError:
+    edge_tts = None
+    miniaudio = None
+
+GEMINI_TO_EDGE_VOICE = {
+    # Female-sounding voices
+    "Aoede": "en-US-JennyNeural",
+    "Autonoe": "en-US-AriaNeural",
+    "Callirrhoe": "en-US-JennyNeural",
+    "Despina": "en-US-AriaNeural",
+    "Erinome": "en-US-JennyNeural",
+    "Kore": "en-US-AriaNeural",
+    "Laomedeia": "en-GB-SoniaNeural",
+    "Leda": "en-US-JennyNeural",
+    "Pulcherrima": "en-US-AriaNeural",
+    "Sulafat": "en-US-JennyNeural",
+    "Vindemiatrix": "en-US-AriaNeural",
+    "Zephyr": "en-US-JennyNeural",
+    "Achernar": "en-US-AriaNeural",
+    # Male-sounding voices
+    "Achird": "en-US-GuyNeural",
+    "Algenib": "en-US-ChristopherNeural",
+    "Algieba": "en-US-GuyNeural",
+    "Alnilam": "en-US-ChristopherNeural",
+    "Charon": "en-US-ChristopherNeural",
+    "Enceladus": "en-US-GuyNeural",
+    "Fenrir": "en-US-GuyNeural",
+    "Gacrux": "en-US-ChristopherNeural",
+    "Iapetus": "en-US-GuyNeural",
+    "Orus": "en-US-ChristopherNeural",
+    "Puck": "en-US-GuyNeural",
+    "Rasalgethi": "en-US-ChristopherNeural",
+    "Sadachbia": "en-US-GuyNeural",
+    "Sadaltager": "en-US-ChristopherNeural",
+    "Schedar": "en-US-GuyNeural",
+    "Umbriel": "en-US-GuyNeural",
+    "Zubenelgenubi": "en-US-GuyNeural",
+}
+
 class AetherEngine:
     """
     Manages the Gemini Multimodal Live API session, Audio Pipeline,
@@ -75,6 +118,7 @@ class AetherEngine:
         self._text_queue = asyncio.Queue()
         self.current_turn_text = ""
         self.current_user_speech = ""
+        self.is_tool_executing = False
 
         # Screen capture pipeline
         self.screen_pipeline = ScreenCapturePipeline()
@@ -130,6 +174,14 @@ class AetherEngine:
             self.audio.set_ptt(active)
             self.notify("mic_status", {"ptt_active": active, "is_speaking": self.audio.is_speaking})
 
+    def _on_speech_state(self, state: str):
+        if not self.is_running:
+            return
+        if state == "speech_detected":
+            self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
+        elif state == "speech_finalized":
+            self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
+
     async def send_text(self, text: str):
         """Queues a typed message to be sent into the active Gemini Live session."""
         if not text.strip():
@@ -147,6 +199,17 @@ class AetherEngine:
         try:
             while self.is_running:
                 current_cfg = self.config_getter()
+
+                # If a tool call is actively executing, pause streaming to prevent 1011 state conflicts
+                if self.is_tool_executing:
+                    if self.audio and self.audio.input_queue:
+                        while not self.audio.input_queue.empty():
+                            try:
+                                self.audio.input_queue.get_nowait()
+                            except Exception:
+                                break
+                    await asyncio.sleep(0.01)
+                    continue
 
                 # 1. Check for any queued typed text messages
                 while not self._text_queue.empty():
@@ -209,34 +272,38 @@ class AetherEngine:
                     # 0. Handle Tool Calls from Model via Modular Dispatcher
                     tool_call = getattr(response, "tool_call", None)
                     if tool_call is not None and tool_call.function_calls:
-                        function_responses = []
+                        self.is_tool_executing = True
+                        try:
+                            function_responses = []
 
-                        for fc in tool_call.function_calls:
-                            fn_name = fc.name
-                            fn_args = fc.args or {}
-                            fc_id = fc.id
-                            print(f"[TOOL CALL] Function: {fn_name}, Args: {fn_args}, ID: {fc_id}")
+                            for fc in tool_call.function_calls:
+                                fn_name = fc.name
+                                fn_args = fc.args or {}
+                                fc_id = fc.id
+                                print(f"[TOOL CALL] Function: {fn_name}, Args: {fn_args}, ID: {fc_id}")
 
-                            result = await self.dispatcher.dispatch(fn_name, fn_args)
+                                result = await self.dispatcher.dispatch(fn_name, fn_args)
 
-                            # If a snapshot was requested, stream the JPEG frame back to the live session
-                            if fn_name == "capture_screen_snapshot" and "_jpeg_bytes" in result:
-                                raw_jpeg = result.pop("_jpeg_bytes")
-                                try:
-                                    await session.send_realtime_input(
-                                        video=types.Blob(data=raw_jpeg, mime_type="image/jpeg")
-                                    )
-                                except Exception as e:
-                                    print(f"[SNAPSHOT SEND ERROR] {e}")
+                                # If a snapshot was requested, stream the JPEG frame back to the live session
+                                if fn_name == "capture_screen_snapshot" and "_jpeg_bytes" in result:
+                                    raw_jpeg = result.pop("_jpeg_bytes")
+                                    try:
+                                        await session.send_realtime_input(
+                                            video=types.Blob(data=raw_jpeg, mime_type="image/jpeg")
+                                        )
+                                    except Exception as e:
+                                        print(f"[SNAPSHOT SEND ERROR] {e}")
 
-                            function_responses.append(types.FunctionResponse(
-                                id=fc_id,
-                                name=fn_name,
-                                response=result
-                            ))
+                                function_responses.append(types.FunctionResponse(
+                                    id=fc_id,
+                                    name=fn_name,
+                                    response={"result": result} if not isinstance(result, dict) else result
+                                ))
 
-                        if function_responses:
-                            await session.send_tool_response(function_responses=function_responses)
+                            if function_responses:
+                                await session.send_tool_response(function_responses=function_responses)
+                        finally:
+                            self.is_tool_executing = False
 
                     server_content = getattr(response, "server_content", None)
                     if server_content is None:
@@ -412,20 +479,34 @@ class AetherEngine:
             f"Under NO circumstances should you ever call yourself 'Aether', 'Gemini', or any name other than '{agent_name}'.\n"
             f"Whenever asked about your identity, name, or who you are, you must ALWAYS explicitly state that your name is {agent_name}.\n\n"
         )
+        skills_summary = self.dispatcher.skill_library.get_manifest_summary()
+
         desktop_tools_directive = (
-            "DESKTOP VISION, DETERMINISTIC WIN32 CONTROL & SCRIPT AUTOMATION:\n"
+            "DESKTOP VISION, DETERMINISTIC WIN32 CONTROL & AUTONOMOUS SCRIPT AUTOMATION:\n"
             "You have real-time vision of the user's desktop screen and powerful tools to interact directly with applications:\n"
             "- Real-Time Vision: You continuously receive video frames of the user's desktop (with multi-monitor tracking). You can see open windows, buttons, search bars, and text on screen.\n"
-            "- Launching Applications & Browser Profiles: When asked to open/launch an application (e.g. 'Open Chrome', 'Launch Notepad', 'Open Word', 'Open Excel'), call `launch_application(app_name=...)`. When asked to sign in or use a specific browser user/profile (e.g. 'Open Chrome and sign in as Michael', 'Launch Chrome as Traci', 'Open Chrome as Noah'), call `launch_application(app_name='chrome', profile='Michael')` (or 'Traci', 'Noah', etc.). This launches directly into that user profile natively without showing the profile picker dialog.\n"
-            "- Deterministic In-Browser Search & Omnibox Navigation: When asked to search or navigate in an open browser (e.g. 'search for News today', 'open MSN.com', 'go to YouTube', 'look up weather in Chrome'), ALWAYS call `navigate_browser(query_or_url=..., app_name='chrome')`. NEVER attempt to guess or click mouse coordinates on the search bar or address bar—`navigate_browser` uses deterministic Win32 window focus and Ctrl+L omnibox navigation!\n"
-            "- Precision Visual Element & Link Clicking: When asked to click on a link (e.g. 'Click on the first link', 'Click the Wikipedia link'), button (e.g. 'Click Submit', 'Click Sign In', 'Click Search', 'Close popup'), or any visible element/text by description, ALWAYS call `find_and_click_element(target_description=..., app_name='chrome' or optional)`. This uses AI visual grounding on a high-res snapshot to locate the element's exact bounding box and clicks dead center without guessing coordinates!\n"
-            "- Coordinate Clicking: If you need to click a specific desktop screen coordinate, call `mouse_click(x, y, app_name=optional)` with 0-1000 normalized screen coordinates.\n"
-
-            "- Writing & Typing: When asked to write or type text into an application (e.g. 'write a synopsis in Notepad', 'type this into Word', 'write notes in Notepad'), ALWAYS specify app_name (e.g. `type_text(text=..., app_name='notepad')`). The application will automatically be brought to the foreground, confirmed in focus, and the text will be entered cleanly with full formatting and newlines.\n"
-            "- Keyboard Shortcuts: When asked to press keys or shortcuts (e.g. new tab, enter, escape, select all), call `press_key(key_combo)`.\n"
-            "- Scrolling: When asked to scroll a page or list, call `scroll_page(direction, amount)`.\n"
-            "- Screen Inspection: When you need a high-detail snapshot of a specific display, call `capture_screen_snapshot(monitor)`.\n"
-            "- On-The-Fly Script Automation: For complex operations (such as creating/formatting tables in Word or Excel, populating spreadsheets, calculating data, or automating multi-step document tasks), write and run an on-the-fly Python script via `execute_automation_script(script_code, description)`. Python scripts have full access to native Microsoft Office COM via `win32com.client` (e.g. `win32com.client.Dispatch('Excel.Application')` or `Dispatch('Word.Application')`) so you can manipulate documents, rows, columns, and cells live in the background!\n"
+            "- Atomic Reflex Tools (Low-Latency): Use built-in tools for instant actions:\n"
+            "  * `launch_application(app_name, target, profile)`: Launches allowed desktop apps and browser profiles directly.\n"
+            "  * `focus_window(app_name)`, `maximize_window(app_name)`, `minimize_window(app_name)`, `restore_window(app_name)`: Fast Win32 window management.\n"
+            "  * `navigate_browser(query_or_url, app_name='chrome')`: Deterministic browser search and URL navigation via omnibox.\n"
+            "  * `find_and_click_element(target_description, app_name)`: Visual grounding element locator and clicker.\n"
+            "  * `type_text(text, app_name, press_enter)`: Foreground window typing with formatting.\n"
+            "  * `press_key(key_combo)`: Keyboard hotkeys and shortcuts.\n"
+            "  * `mouse_click(x, y, app_name)`: 0-1000 normalized desktop coordinate clicks.\n"
+            "  * `capture_screen_snapshot(monitor)`: High-detail screen capture.\n\n"
+            "PERMANENT SKILL LIBRARY (REUSABLE AUTOMATIONS):\n"
+            "You possess a persistent, version-controlled library of tested automation scripts. Before writing new code from scratch, ALWAYS check if a matching skill is available and invoke `run_saved_script(skill_name, args)`:\n"
+            f"{skills_summary}\n\n"
+            "CRITICAL RULE FOR CREATING TABLES & DOCUMENT COMPARISONS:\n"
+            "- When asked to create, compare, or insert a table into an open document (e.g. 'Within this document, create a table comparing X and Y', 'Create a comparison table in Google Docs / Word', 'Compare these items with pros and cons in a table'):\n"
+            "  1. Do NOT type queries, headers, or titles into the document or browser with `type_text`.\n"
+            "  2. Synthesize or look up the required comparison facts, specs, and pros/cons.\n"
+            "  3. Immediately invoke `run_saved_script(skill_name='create_table_google_docs', args={'headers': ['Feature / Spec', 'Vehicle A', 'Vehicle B'], 'rows': [['Pros', '...', '...'], ['Cons', '...', '...']], 'title': 'Comparison Title'})` for Google Docs (or `create_table_word` for Word).\n"
+            "  4. The saved skill automatically loads the clipboard with formatted HTML and pastes it cleanly into the active document.\n\n"
+            "DYNAMIC EXECUTION & SELF-EXTENDING LEARNING (CORTEX):\n"
+            "- Dynamic Python Generation: For novel, multi-step, document, spreadsheet, data processing (pandas), Microsoft Office COM (Word/Excel via win32com.client), or window layout tasks without a pre-existing skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
+            "- Self-Correction on Error: If a script fails, you will receive the full Python stack trace / traceback in the tool response. Inspect the error, adjust your script or logic, and retry.\n"
+            "- Learning & Memory: Once you have dynamically generated and verified a successful script for a task that might be reused (e.g. formatting a report, manipulating files, custom layouts), save it permanently to the Skill Library via `save_script_to_library(skill_name, description, script_code, parameters)`. This persists it to disk and syncs it via Git so you never have to generate it again!\n"
             "- Whitelist: If an app is blocked by the security whitelist and the user asks to add or allow it, call `add_to_whitelist(app_name)`.\n"
             "- After executing actions, provide a brief, polite verbal confirmation (1-2 sentences). You can chain multiple actions smoothly.\n\n"
         )
@@ -445,6 +526,9 @@ class AetherEngine:
         in_idx = audio_cfg.get("input_device_index", 0)
         out_idx = audio_cfg.get("output_device_index", 0)
 
+        # Validate and resolve to available devices in case configured device was unplugged or invalid
+        in_idx, out_idx = resolve_valid_audio_devices(in_idx, out_idx)
+
         self.notify("status", {"state": "connecting", "message": f"Opening audio devices ({in_idx}, {out_idx})..."})
 
         try:
@@ -452,7 +536,8 @@ class AetherEngine:
                 input_device=in_idx,
                 output_device=out_idx,
                 mode=audio_mode,
-                software_gate=software_gate
+                software_gate=software_gate,
+                on_speech_state=self._on_speech_state
             )
             await self.audio.start()
         except Exception as e:
@@ -462,76 +547,32 @@ class AetherEngine:
             self.is_running = False
             return
 
-        self.notify("status", {"state": "connecting", "message": f"Connecting to Gemini Live ({model_id}, Voice: {voice_name})..."})
+        if kill_phrase:
+            system_instruction_text += f"\nImportant: If the user says '{kill_phrase}' or 'stop', halt speaking immediately."
+
+        pipeline_mode = api_cfg.get("pipeline_mode", "modular").lower()
 
         try:
-            client = genai.Client(api_key=api_key)
-            self.dispatcher.genai_client = client
-
-            if kill_phrase:
-                system_instruction_text += f"\nImportant: If the user says '{kill_phrase}' or 'stop', halt speaking immediately."
-
-            live_tools = [
-                types.Tool(google_search=types.GoogleSearch()),
-                types.Tool(function_declarations=get_all_tool_declarations())
-            ]
-
-            live_config = types.LiveConnectConfig(
-                response_modalities=["AUDIO"],
-                temperature=temperature,
-                tools=live_tools,
-                input_audio_transcription=types.AudioTranscriptionConfig(),
-                output_audio_transcription=types.AudioTranscriptionConfig(),
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=voice_name
-                        )
-                    )
-                ),
-                system_instruction=types.Content(
-                    parts=[types.Part.from_text(text=system_instruction_text)]
+            if pipeline_mode == "modular":
+                await self._run_modular_pipeline(
+                    api_key=api_key,
+                    agent_name=agent_name,
+                    kill_phrase=kill_phrase,
+                    api_cfg=api_cfg,
+                    system_instruction_text=system_instruction_text,
+                    voice_name=voice_name,
+                    temperature=temperature
                 )
-            )
-
-            async with client.aio.live.connect(model=model_id, config=live_config) as session:
-                self.session = session
-                self.notify("status", {"state": "connected", "message": f"Connected to Gemini Live. {agent_name} is listening."})
-                self.notify("chat_event", {
-                    "type": "system",
-                    "content": f"Connected to Gemini Live ({model_id}, Voice: {voice_name}). {agent_name} is listening..."
-                })
-
-                send_task = asyncio.create_task(self._send_loop(session))
-                recv_task = asyncio.create_task(self._receive_loop(session, kill_phrase, agent_name))
-                tasks = {send_task, recv_task}
-
-                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in pending:
-                    task.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
-
-                for task in done:
-                    try:
-                        task.result()
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception as e:
-                        if self.is_running and "1000" not in str(e):
-                            print(f"[TASK FINISHED WITH ERROR] {e}")
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            err_str = str(e)
-            if self.is_running and "1000" not in err_str and "normal" not in err_str.lower():
-                traceback.print_exc()
-                err_msg = f"Connection failed: {e}"
-                self.notify("status", {"state": "error", "message": err_msg})
-                self.notify("chat_event", {
-                    "type": "error",
-                    "content": f"Failed to connect to Gemini Live: {e}\n\nPlease check your Gemini API key and network connection."
-                })
+            else:
+                await self._run_live_pipeline(
+                    api_key=api_key,
+                    agent_name=agent_name,
+                    kill_phrase=kill_phrase,
+                    api_cfg=api_cfg,
+                    system_instruction_text=system_instruction_text,
+                    voice_name=voice_name,
+                    temperature=temperature
+                )
         finally:
             if self.audio:
                 self.audio.stop()
@@ -539,6 +580,426 @@ class AetherEngine:
             self.session = None
             self.is_running = False
             self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
+
+    async def _run_modular_pipeline(
+        self,
+        api_key: str,
+        agent_name: str,
+        kill_phrase: str,
+        api_cfg: dict,
+        system_instruction_text: str,
+        voice_name: str,
+        temperature: float
+    ):
+        """
+        Executes Option #2: High-Reasoning Modular 3-Stage Pipeline.
+        - Stage 1 (STT): gemini-3.5-transcribe
+        - Stage 2 (Cortex): gemini-3.8-flash (Reasoning, Google Search, & Function Calling)
+        - Stage 3 (TTS): gemini-3.1-flash-tts-preview
+        Immunizes the assistant against WebSocket 1011 errors during complex tool runs.
+        """
+        stt_model = api_cfg.get("stt_model_id", "gemini-3.5-transcribe")
+        cortex_model = api_cfg.get("model_id", "gemini-3.8-flash")
+        tts_model = api_cfg.get("tts_model_id", "gemini-3.1-flash-tts-preview")
+
+        client = genai.Client(api_key=api_key)
+        self.dispatcher.genai_client = client
+
+        self.notify("status", {
+            "state": "connected",
+            "message": f"Modular Pipeline active ({cortex_model}). {agent_name} is listening."
+        })
+        self.notify("chat_event", {
+            "type": "system",
+            "content": f"Ready in Modular Pipeline mode.\n- Cortex: {cortex_model}\n- STT: {stt_model}\n- TTS: {tts_model} (Voice: {voice_name})\n{agent_name} is listening..."
+        })
+
+        # Multi-turn Cortex chat session with Google Search & Function Calling
+        chat = client.chats.create(
+            model=cortex_model,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction_text,
+                tools=[
+                    types.Tool(google_search=types.GoogleSearch()),
+                    types.Tool(function_declarations=get_all_tool_declarations())
+                ],
+                tool_config=types.ToolConfig(
+                    include_server_side_tool_invocations=True
+                ),
+                temperature=temperature
+            )
+        )
+
+        while self.is_running:
+            try:
+                # 1. Wait concurrently for either typed input or speech utterance from VAD
+                text_task = asyncio.create_task(self._text_queue.get())
+                audio_task = asyncio.create_task(self.audio.utterance_queue.get())
+
+                done, pending = await asyncio.wait(
+                    [text_task, audio_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                for t in pending:
+                    t.cancel()
+
+                user_prompt = ""
+                source = "voice"
+
+                if text_task in done:
+                    user_prompt = text_task.result().strip()
+                    source = "text"
+                elif audio_task in done:
+                    wav_bytes = audio_task.result()
+                    if not wav_bytes or len(wav_bytes) < 1000:
+                        continue
+
+                    self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
+                    try:
+                        stt_resp = await asyncio.to_thread(
+                            client.models.generate_content,
+                            model=stt_model,
+                            contents=[types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav")],
+                            config=types.GenerateContentConfig()
+                        )
+                        if stt_resp.candidates and stt_resp.candidates[0].content and stt_resp.candidates[0].content.parts:
+                            for part in stt_resp.candidates[0].content.parts:
+                                if getattr(part, "audio_transcription", None) and getattr(part.audio_transcription, "text", None):
+                                    user_prompt += part.audio_transcription.text
+                                elif getattr(part, "text", None):
+                                    user_prompt += part.text
+                        user_prompt = user_prompt.strip()
+                    except Exception as stt_err:
+                        print(f"[STT TRANSCRIPTION ERROR] {stt_err}")
+                        self.notify("chat_event", {"type": "error", "content": f"STT error: {stt_err}"})
+                        continue
+
+                if not user_prompt:
+                    continue
+
+                print(f"[USER PROMPT ({source})]: {user_prompt}")
+
+                # Check kill phrase
+                if kill_phrase and kill_phrase.lower() in user_prompt.lower():
+                    self.kill_audio()
+
+                # Emit user speech to chat if from voice (text is already emitted in send_text)
+                if source == "voice":
+                    self.notify("chat_event", {
+                        "type": "user",
+                        "content": user_prompt,
+                        "source": source
+                    })
+
+                self.notify("status", {"state": "thinking", "message": f"{agent_name} is thinking...", "user_prompt": user_prompt})
+
+                # 2. Send prompt to Cortex (gemini-3.8-flash)
+                self.is_tool_executing = True
+                try:
+                    response = await asyncio.to_thread(chat.send_message, user_prompt)
+                finally:
+                    self.is_tool_executing = False
+
+                # Handle Search Grounding queries if present
+                if response.candidates and getattr(response.candidates[0], "grounding_metadata", None):
+                    queries = getattr(response.candidates[0].grounding_metadata, "web_search_queries", None)
+                    if queries:
+                        for q in queries:
+                            self.notify("chat_event", {
+                                "type": "tool",
+                                "name": "Google Search",
+                                "content": f"Searching: {q}"
+                            })
+                            self.notify("status", {
+                                "state": "executing",
+                                "message": f"Searching Google: {q}...",
+                                "action": "Google Search",
+                                "user_prompt": user_prompt
+                            })
+
+                # 3. Handle Tool Calls / Dynamic Scripts Execution Loop
+                loop_count = 0
+                max_tool_turns = 10
+                while self.is_running and getattr(response, "function_calls", None) and loop_count < max_tool_turns:
+                    loop_count += 1
+                    self.is_tool_executing = True
+                    tool_parts = []
+                    try:
+                        for fc in response.function_calls:
+                            fn_name = fc.name
+                            fn_args = fc.args or {}
+                            print(f"[MODULAR TOOL CALL] Function: {fn_name}, Args: {fn_args}")
+
+                            self.notify("chat_event", {
+                                "type": "tool",
+                                "name": fn_name,
+                                "content": f"Executing: {fn_name}({json.dumps(fn_args, default=str)})"
+                            })
+                            self.notify("status", {
+                                "state": "executing",
+                                "message": f"Executing: {fn_name}...",
+                                "action": fn_name,
+                                "user_prompt": user_prompt
+                            })
+
+                            result = await self.dispatcher.dispatch(fn_name, fn_args)
+
+                            # Handle screen snapshot JPEG if returned
+                            raw_jpeg = None
+                            if fn_name == "capture_screen_snapshot" and isinstance(result, dict) and "_jpeg_bytes" in result:
+                                raw_jpeg = result.pop("_jpeg_bytes")
+
+                            func_resp = types.Part.from_function_response(
+                                name=fn_name,
+                                response={"result": result} if not isinstance(result, dict) else result
+                            )
+                            tool_parts.append(func_resp)
+                            if raw_jpeg:
+                                tool_parts.append(types.Part.from_bytes(data=raw_jpeg, mime_type="image/jpeg"))
+
+                        self.notify("status", {
+                            "state": "thinking",
+                            "message": f"{agent_name} is reasoning with tool output...",
+                            "user_prompt": user_prompt
+                        })
+                        response = await asyncio.to_thread(chat.send_message, tool_parts)
+                    finally:
+                        self.is_tool_executing = False
+
+                # 4. Extract Assistant Response Text
+                assistant_text = getattr(response, "text", "") or ""
+                if not assistant_text and response.candidates and response.candidates[0].content:
+                    for part in response.candidates[0].content.parts or []:
+                        if getattr(part, "text", None):
+                            assistant_text += part.text
+
+                # If loop reached max turns and model is still proposing tools without text, request verbal answer
+                if not assistant_text.strip() and getattr(response, "function_calls", None):
+                    try:
+                        summary_resp = await asyncio.to_thread(chat.send_message, "Please provide your concise verbal response and summary to the user now.")
+                        assistant_text = getattr(summary_resp, "text", "") or ""
+                        if not assistant_text and summary_resp.candidates and summary_resp.candidates[0].content:
+                            for part in summary_resp.candidates[0].content.parts or []:
+                                if getattr(part, "text", None):
+                                    assistant_text += part.text
+                    except Exception as summary_err:
+                        print(f"[SUMMARY ERROR] {summary_err}")
+
+                assistant_text = assistant_text.strip()
+                if assistant_text:
+                    self.notify("chat_event", {
+                        "type": "assistant",
+                        "agent_name": agent_name,
+                        "content": assistant_text
+                    })
+
+                    # 5. Synthesize Speech via Selected Engine (Edge TTS / Windows Local / Gemini TTS)
+                    self.notify("status", {
+                        "state": "speaking",
+                        "message": f"{agent_name} is speaking...",
+                        "user_prompt": user_prompt
+                    })
+                    try:
+                        pcm_bytes = await self._synthesize_speech(
+                            text=assistant_text,
+                            tts_engine=tts_model,
+                            voice_name=voice_name,
+                            client=client
+                        )
+                        if pcm_bytes:
+                            self.audio.write_output_chunk(pcm_bytes)
+
+                            # Drain output buffer while listening for interruptions
+                            while self.audio and not self.audio.is_output_empty() and self.is_running:
+                                if not self._text_queue.empty():
+                                    self.kill_audio()
+                                    break
+                                await asyncio.sleep(0.05)
+                    except Exception as tts_err:
+                        print(f"[TTS SYNTHESIS ERROR] {tts_err}")
+
+                if self.audio:
+                    self.audio.clear_output_buffer()
+                if self.is_running:
+                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+
+            except asyncio.CancelledError:
+                break
+            except Exception as turn_err:
+                if self.is_running:
+                    print(f"[MODULAR TURN ERROR] {turn_err}")
+                    traceback.print_exc()
+                    self.notify("chat_event", {"type": "error", "content": f"Pipeline error: {turn_err}"})
+                    self.notify("status", {"state": "error", "message": f"Error: {turn_err}"})
+                    await asyncio.sleep(1.0)
+
+    def _resolve_edge_voice(self, voice_name: str) -> str:
+        """Maps Gemini or generic voice names to Microsoft Edge Neural voices."""
+        if not voice_name:
+            return "en-US-JennyNeural"
+        if "-" in voice_name and "Neural" in voice_name:
+            return voice_name
+        return GEMINI_TO_EDGE_VOICE.get(voice_name, "en-US-JennyNeural")
+
+    async def _synthesize_speech(
+        self,
+        text: str,
+        tts_engine: str,
+        voice_name: str,
+        client: genai.Client
+    ) -> Optional[bytes]:
+        """
+        Synthesizes speech using the requested TTS engine and returns raw 24kHz 16-bit Mono PCM bytes.
+        Supported engines:
+        - "edge-tts" / "edge": Ultra-fast Microsoft Neural TTS (~600ms latency)
+        - "windows-local" / "sapi" / "local": Instantaneous offline Windows SAPI5 voice (<50ms latency)
+        - "gemini-3.1-flash-tts-preview" / "gemini-2.5-flash-preview-tts": Cloud Gemini TTS (~2.8s-4.2s)
+        """
+        tts_lower = (tts_engine or "").lower()
+
+        # 1. Edge Neural TTS (Ultra-Fast ~0.6s)
+        if "edge" in tts_lower:
+            if edge_tts is not None and miniaudio is not None:
+                try:
+                    edge_voice = self._resolve_edge_voice(voice_name)
+                    communicate = edge_tts.Communicate(text, edge_voice)
+                    chunks = []
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            chunks.append(chunk["data"])
+                    mp3_data = b"".join(chunks)
+                    if mp3_data:
+                        decoded = miniaudio.decode(mp3_data, nchannels=1, sample_rate=24000)
+                        return decoded.samples.tobytes()
+                except Exception as edge_err:
+                    print(f"[EDGE TTS ERROR] {edge_err}, falling back...")
+
+        # 2. Windows Local SAPI5 (Instantaneous < 0.05s)
+        if "windows" in tts_lower or "sapi" in tts_lower or "local" in tts_lower:
+            def _speak_sapi():
+                try:
+                    import win32com.client
+                    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+                    if voice_name:
+                        for i in range(speaker.GetVoices().Count):
+                            v = speaker.GetVoices().Item(i)
+                            if voice_name.lower() in v.GetDescription().lower():
+                                speaker.Voice = v
+                                break
+                    stream = win32com.client.Dispatch("SAPI.SpMemoryStream")
+                    stream.Format.Type = 30  # SAFT24kHz16BitMono
+                    speaker.AudioOutputStream = stream
+                    speaker.Speak(text)
+                    return bytes(stream.GetData())
+                except Exception as sapi_err:
+                    print(f"[SAPI ERROR] {sapi_err}")
+                    return None
+
+            pcm = await asyncio.to_thread(_speak_sapi)
+            if pcm:
+                return pcm
+
+        # 3. Gemini Cloud TTS Preview
+        model = tts_engine if "gemini" in tts_lower else "gemini-3.1-flash-tts-preview"
+        try:
+            tts_resp = await asyncio.to_thread(
+                client.interactions.create,
+                model=model,
+                input=text,
+                response_format={"type": "audio"},
+                generation_config={"speech_config": [{"voice": voice_name}]}
+            )
+            if getattr(tts_resp, "output_audio", None) and getattr(tts_resp.output_audio, "data", None):
+                return base64.b64decode(tts_resp.output_audio.data)
+        except Exception as gem_err:
+            print(f"[GEMINI TTS ERROR] {gem_err}")
+        return None
+
+    async def _run_live_pipeline(
+        self,
+        api_key: str,
+        agent_name: str,
+        kill_phrase: str,
+        api_cfg: dict,
+        system_instruction_text: str,
+        voice_name: str,
+        temperature: float
+    ):
+        """Executes the original Gemini Multimodal Live WebSocket session (Fallback/Live Mode)."""
+        model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
+        live_tools = [
+            types.Tool(google_search=types.GoogleSearch()),
+            types.Tool(function_declarations=get_all_tool_declarations())
+        ]
+
+        live_config = types.LiveConnectConfig(
+            response_modalities=["AUDIO"],
+            temperature=temperature,
+            tools=live_tools,
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=voice_name
+                    )
+                )
+            ),
+            system_instruction=types.Content(
+                parts=[types.Part.from_text(text=system_instruction_text)]
+            )
+        )
+
+        reconnect_delay = 1.0
+
+        while self.is_running:
+            self.notify("status", {"state": "connecting", "message": f"Connecting to Gemini Live ({model_id}, Voice: {voice_name})..."})
+
+            try:
+                client = genai.Client(api_key=api_key)
+                self.dispatcher.genai_client = client
+
+                async with client.aio.live.connect(model=model_id, config=live_config) as session:
+                    self.session = session
+                    reconnect_delay = 1.0
+                    self.notify("status", {"state": "connected", "message": f"Connected to Gemini Live. {agent_name} is listening."})
+                    self.notify("chat_event", {
+                        "type": "system",
+                        "content": f"Connected to Gemini Live ({model_id}, Voice: {voice_name}). {agent_name} is listening..."
+                    })
+
+                    send_task = asyncio.create_task(self._send_loop(session))
+                    recv_task = asyncio.create_task(self._receive_loop(session, kill_phrase, agent_name))
+                    tasks = {send_task, recv_task}
+
+                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+                    for task in done:
+                        try:
+                            task.result()
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as e:
+                            if self.is_running and "1000" not in str(e):
+                                print(f"[TASK FINISHED WITH ERROR] {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                err_str = str(e)
+                if not self.is_running or "1000" in err_str or "normal" in err_str.lower():
+                    break
+                print(f"\n[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
+                self.notify("status", {"state": "reconnecting", "message": f"Connection lost ({e}). Reconnecting in {reconnect_delay:.1f}s..."})
+                self.notify("chat_event", {
+                    "type": "system",
+                    "content": f"⚠️ Connection interrupted ({e}). Reconnecting in {reconnect_delay:.1f}s..."
+                })
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 1.5, 8.0)
 
     def start(self, loop: asyncio.AbstractEventLoop):
         """Starts the assistant engine on the provided event loop."""

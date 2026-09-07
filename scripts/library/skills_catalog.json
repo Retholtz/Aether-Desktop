@@ -1,0 +1,29 @@
+{
+  "create_table_google_docs": {
+    "description": "Formats and pastes a rich HTML/TSV table directly into Google Docs or a web document in Chrome.",
+    "parameters": {
+      "headers": "List of string column titles (e.g. ['Model', 'Range', 'Price'])",
+      "rows": "2D list of row strings (e.g. [['Tesla 3', '341 mi', '$38,990']])",
+      "title": "Optional table title heading string",
+      "app_name": "Optional target window (default 'Google Docs')"
+    },
+    "file": "create_table_google_docs.py"
+  },
+  "create_table_word": {
+    "description": "Creates and populates a native formatted table in Microsoft Word via COM automation.",
+    "parameters": {
+      "headers": "List of string column titles",
+      "rows": "2D list of row strings",
+      "title": "Optional table title heading string"
+    },
+    "file": "create_table_word.py"
+  },
+  "tile_windows": {
+    "description": "Tiles two open applications side-by-side (50% left, 50% right) on the screen.",
+    "parameters": {
+      "left_app": "Application name to position on the left (e.g. 'notepad')",
+      "right_app": "Application name to position on the right (e.g. 'chrome')"
+    },
+    "file": "tile_windows.py"
+  }
+}

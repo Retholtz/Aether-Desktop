@@ -5,6 +5,7 @@ import sys
 import sounddevice as sd
 from typing import Optional
 
+from core.audio_stream import get_available_audio_devices
 from core.engine import AetherEngine, GEMINI_VOICES
 from core.security import protect_secret, unprotect_secret
 
@@ -24,6 +25,8 @@ class GuiBridge:
             except RuntimeError:
                 self._loop = asyncio.new_event_loop()
         self._window = None
+        self._overlay_window = None
+        self._overlay_visible = False
         self._config = self._load_config()
         self._engine = AetherEngine(
             config_getter=self.get_raw_config,
@@ -33,6 +36,9 @@ class GuiBridge:
 
     def set_window(self, window):
         self._window = window
+
+    def set_overlay_window(self, window):
+        self._overlay_window = window
 
     def update_whitelist(self, new_whitelist: list) -> dict:
         """Updates security app_whitelist in config, persists to disk, and pushes config_updated event."""
@@ -59,15 +65,27 @@ class GuiBridge:
         return self._config
 
     def _on_engine_event(self, event_type: str, data: dict):
-        """Pushes events to the WebView frontend JavaScript runtime."""
-        if not self._window:
-            return
+        """Pushes events to both the Main Window and Floating Overlay JavaScript runtimes."""
         try:
             payload = json.dumps({"type": event_type, "data": data})
-            js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
-            self._window.evaluate_js(js_code)
-        except Exception:
-            pass
+            
+            # Dispatch to Main Window
+            if self._window:
+                try:
+                    js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
+                    self._window.evaluate_js(js_code)
+                except Exception:
+                    pass
+
+            # Dispatch to Floating Overlay Window
+            if self._overlay_window:
+                try:
+                    overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
+                    self._overlay_window.evaluate_js(overlay_js)
+                except Exception:
+                    pass
+        except Exception as err:
+            print(f"[BRIDGE DISPATCH ERROR] {err}")
 
     # =========================================================================
     # Methods exposed to JavaScript (via window.pywebview.api)
@@ -107,6 +125,14 @@ class GuiBridge:
                 self._config.setdefault("api", {})["agent_name"] = api_cfg["agent_name"].strip() or "Aether"
             if "model_id" in api_cfg:
                 self._config.setdefault("api", {})["model_id"] = api_cfg["model_id"]
+            if "pipeline_mode" in api_cfg:
+                self._config.setdefault("api", {})["pipeline_mode"] = api_cfg["pipeline_mode"]
+            if "stt_model_id" in api_cfg:
+                self._config.setdefault("api", {})["stt_model_id"] = api_cfg["stt_model_id"]
+            if "tts_model_id" in api_cfg:
+                self._config.setdefault("api", {})["tts_model_id"] = api_cfg["tts_model_id"]
+            if "live_model_id" in api_cfg:
+                self._config.setdefault("api", {})["live_model_id"] = api_cfg["live_model_id"]
             if "stt_endpoint" in api_cfg:
                 self._config.setdefault("api", {})["stt_endpoint"] = api_cfg["stt_endpoint"]
             if "tts_endpoint" in api_cfg:
@@ -130,6 +156,8 @@ class GuiBridge:
                 self._config["vision"] = new_config["vision"]
             if "security" in new_config:
                 self._config["security"] = new_config["security"]
+            if "ui" in new_config:
+                self._config["ui"] = new_config["ui"]
 
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2)
@@ -139,41 +167,8 @@ class GuiBridge:
             return {"success": False, "error": str(e)}
 
     def get_audio_devices(self) -> dict:
-        """Enumerates active microphones and speakers on the Windows system."""
-        try:
-            devices = sd.query_devices()
-            hostapis = sd.query_hostapis()
-            
-            inputs = []
-            outputs = []
-
-            for idx, dev in enumerate(devices):
-                api_name = hostapis[dev['hostapi']]['name']
-                label = f"{dev['name']} ({api_name})"
-                
-                if dev['max_input_channels'] > 0:
-                    inputs.append({
-                        "index": idx,
-                        "name": dev['name'],
-                        "api": api_name,
-                        "label": label,
-                        "channels": dev['max_input_channels'],
-                        "samplerate": int(dev['default_samplerate'])
-                    })
-                
-                if dev['max_output_channels'] > 0:
-                    outputs.append({
-                        "index": idx,
-                        "name": dev['name'],
-                        "api": api_name,
-                        "label": label,
-                        "channels": dev['max_output_channels'],
-                        "samplerate": int(dev['default_samplerate'])
-                    })
-
-            return {"inputs": inputs, "outputs": outputs}
-        except Exception as e:
-            return {"inputs": [], "outputs": [], "error": str(e)}
+        """Enumerates truly active, available microphones and speakers on the system."""
+        return get_available_audio_devices()
 
     def get_available_voices(self) -> list:
         """Returns list of the 30 Google Gemini official TTS voices."""
@@ -266,4 +261,71 @@ class GuiBridge:
             "is_dark": is_dark,
             "accent_color": accent_hex
         }
+
+    # =========================================================================
+    # Window & Floating Overlay Controls
+    # =========================================================================
+
+    def restore_main_window(self) -> dict:
+        """Restores the main window from minimized or hidden state and focuses it."""
+        try:
+            if self._window:
+                self._window.restore()
+                self._window.show()
+                cfg = self._config.get("ui", {})
+                mode = cfg.get("floating_overlay", "on_minimize")
+                if mode == "on_minimize" and getattr(self, "_overlay_window", None):
+                    self._overlay_window.hide()
+                    self._overlay_visible = False
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def show_overlay(self) -> dict:
+        """Explicitly displays the floating overlay window."""
+        try:
+            if getattr(self, "_overlay_window", None):
+                self._overlay_window.show()
+                self._overlay_visible = True
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def hide_overlay(self) -> dict:
+        """Hides the floating overlay window."""
+        try:
+            if getattr(self, "_overlay_window", None):
+                self._overlay_window.hide()
+                self._overlay_visible = False
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def toggle_overlay(self) -> dict:
+        """Toggles visibility of the floating overlay."""
+        try:
+            if getattr(self, "_overlay_window", None):
+                if getattr(self, "_overlay_visible", False):
+                    self._overlay_window.hide()
+                    self._overlay_visible = False
+                else:
+                    self._overlay_window.show()
+                    self._overlay_visible = True
+            return {"success": True, "visible": getattr(self, "_overlay_visible", False)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def toggle_mic_mute(self) -> dict:
+        """Toggles microphone mute state."""
+        try:
+            if self._engine and self._engine.audio:
+                new_mode = "ptt" if self._engine.audio.mode == "always_on" else "always_on"
+                self._engine.audio.set_mode(new_mode)
+                muted = (new_mode == "ptt")
+                self._on_engine_event("mic_muted", {"muted": muted})
+                return {"success": True, "muted": muted}
+            return {"success": False, "error": "Audio pipeline not active"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 

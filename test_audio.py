@@ -1,27 +1,31 @@
-import sounddevice as sd
+from core.audio_stream import get_available_audio_devices
 
 def list_audio_devices():
-    devices = sd.query_devices()
-    hostapis = sd.query_hostapis()
-    
-    print("\n" + "=" * 60)
-    print("        AETHER DESKTOP - AUDIO HARDWARE ENUMERATION")
-    print("=" * 60)
-    
-    print("\n--- AVAILABLE INPUT MICROPHONES ---")
-    for idx, dev in enumerate(devices):
-        if dev['max_input_channels'] > 0:
-            api_name = hostapis[dev['hostapi']]['name']
-            # Highlight Windows Core Audio (WASAPI/DirectSound)
-            print(f"[{idx}] {dev['name']} ({api_name}) - Channels: {dev['max_input_channels']}, Default Sample Rate: {int(dev['default_samplerate'])}Hz")
-            
-    print("\n--- AVAILABLE OUTPUT SPEAKERS ---")
-    for idx, dev in enumerate(devices):
-        if dev['max_output_channels'] > 0:
-            api_name = hostapis[dev['hostapi']]['name']
-            print(f"[{idx}] {dev['name']} ({api_name}) - Channels: {dev['max_output_channels']}, Default Sample Rate: {int(dev['default_samplerate'])}Hz")
-            
-    print("\n" + "=" * 60)
+    res = get_available_audio_devices()
+    inputs = res.get("inputs", [])
+    outputs = res.get("outputs", [])
+
+    print("\n" + "=" * 65)
+    print("      AETHER DESKTOP - VERIFIED AVAILABLE AUDIO DEVICES")
+    print("=" * 65)
+
+    print("\n--- AVAILABLE MICROPHONES (INPUT) ---")
+    if inputs:
+        for dev in inputs:
+            def_tag = " [DEFAULT]" if dev.get("is_default") else ""
+            print(f"[{dev['index']:2d}] {dev['name']}{def_tag} | {dev['samplerate']}Hz | {dev['api']}")
+    else:
+        print("  None detected or available.")
+
+    print("\n--- AVAILABLE SPEAKERS (OUTPUT) ---")
+    if outputs:
+        for dev in outputs:
+            def_tag = " [DEFAULT]" if dev.get("is_default") else ""
+            print(f"[{dev['index']:2d}] {dev['name']}{def_tag} | {dev['samplerate']}Hz | {dev['api']}")
+    else:
+        print("  None detected or available.")
+
+    print("\n" + "=" * 65)
 
 if __name__ == "__main__":
     list_audio_devices()

@@ -25,6 +25,7 @@ from tools.os_controls import (
 )
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
+from tools.skill_library import SkillLibrary
 
 
 
@@ -249,7 +250,9 @@ TYPE_TEXT_DECLARATION = {
     "description": (
         "Enters text into the active focused field or specified application window (e.g. 'notepad', 'word', 'chrome'). "
         "When app_name is provided, automatically verifies and brings the target window to the foreground before typing. "
-        "Supports all Unicode characters, symbols, and multiline text. Set press_enter=true to submit the text or search query."
+        "Supports all Unicode characters, symbols, and multiline text. "
+        "Do NOT use this to navigate or search the web in a browser (use navigate_browser instead). "
+        "Do NOT use this to generate tables in Google Docs or Word (use run_saved_script with 'create_table_google_docs' instead)."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -349,14 +352,79 @@ CAPTURE_SCREEN_SNAPSHOT_DECLARATION = {
     }
 }
 
+RUN_SAVED_SCRIPT_DECLARATION = {
+    "name": "run_saved_script",
+    "description": (
+        "Executes a tested automation routine from the permanent Skill Library by name (e.g. 'create_table_google_docs', "
+        "'create_table_word', 'tile_windows') with optional arguments. ALWAYS check if a matching saved skill exists in your "
+        "library before writing new code from scratch!"
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "skill_name": {
+                "type": "STRING",
+                "description": "The exact name of the saved skill (e.g. 'create_table_google_docs', 'create_table_word', 'tile_windows')."
+            },
+            "args": {
+                "type": "OBJECT",
+                "description": "Optional dictionary of arguments matching the skill's parameter schema (e.g. {'headers': ['A', 'B'], 'rows': [['1', '2']]})."
+            }
+        },
+        "required": ["skill_name"]
+    }
+}
+
+SAVE_SCRIPT_TO_LIBRARY_DECLARATION = {
+    "name": "save_script_to_library",
+    "description": (
+        "Saves a newly generated, tested Python automation script into the permanent Skill Library so it can be reused later "
+        "by name without regenerating code. AST safety checks are verified before saving to the repository."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "skill_name": {
+                "type": "STRING",
+                "description": "Unique snake_case identifier for the skill (e.g. 'format_sales_sheet', 'backup_workspace', 'tile_three_windows')."
+            },
+            "description": {
+                "type": "STRING",
+                "description": "Clear plain-English summary of what this automation skill does and what problems it solves."
+            },
+            "script_code": {
+                "type": "STRING",
+                "description": "The complete Python code for the skill. Must read arguments from SKILL_ARGS or sys.argv if parameterized."
+            },
+            "parameters": {
+                "type": "OBJECT",
+                "description": "Optional parameter specification documenting the expected argument names and descriptions."
+            }
+        },
+        "required": ["skill_name", "description", "script_code"]
+    }
+}
+
+LIST_SAVED_SKILLS_DECLARATION = {
+    "name": "list_saved_skills",
+    "description": (
+        "Lists all available reusable automation skills currently in the permanent Skill Library, including descriptions and required parameters."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {},
+        "required": []
+    }
+}
+
 EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
-        "Generates and executes an on-the-fly Python or PowerShell automation script in the background. "
-        "Use this for complex operations such as creating or formatting tables in Word or Excel, "
-        "populating spreadsheets, calculating formulas, editing documents, file batching, or system tasks. "
-        "Python scripts run with full access to win32com.client (e.g. win32com.client.Dispatch('Excel.Application') "
-        "or Dispatch('Word.Application')) for native real-time Microsoft Office automation."
+        "Universal dynamic code execution engine. Generates and executes an on-the-fly Python script to solve novel or complex desktop tasks. "
+        "Use this for document creation, table generation, data analysis (pandas), Microsoft Office COM (Word/Excel via win32com.client), "
+        "file batching, complex calculations, and window layouts. "
+        "If a script fails with an exception, the full traceback is returned so you can diagnose the issue, adjust your code, and retry. "
+        "When you solve a novel task with a reusable script, save it to the permanent library using `save_script_to_library`."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -371,7 +439,7 @@ EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
             },
             "description": {
                 "type": "STRING",
-                "description": "A clear 1-line description of what this automation script does (e.g. 'Format sales table in Word', 'Populate quarterly revenue in Excel')."
+                "description": "A clear 1-line description of what this automation script does."
             }
         },
         "required": ["script_code"]
@@ -397,6 +465,9 @@ def get_all_tool_declarations() -> List[dict]:
         PRESS_KEY_DECLARATION,
         SCROLL_PAGE_DECLARATION,
         CAPTURE_SCREEN_SNAPSHOT_DECLARATION,
+        RUN_SAVED_SCRIPT_DECLARATION,
+        SAVE_SCRIPT_TO_LIBRARY_DECLARATION,
+        LIST_SAVED_SKILLS_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
     ]
 
@@ -419,6 +490,7 @@ class ToolDispatcher:
         self.screen_pipeline = screen_pipeline or ScreenCapturePipeline()
         self.gui_controller = GuiPrimitivesController(self.screen_pipeline)
         self.script_runner = ScriptRunner()
+        self.skill_library = SkillLibrary()
         self.on_event = on_event
         self.whitelist_getter = whitelist_getter or (lambda: [])
         self.whitelist_updater = whitelist_updater
@@ -795,8 +867,51 @@ class ToolDispatcher:
                 }
 
             # -------------------------------------------------------------
-            # Tier 3: Sandboxed Script Runner
+            # Tier 3: Sandboxed Script Runner & Skill Library
             # -------------------------------------------------------------
+            elif fn_name == "run_saved_script":
+                skill_name = str(args.get("skill_name", "")).strip()
+                skill_args = args.get("args") or {}
+                result = await asyncio.to_thread(
+                    self.skill_library.run_skill,
+                    skill_name=skill_name,
+                    args=skill_args
+                )
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Skill Library",
+                    "content": f"⚡ [SKILL: {skill_name}] {result.get('message', 'Executed.')}"
+                })
+                return result
+
+            elif fn_name == "save_script_to_library":
+                skill_name = str(args.get("skill_name", "")).strip()
+                description = str(args.get("description", "")).strip()
+                script_code = str(args.get("script_code", "")).strip()
+                parameters = args.get("parameters") or {}
+                result = await asyncio.to_thread(
+                    self.skill_library.save_skill,
+                    skill_name=skill_name,
+                    description=description,
+                    script_code=script_code,
+                    parameters=parameters
+                )
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Skill Library",
+                    "content": f"💾 [SAVED SKILL] {result.get('message', skill_name)}"
+                })
+                return result
+
+            elif fn_name == "list_saved_skills":
+                manifest = self.skill_library.get_skills_manifest()
+                return {
+                    "status": "success",
+                    "skills": manifest,
+                    "count": len(manifest),
+                    "summary": self.skill_library.get_manifest_summary()
+                }
+
             elif fn_name == "execute_automation_script":
                 script_code = str(args.get("script_code", ""))
                 script_type = str(args.get("script_type", "python"))

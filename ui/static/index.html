@@ -125,23 +125,29 @@
                   <span class="input-hint" id="apiKeyHint">Stored securely in your Windows user DPAPI vault.</span>
                 </div>
 
-                <!-- Live Model Endpoint -->
+                <!-- Model Endpoint -->
                 <div class="form-group">
-                  <label for="modelSelect">Live Model Endpoint</label>
+                  <label for="modelSelect">Primary Model Endpoint</label>
                   <select id="modelSelect" class="hud-select">
-                    <option value="gemini-2.5-flash-native-audio-latest" selected>gemini-2.5-flash-native-audio-latest (Recommended)</option>
-                    <option value="gemini-2.0-flash-realtime-exp">gemini-2.0-flash-realtime-exp</option>
+                    <option value="gemini-3.8-flash" selected>gemini-3.8-flash (Modular Cortex - Recommended: Superfast Reasoning & Coding)</option>
+                    <option value="gemini-3.7-flash">gemini-3.7-flash (Hybrid Thinking & Quick Execution)</option>
+                    <option value="gemini-3.6-flash">gemini-3.6-flash (Fast Everyday Reasoning)</option>
+                    <option value="gemini-3.5-flash">gemini-3.5-flash (Balanced Multimodal Agent)</option>
+                    <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Deep Complex Reasoning & Advanced Scripts)</option>
+                    <option value="gemini-2.5-pro">gemini-2.5-pro (Deep Reasoning)</option>
+                    <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview (Gemini Live WebSocket Bidirectional)</option>
+                    <option value="gemini-2.5-flash-native-audio-latest">gemini-2.5-flash-native-audio-latest (Legacy Live Audio WebSocket)</option>
                   </select>
-                  <span class="input-hint">Primary Multimodal Live Bidirectional WebSocket model.</span>
+                  <span class="input-hint">Primary reasoning and orchestration model.</span>
                 </div>
 
                 <!-- LLM Temperature Slider -->
                 <div class="form-group">
                   <div class="slider-header">
                     <label for="temperatureSlider">Creativity / Temperature</label>
-                    <span class="slider-val" id="tempValDisplay">1.00</span>
+                    <span class="slider-val" id="tempValDisplay">0.70</span>
                   </div>
-                  <input type="range" id="temperatureSlider" min="0.0" max="2.0" step="0.05" value="1.0" class="hud-slider">
+                  <input type="range" id="temperatureSlider" min="0.0" max="2.0" step="0.05" value="0.7" class="hud-slider">
                   <div class="slider-ticks">
                     <span>0.0 (Precise)</span>
                     <span>1.0 (Balanced)</span>
@@ -153,9 +159,9 @@
                 <div class="form-group">
                   <label for="sttSelect">Speech to Text (STT) Endpoint</label>
                   <select id="sttSelect" class="hud-select">
-                    <option value="gemini-live-native" selected>Gemini Live Native Audio Stream (Real-Time Bidirectional)</option>
-                    <option value="gemini-2.5-flash-audio">Gemini Audio Cloud (gemini-2.5-flash)</option>
-                    <option value="whisper-local">Whisper Local / Faster-Whisper (Planned)</option>
+                    <option value="gemini-3.5-transcribe" selected>gemini-3.5-transcribe (High Accuracy Cloud STT - Recommended)</option>
+                    <option value="gemini-3.5-transcribe-live">gemini-3.5-transcribe-live (Streaming Cloud STT)</option>
+                    <option value="gemini-live-native">Gemini Live Native Audio Stream (Real-Time Bidirectional)</option>
                   </select>
                   <span class="input-hint">Microphone speech recognition pipeline.</span>
                 </div>
@@ -164,9 +170,11 @@
                 <div class="form-group">
                   <label for="ttsSelect">Text to Speech (TTS) Endpoint</label>
                   <select id="ttsSelect" class="hud-select">
-                    <option value="gemini-live-native" selected>Gemini Live Native Voice Generation (30 Prebuilt Voices)</option>
-                    <option value="google-cloud-tts">Google Cloud Text-to-Speech API</option>
-                    <option value="elevenlabs">ElevenLabs Neural Voice API (Planned)</option>
+                    <option value="edge-tts" selected>Edge Neural TTS (~0.6s Ultra-Fast, Natural Voices - Recommended)</option>
+                    <option value="windows-local">Windows Native SAPI5 / Local Voices (Instantaneous ~0.02s, Offline)</option>
+                    <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview (~2.8s, 30 Gemini Voices)</option>
+                    <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts (~4.1s)</option>
+                    <option value="gemini-live-native">Gemini Live Native Voice Generation (WebSocket)</option>
                   </select>
                   <span class="input-hint">Voice synthesis engine for assistant speech playback.</span>
                 </div>
@@ -175,10 +183,11 @@
                 <div class="form-group full">
                   <label for="proModelSelect">Problem Solving LLM Endpoint (Complex Tasks & Reasoning)</label>
                   <select id="proModelSelect" class="hud-select">
-                    <option value="gemini-3.1-pro-preview" selected>gemini-3.1-pro-preview (Deep Reasoning, Desktop Automation & Coding)</option>
+                    <option value="gemini-3.1-pro-preview" selected>gemini-3.1-pro-preview (Deep Reasoning, Desktop Automation & Coding - Recommended)</option>
                     <option value="gemini-3.8-flash">gemini-3.8-flash (Fast Everyday Reasoning)</option>
+                    <option value="gemini-3.7-flash">gemini-3.7-flash (Hybrid Thinking & Quick Execution)</option>
+                    <option value="gemini-2.5-pro">gemini-2.5-pro (Deep Reasoning)</option>
                   </select>
-
                   <span class="input-hint">Heavy reasoning model for desktop problem-solving, code editing, and complex actions.</span>
                 </div>
 
@@ -301,6 +310,35 @@
                   <label for="whitelistInput">Allowed Applications Whitelist (Comma separated)</label>
                   <input type="text" id="whitelistInput" class="hud-input" value="chrome.exe, notepad.exe, winword.exe, excel.exe, spotify.exe, blender.exe">
                   <span class="input-hint">Only programs in this list can be opened or controlled.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: Floating HUD Overlay & System Tray -->
+          <div class="hud-card">
+            <div class="card-header">
+              <span class="card-title">FLOATING HUD OVERLAY & SYSTEM TRAY</span>
+              <span class="card-tag">DESKTOP HUD</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="floatingOverlayMode">Floating HUD Overlay Mode</label>
+                  <select id="floatingOverlayMode" class="hud-select">
+                    <option value="on_minimize" selected>Show On Minimize (Recommended)</option>
+                    <option value="always">Always On Top (Always Visible)</option>
+                    <option value="disabled">Disabled (Hidden)</option>
+                  </select>
+                  <span class="input-hint">Displays a sleek floating widget showing live speech, status, and task actions.</span>
+                </div>
+
+                <div class="form-group">
+                  <label class="hud-checkbox" style="margin-top: 26px;">
+                    <input type="checkbox" id="minimizeToTrayCheck" checked>
+                    <span>Minimize To System Tray</span>
+                  </label>
+                  <span class="input-hint">Keeps Aether running in the background notification area when minimized.</span>
                 </div>
               </div>
             </div>

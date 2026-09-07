@@ -41,6 +41,8 @@ venv.bak/
 
 # Scratch & temporary testing artifacts
 scratch/
+scripts/cache/
 *.tmp
 *.log
+
 

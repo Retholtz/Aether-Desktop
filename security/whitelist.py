@@ -213,16 +213,21 @@ class WhitelistValidator:
             extra_args.append("--disable-session-crashed-bubble")
 
         resolved_profile_name = None
-        if profile and target_exe.lower() in ("chrome.exe", "msedge.exe"):
-            prof_clean = str(profile).strip().lower()
-            profiles_map = cls.get_chrome_profiles()
-            if prof_clean in profiles_map:
-                prof_dir = profiles_map[prof_clean]
-                extra_args.append(f"--profile-directory={prof_dir}")
-                resolved_profile_name = f"{profile} ({prof_dir})"
+        if target_exe.lower() in ("chrome.exe", "msedge.exe"):
+            if profile:
+                prof_clean = str(profile).strip().lower()
+                profiles_map = cls.get_chrome_profiles()
+                if prof_clean in profiles_map:
+                    prof_dir = profiles_map[prof_clean]
+                    extra_args.append(f"--profile-directory={prof_dir}")
+                    resolved_profile_name = f"{profile} ({prof_dir})"
+                else:
+                    extra_args.append(f"--profile-directory={profile}")
+                    resolved_profile_name = profile
             else:
-                extra_args.append(f"--profile-directory={profile}")
-                resolved_profile_name = profile
+                # Default to primary user profile to bypass the "Who's using Chrome?" profile picker dialog
+                extra_args.append("--profile-directory=Default")
+                resolved_profile_name = "Default"
 
         # 5. Launch process
         try:

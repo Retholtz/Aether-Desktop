@@ -1,7 +1,13 @@
 import asyncio
+import io
+import logging
 import threading
+import wave
+from typing import Callable, Optional
 import numpy as np
 import sounddevice as sd
+
+logger = logging.getLogger("Aether.Audio")
 
 class AudioPipeline:
     def __init__(
@@ -9,12 +15,14 @@ class AudioPipeline:
         input_device: int,
         output_device: int,
         mode: str = "always_on",
-        software_gate: bool = False
+        software_gate: bool = False,
+        on_speech_state: Optional[Callable[[str], None]] = None
     ):
         self.input_device = input_device
         self.output_device = output_device
         self.mode = mode  # "always_on" or "ptt"
         self.software_gate = software_gate  # if True, drops mic while Aether speaks
+        self.on_speech_state = on_speech_state
         self.ptt_active = False
 
         self.target_input_rate = 16000
@@ -26,6 +34,7 @@ class AudioPipeline:
         self.hw_out_rate = int(out_info['default_samplerate'])
         
         self.input_queue = asyncio.Queue()
+        self.utterance_queue = asyncio.Queue()  # Emits completed WAV byte utterances for STT
         self.output_buffer = bytearray()
         self.buffer_lock = threading.Lock()
         
@@ -34,8 +43,24 @@ class AudioPipeline:
         self.is_speaking = False
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
 
+        # Voice Activity Detection (VAD) state for utterance segmentation
+        # Dual-threshold hysteresis prevents clipping quiet word endings and soft syllables
+        self._speech_frames = []
+        self._preroll_frames = []
+        self._silence_count = 0
+        self._is_in_speech = False
+        self._vad_onset_threshold = 0.010    # RMS threshold to trigger speech onset
+        self._vad_hangover_threshold = 0.005 # Lower RMS threshold to maintain speech
+        self._silence_limit = 28             # ~1.2s of sub-hangover silence before finalizing (~42ms per block at 48kHz)
+        self._preroll_limit = 8              # ~340ms pre-speech audio retained
+        self._postroll_padding = 6           # ~250ms post-speech audio retained
+
     def set_ptt(self, active: bool):
+        was_active = self.ptt_active
         self.ptt_active = active
+        if was_active and not active:
+            # PTT released: finalize any speech immediately
+            self._finalize_utterance()
 
     def set_mode(self, mode: str):
         self.mode = mode
@@ -78,6 +103,72 @@ class AudioPipeline:
         
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.input_queue.put_nowait, pcm16)
+
+        # Dual-threshold hysteresis VAD & Utterance Segmentation for Modular Pipeline
+        if self._is_in_speech:
+            is_speech_energy = (rms >= self._vad_hangover_threshold)
+        else:
+            is_speech_energy = (rms >= self._vad_onset_threshold)
+
+        if is_speech_energy:
+            if not self._is_in_speech:
+                self._is_in_speech = True
+                self._speech_frames = list(self._preroll_frames)
+                if self.on_speech_state:
+                    try:
+                        self.on_speech_state("speech_detected")
+                    except Exception:
+                        pass
+            self._speech_frames.append(pcm16)
+            self._silence_count = 0
+        else:
+            if self._is_in_speech:
+                self._speech_frames.append(pcm16)
+                self._silence_count += 1
+                if self._silence_count >= self._silence_limit:
+                    self._finalize_utterance()
+            else:
+                self._preroll_frames.append(pcm16)
+                if len(self._preroll_frames) > self._preroll_limit:
+                    self._preroll_frames.pop(0)
+
+    def _finalize_utterance(self):
+        if not self._speech_frames:
+            self._is_in_speech = False
+            self._silence_count = 0
+            return
+
+        # Keep only up to _postroll_padding frames of silence at the end of utterance
+        # to ensure soft trailing syllables ('t', 's', 'k') are retained without dead air
+        trim_silence = max(0, self._silence_count - self._postroll_padding)
+        if trim_silence > 0 and len(self._speech_frames) > trim_silence:
+            frames_to_send = self._speech_frames[:-trim_silence]
+        else:
+            frames_to_send = self._speech_frames
+
+        total_pcm = b"".join(frames_to_send)
+        self._speech_frames = []
+        self._is_in_speech = False
+        self._silence_count = 0
+
+        if self.on_speech_state:
+            try:
+                self.on_speech_state("speech_finalized")
+            except Exception:
+                pass
+
+        # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono)
+        if len(total_pcm) >= 11200:
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(self.target_input_rate)
+                wf.writeframes(total_pcm)
+            buf.seek(0)
+            wav_bytes = buf.read()
+            if self.loop and self.loop.is_running():
+                self.loop.call_soon_threadsafe(self.utterance_queue.put_nowait, wav_bytes)
 
     def _output_callback(self, outdata, frames, time_info, status):
         if self.hw_out_rate != self.target_output_rate:
@@ -182,3 +273,147 @@ class AudioPipeline:
                 self.out_stream.close()
             except Exception:
                 pass
+
+
+def get_available_audio_devices() -> dict:
+    """
+    Enumerates truly available, active audio input and output devices.
+    Prioritizes modern Windows WASAPI endpoints, filters out broken WDM-KS pins
+    and virtual sound mappers, validates each device with a test stream open,
+    and sorts the system default devices to the top.
+    """
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+
+        # Check if WASAPI is available (native Windows Core Audio Session API)
+        wasapi_api_idx = None
+        for idx, api in enumerate(hostapis):
+            if "wasapi" in api.get("name", "").lower():
+                wasapi_api_idx = idx
+                break
+
+        def _collect(preferred_hostapi=None):
+            ins = []
+            outs = []
+
+            if preferred_hostapi is not None:
+                def_in = hostapis[preferred_hostapi].get("default_input_device", -1)
+                def_out = hostapis[preferred_hostapi].get("default_output_device", -1)
+            else:
+                sd_def = sd.default.device
+                def_in = sd_def[0] if isinstance(sd_def, (list, tuple)) else -1
+                def_out = sd_def[1] if isinstance(sd_def, (list, tuple)) else -1
+
+            for idx, dev in enumerate(devices):
+                api_name = hostapis[dev["hostapi"]]["name"]
+                dev_name = dev["name"].strip()
+
+                # Filter out raw WDM-KS driver pins (fail blocking stream open)
+                if "wdm-ks" in api_name.lower():
+                    continue
+
+                # Filter by preferred hostapi if specified
+                if preferred_hostapi is not None and dev["hostapi"] != preferred_hostapi:
+                    continue
+
+                # Filter generic virtual aliases and unconfigured pins
+                if any(p in dev_name for p in ["Sound Mapper", "Primary Sound Driver", "Primary Sound Capture"]):
+                    continue
+                if dev_name in ["Input ()", "Headphones ()"]:
+                    continue
+
+                sr = int(dev["default_samplerate"])
+                rate_str = f"{sr // 1000}kHz" if sr % 1000 == 0 else f"{sr / 1000:.1f}kHz"
+
+                # Check and validate input
+                if dev["max_input_channels"] > 0:
+                    try:
+                        with sd.InputStream(device=idx, channels=1, samplerate=sr):
+                            pass
+                        is_def = (idx == def_in)
+                        display = f"{dev_name} [Default]" if is_def else dev_name
+                        ins.append({
+                            "index": idx,
+                            "name": dev_name,
+                            "display_name": display,
+                            "label": f"{display} ({rate_str})",
+                            "is_default": is_def,
+                            "channels": dev["max_input_channels"],
+                            "samplerate": sr,
+                            "api": api_name
+                        })
+                    except Exception:
+                        pass
+
+                # Check and validate output
+                if dev["max_output_channels"] > 0:
+                    try:
+                        ch = min(int(dev["max_output_channels"]), 2)
+                        with sd.OutputStream(device=idx, channels=ch, samplerate=sr):
+                            pass
+                        is_def = (idx == def_out)
+                        display = f"{dev_name} [Default]" if is_def else dev_name
+                        outs.append({
+                            "index": idx,
+                            "name": dev_name,
+                            "display_name": display,
+                            "label": f"{display} ({rate_str})",
+                            "is_default": is_def,
+                            "channels": dev["max_output_channels"],
+                            "samplerate": sr,
+                            "api": api_name
+                        })
+                    except Exception:
+                        pass
+
+            # Sort so system default device is first, then alphabetical by name
+            ins.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
+            outs.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
+            return ins, outs
+
+        # First attempt with WASAPI if available
+        inputs, outputs = _collect(preferred_hostapi=wasapi_api_idx)
+
+        # Fallback to non-WDM-KS devices if WASAPI found nothing
+        if not inputs or not outputs:
+            fb_ins, fb_outs = _collect(preferred_hostapi=None)
+            if not inputs:
+                inputs = fb_ins
+            if not outputs:
+                outputs = fb_outs
+
+        return {"inputs": inputs, "outputs": outputs}
+    except Exception as e:
+        logger.error(f"Error enumerating audio devices: {e}")
+        return {"inputs": [], "outputs": [], "error": str(e)}
+
+
+def resolve_valid_audio_devices(configured_in: int, configured_out: int) -> tuple[int, int]:
+    """
+    Validates configured audio device indices and resolves to available defaults if needed.
+    Prevents engine crashes if a configured audio device is unplugged or invalid.
+    """
+    avail = get_available_audio_devices()
+    inputs = avail.get("inputs", [])
+    outputs = avail.get("outputs", [])
+
+    valid_in = configured_in
+    if not any(d["index"] == configured_in for d in inputs):
+        if inputs:
+            valid_in = inputs[0]["index"]
+            logger.warning(
+                f"Configured input device #{configured_in} is unavailable. "
+                f"Defaulting to available device #{valid_in} ({inputs[0]['name']})."
+            )
+
+    valid_out = configured_out
+    if not any(d["index"] == configured_out for d in outputs):
+        if outputs:
+            valid_out = outputs[0]["index"]
+            logger.warning(
+                f"Configured output device #{configured_out} is unavailable. "
+                f"Defaulting to available device #{valid_out} ({outputs[0]['name']})."
+            )
+
+    return valid_in, valid_out

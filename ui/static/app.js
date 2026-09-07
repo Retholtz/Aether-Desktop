@@ -238,26 +238,53 @@ window.aetherUI = {
   loadAudioDevices: async function() {
     if (!window.pywebview || !window.pywebview.api) return;
     try {
-      const data = await window.pywebview.api.get_audio_devices();
       const inSelect = document.getElementById("inputDeviceSelect");
       const outSelect = document.getElementById("outputDeviceSelect");
+      if (!inSelect || !outSelect) return;
+
+      const prevInVal = inSelect.value;
+      const prevOutVal = outSelect.value;
+
+      const data = await window.pywebview.api.get_audio_devices();
       
       inSelect.innerHTML = "";
       outSelect.innerHTML = "";
 
-      data.inputs.forEach(dev => {
+      if (data.inputs && data.inputs.length > 0) {
+        data.inputs.forEach(dev => {
+          const opt = document.createElement("option");
+          opt.value = dev.index;
+          opt.innerText = dev.label || dev.name;
+          inSelect.appendChild(opt);
+        });
+      } else {
         const opt = document.createElement("option");
-        opt.value = dev.index;
-        opt.innerText = `[${dev.index}] ${dev.label} (${dev.samplerate}Hz)`;
+        opt.value = "-1";
+        opt.innerText = "No available microphones detected";
         inSelect.appendChild(opt);
-      });
+      }
 
-      data.outputs.forEach(dev => {
+      if (data.outputs && data.outputs.length > 0) {
+        data.outputs.forEach(dev => {
+          const opt = document.createElement("option");
+          opt.value = dev.index;
+          opt.innerText = dev.label || dev.name;
+          outSelect.appendChild(opt);
+        });
+      } else {
         const opt = document.createElement("option");
-        opt.value = dev.index;
-        opt.innerText = `[${dev.index}] ${dev.label} (${dev.samplerate}Hz)`;
+        opt.value = "-1";
+        opt.innerText = "No available speakers detected";
         outSelect.appendChild(opt);
-      });
+      }
+
+      // Preserve previously selected option if still present in available list
+      if (prevInVal && inSelect.querySelector(`option[value="${prevInVal}"]`)) {
+        inSelect.value = prevInVal;
+      }
+      if (prevOutVal && outSelect.querySelector(`option[value="${prevOutVal}"]`)) {
+        outSelect.value = prevOutVal;
+      }
     } catch (e) {
       console.error("Failed to load audio devices:", e);
     }
@@ -317,11 +344,13 @@ window.aetherUI = {
         document.getElementById("telVoice").innerText = api.voice_name;
       }
       if (api.model_id) document.getElementById("modelSelect").value = api.model_id;
-      if (api.stt_endpoint && document.getElementById("sttSelect")) {
-        document.getElementById("sttSelect").value = api.stt_endpoint;
+      const currentStt = api.stt_model_id || api.stt_endpoint;
+      if (currentStt && document.getElementById("sttSelect")) {
+        document.getElementById("sttSelect").value = currentStt;
       }
-      if (api.tts_endpoint && document.getElementById("ttsSelect")) {
-        document.getElementById("ttsSelect").value = api.tts_endpoint;
+      const currentTts = api.tts_model_id || api.tts_endpoint;
+      if (currentTts && document.getElementById("ttsSelect")) {
+        document.getElementById("ttsSelect").value = currentTts;
       }
       if (api.pro_model_id && document.getElementById("proModelSelect")) {
         document.getElementById("proModelSelect").value = api.pro_model_id;
@@ -355,12 +384,59 @@ window.aetherUI = {
       if (audio.software_gate !== undefined) {
         document.getElementById("softwareGateCheck").checked = audio.software_gate;
       }
+      // Audio Devices
       if (audio.input_device_index !== undefined) {
-        document.getElementById("inputDeviceSelect").value = audio.input_device_index;
+        const inSel = document.getElementById("inputDeviceSelect");
+        let matched = false;
+        for (let opt of inSel.options) {
+          if (parseInt(opt.value, 10) === audio.input_device_index) {
+            inSel.value = opt.value;
+            matched = true;
+            break;
+          }
+        }
+        // Fallback: match by device name if device index shifted
+        if (!matched && audio.input_device_name) {
+          const rawName = audio.input_device_name.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
+          if (rawName) {
+            for (let opt of inSel.options) {
+              const optName = opt.innerText.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
+              if (optName.includes(rawName) || rawName.includes(optName)) {
+                inSel.value = opt.value;
+                matched = true;
+                break;
+              }
+            }
+          }
+        }
       }
+
       if (audio.output_device_index !== undefined) {
-        document.getElementById("outputDeviceSelect").value = audio.output_device_index;
+        const outSel = document.getElementById("outputDeviceSelect");
+        let matched = false;
+        for (let opt of outSel.options) {
+          if (parseInt(opt.value, 10) === audio.output_device_index) {
+            outSel.value = opt.value;
+            matched = true;
+            break;
+          }
+        }
+        // Fallback: match by device name if device index shifted
+        if (!matched && audio.output_device_name) {
+          const rawName = audio.output_device_name.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
+          if (rawName) {
+            for (let opt of outSel.options) {
+              const optName = opt.innerText.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
+              if (optName.includes(rawName) || rawName.includes(optName)) {
+                outSel.value = opt.value;
+                matched = true;
+                break;
+              }
+            }
+          }
+        }
       }
+
 
       // Vision
       if (vision.enabled !== undefined) {
@@ -376,6 +452,16 @@ window.aetherUI = {
       // Security
       if (security.app_whitelist) {
         document.getElementById("whitelistInput").value = security.app_whitelist.join(", ");
+      }
+
+      // Floating HUD Overlay & System Tray
+      if (cfg.ui) {
+        const overlayMode = cfg.ui.floating_overlay || "on_minimize";
+        const overlaySel = document.getElementById("floatingOverlayMode");
+        if (overlaySel) overlaySel.value = overlayMode;
+
+        const trayCheck = document.getElementById("minimizeToTrayCheck");
+        if (trayCheck) trayCheck.checked = (cfg.ui.minimize_to_tray !== false);
       }
 
       this.updateTelemetryDeviceLabels();
@@ -423,9 +509,13 @@ window.aetherUI = {
           agent_name: agentName,
           voice_name: document.getElementById("voiceSelect").value,
           model_id: document.getElementById("modelSelect").value,
-          stt_endpoint: document.getElementById("sttSelect")?.value || "gemini-live-native",
-          tts_endpoint: document.getElementById("ttsSelect")?.value || "gemini-live-native",
-          pro_model_id: document.getElementById("proModelSelect")?.value || "gemini-2.5-pro",
+          pipeline_mode: document.getElementById("modelSelect").value.includes("live") ? "live" : "modular",
+          stt_model_id: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
+          tts_model_id: document.getElementById("ttsSelect")?.value || "edge-tts",
+          live_model_id: "gemini-3.1-flash-live-preview",
+          stt_endpoint: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
+          tts_endpoint: document.getElementById("ttsSelect")?.value || "edge-tts",
+          pro_model_id: document.getElementById("proModelSelect")?.value || "gemini-3.1-pro-preview",
           temperature: parseFloat(document.getElementById("temperatureSlider").value),
           system_instruction: document.getElementById("systemPromptInput").value
         },
@@ -451,6 +541,10 @@ window.aetherUI = {
         security: {
           app_whitelist: whitelist,
           require_verbal_confirmation: true
+        },
+        ui: {
+          floating_overlay: document.getElementById("floatingOverlayMode")?.value || "on_minimize",
+          minimize_to_tray: document.getElementById("minimizeToTrayCheck")?.checked !== false
         }
       };
 
@@ -462,6 +556,15 @@ window.aetherUI = {
         }
         document.getElementById("apiKeyInput").value = "";
         await this.loadConfig();
+
+        // Dynamically reflect floating overlay setting change
+        const overlayMode = payload.ui.floating_overlay;
+        if (overlayMode === "always") {
+          window.pywebview.api.show_overlay();
+        } else if (overlayMode === "disabled") {
+          window.pywebview.api.hide_overlay();
+        }
+
         return true;
       } else {
         if (!silent && saveMsg) saveMsg.innerText = "Error: " + res.error;
