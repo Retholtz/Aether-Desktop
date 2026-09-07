@@ -179,6 +179,13 @@ class GuiBridge:
         """Returns list of the 30 Google Gemini official TTS voices."""
         return GEMINI_VOICES
 
+    def get_monitors(self) -> list:
+        """Enumerates connected monitors for the frontend settings."""
+        try:
+            return self._engine.screen_pipeline.get_monitor_list_for_ui()
+        except Exception as e:
+            return [{"id": "auto", "name": "Auto (Follow Active Window)", "details": str(e)}]
+
     def start_assistant(self) -> dict:
         """Starts the Aether voice assistant engine."""
         try:

@@ -24,6 +24,7 @@
   "vision": {
     "enabled": true,
     "fps": 1,
+    "monitor": "auto",
     "endpoint": "live-stream",
     "resolution": [
       768,
