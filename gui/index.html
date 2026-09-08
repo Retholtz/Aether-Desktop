@@ -64,7 +64,10 @@
               <span class="thread-title">CONVERSATION STREAM</span>
               <span class="thread-status" id="threadVoiceLabel">VOICE: Aoede</span>
             </div>
-            <button class="hud-btn-ghost sm" id="clearChatBtn" title="Clear chat thread">CLEAR LOG</button>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button class="hud-btn-secondary sm" id="newSessionBtn" title="Reset AI memory and start fresh task">✨ NEW TASK</button>
+              <button class="hud-btn-ghost sm" id="clearChatBtn" title="Clear chat thread">CLEAR LOG</button>
+            </div>
           </div>
 
           <!-- Message History -->
@@ -247,6 +250,22 @@
                   <select id="outputDeviceSelect" class="hud-select">
                     <!-- Populated dynamically -->
                   </select>
+                </div>
+
+                <!-- Preferred Spoken Language (STT Strict Filter) -->
+                <div class="form-group full">
+                  <label for="preferredLanguageSelect">Preferred Language (STT Strict Filter)</label>
+                  <select id="preferredLanguageSelect" class="hud-select">
+                    <option value="en-US">English (United States)</option>
+                    <option value="en-GB">English (United Kingdom)</option>
+                    <option value="es-ES">Spanish (Español)</option>
+                    <option value="fr-FR">French (Français)</option>
+                    <option value="de-DE">German (Deutsch)</option>
+                    <option value="it-IT">Italian (Italiano)</option>
+                    <option value="pt-BR">Portuguese (Português - Brasil)</option>
+                    <option value="ja-JP">Japanese (日本語)</option>
+                  </select>
+                  <span class="input-hint">Restricts speech-to-text to this language and filters out ambient foreign noise or hallucinations.</span>
                 </div>
 
                 <!-- Software Gating -->

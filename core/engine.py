@@ -122,6 +122,7 @@ class AetherEngine:
         self.current_turn_text = ""
         self.current_user_speech = ""
         self.is_tool_executing = False
+        self._reset_context_flag = False
 
         # Screen capture pipeline
         self.screen_pipeline = ScreenCapturePipeline()
@@ -134,6 +135,15 @@ class AetherEngine:
             whitelist_updater=self._update_whitelist,
             config_getter=self.config_getter
         )
+
+    def reset_chat_context(self):
+        """Signals the active pipeline loop to reset chat session state / memory."""
+        self._reset_context_flag = True
+        logger.info("[SESSION] Reset context requested by user/UI.")
+        self.notify("chat_event", {
+            "type": "system",
+            "content": "✨ AI conversation context reset. Starting fresh task."
+        })
 
 
     def _get_whitelist(self) -> list:
@@ -514,6 +524,12 @@ class AetherEngine:
             "- Learning & Memory: Once you have dynamically generated and verified a successful script for a task that might be reused (e.g. formatting a report, manipulating files, custom layouts), save it permanently to the Skill Library via `save_script_to_library(skill_name, description, script_code, parameters)`. This persists it to disk and syncs it via Git so you never have to generate it again!\n"
             "- Whitelist: If an app is blocked by the security whitelist and the user asks to add or allow it, call `add_to_whitelist(app_name)`.\n"
             "- After executing actions, provide a brief, polite verbal confirmation (1-2 sentences). You can chain multiple actions smoothly.\n\n"
+            "ATOMIC NAVIGATION & COMMAND ISOLATION (CRITICAL):\n"
+            "- Treat standalone application navigation commands (e.g. 'Open Gmail', 'Open Chrome', 'Open Word', 'Open YouTube', 'Go to Google Docs') as fresh, generic actions. Always navigate to the default clean home page or root inbox (e.g. https://mail.google.com). NEVER inject keywords, queries, search terms, or filters from previous tasks into a generic navigation command.\n"
+            "- Only carry over search terms or context if the user explicitly uses referential words such as 'those', 'them', 'that search', 'it', 'again', or 'continue'.\n"
+            "- When the user switches topics or applications, completely purge prior task context.\n\n"
+            "MULTI-STEP WORKFLOW AUTONOMY:\n"
+            "- When given a multi-step instruction (e.g. 'Find X in Gmail, calculate the total, and export it into a table in Google Docs'), do NOT stop prematurely after the first step to ask if you should proceed. Autonomously continue executing subsequent steps through to the final deliverable unless you encounter an unresolvable error or need user credentials.\n\n"
         )
         system_instruction_text = strict_identity + desktop_tools_directive + templated_instruction
 
@@ -606,6 +622,8 @@ class AetherEngine:
         stt_model = api_cfg.get("stt_model_id", "gemini-3.5-transcribe")
         cortex_model = api_cfg.get("model_id", "gemini-3.8-flash")
         tts_model = api_cfg.get("tts_model_id", "gemini-live-native")
+        audio_cfg = self.config_getter().get("audio", {})
+        preferred_language = audio_cfg.get("preferred_language", "en-US")
 
         client = genai.Client(api_key=api_key)
         self.dispatcher.genai_client = client
@@ -616,24 +634,28 @@ class AetherEngine:
         })
         self.notify("chat_event", {
             "type": "system",
-            "content": f"Ready in Modular Pipeline mode.\n- Cortex: {cortex_model}\n- STT: {stt_model}\n- TTS: {tts_model} (Voice: {voice_name})\n{agent_name} is listening..."
+            "content": f"Ready in Modular Pipeline mode.\n- Cortex: {cortex_model}\n- STT: {stt_model} (Language: {preferred_language})\n- TTS: {tts_model} (Voice: {voice_name})\n{agent_name} is listening..."
         })
 
-        # Multi-turn Cortex chat session with Google Search & Function Calling
-        chat = client.chats.create(
-            model=cortex_model,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction_text,
-                tools=[
-                    types.Tool(google_search=types.GoogleSearch()),
-                    types.Tool(function_declarations=get_all_tool_declarations())
-                ],
-                tool_config=types.ToolConfig(
-                    include_server_side_tool_invocations=True
-                ),
-                temperature=temperature
+        # Multi-turn Cortex chat session factory with Google Search & Function Calling
+        def create_fresh_chat():
+            logger.info(f"[SESSION] Initializing fresh Cortex chat session ({cortex_model})")
+            return client.chats.create(
+                model=cortex_model,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction_text,
+                    tools=[
+                        types.Tool(google_search=types.GoogleSearch()),
+                        types.Tool(function_declarations=get_all_tool_declarations())
+                    ],
+                    tool_config=types.ToolConfig(
+                        include_server_side_tool_invocations=True
+                    ),
+                    temperature=temperature
+                )
             )
-        )
+
+        chat = create_fresh_chat()
 
         turn_counter = 0
         while self.is_running:
@@ -643,6 +665,12 @@ class AetherEngine:
                 llm_ms = 0.0
                 tools_ms = 0.0
                 tts_ms = 0.0
+
+                # Check if UI / external trigger requested a context reset
+                if self._reset_context_flag:
+                    self._reset_context_flag = False
+                    chat = create_fresh_chat()
+                    logger.info("[SESSION] Conversational context reset to clean slate via flag.")
 
                 # 1. Wait concurrently for either typed input or speech utterance from VAD
                 text_task = asyncio.create_task(self._text_queue.get())
@@ -668,14 +696,26 @@ class AetherEngine:
                         continue
 
                     t_turn_start = time.perf_counter()
-                    self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
+                    self.notify("status", {"state": "transcribing", "message": f"Transcribing speech ({preferred_language})..."})
                     t_stt_0 = time.perf_counter()
                     try:
+                        stt_prompt = (
+                            f"You are a verbatim speech-to-text transcriber for {preferred_language}. "
+                            f"Transcribe only clear, audible speech spoken in {preferred_language}. "
+                            f"Output only the verbatim spoken words without commentary. "
+                            f"If the audio contains background chatter, noise, sighs, breathing, non-speech vocalizations, "
+                            f"or speech in another language, output NOTHING (empty string). Do not guess or translate."
+                        )
                         stt_resp = await asyncio.to_thread(
                             client.models.generate_content,
                             model=stt_model,
-                            contents=[types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav")],
-                            config=types.GenerateContentConfig()
+                            contents=[
+                                types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
+                                stt_prompt
+                            ],
+                            config=types.GenerateContentConfig(
+                                temperature=0.0
+                            )
                         )
                         stt_ms = (time.perf_counter() - t_stt_0) * 1000
                         logger.info(f"[LATENCY] STT ({stt_model}): {stt_ms:.1f}ms")
@@ -687,6 +727,23 @@ class AetherEngine:
                                 elif getattr(part, "text", None):
                                     user_prompt += part.text
                         user_prompt = user_prompt.strip()
+
+                        # Language / Script validation filter
+                        if user_prompt:
+                            # If preferred language is English, reject non-Latin scripts (Devanagari, Gurmukhi/Punjabi, Arabic, Asian scripts)
+                            if preferred_language.lower().startswith("en"):
+                                import re
+                                if re.search(r'[\u0600-\u06FF\u0900-\u097F\u0A00-\u0A7F\u4E00-\u9FFF\u3040-\u30FF]', user_prompt):
+                                    logger.warning(f"[STT FILTER] Discarded non-English transcription hallucination: '{user_prompt}'")
+                                    user_prompt = ""
+                                    continue
+                            # Reject pure filler/noise vocalizations like "hmm", "...", "uhm"
+                            filler_words = {"hmm", "hmmm", "uh", "um", "ah", "uhm", "huh", "mhm"}
+                            cleaned_lower = "".join(c for c in user_prompt.lower() if c.isalnum() or c.isspace()).strip()
+                            if cleaned_lower in filler_words or len(cleaned_lower) <= 1:
+                                logger.info(f"[STT FILTER] Discarded vocal filler or ambient sound: '{user_prompt}'")
+                                user_prompt = ""
+                                continue
                     except Exception as stt_err:
                         stt_ms = (time.perf_counter() - t_stt_0) * 1000
                         logger.error(f"[STT TRANSCRIPTION ERROR] ({stt_ms:.1f}ms) {stt_err}")
@@ -695,6 +752,46 @@ class AetherEngine:
 
                 if not user_prompt:
                     continue
+
+                # Voice-driven Context Reset Triggers
+                reset_phrases = [
+                    "new task", "clear context", "reset context", "start over",
+                    "forget that", "shifting gears", "new session", "clean slate"
+                ]
+                lower_prompt = user_prompt.lower().strip()
+
+                # Standalone reset command
+                if any(lower_prompt == p or lower_prompt == f"{agent_name.lower()} {p}" for p in reset_phrases):
+                    chat = create_fresh_chat()
+                    logger.info(f"[SESSION] Context reset triggered by voice command: '{user_prompt}'")
+                    self.notify("chat_event", {
+                        "type": "system",
+                        "content": "✨ Conversation context cleared. Ready for your next command."
+                    })
+                    if tts_model:
+                        await self._stream_synthesize_speech(
+                            client=client,
+                            voice_name=voice_name,
+                            text="Context cleared. What would you like to do next?"
+                        )
+                    continue
+
+                # Leading reset phrase (e.g. "New task, open gmail" or "Shifting gears, open my email")
+                for p in reset_phrases:
+                    matched_prefix = None
+                    for prefix in [f"{p},", f"{p} -", f"{p}:", f"{p} "]:
+                        if lower_prompt.startswith(prefix):
+                            matched_prefix = prefix
+                            break
+                    if matched_prefix:
+                        chat = create_fresh_chat()
+                        logger.info(f"[SESSION] Context reset with leading phrase '{p}'. Fresh chat session initialized.")
+                        user_prompt = user_prompt[len(matched_prefix):].strip()
+                        self.notify("chat_event", {
+                            "type": "system",
+                            "content": "✨ Prior context cleared for new task."
+                        })
+                        break
 
                 turn_counter += 1
                 logger.info(f"[TURN START #{turn_counter}] Prompt ({source}): {user_prompt}")
@@ -743,7 +840,7 @@ class AetherEngine:
 
                 # 3. Handle Tool Calls / Dynamic Scripts Execution Loop
                 loop_count = 0
-                max_tool_turns = 10
+                max_tool_turns = 25  # Extended from 10 to allow complex multi-stage workflows (e.g. Gmail search + Google Docs export) to finish
                 t_tools_0 = time.perf_counter()
                 while self.is_running and getattr(response, "function_calls", None) and loop_count < max_tool_turns:
                     loop_count += 1

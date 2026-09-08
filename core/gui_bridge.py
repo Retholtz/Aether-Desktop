@@ -217,6 +217,16 @@ class GuiBridge:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def reset_chat_context(self) -> dict:
+        """Resets the active conversational context / chat history in the engine."""
+        try:
+            if self._engine:
+                self._engine.reset_chat_context()
+                return {"success": True, "message": "Context reset successfully."}
+            return {"success": False, "error": "Engine not running"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def set_ptt(self, active: bool) -> dict:
         """Sets the Push-To-Talk state (active = True/False)."""
         self._engine.set_ptt(active)

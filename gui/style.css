@@ -843,6 +843,11 @@ label {
   transition: all 0.2s;
 }
 
+.hud-btn-secondary.sm {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
 .hud-btn-secondary:hover {
   background: var(--bg-card);
   border-color: var(--win-accent);

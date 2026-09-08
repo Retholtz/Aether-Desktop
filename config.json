@@ -15,6 +15,7 @@
     "tts_endpoint": "gemini-live-native"
   },
   "audio": {
+    "preferred_language": "en-US",
     "mode": "always_on",
     "safe_phrase": "Aether stop",
     "software_gate": true,

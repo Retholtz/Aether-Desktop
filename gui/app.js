@@ -163,6 +163,12 @@ window.aetherUI = {
       document.getElementById("chatHistory").innerHTML = "";
     });
 
+    // New Task / Reset Context button
+    const newSessionBtn = document.getElementById("newSessionBtn");
+    if (newSessionBtn) {
+      newSessionBtn.addEventListener("click", () => this.resetContext());
+    }
+
     // Log filter buttons
     document.querySelectorAll(".logs-filter-bar button").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -428,6 +434,9 @@ window.aetherUI = {
         document.getElementById("safePhraseInput").value = `${this.agentName} stop`;
       }
 
+      if (audio.preferred_language && document.getElementById("preferredLanguageSelect")) {
+        document.getElementById("preferredLanguageSelect").value = audio.preferred_language;
+      }
       if (audio.software_gate !== undefined) {
         document.getElementById("softwareGateCheck").checked = audio.software_gate;
       }
@@ -567,6 +576,7 @@ window.aetherUI = {
           system_instruction: document.getElementById("systemPromptInput").value
         },
         audio: {
+          preferred_language: document.getElementById("preferredLanguageSelect")?.value || "en-US",
           mode: mode,
           safe_phrase: killPhrase,
           software_gate: document.getElementById("softwareGateCheck").checked,
@@ -691,6 +701,14 @@ window.aetherUI = {
     if (!window.pywebview || !window.pywebview.api) return;
     await window.pywebview.api.kill_audio();
     this.log("Voice Playback Kill executed.");
+  },
+
+  resetContext: async function() {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.reset_chat_context) {
+      await window.pywebview.api.reset_chat_context();
+    }
+    this.appendBubble("system", "✨ AI context reset. Starting fresh task.", "SYSTEM");
+    this.log("Conversation context reset by user.");
   },
 
   sendChatMessage: async function() {
