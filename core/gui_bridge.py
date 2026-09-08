@@ -157,10 +157,17 @@ class GuiBridge:
                 self._config.setdefault("api", {})["system_instruction"] = api_cfg["system_instruction"]
 
             if "audio" in new_config:
-                self._config["audio"] = new_config["audio"]
+                aud_cfg = new_config["audio"]
+                if "voice_biometrics" in aud_cfg:
+                    self._config.setdefault("audio", {}).setdefault("voice_biometrics", {}).update(aud_cfg["voice_biometrics"])
+                    aud_copy = dict(aud_cfg)
+                    del aud_copy["voice_biometrics"]
+                    self._config["audio"].update(aud_copy)
+                else:
+                    self._config.setdefault("audio", {}).update(aud_cfg)
                 if self._engine and self._engine.audio:
-                    self._engine.audio.set_mode(new_config["audio"].get("mode", "always_on"))
-                    self._engine.audio.set_software_gate(new_config["audio"].get("software_gate", False))
+                    self._engine.audio.set_mode(self._config["audio"].get("mode", "always_on"))
+                    self._engine.audio.set_software_gate(self._config["audio"].get("software_gate", False))
 
             if "vision" in new_config:
                 self._config["vision"] = new_config["vision"]
@@ -281,6 +288,152 @@ class GuiBridge:
             "is_dark": is_dark,
             "accent_color": accent_hex
         }
+
+    # =========================================================================
+    # Target Speaker Verification & Voice Profile Onboarding
+    # =========================================================================
+
+    def get_voice_profile_status(self) -> dict:
+        """Returns the enrollment status, active threshold, and staged samples."""
+        try:
+            status = self._engine.voice_verifier.get_status()
+            bio_cfg = self._config.get("audio", {}).get("voice_biometrics", {})
+            status["enabled"] = bio_cfg.get("enabled", False)
+            status["threshold"] = bio_cfg.get("threshold", 0.45)
+            return {"success": True, **status}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def start_voice_calibration(self) -> dict:
+        """Clears any previous staged calibration samples to begin fresh onboarding."""
+        try:
+            self._engine.voice_verifier.clear_staged_samples()
+            return {"success": True, "message": "Ready to record calibration samples."}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def record_calibration_sample(self, prompt_index: int) -> dict:
+        """
+        Records a 3.5-second calibration utterance from the configured microphone
+        at its native hardware sample rate, resamples to 16kHz 16-bit mono,
+        and extracts a 512-dim CAM++ embedding vector.
+        """
+        was_calibrating = False
+        try:
+            # Temporarily mute assistant speech intake while recording calibration
+            if self._engine and self._engine.audio and self._engine.is_running:
+                self._engine.audio.is_calibrating = True
+                was_calibrating = True
+
+            audio_cfg = self._config.get("audio", {})
+            in_idx = audio_cfg.get("input_device_index", None)
+
+            # Query hardware device details to get native supported samplerate
+            try:
+                in_info = sd.query_devices(in_idx) if in_idx is not None else sd.query_devices(kind='input')
+                hw_sr = int(in_info.get('default_samplerate', 48000))
+                dev_idx = in_info.get('index', in_idx)
+            except Exception:
+                in_info = sd.query_devices(kind='input')
+                hw_sr = int(in_info.get('default_samplerate', 48000))
+                dev_idx = None
+
+            duration = 3.5
+            target_sr = 16000
+
+            logger.info(f"[VOICE CALIBRATION] Recording prompt #{prompt_index} for {duration}s from mic #{dev_idx} ({hw_sr}Hz)...")
+            
+            # Record float32 at native hardware rate
+            import numpy as np
+            recording = sd.rec(
+                int(duration * hw_sr),
+                samplerate=hw_sr,
+                channels=1,
+                dtype='float32',
+                device=dev_idx
+            )
+            sd.wait()
+
+            # Resample to 16,000 Hz if hardware rate differs
+            mono = recording.flatten() if recording.ndim == 1 else np.mean(recording, axis=1)
+            if hw_sr == 48000 and target_sr == 16000:
+                rem = len(mono) % 3
+                if rem > 0:
+                    mono = mono[:-rem]
+                resampled = mono.reshape(-1, 3).mean(axis=1)
+            elif hw_sr != target_sr:
+                target_length = int(round(len(mono) * target_sr / hw_sr))
+                if target_length > 0:
+                    resampled = np.interp(
+                        np.linspace(0.0, 1.0, target_length, endpoint=False),
+                        np.linspace(0.0, 1.0, len(mono), endpoint=False),
+                        mono
+                    )
+                else:
+                    resampled = mono
+            else:
+                resampled = mono
+
+            # Convert to 16-bit PCM integer
+            audio_int16 = (np.clip(resampled, -1.0, 1.0) * 32767).astype(np.int16)
+
+            import io, wave
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(target_sr)
+                wf.writeframes(audio_int16.tobytes())
+            wav_bytes = buf.getvalue()
+
+            res = self._engine.voice_verifier.add_calibration_sample(wav_bytes)
+            res["prompt_index"] = prompt_index
+            return res
+        except Exception as e:
+            logger.error(f"[VOICE CALIBRATION ERROR] {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            if was_calibrating and self._engine and self._engine.audio:
+                self._engine.audio.is_calibrating = False
+
+    def finalize_voice_profile(self, threshold: float = 0.45, enabled: bool = True) -> dict:
+        """Averages calibration samples, saves voiceprint, and enables biometric gating."""
+        try:
+            res = self._engine.voice_verifier.finalize_calibration()
+            if res.get("success"):
+                self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = enabled
+                self._config["audio"]["voice_biometrics"]["threshold"] = float(threshold)
+                with open(self._config_path, "w", encoding="utf-8") as f:
+                    json.dump(self._config, f, indent=2)
+                self._on_engine_event("voice_profile_updated", {"enrolled": True, "enabled": enabled, "threshold": threshold})
+            return res
+        except Exception as e:
+            logger.error(f"[VOICE CALIBRATION FINALIZE ERROR] {e}")
+            return {"success": False, "error": str(e)}
+
+    def save_voice_biometrics_settings(self, enabled: bool, threshold: float) -> dict:
+        """Updates biometric enabled toggle and sensitivity threshold."""
+        try:
+            self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = bool(enabled)
+            self._config["audio"]["voice_biometrics"]["threshold"] = float(threshold)
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2)
+            self._on_engine_event("voice_profile_updated", {"enrolled": self._engine.voice_verifier.is_enrolled(), "enabled": enabled, "threshold": threshold})
+            return {"success": True, "enabled": enabled, "threshold": threshold}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_voice_profile(self) -> dict:
+        """Removes enrolled voiceprint profile."""
+        try:
+            res = self._engine.voice_verifier.delete_profile()
+            self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = False
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2)
+            self._on_engine_event("voice_profile_updated", {"enrolled": False, "enabled": False})
+            return res
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     # =========================================================================
     # Window & Floating Overlay Controls

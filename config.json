@@ -16,6 +16,12 @@
   },
   "audio": {
     "preferred_language": "en-US",
+    "voice_biometrics": {
+      "enabled": true,
+      "threshold": 0.45,
+      "model_path": "models/wespeaker_en_voxceleb_CAM++.onnx",
+      "profile_path": "profile/user_voiceprint.npy"
+    },
     "mode": "always_on",
     "safe_phrase": "Aether stop",
     "software_gate": true,

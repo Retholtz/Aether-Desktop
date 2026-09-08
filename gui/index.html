@@ -280,6 +280,107 @@
             </div>
           </div>
 
+          <!-- Card: User Voice Biometrics & Target Speaker Filter -->
+          <div class="hud-card" id="voiceBiometricsCard">
+            <div class="card-header">
+              <span class="card-title">USER VOICE TRAINING & TARGET SPEAKER FILTER</span>
+              <span id="voiceProfileBadge" class="card-tag not-enrolled">NOT CALIBRATED</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <!-- Biometric Gating Toggle -->
+                <div class="form-group full">
+                  <label class="hud-checkbox">
+                    <input type="checkbox" id="voiceBiometricsCheck">
+                    <span>Enable Target Speaker Filtering (Only respond to enrolled user voice)</span>
+                  </label>
+                  <span class="input-hint">When active, Aether extracts a deep neural speaker embedding from incoming speech in real-time (&lt;20ms) and silently drops background TV, room chatter, or secondary speakers.</span>
+                </div>
+
+                <!-- Match Sensitivity Threshold Slider -->
+                <div class="form-group full">
+                  <div class="slider-header">
+                    <label for="bioThresholdSlider">Speaker Verification Sensitivity (Cosine Similarity Threshold)</label>
+                    <span id="bioThresholdVal" class="slider-val">0.45</span>
+                  </div>
+                  <input type="range" id="bioThresholdSlider" min="0.30" max="0.70" step="0.01" value="0.45" class="hud-slider">
+                  <span class="input-hint">Default is 0.45 (Balanced). Values 0.50 - 0.65 offer strict rejection; values 0.35 - 0.44 provide maximum tolerance for quieter speech or greater microphone distance.</span>
+                </div>
+
+                <!-- Calibration Onboarding Wizard Section -->
+                <div class="form-group full">
+                  <div class="calibration-container">
+                    <div class="calibration-header-row">
+                      <div class="calibration-title-group">
+                        <span class="calibration-section-title">VOICEPRINT CALIBRATION WIZARD</span>
+                        <span class="calibration-subtext">Record 3 brief utterances into your active microphone to generate your centroid voiceprint.</span>
+                      </div>
+                      <button type="button" id="retrainProfileBtn" class="hud-btn-secondary" title="Clear current voice profile and re-record samples">
+                        <span>RESET / RETRAIN</span>
+                      </button>
+                    </div>
+
+                    <div class="calibration-steps">
+                      <!-- Step 1 -->
+                      <div class="calibration-step-card" id="calibStep1Card">
+                        <div class="step-num-badge">1</div>
+                        <div class="step-content">
+                          <span class="step-prompt-label">Prompt 1 of 3:</span>
+                          <p class="step-prompt-text">"Aether is my personal AI desktop assistant."</p>
+                          <div class="step-action-row">
+                            <button type="button" id="recStep1Btn" class="hud-btn-record">
+                              <span class="rec-icon">🎙️</span>
+                              <span class="rec-btn-text">RECORD SAMPLE 1</span>
+                            </button>
+                            <span id="step1Status" class="step-status-pill pending">PENDING</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Step 2 -->
+                      <div class="calibration-step-card" id="calibStep2Card">
+                        <div class="step-num-badge">2</div>
+                        <div class="step-content">
+                          <span class="step-prompt-label">Prompt 2 of 3:</span>
+                          <p class="step-prompt-text">"Open my documents and check today's schedule."</p>
+                          <div class="step-action-row">
+                            <button type="button" id="recStep2Btn" class="hud-btn-record" disabled>
+                              <span class="rec-icon">🎙️</span>
+                              <span class="rec-btn-text">RECORD SAMPLE 2</span>
+                            </button>
+                            <span id="step2Status" class="step-status-pill pending">PENDING</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Step 3 -->
+                      <div class="calibration-step-card" id="calibStep3Card">
+                        <div class="step-num-badge">3</div>
+                        <div class="step-content">
+                          <span class="step-prompt-label">Prompt 3 of 3:</span>
+                          <p class="step-prompt-text">"Organize my files and create a summary comparison table."</p>
+                          <div class="step-action-row">
+                            <button type="button" id="recStep3Btn" class="hud-btn-record" disabled>
+                              <span class="rec-icon">🎙️</span>
+                              <span class="rec-btn-text">RECORD SAMPLE 3</span>
+                            </button>
+                            <span id="step3Status" class="step-status-pill pending">PENDING</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div id="calibrationFeedback" class="calibration-feedback-banner">
+                      <span class="feedback-icon">ℹ️</span>
+                      <span id="calibrationFeedbackText">Click "Record Sample 1" and speak the prompt naturally. Each recording captures 3.5 seconds.</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
           <!-- Card: Desktop Vision & Automation Hook (Preparatory) -->
           <div class="hud-card">
             <div class="card-header">

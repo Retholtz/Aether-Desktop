@@ -146,16 +146,17 @@ CLOSE_APPLICATION_DECLARATION = {
 ADD_TO_WHITELIST_DECLARATION = {
     "name": "add_to_whitelist",
     "description": (
-        "Adds an application (e.g. calculator, calc.exe, steam, discord, paint) to the user's security whitelist "
-        "so that it can be launched. Call this when the user asks to add, permit, or allow a program on the whitelist, "
-        "or when an application was blocked and the user instructs to add it or allow it."
+        "Adds an application (e.g. explorer.exe, calc.exe, steam.exe, discord.exe) to the user's security whitelist "
+        "so that it can be launched. ALWAYS call this when an application was blocked by the whitelist and the user gives "
+        "verbal permission (e.g. 'yes', 'add it', 'sure', 'go ahead', 'please do') to add it. "
+        "After adding it to the whitelist, immediately launch the requested application to complete the user's request."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "app_name": {
                 "type": "STRING",
-                "description": "The name or executable of the application to add to the whitelist (e.g. 'calculator', 'calc.exe', 'steam', 'discord')."
+                "description": "The name or executable of the application to add to the whitelist (e.g. 'explorer', 'calc', 'steam'). If the user simply said 'yes' or 'add it', pass the name of the blocked application or 'last_blocked'."
             }
         },
         "required": ["app_name"]
@@ -533,8 +534,8 @@ class ToolDispatcher:
             focus_window(app_name)
             await asyncio.sleep(0.12)
 
-        # 2. Capture crisp high-resolution snapshot (1920 max_dim provides crystal clear text rendering)
-        jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target="auto", max_dim=1920, quality=90)
+        # 2. Capture crisp snapshot (1024 max_dim provides clear text while keeping latency fast)
+        jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
         mon_rect = meta.get("monitor_rect", {"left": 0, "top": 0, "width": 2560, "height": 1600})
 
         # 3. Determine visual grounding model from config
@@ -753,7 +754,8 @@ class ToolDispatcher:
             # -------------------------------------------------------------
             elif fn_name == "add_to_whitelist":
                 app_name = str(args.get("app_name", "")).strip()
-                if (not app_name or app_name.lower() in ("it", "that", "this", "the app", "the program")) and self.last_blocked_app:
+                generic_aliases = ("it", "that", "this", "the app", "the program", "last_blocked", "blocked_app", "yes", "add it", "sure", "please do", "go ahead")
+                if (not app_name or app_name.lower() in generic_aliases) and self.last_blocked_app:
                     app_name = self.last_blocked_app
 
                 whitelist = self.whitelist_getter()
@@ -883,7 +885,7 @@ class ToolDispatcher:
 
             elif fn_name == "capture_screen_snapshot":
                 monitor = args.get("monitor", "auto")
-                jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target=monitor, max_dim=1280, quality=85)
+                jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target=monitor, max_dim=1024, quality=75)
                 self.notify("chat_event", {
                     "type": "tool",
                     "name": "Vision Hook",

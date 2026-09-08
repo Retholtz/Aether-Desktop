@@ -41,6 +41,7 @@ class AudioPipeline:
         self.loop = None
         self._running = False
         self.is_speaking = False
+        self.is_calibrating = False
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
 
         # Voice Activity Detection (VAD) state for utterance segmentation
@@ -84,9 +85,18 @@ class AudioPipeline:
         if self.software_gate and self.is_speaking:
             return
 
+        # Mute agent speech ingestion while user is actively recording voice calibration samples
+        if getattr(self, "is_calibrating", False):
+            return
+
         mono = np.mean(indata, axis=1) if indata.ndim > 1 else indata.flatten()
         
-        if self.hw_in_rate != self.target_input_rate:
+        if self.hw_in_rate == 48000 and self.target_input_rate == 16000:
+            rem = len(mono) % 3
+            if rem > 0:
+                mono = mono[:-rem]
+            resampled = mono.reshape(-1, 3).mean(axis=1)
+        elif self.hw_in_rate != self.target_input_rate:
             target_length = int(round(len(mono) * self.target_input_rate / self.hw_in_rate))
             if target_length > 0:
                 resampled = np.interp(
@@ -239,12 +249,13 @@ class AudioPipeline:
         self.loop = asyncio.get_running_loop()
         self._running = True
         
+        in_blocksize = 2400 if self.hw_in_rate == 48000 else 2048
         self.in_stream = sd.InputStream(
             device=self.input_device,
             samplerate=self.hw_in_rate,
             channels=1,
             dtype='float32',
-            blocksize=2048,
+            blocksize=in_blocksize,
             callback=self._input_callback
         )
         self.out_stream = sd.OutputStream(

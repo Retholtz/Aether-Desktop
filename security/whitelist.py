@@ -194,7 +194,12 @@ class WhitelistValidator:
                 "status": "blocked",
                 "app_name": app_name,
                 "executable": target_exe,
-                "error": f"Security Blocked: '{target_exe}' is not in your allowed application whitelist. You can add it in Settings > Desktop Vision & Automation Hook."
+                "error": (
+                    f"Security Blocked: '{target_exe}' ({app_name}) is not in your allowed application whitelist. "
+                    f"DO NOT attempt workaround hacks, hotkeys, or scripts to circumvent this block. "
+                    f"Instead, STOP immediately and verbally inform the user: '{app_name} is not currently on your allowed whitelist. Would you like me to add it so I can open it?' "
+                    f"If the user grants permission (e.g. 'yes', 'add it', 'sure'), invoke add_to_whitelist('{target_exe}') and then launch it."
+                )
             }
 
         # 2. Resolve executable path
@@ -297,7 +302,10 @@ class WhitelistValidator:
                 "status": "blocked",
                 "app_name": app_name,
                 "executable": target_exe,
-                "error": f"Security Blocked: Cannot close '{target_exe}' because it is not in your allowed application whitelist."
+                "error": (
+                    f"Security Blocked: Cannot close '{target_exe}' ({app_name}) because it is not in your allowed application whitelist. "
+                    f"STOP immediately and verbally inform the user: '{app_name} is not on your allowed whitelist. Would you like me to add it?'"
+                )
             }
 
         if sys.platform != "win32":

@@ -15,6 +15,7 @@ ensure_thread_desktop()
 
 from core.audio_stream import AudioPipeline, resolve_valid_audio_devices
 from core.logger import get_logger
+from core.voice_verifier import VoiceProfileVerifier
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 
@@ -135,6 +136,9 @@ class AetherEngine:
             whitelist_updater=self._update_whitelist,
             config_getter=self.config_getter
         )
+
+        # Target Speaker Verification (CAM++ Offline Biometrics)
+        self.voice_verifier = VoiceProfileVerifier()
 
     def reset_chat_context(self):
         """Signals the active pipeline loop to reset chat session state / memory."""
@@ -522,6 +526,21 @@ class AetherEngine:
             "- Dynamic Python Generation: For novel, multi-step, document, spreadsheet, data processing (pandas), Microsoft Office COM (Word/Excel via win32com.client), or window layout tasks without a pre-existing skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
             "- Self-Correction on Error: If a script fails, you will receive the full Python stack trace / traceback in the tool response. Inspect the error, adjust your script or logic, and retry.\n"
             "- Learning & Memory: Once you have dynamically generated and verified a successful script for a task that might be reused (e.g. formatting a report, manipulating files, custom layouts), save it permanently to the Skill Library via `save_script_to_library(skill_name, description, script_code, parameters)`. This persists it to disk and syncs it via Git so you never have to generate it again!\n"
+            "SECURITY WHITELIST & EASY-BUTTON PERMISSION PROTOCOL (CRITICAL):\n"
+            "- Desktop applications and processes are governed by the user's security whitelist.\n"
+            "- When you call `launch_application` or `close_application` and it returns `status: 'blocked'`:\n"
+            "  1. STOP IMMEDIATELY. Do NOT call any further tools, and NEVER attempt workaround hacks (such as pressing Win+E, Alt+F4, hotkey shortcuts, or running arbitrary scripts) to bypass the whitelist block.\n"
+            "  2. Adding the program to the whitelist with user permission is the 'EASY BUTTON'. Immediately inform the user verbally in one clear, concise sentence that the program is not in their allowed whitelist, and ask if they would like you to add it:\n"
+            "     Example: 'File Explorer is not currently on your allowed whitelist. Would you like me to add it so I can open it for you?'\n"
+            "  3. When the user confirms (e.g. 'Yes', 'Yes please', 'Add it', 'Sure', 'Go ahead', 'Allow it'):\n"
+            "     * Immediately call `add_to_whitelist(app_name=...)`.\n"
+            "     * In the same turn, call `launch_application(app_name=..., target=...)` to seamlessly fulfill their original request without making them ask again!\n"
+            "     * Give a brief, pleasant verbal confirmation: 'I've added File Explorer to your whitelist and opened your documents.'\n\n"
+            "DETERMINISTIC DIRECT NAVIGATION PREFERENCE (SPEED & ACCURACY):\n"
+            "- Always prefer direct URL navigation or direct OS commands over multi-turn visual clicking:\n"
+            "  * To create a new Google Doc, Sheet, or Slide, directly navigate to `https://docs.new`, `https://sheets.new`, or `https://slides.new` via `navigate_browser` or `launch_application` (instant 50ms) instead of hunting for template buttons.\n"
+            "  * To open standard folders, pass the target directly (e.g. `shell:Personal` for Documents, `shell:My Pictures\\Screenshots` for Screenshots) to `launch_application(app_name='explorer', target=...)`.\n"
+            "  * Avoid calling `capture_screen_snapshot` after routine atomic actions unless visual verification is strictly necessary or requested by the user.\n\n"
             "- Whitelist: If an app is blocked by the security whitelist and the user asks to add or allow it, call `add_to_whitelist(app_name)`.\n"
             "- After executing actions, provide a brief, polite verbal confirmation (1-2 sentences). You can chain multiple actions smoothly.\n\n"
             "ATOMIC NAVIGATION & COMMAND ISOLATION (CRITICAL):\n"
@@ -695,6 +714,22 @@ class AetherEngine:
                     if not wav_bytes or len(wav_bytes) < 1000:
                         continue
 
+                    # Target Speaker Verification Gate (CAM++ Offline Biometrics)
+                    live_audio_cfg = self.config_getter().get("audio", {})
+                    live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
+                    if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
+                        thresh = float(live_bio_cfg.get("threshold", 0.45))
+                        is_user, score = self.voice_verifier.verify(wav_bytes, threshold=thresh)
+                        if not is_user:
+                            logger.info(f"[VOICE GATE] Utterance discarded: non-user voice (score: {score:.3f} < {thresh:.2f})")
+                            self.notify("status", {
+                                "state": "voice_gated",
+                                "message": f"Ignored background voice (score: {score:.2f})"
+                            })
+                            continue
+                        else:
+                            logger.info(f"[VOICE GATE] Authorized user verified (score: {score:.3f} >= {thresh:.2f})")
+
                     t_turn_start = time.perf_counter()
                     self.notify("status", {"state": "transcribing", "message": f"Transcribing speech ({preferred_language})..."})
                     t_stt_0 = time.perf_counter()
@@ -842,6 +877,7 @@ class AetherEngine:
                 loop_count = 0
                 max_tool_turns = 25  # Extended from 10 to allow complex multi-stage workflows (e.g. Gmail search + Google Docs export) to finish
                 t_tools_0 = time.perf_counter()
+                blocked_by_whitelist = False
                 while self.is_running and getattr(response, "function_calls", None) and loop_count < max_tool_turns:
                     loop_count += 1
                     self.is_tool_executing = True
@@ -864,6 +900,8 @@ class AetherEngine:
                             })
 
                             result = await self.dispatcher.dispatch(fn_name, fn_args)
+                            if isinstance(result, dict) and result.get("status") == "blocked":
+                                blocked_by_whitelist = True
 
                             # Handle screen snapshot JPEG if returned
                             raw_jpeg = None
@@ -884,8 +922,24 @@ class AetherEngine:
                             "user_prompt": user_prompt
                         })
                         response = await asyncio.to_thread(chat.send_message, tool_parts)
+
+                        # Latency optimization: prune older image parts from chat._curated_history so subsequent turns don't re-upload stale multi-megabyte screenshots
+                        if hasattr(chat, "_curated_history") and chat._curated_history:
+                            image_parts_found = []
+                            for turn in chat._curated_history:
+                                if getattr(turn, "parts", None):
+                                    for idx, p in enumerate(turn.parts):
+                                        if getattr(p, "inline_data", None) and getattr(p.inline_data, "mime_type", "").startswith("image/"):
+                                            image_parts_found.append((turn, idx))
+                            if len(image_parts_found) > 1:
+                                for turn_obj, p_idx in image_parts_found[:-1]:
+                                    turn_obj.parts[p_idx] = types.Part.from_text(text="[Prior desktop screen snapshot omitted to optimize latency]")
                     finally:
                         self.is_tool_executing = False
+
+                    if blocked_by_whitelist:
+                        logger.info("[WHITELIST GATE] Application blocked by whitelist. Halting tool loop to deliver verbal permission request.")
+                        break
 
                 if loop_count > 0:
                     tools_ms = (time.perf_counter() - t_tools_0) * 1000

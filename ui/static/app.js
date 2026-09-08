@@ -18,6 +18,7 @@ window.aetherUI = {
     await this.loadAudioDevices();
     await this.loadMonitors();
     await this.loadConfig();
+    await this.loadVoiceProfileStatus();
     await this.loadRecentLogs();
     this.startTelemetryLoop();
     this.log("Aether Desktop initialized and ready.");
@@ -245,6 +246,52 @@ window.aetherUI = {
     pttBtn.addEventListener("mouseleave", stopPTT);
     pttBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startPTT(); });
     pttBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopPTT(); });
+
+    // Voice Biometrics Toggle & Sensitivity Slider
+    const bioCheck = document.getElementById("voiceBiometricsCheck");
+    if (bioCheck) {
+      bioCheck.addEventListener("change", async (e) => {
+        const threshold = parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.45");
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.save_voice_biometrics_settings) {
+          await window.pywebview.api.save_voice_biometrics_settings(e.target.checked, threshold);
+          this.log(`Target speaker filter ${e.target.checked ? "ENABLED" : "DISABLED"} (Threshold: ${threshold})`);
+        }
+      });
+    }
+
+    const bioSlider = document.getElementById("bioThresholdSlider");
+    const bioVal = document.getElementById("bioThresholdVal");
+    if (bioSlider) {
+      bioSlider.addEventListener("input", (e) => {
+        if (bioVal) bioVal.innerText = parseFloat(e.target.value).toFixed(2);
+      });
+      bioSlider.addEventListener("change", async (e) => {
+        const enabled = document.getElementById("voiceBiometricsCheck")?.checked || false;
+        const threshold = parseFloat(e.target.value);
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.save_voice_biometrics_settings) {
+          await window.pywebview.api.save_voice_biometrics_settings(enabled, threshold);
+          this.log(`Speaker verification sensitivity updated to ${threshold}`);
+        }
+      });
+    }
+
+    // Voice Calibration Wizard Buttons
+    const recStep1Btn = document.getElementById("recStep1Btn");
+    if (recStep1Btn) {
+      recStep1Btn.addEventListener("click", () => this.recordVoiceStep(1));
+    }
+    const recStep2Btn = document.getElementById("recStep2Btn");
+    if (recStep2Btn) {
+      recStep2Btn.addEventListener("click", () => this.recordVoiceStep(2));
+    }
+    const recStep3Btn = document.getElementById("recStep3Btn");
+    if (recStep3Btn) {
+      recStep3Btn.addEventListener("click", () => this.recordVoiceStep(3));
+    }
+    const retrainProfileBtn = document.getElementById("retrainProfileBtn");
+    if (retrainProfileBtn) {
+      retrainProfileBtn.addEventListener("click", () => this.retrainVoiceProfile());
+    }
   },
 
   updateAgentNameUI: function(name) {
@@ -440,6 +487,17 @@ window.aetherUI = {
       if (audio.software_gate !== undefined) {
         document.getElementById("softwareGateCheck").checked = audio.software_gate;
       }
+      if (audio.voice_biometrics) {
+        const bio = audio.voice_biometrics;
+        if (bio.enabled !== undefined && document.getElementById("voiceBiometricsCheck")) {
+          document.getElementById("voiceBiometricsCheck").checked = !!bio.enabled;
+        }
+        if (bio.threshold !== undefined && document.getElementById("bioThresholdSlider")) {
+          document.getElementById("bioThresholdSlider").value = bio.threshold;
+          const valDisplay = document.getElementById("bioThresholdVal");
+          if (valDisplay) valDisplay.innerText = parseFloat(bio.threshold).toFixed(2);
+        }
+      }
       // Audio Devices
       if (audio.input_device_index !== undefined) {
         const inSel = document.getElementById("inputDeviceSelect");
@@ -577,6 +635,10 @@ window.aetherUI = {
         },
         audio: {
           preferred_language: document.getElementById("preferredLanguageSelect")?.value || "en-US",
+          voice_biometrics: {
+            enabled: document.getElementById("voiceBiometricsCheck")?.checked || false,
+            threshold: parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.45")
+          },
           mode: mode,
           safe_phrase: killPhrase,
           software_gate: document.getElementById("softwareGateCheck").checked,
@@ -749,6 +811,8 @@ window.aetherUI = {
       this.appendLogEntry(data);
     } else if (type === "telemetry_update") {
       this.updateTelemetryMetrics(data);
+    } else if (type === "voice_profile_updated") {
+      this.updateVoiceProfileUI(data);
     }
   },
 
@@ -1003,6 +1067,205 @@ window.aetherUI = {
         // Suppress polling error
       }
     }, 100);
+  },
+
+  appendBubble: function(type, content, sender) {
+    this.renderChatBubble({
+      type: type,
+      content: content,
+      agent_name: sender
+    });
+  },
+
+  // =========================================================================
+  // Voice Biometrics & Calibration Wizard
+  // =========================================================================
+  loadVoiceProfileStatus: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_voice_profile_status) return;
+    try {
+      const status = await window.pywebview.api.get_voice_profile_status();
+      if (status.success) {
+        this.updateVoiceProfileUI(status);
+      }
+    } catch (e) {
+      console.warn("Could not load voice profile status:", e);
+    }
+  },
+
+  updateVoiceProfileUI: function(data) {
+    if (!data) return;
+    const badge = document.getElementById("voiceProfileBadge");
+    const check = document.getElementById("voiceBiometricsCheck");
+    const slider = document.getElementById("bioThresholdSlider");
+    const sliderVal = document.getElementById("bioThresholdVal");
+    const feedback = document.getElementById("calibrationFeedback");
+    const feedbackText = document.getElementById("calibrationFeedbackText");
+
+    const isEnrolled = !!data.enrolled;
+    if (badge) {
+      if (isEnrolled) {
+        badge.className = "card-tag enrolled";
+        badge.innerText = data.enabled ? "ACTIVE / ENROLLED" : "ENROLLED (OFF)";
+      } else {
+        badge.className = "card-tag not-enrolled";
+        badge.innerText = "NOT CALIBRATED";
+      }
+    }
+
+    if (check && data.enabled !== undefined) {
+      check.checked = data.enabled;
+    }
+    if (slider && data.threshold !== undefined) {
+      slider.value = data.threshold;
+      if (sliderVal) sliderVal.innerText = parseFloat(data.threshold).toFixed(2);
+    }
+
+    // Update wizard steps state if enrolled or in-progress
+    const staged = data.staged_samples || (isEnrolled ? 3 : 0);
+    for (let i = 1; i <= 3; i++) {
+      const card = document.getElementById(`calibStep${i}Card`);
+      const btn = document.getElementById(`recStep${i}Btn`);
+      const pill = document.getElementById(`step${i}Status`);
+      if (!card || !btn || !pill) continue;
+
+      const btnText = btn.querySelector(".rec-btn-text");
+      if (i <= staged) {
+        card.className = "calibration-step-card completed";
+        btn.disabled = false;
+        if (btnText) btnText.innerText = `RE-RECORD ${i}`;
+        pill.className = "step-status-pill completed";
+        pill.innerText = "✓ RECORDED";
+      } else if (i === staged + 1) {
+        card.className = "calibration-step-card active";
+        btn.disabled = false;
+        if (btnText) btnText.innerText = `RECORD SAMPLE ${i}`;
+        pill.className = "step-status-pill pending";
+        pill.innerText = "READY";
+      } else {
+        card.className = "calibration-step-card";
+        btn.disabled = true;
+        if (btnText) btnText.innerText = `RECORD SAMPLE ${i}`;
+        pill.className = "step-status-pill pending";
+        pill.innerText = "PENDING";
+      }
+    }
+
+    if (feedback && feedbackText) {
+      if (isEnrolled) {
+        feedback.className = "calibration-feedback-banner success";
+        feedbackText.innerText = "✓ Voiceprint calibrated and verified! Aether only responds to your voice when filtering is enabled.";
+      } else if (staged > 0) {
+        feedback.className = "calibration-feedback-banner";
+        feedbackText.innerText = `Recorded ${staged} of 3 samples. Please record the next prompt.`;
+      } else {
+        feedback.className = "calibration-feedback-banner";
+        feedbackText.innerText = 'Click "Record Sample 1" and speak the prompt naturally. Each recording captures 3.5 seconds.';
+      }
+    }
+  },
+
+  recordVoiceStep: async function(stepNum) {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.record_calibration_sample) return;
+    const btn = document.getElementById(`recStep${stepNum}Btn`);
+    const pill = document.getElementById(`step${stepNum}Status`);
+    const card = document.getElementById(`calibStep${stepNum}Card`);
+    const feedback = document.getElementById("calibrationFeedback");
+    const feedbackText = document.getElementById("calibrationFeedbackText");
+    const btnText = btn?.querySelector(".rec-btn-text");
+
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("recording");
+      if (btnText) btnText.innerText = "RECORDING (3.5s)...";
+    }
+    if (pill) {
+      pill.className = "step-status-pill recording";
+      pill.innerText = "RECORDING...";
+    }
+    if (feedbackText) {
+      feedbackText.innerText = `🎙️ Listening... Please read Prompt ${stepNum} clearly now!`;
+    }
+
+    try {
+      const res = await window.pywebview.api.record_calibration_sample(stepNum);
+      if (btn) btn.classList.remove("recording");
+
+      if (res && res.success) {
+        this.log(`Voice sample #${stepNum} recorded successfully (SNR: ${res.snr_db || 0} dB, Energy: ${res.rms_energy || 0})`);
+        if (pill) {
+          pill.className = "step-status-pill completed";
+          pill.innerText = "✓ RECORDED";
+        }
+        if (card) {
+          card.className = "calibration-step-card completed";
+        }
+        if (btn) {
+          btn.disabled = false;
+          if (btnText) btnText.innerText = `RE-RECORD ${stepNum}`;
+        }
+
+        // Enable next step button if available
+        if (stepNum < 3) {
+          const nextBtn = document.getElementById(`recStep${stepNum + 1}Btn`);
+          const nextCard = document.getElementById(`calibStep${stepNum + 1}Card`);
+          const nextPill = document.getElementById(`step${stepNum + 1}Status`);
+          if (nextBtn) nextBtn.disabled = false;
+          if (nextCard) nextCard.className = "calibration-step-card active";
+          if (nextPill) nextPill.innerText = "READY";
+          if (feedbackText) feedbackText.innerText = `✓ Sample ${stepNum} captured. Proceed to Prompt ${stepNum + 1}.`;
+        }
+
+        // If 3 samples collected, finalize voiceprint!
+        if (res.sample_count >= 3) {
+          if (feedbackText) feedbackText.innerText = "Synthesizing centroid voiceprint and verifying...";
+          const threshold = parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.45");
+          const finRes = await window.pywebview.api.finalize_voice_profile(threshold, true);
+          if (finRes && finRes.success) {
+            this.log("Voiceprint enrollment finalized and saved to profile/user_voiceprint.npy");
+            this.updateVoiceProfileUI({ enrolled: true, enabled: true, threshold: threshold });
+            this.appendBubble("system", "🎯 User Voice Calibration Complete! Aether is now locked to your voiceprint.", "SYSTEM");
+          } else {
+            if (feedbackText) feedbackText.innerText = `Finalization error: ${finRes.error || "Unknown"}`;
+          }
+        }
+      } else {
+        if (btn) {
+          btn.disabled = false;
+          if (btnText) btnText.innerText = `RETRY SAMPLE ${stepNum}`;
+        }
+        if (pill) {
+          pill.className = "step-status-pill pending";
+          pill.innerText = "FAILED";
+        }
+        if (feedbackText) feedbackText.innerText = `Recording failed: ${res?.error || "Low audio signal"}. Please try again.`;
+        this.log(`[VOICE ERROR] ${res?.error || "Failed to capture sample"}`);
+      }
+    } catch (err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove("recording");
+        if (btnText) btnText.innerText = `RETRY SAMPLE ${stepNum}`;
+      }
+      if (pill) {
+        pill.className = "step-status-pill pending";
+        pill.innerText = "ERROR";
+      }
+      if (feedbackText) feedbackText.innerText = `Error: ${err}`;
+      console.error("Calibration record error:", err);
+    }
+  },
+
+  retrainVoiceProfile: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.delete_voice_profile) return;
+    try {
+      const res = await window.pywebview.api.delete_voice_profile();
+      if (res && res.success) {
+        this.log("Voiceprint profile reset.");
+        this.updateVoiceProfileUI({ enrolled: false, enabled: false, staged_samples: 0 });
+      }
+    } catch (e) {
+      console.error("Failed to reset voice profile:", e);
+    }
   }
 };
 
