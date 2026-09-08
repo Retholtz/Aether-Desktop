@@ -14,8 +14,11 @@ from core.screen_stream import ScreenCapturePipeline, ensure_thread_desktop
 ensure_thread_desktop()
 
 from core.audio_stream import AudioPipeline, resolve_valid_audio_devices
+from core.logger import get_logger
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
+
+logger = get_logger("Engine")
 
 # The 30 Gemini Live prebuilt voices - Alphabetized
 RAW_GEMINI_VOICES = [
@@ -153,11 +156,13 @@ class AetherEngine:
                 return {"success": False, "error": str(e)}
 
     def notify(self, event_type: str, data: dict):
+        if event_type == "status":
+            logger.debug(f"[STATUS] {data.get('state')}: {data.get('message')}")
         if self.on_event:
             try:
                 self.on_event(event_type, data)
             except Exception as e:
-                print(f"[ENGINE EVENT ERROR] {e}")
+                logger.error(f"[ENGINE EVENT ERROR] {e}")
 
     def kill_audio(self):
         """Immediately halts audio playback and drains all output buffers."""
@@ -600,7 +605,7 @@ class AetherEngine:
         """
         stt_model = api_cfg.get("stt_model_id", "gemini-3.5-transcribe")
         cortex_model = api_cfg.get("model_id", "gemini-3.8-flash")
-        tts_model = api_cfg.get("tts_model_id", "gemini-3.1-flash-tts-preview")
+        tts_model = api_cfg.get("tts_model_id", "gemini-live-native")
 
         client = genai.Client(api_key=api_key)
         self.dispatcher.genai_client = client
@@ -630,8 +635,15 @@ class AetherEngine:
             )
         )
 
+        turn_counter = 0
         while self.is_running:
             try:
+                t_turn_start = time.perf_counter()
+                stt_ms = 0.0
+                llm_ms = 0.0
+                tools_ms = 0.0
+                tts_ms = 0.0
+
                 # 1. Wait concurrently for either typed input or speech utterance from VAD
                 text_task = asyncio.create_task(self._text_queue.get())
                 audio_task = asyncio.create_task(self.audio.utterance_queue.get())
@@ -649,12 +661,15 @@ class AetherEngine:
                 if text_task in done:
                     user_prompt = text_task.result().strip()
                     source = "text"
+                    t_turn_start = time.perf_counter()
                 elif audio_task in done:
                     wav_bytes = audio_task.result()
                     if not wav_bytes or len(wav_bytes) < 1000:
                         continue
 
+                    t_turn_start = time.perf_counter()
                     self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
+                    t_stt_0 = time.perf_counter()
                     try:
                         stt_resp = await asyncio.to_thread(
                             client.models.generate_content,
@@ -662,6 +677,9 @@ class AetherEngine:
                             contents=[types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav")],
                             config=types.GenerateContentConfig()
                         )
+                        stt_ms = (time.perf_counter() - t_stt_0) * 1000
+                        logger.info(f"[LATENCY] STT ({stt_model}): {stt_ms:.1f}ms")
+
                         if stt_resp.candidates and stt_resp.candidates[0].content and stt_resp.candidates[0].content.parts:
                             for part in stt_resp.candidates[0].content.parts:
                                 if getattr(part, "audio_transcription", None) and getattr(part.audio_transcription, "text", None):
@@ -670,14 +688,16 @@ class AetherEngine:
                                     user_prompt += part.text
                         user_prompt = user_prompt.strip()
                     except Exception as stt_err:
-                        print(f"[STT TRANSCRIPTION ERROR] {stt_err}")
+                        stt_ms = (time.perf_counter() - t_stt_0) * 1000
+                        logger.error(f"[STT TRANSCRIPTION ERROR] ({stt_ms:.1f}ms) {stt_err}")
                         self.notify("chat_event", {"type": "error", "content": f"STT error: {stt_err}"})
                         continue
 
                 if not user_prompt:
                     continue
 
-                print(f"[USER PROMPT ({source})]: {user_prompt}")
+                turn_counter += 1
+                logger.info(f"[TURN START #{turn_counter}] Prompt ({source}): {user_prompt}")
 
                 # Check kill phrase
                 if kill_phrase and kill_phrase.lower() in user_prompt.lower():
@@ -695,16 +715,20 @@ class AetherEngine:
 
                 # 2. Send prompt to Cortex (gemini-3.8-flash)
                 self.is_tool_executing = True
+                t_llm_0 = time.perf_counter()
                 try:
                     response = await asyncio.to_thread(chat.send_message, user_prompt)
+                    llm_ms = (time.perf_counter() - t_llm_0) * 1000
+                    logger.info(f"[LATENCY] Cortex LLM ({cortex_model}): {llm_ms:.1f}ms")
                 finally:
                     self.is_tool_executing = False
 
                 # Handle Search Grounding queries if present
                 if response.candidates and getattr(response.candidates[0], "grounding_metadata", None):
-                    queries = getattr(response.candidates[0].grounding_metadata, "web_search_queries", None)
+                    queries = getattr(response.candidates[0], "grounding_metadata", "web_search_queries", None)
                     if queries:
                         for q in queries:
+                            logger.info(f"[SEARCH GROUNDING] Query: {q}")
                             self.notify("chat_event", {
                                 "type": "tool",
                                 "name": "Google Search",
@@ -720,6 +744,7 @@ class AetherEngine:
                 # 3. Handle Tool Calls / Dynamic Scripts Execution Loop
                 loop_count = 0
                 max_tool_turns = 10
+                t_tools_0 = time.perf_counter()
                 while self.is_running and getattr(response, "function_calls", None) and loop_count < max_tool_turns:
                     loop_count += 1
                     self.is_tool_executing = True
@@ -728,7 +753,6 @@ class AetherEngine:
                         for fc in response.function_calls:
                             fn_name = fc.name
                             fn_args = fc.args or {}
-                            print(f"[MODULAR TOOL CALL] Function: {fn_name}, Args: {fn_args}")
 
                             self.notify("chat_event", {
                                 "type": "tool",
@@ -766,6 +790,10 @@ class AetherEngine:
                     finally:
                         self.is_tool_executing = False
 
+                if loop_count > 0:
+                    tools_ms = (time.perf_counter() - t_tools_0) * 1000
+                    logger.info(f"[LATENCY] Tool Calls ({loop_count} turns): {tools_ms:.1f}ms")
+
                 # 4. Extract Assistant Response Text
                 assistant_text = getattr(response, "text", "") or ""
                 if not assistant_text and response.candidates and response.candidates[0].content:
@@ -783,7 +811,7 @@ class AetherEngine:
                                 if getattr(part, "text", None):
                                     assistant_text += part.text
                     except Exception as summary_err:
-                        print(f"[SUMMARY ERROR] {summary_err}")
+                        logger.error(f"[SUMMARY ERROR] {summary_err}")
 
                 assistant_text = assistant_text.strip()
                 if assistant_text:
@@ -793,30 +821,58 @@ class AetherEngine:
                         "content": assistant_text
                     })
 
-                    # 5. Synthesize Speech via Selected Engine (Edge TTS / Windows Local / Gemini TTS)
+                    # 5. Synthesize & Stream Speech (Gemini Live WebSocket / Edge TTS / SAPI)
                     self.notify("status", {
                         "state": "speaking",
                         "message": f"{agent_name} is speaking...",
                         "user_prompt": user_prompt
                     })
+                    t_tts_0 = time.perf_counter()
+                    first_audio_ms = None
                     try:
-                        pcm_bytes = await self._synthesize_speech(
+                        def _on_pcm_chunk(chunk: bytes):
+                            nonlocal first_audio_ms
+                            if chunk and self.audio and self.is_running:
+                                if first_audio_ms is None:
+                                    first_audio_ms = (time.perf_counter() - t_tts_0) * 1000
+                                self.audio.write_output_chunk(chunk)
+
+                        await self._stream_synthesize_speech(
                             text=assistant_text,
                             tts_engine=tts_model,
                             voice_name=voice_name,
-                            client=client
+                            client=client,
+                            on_pcm_chunk=_on_pcm_chunk
                         )
-                        if pcm_bytes:
-                            self.audio.write_output_chunk(pcm_bytes)
+                        tts_ms = (time.perf_counter() - t_tts_0) * 1000
+                        ttfb_str = f" | First sound: {first_audio_ms:.0f}ms" if first_audio_ms is not None else ""
+                        logger.info(f"[LATENCY] TTS ({tts_model}): {tts_ms:.1f}ms{ttfb_str}")
 
-                            # Drain output buffer while listening for interruptions
-                            while self.audio and not self.audio.is_output_empty() and self.is_running:
-                                if not self._text_queue.empty():
-                                    self.kill_audio()
-                                    break
-                                await asyncio.sleep(0.05)
+                        # Drain output buffer while listening for interruptions
+                        while self.audio and not self.audio.is_output_empty() and self.is_running:
+                            if not self._text_queue.empty():
+                                self.kill_audio()
+                                break
+                            await asyncio.sleep(0.05)
                     except Exception as tts_err:
-                        print(f"[TTS SYNTHESIS ERROR] {tts_err}")
+                        tts_ms = (time.perf_counter() - t_tts_0) * 1000
+                        logger.error(f"[TTS SYNTHESIS ERROR] ({tts_ms:.1f}ms) {tts_err}")
+
+                # Calculate total end-to-end turnaround latency
+                total_turn_ms = (time.perf_counter() - t_turn_start) * 1000
+                logger.info(
+                    f"[LATENCY SUMMARY] Turn #{turn_counter} Completed in {total_turn_ms:.0f}ms | "
+                    f"STT: {stt_ms:.0f}ms | LLM: {llm_ms:.0f}ms | Tools: {tools_ms:.0f}ms | TTS: {tts_ms:.0f}ms"
+                )
+
+                # Push real-time latency telemetry to the UI dashboard
+                self.notify("telemetry_update", {
+                    "stt_ms": round(stt_ms),
+                    "llm_ms": round(llm_ms),
+                    "tools_ms": round(tools_ms),
+                    "tts_ms": round(tts_ms),
+                    "total_ms": round(total_turn_ms)
+                })
 
                 if self.audio:
                     self.audio.clear_output_buffer()
@@ -827,9 +883,11 @@ class AetherEngine:
                 break
             except Exception as turn_err:
                 if self.is_running:
-                    print(f"[MODULAR TURN ERROR] {turn_err}")
-                    traceback.print_exc()
+                    logger.error(f"[MODULAR TURN ERROR] {turn_err}", exc_info=True)
                     self.notify("chat_event", {"type": "error", "content": f"Pipeline error: {turn_err}"})
+                    self.notify("status", {"state": "error", "message": f"Error: {turn_err}"})
+                    await asyncio.sleep(1.0)
+
                     self.notify("status", {"state": "error", "message": f"Error: {turn_err}"})
                     await asyncio.sleep(1.0)
 
@@ -841,40 +899,85 @@ class AetherEngine:
             return voice_name
         return GEMINI_TO_EDGE_VOICE.get(voice_name, "en-US-JennyNeural")
 
-    async def _synthesize_speech(
+    async def _stream_synthesize_speech(
         self,
         text: str,
         tts_engine: str,
         voice_name: str,
-        client: genai.Client
-    ) -> Optional[bytes]:
+        client: genai.Client,
+        on_pcm_chunk: Callable[[bytes], None]
+    ):
         """
-        Synthesizes speech using the requested TTS engine and returns raw 24kHz 16-bit Mono PCM bytes.
+        Streams synthesized speech directly to the audio playback buffer in real time.
         Supported engines:
-        - "edge-tts" / "edge": Ultra-fast Microsoft Neural TTS (~600ms latency)
-        - "windows-local" / "sapi" / "local": Instantaneous offline Windows SAPI5 voice (<50ms latency)
-        - "gemini-3.1-flash-tts-preview" / "gemini-2.5-flash-preview-tts": Cloud Gemini TTS (~2.8s-4.2s)
+        - "gemini-live-native" / "gemini" / "multimodal": Real-Time WebSocket streaming (~500ms TTFB)
+        - "edge-tts" / "edge": Ultra-fast Microsoft Neural TTS (~300ms TTFB)
+        - "windows-local" / "sapi": Offline local Windows SAPI5 voice (<50ms)
+        - "gemini-2.5-flash-preview-tts" / "gemini-3.1-flash-tts-preview": REST fallback
         """
         tts_lower = (tts_engine or "").lower()
 
-        # 1. Edge Neural TTS (Ultra-Fast ~0.6s)
+        # 1. Gemini Multimodal Live WebSocket Streaming (Fast ~500ms TTFB, 30 Native Gemini Voices)
+        if "live" in tts_lower or tts_lower == "gemini-live-native" or ("gemini" in tts_lower and "preview" not in tts_lower and "2.5" not in tts_lower):
+            try:
+                live_model = "gemini-3.1-flash-live-preview"
+                config = types.LiveConnectConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice_name or "Aoede"
+                            )
+                        )
+                    ),
+                    system_instruction=types.Content(
+                        parts=[types.Part.from_text(
+                            text="You are a vocal speech synthesis engine. Read the user input aloud directly with natural, pleasant expression. Do not add any commentary, greetings, or conversational filler. Only vocalize the exact text provided."
+                        )]
+                    )
+                )
+
+                async with client.aio.live.connect(model=live_model, config=config) as session:
+                    await session.send_realtime_input(text=text)
+                    async for response in session.receive():
+                        if not self.is_running:
+                            break
+                        if not self._text_queue.empty():
+                            self.kill_audio()
+                            break
+                        sc = getattr(response, "server_content", None)
+                        if sc and sc.model_turn:
+                            for part in sc.model_turn.parts:
+                                inline_data = getattr(part, "inline_data", None)
+                                if inline_data and inline_data.data:
+                                    on_pcm_chunk(inline_data.data)
+                        if sc and sc.turn_complete:
+                            break
+                return
+            except Exception as live_tts_err:
+                logger.warning(f"[GEMINI LIVE TTS STREAM ERROR] {live_tts_err}, falling back...")
+
+        # 2. Edge Neural TTS (Ultra-Fast ~300ms TTFB)
         if "edge" in tts_lower:
             if edge_tts is not None and miniaudio is not None:
                 try:
                     edge_voice = self._resolve_edge_voice(voice_name)
-                    communicate = edge_tts.Communicate(text, edge_voice)
-                    chunks = []
-                    async for chunk in communicate.stream():
+                    comm = edge_tts.Communicate(text, edge_voice)
+                    async for chunk in comm.stream():
+                        if not self.is_running:
+                            break
+                        if not self._text_queue.empty():
+                            self.kill_audio()
+                            break
                         if chunk["type"] == "audio":
-                            chunks.append(chunk["data"])
-                    mp3_data = b"".join(chunks)
-                    if mp3_data:
-                        decoded = miniaudio.decode(mp3_data, nchannels=1, sample_rate=24000)
-                        return decoded.samples.tobytes()
+                            decoded = miniaudio.decode(chunk["data"], nchannels=1, sample_rate=24000)
+                            if decoded and decoded.samples:
+                                on_pcm_chunk(decoded.samples.tobytes())
+                    return
                 except Exception as edge_err:
-                    print(f"[EDGE TTS ERROR] {edge_err}, falling back...")
+                    logger.warning(f"[EDGE TTS ERROR] {edge_err}, falling back...")
 
-        # 2. Windows Local SAPI5 (Instantaneous < 0.05s)
+        # 3. Windows Local SAPI5 (Instantaneous < 50ms)
         if "windows" in tts_lower or "sapi" in tts_lower or "local" in tts_lower:
             def _speak_sapi():
                 try:
@@ -892,14 +995,15 @@ class AetherEngine:
                     speaker.Speak(text)
                     return bytes(stream.GetData())
                 except Exception as sapi_err:
-                    print(f"[SAPI ERROR] {sapi_err}")
+                    logger.error(f"[SAPI ERROR] {sapi_err}")
                     return None
 
             pcm = await asyncio.to_thread(_speak_sapi)
             if pcm:
-                return pcm
+                on_pcm_chunk(pcm)
+                return
 
-        # 3. Gemini Cloud TTS Preview
+        # 4. Fallback / REST Non-streaming Gemini TTS
         model = tts_engine if "gemini" in tts_lower else "gemini-3.1-flash-tts-preview"
         try:
             tts_resp = await asyncio.to_thread(
@@ -910,10 +1014,28 @@ class AetherEngine:
                 generation_config={"speech_config": [{"voice": voice_name}]}
             )
             if getattr(tts_resp, "output_audio", None) and getattr(tts_resp.output_audio, "data", None):
-                return base64.b64decode(tts_resp.output_audio.data)
+                pcm = base64.b64decode(tts_resp.output_audio.data)
+                on_pcm_chunk(pcm)
         except Exception as gem_err:
-            print(f"[GEMINI TTS ERROR] {gem_err}")
-        return None
+            logger.error(f"[GEMINI REST TTS ERROR] {gem_err}")
+
+    async def _synthesize_speech(
+        self,
+        text: str,
+        tts_engine: str,
+        voice_name: str,
+        client: genai.Client
+    ) -> Optional[bytes]:
+        """Convenience helper collecting all chunks into a single byte buffer."""
+        chunks = []
+        await self._stream_synthesize_speech(
+            text=text,
+            tts_engine=tts_engine,
+            voice_name=voice_name,
+            client=client,
+            on_pcm_chunk=lambda c: chunks.append(c)
+        )
+        return b"".join(chunks) if chunks else None
 
     async def _run_live_pipeline(
         self,

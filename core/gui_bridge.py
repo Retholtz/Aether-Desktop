@@ -7,7 +7,16 @@ from typing import Optional
 
 from core.audio_stream import get_available_audio_devices
 from core.engine import AetherEngine, GEMINI_VOICES
+from core.logger import (
+    get_logger,
+    register_ui_log_callback,
+    get_recent_logs,
+    clear_memory_logs,
+    open_logs_folder,
+)
 from core.security import protect_secret, unprotect_secret
+
+logger = get_logger("Bridge")
 
 class GuiBridge:
     """
@@ -33,6 +42,7 @@ class GuiBridge:
             on_event=self._on_engine_event,
             on_whitelist_update=self.update_whitelist
         )
+        register_ui_log_callback(self._on_log_record)
 
     def set_window(self, window):
         self._window = window
@@ -327,5 +337,28 @@ class GuiBridge:
             return {"success": False, "error": "Audio pipeline not active"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    # =========================================================================
+    # Diagnostic Logs & Latency Telemetry
+    # =========================================================================
+
+    def _on_log_record(self, log_entry: dict):
+        """Pushes real-time log records to pywebview."""
+        self._on_engine_event("log_event", log_entry)
+
+    def get_recent_logs(self) -> list:
+        """Returns buffered recent log entries for the UI log console."""
+        return get_recent_logs()
+
+    def clear_log_console(self) -> dict:
+        """Clears buffered in-memory logs."""
+        clear_memory_logs()
+        return {"success": True}
+
+    def open_logs_folder(self) -> dict:
+        """Opens the logs directory in Windows Explorer."""
+        ok = open_logs_folder()
+        return {"success": ok}
+
 
 

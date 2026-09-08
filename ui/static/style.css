@@ -692,6 +692,15 @@ label {
   color: var(--text-dim);
 }
 
+.telemetry-box.highlight {
+  border-color: rgba(0, 229, 255, 0.35);
+  background: rgba(0, 229, 255, 0.04);
+}
+
+.telemetry-box.highlight .telemetry-label {
+  color: #00e5ff;
+}
+
 /* ==========================================================================
    Tab 4: Logs
    ========================================================================== */
@@ -708,9 +717,23 @@ label {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-dim);
+}
+
+.logs-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.logs-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .log-console {
@@ -725,6 +748,25 @@ label {
   color: var(--text-dim);
   line-height: 1.5;
   user-select: text;
+}
+
+.log-line {
+  margin-bottom: 2px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-line.error { color: #f87171; font-weight: 600; }
+.log-line.warn { color: #fbbf24; }
+.log-line.latency { color: #38bdf8; font-weight: 500; }
+.log-line.script { color: #c084fc; }
+.log-line.tool { color: #34d399; }
+.log-line.status { color: #a3e635; }
+.log-line.info { color: #cbd5e1; }
+
+.hud-btn-ghost.active {
+  background: rgba(0, 229, 255, 0.2) !important;
+  color: #00e5ff !important;
+  border-color: #00e5ff !important;
 }
 
 /* ==========================================================================

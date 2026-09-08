@@ -5,14 +5,14 @@
     "pipeline_mode": "modular",
     "model_id": "gemini-3.8-flash",
     "stt_model_id": "gemini-3.5-transcribe",
-    "tts_model_id": "gemini-2.5-flash-preview-tts",
+    "tts_model_id": "gemini-live-native",
     "live_model_id": "gemini-3.1-flash-live-preview",
     "pro_model_id": "gemini-3.1-pro-preview",
     "temperature": 0.7,
     "voice_name": "Aoede",
     "system_instruction": "You are [Agent Name], a fast, knowledgeable desktop voice assistant. You have Google Search available to check real-time facts, weather, news, and details. When asked for live information, search the web and answer conversationally and concisely. If the user says 'stop', '[Agent Name] stop', or tells you to stop speaking, halt immediately. Always keep answers brief (1-3 sentences) unless asked to elaborate.",
     "stt_endpoint": "gemini-3.5-transcribe",
-    "tts_endpoint": "gemini-2.5-flash-preview-tts"
+    "tts_endpoint": "gemini-live-native"
   },
   "audio": {
     "mode": "always_on",

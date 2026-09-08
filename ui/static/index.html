@@ -170,11 +170,11 @@
                 <div class="form-group">
                   <label for="ttsSelect">Text to Speech (TTS) Endpoint</label>
                   <select id="ttsSelect" class="hud-select">
-                    <option value="edge-tts" selected>Edge Neural TTS (~0.6s Ultra-Fast, Natural Voices - Recommended)</option>
+                    <option value="gemini-live-native" selected>Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)</option>
+                    <option value="edge-tts">Edge Neural TTS (~0.6s Ultra-Fast, Natural Voices)</option>
                     <option value="windows-local">Windows Native SAPI5 / Local Voices (Instantaneous ~0.02s, Offline)</option>
-                    <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview (~2.8s, 30 Gemini Voices)</option>
-                    <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts (~4.1s)</option>
-                    <option value="gemini-live-native">Gemini Live Native Voice Generation (WebSocket)</option>
+                    <option value="gemini-3.1-flash-tts-preview">gemini-3.1-flash-tts-preview (REST Non-streaming Preview)</option>
+                    <option value="gemini-2.5-flash-preview-tts">gemini-2.5-flash-preview-tts (REST Non-streaming Legacy)</option>
                   </select>
                   <span class="input-hint">Voice synthesis engine for assistant speech playback.</span>
                 </div>
@@ -389,6 +389,26 @@
             <div class="telemetry-label">KILL PHRASE</div>
             <div class="telemetry-val sm" id="telSafePhrase">"Aether stop"</div>
           </div>
+          <div class="telemetry-box highlight">
+            <div class="telemetry-label">TOTAL TURN LATENCY</div>
+            <div class="telemetry-val" id="telTotalLatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">STT TRANSCRIBE LATENCY</div>
+            <div class="telemetry-val" id="telSttLatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">CORTEX LLM LATENCY</div>
+            <div class="telemetry-val" id="telLlmlatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">TOOLS & SCRIPT LATENCY</div>
+            <div class="telemetry-val" id="telToolsLatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">TTS AUDIO LATENCY</div>
+            <div class="telemetry-val" id="telTtsLatency">-- ms</div>
+          </div>
         </div>
       </section>
 
@@ -399,9 +419,19 @@
         <div class="logs-container">
           <div class="logs-header">
             <span>LIVE SYSTEM CONSOLE & PROTOCOL LOGS</span>
-            <button class="hud-btn-ghost sm" id="clearLogsBtn">CLEAR</button>
+            <div class="logs-filter-bar">
+              <button type="button" class="hud-btn-ghost sm active" id="filterAllLogsBtn" data-filter="all">ALL</button>
+              <button type="button" class="hud-btn-ghost sm" id="filterScriptLogsBtn" data-filter="script">SCRIPTS & TOOLS</button>
+              <button type="button" class="hud-btn-ghost sm" id="filterLatencyLogsBtn" data-filter="latency">LATENCY</button>
+              <button type="button" class="hud-btn-ghost sm" id="filterErrorLogsBtn" data-filter="error">ERRORS</button>
+            </div>
+            <div class="logs-actions">
+              <button type="button" class="hud-btn-ghost sm" id="copyLogsBtn" title="Copy all visible logs to clipboard">COPY</button>
+              <button type="button" class="hud-btn-ghost sm" id="openLogsFolderBtn" title="Open logs directory in Windows Explorer">OPEN LOGS</button>
+              <button type="button" class="hud-btn-ghost sm" id="clearLogsBtn" title="Clear console output">CLEAR</button>
+            </div>
           </div>
-          <pre id="logConsole" class="log-console"></pre>
+          <div id="logConsole" class="log-console"></div>
         </div>
       </section>
     </main>

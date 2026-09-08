@@ -54,10 +54,49 @@ def main():
     except Exception:
         args = {}
 
-    headers = args.get("headers", ["Header 1", "Header 2", "Header 3"])
-    rows = args.get("rows", [["Row 1 Col 1", "Row 1 Col 2", "Row 1 Col 3"]])
+    raw_headers = args.get("headers", ["Header 1", "Header 2", "Header 3"])
+    raw_rows = args.get("rows", [["Row 1 Col 1", "Row 1 Col 2", "Row 1 Col 3"]])
     title = args.get("title", "")
     target_app = args.get("app_name", "Google Docs")
+
+    # Defensive normalization: prevent strings from splitting into single-character columns
+    if isinstance(raw_headers, str):
+        if "\t" in raw_headers:
+            headers = [h.strip() for h in raw_headers.split("\t")]
+        elif "," in raw_headers:
+            headers = [h.strip() for h in raw_headers.split(",")]
+        else:
+            headers = [raw_headers.strip()]
+    elif isinstance(raw_headers, (list, tuple)):
+        headers = [str(h) for h in raw_headers]
+    else:
+        headers = [str(raw_headers)]
+
+    rows = []
+    if isinstance(raw_rows, str):
+        lines = [ln.strip() for ln in raw_rows.strip().split("\n") if ln.strip()]
+        for ln in lines:
+            if "\t" in ln:
+                rows.append([c.strip() for c in ln.split("\t")])
+            elif "," in ln:
+                rows.append([c.strip() for c in ln.split(",")])
+            else:
+                rows.append([ln])
+    elif isinstance(raw_rows, (list, tuple)):
+        for r in raw_rows:
+            if isinstance(r, str):
+                if "\t" in r:
+                    rows.append([c.strip() for c in r.split("\t")])
+                elif "," in r:
+                    rows.append([c.strip() for c in r.split(",")])
+                else:
+                    rows.append([r.strip()])
+            elif isinstance(r, (list, tuple)):
+                rows.append([str(c) for c in r])
+            else:
+                rows.append([str(r)])
+    else:
+        rows = [[str(raw_rows)]]
 
     # 2. Build HTML Table
     html_parts = []

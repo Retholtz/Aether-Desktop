@@ -5,12 +5,17 @@ enforcing complete exception isolation so tool faults cannot block or crash the 
 """
 
 import asyncio
+import json
 import os
 import re
+import time
 from typing import Callable, Dict, List, Optional
 
+from core.logger import get_logger
 from google import genai
 from google.genai import types
+
+logger = get_logger("Dispatcher")
 
 from core.screen_stream import ScreenCapturePipeline
 from security.crypto import unprotect_secret
@@ -614,13 +619,38 @@ class ToolDispatcher:
         }
 
     async def dispatch(self, fn_name: str, fn_args: dict) -> dict:
-
         """
         Executes the named function with the given arguments.
-        Enforces complete exception isolation so no tool failure can crash the main WebSocket session.
+        Enforces complete exception isolation, latency benchmarking, and diagnostic logging.
         """
         args = fn_args or {}
+        t0 = time.perf_counter()
+        args_repr = json.dumps(args, default=str)
+        if len(args_repr) > 250:
+            args_repr = args_repr[:250] + "... [truncated]"
+        logger.info(f"[TOOL CALL] {fn_name} | Args: {args_repr}")
 
+        try:
+            result = await self._dispatch_internal(fn_name, args)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            st = result.get("status", "success") if isinstance(result, dict) else "success"
+            logger.info(f"[TOOL RESULT] {fn_name} | Duration: {elapsed_ms:.1f}ms | Status: {st}")
+            return result
+        except Exception as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            err_msg = f"Tool execution failed for '{fn_name}': {str(e)}"
+            logger.error(f"[TOOL ERROR] {fn_name} failed after {elapsed_ms:.1f}ms: {err_msg}", exc_info=True)
+            self.notify("chat_event", {
+                "type": "error",
+                "content": err_msg
+            })
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": err_msg
+            }
+
+    async def _dispatch_internal(self, fn_name: str, args: dict) -> dict:
         try:
             # -------------------------------------------------------------
             # Tier 1: Win32 Native Window Management

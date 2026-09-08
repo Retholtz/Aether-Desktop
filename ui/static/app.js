@@ -7,6 +7,8 @@ window.aetherUI = {
   currentConfig: null,
   isAssistantRunning: false,
   agentName: "Aether",
+  logEntries: [],
+  activeLogFilter: "all",
 
   init: async function() {
     this.setupTabs();
@@ -16,6 +18,7 @@ window.aetherUI = {
     await this.loadAudioDevices();
     await this.loadMonitors();
     await this.loadConfig();
+    await this.loadRecentLogs();
     this.startTelemetryLoop();
     this.log("Aether Desktop initialized and ready.");
   },
@@ -160,10 +163,54 @@ window.aetherUI = {
       document.getElementById("chatHistory").innerHTML = "";
     });
 
-    // Clear Logs button
-    document.getElementById("clearLogsBtn").addEventListener("click", () => {
-      document.getElementById("logConsole").innerText = "";
+    // Log filter buttons
+    document.querySelectorAll(".logs-filter-bar button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        this.setLogFilter(btn.dataset.filter);
+      });
     });
+
+    // Copy logs to clipboard
+    const copyLogsBtn = document.getElementById("copyLogsBtn");
+    if (copyLogsBtn) {
+      copyLogsBtn.addEventListener("click", async () => {
+        const visibleLines = this.logEntries
+          .filter(item => this.shouldShowLog(item.category))
+          .map(item => item.entry.formatted || item.entry.message || "")
+          .join("\n");
+        try {
+          await navigator.clipboard.writeText(visibleLines);
+          const origText = copyLogsBtn.innerText;
+          copyLogsBtn.innerText = "COPIED!";
+          setTimeout(() => { copyLogsBtn.innerText = origText; }, 1500);
+        } catch (e) {
+          console.error("Clipboard copy failed:", e);
+        }
+      });
+    }
+
+    // Open logs directory in Windows Explorer
+    const openLogsBtn = document.getElementById("openLogsFolderBtn");
+    if (openLogsBtn) {
+      openLogsBtn.addEventListener("click", async () => {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.open_logs_folder) {
+          await window.pywebview.api.open_logs_folder();
+        }
+      });
+    }
+
+    // Clear Logs button
+    const clearLogsBtn = document.getElementById("clearLogsBtn");
+    if (clearLogsBtn) {
+      clearLogsBtn.addEventListener("click", async () => {
+        const consoleEl = document.getElementById("logConsole");
+        if (consoleEl) consoleEl.innerHTML = "";
+        this.logEntries = [];
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.clear_log_console) {
+          await window.pywebview.api.clear_log_console();
+        }
+      });
+    }
 
     // Audio Mode Radios (PTT vs Always-On)
     document.querySelectorAll("input[name='audioMode']").forEach(radio => {
@@ -511,10 +558,10 @@ window.aetherUI = {
           model_id: document.getElementById("modelSelect").value,
           pipeline_mode: document.getElementById("modelSelect").value.includes("live") ? "live" : "modular",
           stt_model_id: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
-          tts_model_id: document.getElementById("ttsSelect")?.value || "edge-tts",
+          tts_model_id: document.getElementById("ttsSelect")?.value || "gemini-live-native",
           live_model_id: "gemini-3.1-flash-live-preview",
           stt_endpoint: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
-          tts_endpoint: document.getElementById("ttsSelect")?.value || "edge-tts",
+          tts_endpoint: document.getElementById("ttsSelect")?.value || "gemini-live-native",
           pro_model_id: document.getElementById("proModelSelect")?.value || "gemini-3.1-pro-preview",
           temperature: parseFloat(document.getElementById("temperatureSlider").value),
           system_instruction: document.getElementById("systemPromptInput").value
@@ -680,6 +727,10 @@ window.aetherUI = {
           this.currentConfig.security.app_whitelist = data.security.app_whitelist;
         }
       }
+    } else if (type === "log_event") {
+      this.appendLogEntry(data);
+    } else if (type === "telemetry_update") {
+      this.updateTelemetryMetrics(data);
     }
   },
 
@@ -797,11 +848,124 @@ window.aetherUI = {
   },
 
   log: function(msg) {
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    this.appendLogEntry({
+      time: timeStr,
+      level: "INFO",
+      name: "HUD",
+      message: msg,
+      formatted: `[${timeStr}] [INFO ] [HUD] ${msg}`
+    });
+  },
+
+  classifyLogEntry: function(entry) {
+    const msg = (entry && entry.message) ? String(entry.message) : "";
+    const lvl = (entry && entry.level) ? String(entry.level).toUpperCase() : "";
+    const name = (entry && entry.name) ? String(entry.name) : "";
+
+    if (lvl === "ERROR" || msg.includes("ERROR") || msg.includes("Exception") || msg.includes("Traceback")) {
+      return { category: "error", cssClass: "error" };
+    }
+    if (lvl === "WARNING" || lvl === "WARN" || msg.includes("WARN")) {
+      return { category: "warn", cssClass: "warn" };
+    }
+    if (msg.includes("[LATENCY") || name === "Latency") {
+      return { category: "latency", cssClass: "latency" };
+    }
+    if (msg.includes("[SCRIPT") || name === "ScriptRunner") {
+      return { category: "script", cssClass: "script" };
+    }
+    if (msg.includes("[TOOL") || name === "ToolDispatcher" || msg.includes("[SEARCH GROUNDING]")) {
+      return { category: "tool", cssClass: "tool" };
+    }
+    if (msg.includes("[STATUS]") || lvl === "DEBUG") {
+      return { category: "status", cssClass: "status" };
+    }
+    return { category: "info", cssClass: "info" };
+  },
+
+  shouldShowLog: function(category) {
+    if (this.activeLogFilter === "all") return true;
+    if (this.activeLogFilter === "script") return category === "script" || category === "tool";
+    if (this.activeLogFilter === "latency") return category === "latency";
+    if (this.activeLogFilter === "error") return category === "error" || category === "warn";
+    return true;
+  },
+
+  appendLogEntry: function(entry) {
+    const consoleEl = document.getElementById("logConsole");
+    if (!consoleEl || !entry) return;
+
+    const classification = this.classifyLogEntry(entry);
+    const lineDiv = document.createElement("div");
+    lineDiv.className = `log-line ${classification.cssClass}`;
+    lineDiv.dataset.category = classification.category;
+    lineDiv.textContent = entry.formatted || `[${entry.time || new Date().toLocaleTimeString()}] [${entry.level || 'INFO'}] [${entry.name || 'System'}] ${entry.message || ''}`;
+
+    this.logEntries.push({
+      entry: entry,
+      category: classification.category,
+      element: lineDiv
+    });
+
+    if (this.logEntries.length > 500) {
+      const removed = this.logEntries.shift();
+      if (removed && removed.element && removed.element.parentNode) {
+        removed.element.parentNode.removeChild(removed.element);
+      }
+    }
+
+    if (this.shouldShowLog(classification.category)) {
+      lineDiv.style.display = "";
+    } else {
+      lineDiv.style.display = "none";
+    }
+
+    const isNearBottom = (consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight) < 80;
+    consoleEl.appendChild(lineDiv);
+    if (isNearBottom) {
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+  },
+
+  setLogFilter: function(filterName) {
+    this.activeLogFilter = filterName;
+    document.querySelectorAll(".logs-filter-bar button").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.filter === filterName);
+    });
     const consoleEl = document.getElementById("logConsole");
     if (!consoleEl) return;
-    const time = new Date().toLocaleTimeString();
-    consoleEl.innerText += `[${time}] ${msg}\n`;
+    for (const item of this.logEntries) {
+      item.element.style.display = this.shouldShowLog(item.category) ? "" : "none";
+    }
     consoleEl.scrollTop = consoleEl.scrollHeight;
+  },
+
+  loadRecentLogs: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_recent_logs) return;
+    try {
+      const logs = await window.pywebview.api.get_recent_logs();
+      if (Array.isArray(logs)) {
+        logs.forEach(entry => this.appendLogEntry(entry));
+      }
+    } catch (e) {
+      console.warn("Could not load recent logs:", e);
+    }
+  },
+
+  updateTelemetryMetrics: function(data) {
+    if (!data) return;
+    const telTotal = document.getElementById("telTotalLatency");
+    const telStt = document.getElementById("telSttLatency");
+    const telLlm = document.getElementById("telLlmlatency");
+    const telTools = document.getElementById("telToolsLatency");
+    const telTts = document.getElementById("telTtsLatency");
+
+    if (telTotal && data.total_ms !== undefined) telTotal.innerText = `${data.total_ms} ms`;
+    if (telStt && data.stt_ms !== undefined) telStt.innerText = `${data.stt_ms} ms`;
+    if (telLlm && data.llm_ms !== undefined) telLlm.innerText = `${data.llm_ms} ms`;
+    if (telTools && data.tools_ms !== undefined) telTools.innerText = `${data.tools_ms} ms`;
+    if (telTts && data.tts_ms !== undefined) telTts.innerText = `${data.tts_ms} ms`;
   },
 
   // =========================================================================
