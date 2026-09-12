@@ -165,9 +165,12 @@ class GuiBridge:
                     self._config["audio"].update(aud_copy)
                 else:
                     self._config.setdefault("audio", {}).update(aud_cfg)
-                if self._engine and self._engine.audio:
-                    self._engine.audio.set_mode(self._config["audio"].get("mode", "always_on"))
-                    self._engine.audio.set_software_gate(self._config["audio"].get("software_gate", False))
+                if self._engine:
+                    if self._engine.audio:
+                        self._engine.audio.set_mode(self._config["audio"].get("mode", "always_on"))
+                        self._engine.audio.set_software_gate(self._config["audio"].get("software_gate", False))
+                    if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
+                        self._engine.hotkey_manager.update_config(self._config["audio"])
 
             if "vision" in new_config:
                 self._config["vision"] = new_config["vision"]
@@ -237,6 +240,19 @@ class GuiBridge:
     def set_ptt(self, active: bool) -> dict:
         """Sets the Push-To-Talk state (active = True/False)."""
         self._engine.set_ptt(active)
+        return {"success": True}
+
+    def toggle_ptt(self) -> dict:
+        """Toggles active Push-to-Talk state."""
+        if self._engine:
+            new_state = self._engine.toggle_ptt()
+            return {"success": True, "active": new_state}
+        return {"success": False, "error": "Engine not running"}
+
+    def set_input_focused(self, focused: bool) -> dict:
+        """Informs engine whether a text input in the UI has focus (to suppress hotkeys)."""
+        if self._engine and hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
+            self._engine.hotkey_manager.set_input_focused(focused)
         return {"success": True}
 
     def send_text_message(self, text: str) -> dict:

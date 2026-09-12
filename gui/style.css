@@ -888,6 +888,60 @@ label {
   box-shadow: 0 0 10px var(--win-accent-glow);
 }
 
+/* PTT Sub-settings and Keybind Recorder */
+.ptt-sub-settings {
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid var(--win-accent);
+  padding: 12px 14px;
+  border-radius: 0 6px 6px 0;
+  margin-top: 6px;
+  margin-bottom: 12px;
+}
+
+.keybind-recorder-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.hud-btn-keybind {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--win-accent);
+  color: #ffffff;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 110px;
+  text-align: center;
+  transition: all 0.2s ease;
+  user-select: none;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+
+.hud-btn-keybind:hover {
+  background: rgba(0, 120, 212, 0.25);
+  border-color: #ffffff;
+  box-shadow: 0 0 8px var(--win-accent-glow);
+}
+
+.hud-btn-keybind.recording {
+  background: rgba(255, 170, 0, 0.2);
+  border-color: #ffaa00;
+  color: #ffcc00;
+  animation: keybind-pulse 1.2s infinite;
+}
+
+@keyframes keybind-pulse {
+  0% { box-shadow: 0 0 4px rgba(255, 170, 0, 0.4); }
+  50% { box-shadow: 0 0 14px rgba(255, 170, 0, 0.8); }
+  100% { box-shadow: 0 0 4px rgba(255, 170, 0, 0.4); }
+}
+
 .hud-btn-kill {
   background: rgba(232, 17, 35, 0.12);
   border: 1px solid var(--status-red);

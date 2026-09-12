@@ -232,6 +232,33 @@
                   <span class="input-hint">Always-On enables natural conversational flow.</span>
                 </div>
 
+                <!-- Push-To-Talk Options Panel (Behavior & Keybind) -->
+                <div class="form-group ptt-sub-settings" id="pttSettingsGroup" style="display: none;">
+                  <label>Push-To-Talk Behavior</label>
+                  <div class="radio-row">
+                    <label class="hud-radio">
+                      <input type="radio" name="pttType" value="hold" id="pttTypeHold" checked>
+                      <span>Push to Talk - Hold (Microphone is on while Keybind is held down)</span>
+                    </label>
+                    <label class="hud-radio">
+                      <input type="radio" name="pttType" value="toggle" id="pttTypeToggle">
+                      <span>Push to Talk - Toggle (Keybind turns microphone on/off)</span>
+                    </label>
+                  </div>
+                  <span class="input-hint">Select how your keypress controls the microphone.</span>
+
+                  <div style="margin-top: 10px;">
+                    <label style="display: block; margin-bottom: 5px;">PTT Keybind (Global Hotkey)</label>
+                    <div class="keybind-recorder-container">
+                      <button type="button" id="pttKeybindBtn" class="hud-btn-keybind" title="Click to assign a keybind">
+                        <span id="pttKeybindDisplay">Space</span>
+                      </button>
+                      <button type="button" id="pttKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Space)">RESET</button>
+                    </div>
+                    <span class="input-hint" id="pttKeybindHint">Click the keybind button and press any key (or combo like Ctrl+Space) to set your hotkey. Works globally across all apps.</span>
+                  </div>
+                </div>
+
                 <!-- Voice Playback Kill Phrase -->
                 <div class="form-group">
                   <label for="safePhraseInput">Voice Playback Kill Phrase</label>
@@ -788,7 +815,7 @@
     <footer class="hud-footer">
       <!-- PTT Trigger Button -->
       <button id="pttButton" class="hud-btn-ptt" style="display: none;">
-        <span>🎙️ HOLD TO SPEAK (PTT)</span>
+        <span id="pttButtonLabel">🎙️ HOLD TO SPEAK (PTT)</span>
       </button>
 
       <!-- Chat Text Input Form -->

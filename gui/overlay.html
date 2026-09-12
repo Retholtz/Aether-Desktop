@@ -303,6 +303,12 @@
             isMuted = !!data.muted;
             muteBtn.classList.toggle("muted", isMuted);
             muteBtn.innerText = isMuted ? "🔇" : "🎤";
+          } else if (type === "mic_status") {
+            const isPttActive = !!data.ptt_active;
+            muteBtn.classList.toggle("active", isPttActive);
+            if (isPttActive) {
+              setStatus("hearing", "PTT Transmitting...", null, "Speaking into microphone");
+            }
           }
         }
       };

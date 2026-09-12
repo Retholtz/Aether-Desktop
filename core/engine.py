@@ -22,6 +22,7 @@ from core.telemetry_db import TelemetryDB
 from core.user_memory import UserMemory
 from core.proactive_engine import ProactiveEngine
 from core.session_lifecycle import SessionLifecycleManager
+from core.hotkey_manager import HotkeyManager
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 
@@ -132,6 +133,7 @@ class AetherEngine:
         self.config_path = config_path
         self.is_running = False
         self.audio: Optional[AudioPipeline] = None
+        self._ptt_active: bool = False
         self.session = None
         self._main_task = None
         self._text_queue = asyncio.Queue()
@@ -183,6 +185,13 @@ class AetherEngine:
         self._active_cm = None
         self._active_recv_task: Optional[asyncio.Task] = None
         self._base_system_instruction: str = ""
+
+        # Global Push-to-Talk Hotkey Manager (Hold & Toggle modes)
+        self.hotkey_manager = HotkeyManager(
+            on_ptt_change=self.set_ptt,
+            on_ptt_toggle=self.toggle_ptt,
+            config_getter=self.config_getter
+        )
 
         try:
             import main
@@ -337,9 +346,20 @@ class AetherEngine:
         })
 
     def set_ptt(self, active: bool):
+        self._ptt_active = active
         if self.audio:
             self.audio.set_ptt(active)
-            self.notify("mic_status", {"ptt_active": active, "is_speaking": self.audio.is_speaking})
+        self.notify("mic_status", {
+            "ptt_active": active,
+            "is_speaking": self.audio.is_speaking if self.audio else False
+        })
+
+    def toggle_ptt(self) -> bool:
+        """Toggles active Push-to-Talk microphone state (Push to Talk - Toggle mode)."""
+        current = self.audio.ptt_active if self.audio else self._ptt_active
+        new_state = not current
+        self.set_ptt(new_state)
+        return new_state
 
     def _on_speech_state(self, state: str):
         if not self.is_running:
@@ -814,6 +834,7 @@ class AetherEngine:
                 software_gate=software_gate,
                 on_speech_state=self._on_speech_state
             )
+            self.audio.set_ptt(self._ptt_active)
             await self.audio.start()
         except Exception as e:
             err_msg = f"Failed to initialize audio devices (Input #{in_idx}, Output #{out_idx}): {e}"
@@ -2035,11 +2056,13 @@ class AetherEngine:
         if self.is_running:
             return
         self.is_running = True
+        self.hotkey_manager.start()
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
         """Stops the assistant engine, background workers, and closes connections."""
         self.is_running = False
+        self.hotkey_manager.stop()
         if self.audio:
             self.audio.stop()
         if self._optimizer_task and not self._optimizer_task.done():

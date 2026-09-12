@@ -22,7 +22,12 @@
       "model_path": "models/wespeaker_en_voxceleb_CAM++.onnx",
       "profile_path": "profile/user_voiceprint.npy"
     },
-    "mode": "always_on",
+    "mode": "ptt",
+    "ptt_type": "hold",
+    "ptt_key": "Backslash",
+    "ptt_key_display": "BACKSLASH",
+    "ptt_vk": 220,
+    "ptt_modifiers": [],
     "safe_phrase": "Aether stop",
     "software_gate": true,
     "input_device_index": 18,

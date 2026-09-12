@@ -7,6 +7,13 @@ window.aetherUI = {
   currentConfig: null,
   isAssistantRunning: false,
   agentName: "Aether",
+  pttType: "hold",
+  pttKey: "Space",
+  pttKeyDisplay: "Space",
+  pttVk: 32,
+  pttModifiers: [],
+  isPttActive: false,
+  isRecordingKeybind: false,
   logEntries: [],
   activeLogFilter: "all",
 
@@ -233,29 +240,139 @@ window.aetherUI = {
     document.querySelectorAll("input[name='audioMode']").forEach(radio => {
       radio.addEventListener("change", (e) => {
         this.updateAudioModeUI(e.target.value);
+        this.saveSettings(true);
       });
     });
 
-    // Push-To-Talk Button Events
+    // PTT Behavior Radios (Hold vs Toggle)
+    document.querySelectorAll("input[name='pttType']").forEach(radio => {
+      radio.addEventListener("change", (e) => {
+        this.pttType = e.target.value;
+        this.updatePttButtonUI();
+        this.saveSettings(true);
+        this.log(`PTT Behavior set to: ${this.pttType === "hold" ? "Hold to Speak" : "Toggle on/off"}`);
+      });
+    });
+
+    // PTT Keybind Recorder Controls
+    const keybindBtn = document.getElementById("pttKeybindBtn");
+    if (keybindBtn) {
+      keybindBtn.addEventListener("click", () => {
+        if (this.isRecordingKeybind) {
+          this.stopKeybindRecording();
+        } else {
+          this.startKeybindRecording();
+        }
+      });
+    }
+
+    const resetKeybindBtn = document.getElementById("pttKeybindResetBtn");
+    if (resetKeybindBtn) {
+      resetKeybindBtn.addEventListener("click", () => {
+        this.pttKey = "Space";
+        this.pttKeyDisplay = "Space";
+        this.pttVk = 32;
+        this.pttModifiers = [];
+        const disp = document.getElementById("pttKeybindDisplay");
+        if (disp) disp.innerText = "Space";
+        this.updatePttButtonUI();
+        this.saveSettings(true);
+        this.log("PTT Keybind reset to default (Space).");
+      });
+    }
+
+    // Push-To-Talk Button Events (Supports both Hold and Toggle interactions)
     const pttBtn = document.getElementById("pttButton");
-    const startPTT = () => {
-      if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.set_ptt(true);
-        pttBtn.classList.add("active");
+    const startHoldPTT = (e) => {
+      if (this.pttType === "hold") {
+        if (e && e.type === "touchstart") e.preventDefault();
+        if (window.pywebview && window.pywebview.api) {
+          window.pywebview.api.set_ptt(true);
+        }
       }
     };
-    const stopPTT = () => {
-      if (window.pywebview && window.pywebview.api) {
-        window.pywebview.api.set_ptt(false);
-        pttBtn.classList.remove("active");
+    const stopHoldPTT = (e) => {
+      if (this.pttType === "hold") {
+        if (e && e.type === "touchend") e.preventDefault();
+        if (window.pywebview && window.pywebview.api) {
+          window.pywebview.api.set_ptt(false);
+        }
       }
     };
 
-    pttBtn.addEventListener("mousedown", startPTT);
-    pttBtn.addEventListener("mouseup", stopPTT);
-    pttBtn.addEventListener("mouseleave", stopPTT);
-    pttBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startPTT(); });
-    pttBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopPTT(); });
+    pttBtn.addEventListener("mousedown", startHoldPTT);
+    pttBtn.addEventListener("mouseup", stopHoldPTT);
+    pttBtn.addEventListener("mouseleave", stopHoldPTT);
+    pttBtn.addEventListener("touchstart", startHoldPTT);
+    pttBtn.addEventListener("touchend", stopHoldPTT);
+
+    pttBtn.addEventListener("click", (e) => {
+      if (this.pttType === "toggle") {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.toggle_ptt) {
+          window.pywebview.api.toggle_ptt();
+        }
+      }
+    });
+
+    // Window Key Listeners for Keybind Recording & In-Window PTT Trigger
+    window.addEventListener("keydown", (e) => {
+      if (this.isRecordingKeybind) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handleRecordedKey(e);
+        return;
+      }
+      // If PTT mode is active and user presses keybind while window is focused
+      if (this.currentConfig?.audio?.mode === "ptt" && !this.isRecordingKeybind) {
+        const activeTag = document.activeElement ? document.activeElement.tagName : "";
+        const isTyping = (activeTag === "INPUT" || activeTag === "TEXTAREA");
+        // Only suppress if typing in an input and no modifiers are required
+        if (isTyping && (!this.pttModifiers || this.pttModifiers.length === 0)) {
+          return;
+        }
+        if (this.matchesPttKey(e)) {
+          e.preventDefault();
+          if (this.pttType === "hold") {
+            if (!this.isPttActive && window.pywebview?.api?.set_ptt) {
+              window.pywebview.api.set_ptt(true);
+            }
+          } else if (this.pttType === "toggle") {
+            if (!e.repeat && window.pywebview?.api?.toggle_ptt) {
+              window.pywebview.api.toggle_ptt();
+            }
+          }
+        }
+      }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      if (this.isRecordingKeybind) return;
+      if (this.currentConfig?.audio?.mode === "ptt" && this.pttType === "hold") {
+        if (this.matchesPttKey(e)) {
+          if (window.pywebview?.api?.set_ptt) {
+            window.pywebview.api.set_ptt(false);
+          }
+        }
+      }
+    });
+
+    // Notify backend when text inputs gain/lose focus to suppress single-key global hotkeys while typing
+    document.addEventListener("focusin", (e) => {
+      const tag = e.target ? e.target.tagName : "";
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        if (window.pywebview?.api?.set_input_focused) {
+          window.pywebview.api.set_input_focused(true);
+        }
+      }
+    });
+    document.addEventListener("focusout", (e) => {
+      const tag = e.target ? e.target.tagName : "";
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        if (window.pywebview?.api?.set_input_focused) {
+          window.pywebview.api.set_input_focused(false);
+        }
+      }
+    });
 
     // Voice Biometrics Toggle & Sensitivity Slider
     const bioCheck = document.getElementById("voiceBiometricsCheck");
@@ -316,12 +433,104 @@ window.aetherUI = {
 
   updateAudioModeUI: function(mode) {
     const pttBtn = document.getElementById("pttButton");
+    const pttGroup = document.getElementById("pttSettingsGroup");
     document.getElementById("telAudioMode").innerText = mode === "ptt" ? "PUSH-TO-TALK" : "ALWAYS-ON";
     if (mode === "ptt") {
-      pttBtn.style.display = "block";
+      if (pttBtn) pttBtn.style.display = "block";
+      if (pttGroup) pttGroup.style.display = "block";
     } else {
-      pttBtn.style.display = "none";
+      if (pttBtn) pttBtn.style.display = "none";
+      if (pttGroup) pttGroup.style.display = "none";
     }
+    this.updatePttButtonUI();
+  },
+
+  updatePttButtonUI: function() {
+    const pttBtn = document.getElementById("pttButton");
+    const label = document.getElementById("pttButtonLabel") || pttBtn?.querySelector("span");
+    if (!pttBtn || !label) return;
+
+    const keyText = (this.pttKeyDisplay || "SPACE").toUpperCase();
+    if (this.pttType === "hold") {
+      if (this.isPttActive) {
+        label.innerText = `🎙️ TRANSMITTING (HOLD [${keyText}])`;
+        pttBtn.classList.add("active");
+      } else {
+        label.innerText = `🎙️ HOLD [${keyText}] TO SPEAK`;
+        pttBtn.classList.remove("active");
+      }
+    } else if (this.pttType === "toggle") {
+      if (this.isPttActive) {
+        label.innerText = `🎙️ MIC LIVE (PRESS [${keyText}] TO MUTE)`;
+        pttBtn.classList.add("active");
+      } else {
+        label.innerText = `🎙️ MIC MUTED (PRESS [${keyText}] TO SPEAK)`;
+        pttBtn.classList.remove("active");
+      }
+    }
+  },
+
+  startKeybindRecording: function() {
+    this.isRecordingKeybind = true;
+    const btn = document.getElementById("pttKeybindBtn");
+    const display = document.getElementById("pttKeybindDisplay");
+    if (btn) btn.classList.add("recording");
+    if (display) display.innerText = "PRESS ANY KEY...";
+  },
+
+  stopKeybindRecording: function() {
+    this.isRecordingKeybind = false;
+    const btn = document.getElementById("pttKeybindBtn");
+    const display = document.getElementById("pttKeybindDisplay");
+    if (btn) btn.classList.remove("recording");
+    if (display) display.innerText = this.pttKeyDisplay || "Space";
+  },
+
+  handleRecordedKey: function(e) {
+    // Ignore lone modifier presses while waiting for the key
+    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+      return;
+    }
+
+    const mods = [];
+    if (e.ctrlKey) mods.push("Control");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+
+    let keyName = e.code || e.key;
+    if (keyName.startsWith("Key")) keyName = keyName.substring(3);
+    if (keyName.startsWith("Digit")) keyName = keyName.substring(5);
+
+    let displayKey = keyName;
+    if (keyName === "Space") displayKey = "Space";
+    else if (keyName === "Backquote") displayKey = "~";
+    else if (keyName === "Escape") displayKey = "Esc";
+
+    const displayParts = [];
+    if (e.ctrlKey) displayParts.push("Ctrl");
+    if (e.altKey) displayParts.push("Alt");
+    if (e.shiftKey) displayParts.push("Shift");
+    displayParts.push(displayKey.toUpperCase());
+
+    this.pttKey = keyName;
+    this.pttKeyDisplay = displayParts.join(" + ");
+    this.pttVk = e.keyCode || 32;
+    this.pttModifiers = mods;
+
+    this.stopKeybindRecording();
+    this.updatePttButtonUI();
+    this.saveSettings(true);
+    this.log(`PTT Keybind set to: ${this.pttKeyDisplay}`);
+  },
+
+  matchesPttKey: function(e) {
+    if (this.pttVk && e.keyCode === this.pttVk) {
+      const reqCtrl = this.pttModifiers.includes("Control");
+      const reqAlt = this.pttModifiers.includes("Alt");
+      const reqShift = this.pttModifiers.includes("Shift");
+      return e.ctrlKey === reqCtrl && e.altKey === reqAlt && e.shiftKey === reqShift;
+    }
+    return false;
   },
 
   // =========================================================================
@@ -484,8 +693,21 @@ window.aetherUI = {
       if (audio.mode) {
         const radio = document.querySelector(`input[name='audioMode'][value='${audio.mode}']`);
         if (radio) radio.checked = true;
-        this.updateAudioModeUI(audio.mode);
       }
+      if (audio.ptt_type) {
+        this.pttType = audio.ptt_type;
+        const pttRadio = document.querySelector(`input[name='pttType'][value='${audio.ptt_type}']`);
+        if (pttRadio) pttRadio.checked = true;
+      }
+      if (audio.ptt_key) this.pttKey = audio.ptt_key;
+      if (audio.ptt_key_display) {
+        this.pttKeyDisplay = audio.ptt_key_display;
+        const disp = document.getElementById("pttKeybindDisplay");
+        if (disp) disp.innerText = audio.ptt_key_display;
+      }
+      if (audio.ptt_vk !== undefined) this.pttVk = audio.ptt_vk;
+      if (audio.ptt_modifiers) this.pttModifiers = audio.ptt_modifiers;
+      this.updateAudioModeUI(audio.mode || "always_on");
       if (audio.safe_phrase) {
         document.getElementById("safePhraseInput").value = audio.safe_phrase;
         document.getElementById("telSafePhrase").innerText = `"${audio.safe_phrase}"`;
@@ -652,6 +874,11 @@ window.aetherUI = {
             threshold: parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.40")
           },
           mode: mode,
+          ptt_type: document.querySelector("input[name='pttType']:checked")?.value || this.pttType || "hold",
+          ptt_key: this.pttKey || "Space",
+          ptt_key_display: this.pttKeyDisplay || "Space",
+          ptt_vk: this.pttVk || 32,
+          ptt_modifiers: this.pttModifiers || [],
           safe_phrase: killPhrase,
           software_gate: document.getElementById("softwareGateCheck").checked,
           input_device_index: parseInt(inSel.value, 10),
@@ -825,6 +1052,9 @@ window.aetherUI = {
       this.updateTelemetryMetrics(data);
     } else if (type === "voice_profile_updated") {
       this.updateVoiceProfileUI(data);
+    } else if (type === "mic_status") {
+      this.isPttActive = !!data.ptt_active;
+      this.updatePttButtonUI();
     }
   },
 
