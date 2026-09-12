@@ -45,16 +45,26 @@ class AudioPipeline:
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
 
         # Voice Activity Detection (VAD) state for utterance segmentation
-        # Dual-threshold hysteresis prevents clipping quiet word endings and soft syllables
+        # Adaptive noise floor tracking prevents getting trapped by PC/room noise
         self._speech_frames = []
         self._preroll_frames = []
         self._silence_count = 0
         self._is_in_speech = False
-        self._vad_onset_threshold = 0.010    # RMS threshold to trigger speech onset
-        self._vad_hangover_threshold = 0.005 # Lower RMS threshold to maintain speech
-        self._silence_limit = 28             # ~1.2s of sub-hangover silence before finalizing (~42ms per block at 48kHz)
-        self._preroll_limit = 8              # ~340ms pre-speech audio retained
-        self._postroll_padding = 6           # ~250ms post-speech audio retained
+        self._noise_floor = 0.010            # Dynamically tracked ambient background RMS
+        self._vad_onset_threshold = 0.028    # RMS threshold to trigger speech onset (adaptive near-field)
+        self._vad_hangover_threshold = 0.016 # Lower RMS threshold to maintain speech (adaptive)
+        self._silence_limit = 18             # ~900ms of sub-hangover silence before finalizing (18 blocks at ~50ms/block)
+        self._preroll_limit = 8              # ~400ms pre-speech audio retained
+        self._postroll_padding = 5           # ~250ms post-speech audio retained
+        self._max_speech_frames = 200        # ~10 seconds maximum utterance guard to prevent endless accumulation
+
+        # Digital 85Hz high-pass filter state (attenuates AC rumble, fan hum, and desk vibrations)
+        self._hp_alpha = 0.9677
+        self._hp_prev_x = 0.0
+        self._hp_prev_y = 0.0
+
+        # Near-field speaker dominance tracking (ensures loud speaker is separated from room noise)
+        self._utterance_peak_rms = 0.0
 
     def set_ptt(self, active: bool):
         was_active = self.ptt_active
@@ -109,10 +119,36 @@ class AudioPipeline:
         else:
             resampled = mono
 
+        # Apply 85Hz digital high-pass filter (strips AC rumble, fan hum, and desk contact noise)
+        filtered = np.empty_like(resampled)
+        prev_x = self._hp_prev_x
+        prev_y = self._hp_prev_y
+        alpha = self._hp_alpha
+        for i in range(len(resampled)):
+            curr_x = resampled[i]
+            curr_y = alpha * (prev_y + curr_x - prev_x)
+            filtered[i] = curr_y
+            prev_x = curr_x
+            prev_y = curr_y
+        self._hp_prev_x = prev_x
+        self._hp_prev_y = prev_y
+        resampled = filtered
+
+        # Recalculate RMS from the filtered speech signal
+        rms = float(np.sqrt(np.mean(resampled**2)))
+        self.current_mic_level = min(1.0, rms * 8.0)
+
         pcm16 = (np.clip(resampled, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
         
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.input_queue.put_nowait, pcm16)
+
+        # Adaptive noise floor tracking (exponential moving average over non-speech)
+        if not self._is_in_speech:
+            self._noise_floor = 0.95 * self._noise_floor + 0.05 * min(0.05, rms)
+            # Near-field speaker dominance: adapt thresholds well above ambient room noise
+            self._vad_onset_threshold = max(0.028, self._noise_floor * 2.2 + 0.008)
+            self._vad_hangover_threshold = max(0.016, self._noise_floor * 1.35 + 0.004)
 
         # Dual-threshold hysteresis VAD & Utterance Segmentation for Modular Pipeline
         if self._is_in_speech:
@@ -124,6 +160,7 @@ class AudioPipeline:
             if not self._is_in_speech:
                 self._is_in_speech = True
                 self._speech_frames = list(self._preroll_frames)
+                self._utterance_peak_rms = rms
                 if self.on_speech_state:
                     try:
                         self.on_speech_state("speech_detected")
@@ -131,11 +168,19 @@ class AudioPipeline:
                         pass
             self._speech_frames.append(pcm16)
             self._silence_count = 0
+            if rms > self._utterance_peak_rms:
+                self._utterance_peak_rms = rms
+
+            # Failsafe: if continuous speech exceeds ~10s, finalize immediately to avoid hanging
+            if len(self._speech_frames) >= self._max_speech_frames:
+                self._finalize_utterance()
         else:
             if self._is_in_speech:
                 self._speech_frames.append(pcm16)
                 self._silence_count += 1
-                if self._silence_count >= self._silence_limit:
+                # Snappy barge-in / kill phrase: finalize faster (~400ms vs ~900ms) when assistant is speaking
+                active_limit = 8 if (self.is_speaking and not self.software_gate) else self._silence_limit
+                if self._silence_count >= active_limit:
                     self._finalize_utterance()
             else:
                 self._preroll_frames.append(pcm16)
@@ -146,6 +191,20 @@ class AudioPipeline:
         if not self._speech_frames:
             self._is_in_speech = False
             self._silence_count = 0
+            self._utterance_peak_rms = 0.0
+            return
+
+        # Speaker Dominance Check: require near-field speech loudness or clear SNR above ambient floor
+        snr = self._utterance_peak_rms / max(0.005, self._noise_floor)
+        if self._utterance_peak_rms < 0.030 and snr < 2.0:
+            logger.debug(
+                f"[VAD GATE] Discarded ambient noise utterance "
+                f"(Peak: {self._utterance_peak_rms:.4f}, Noise: {self._noise_floor:.4f}, SNR: {snr:.1f}x)"
+            )
+            self._speech_frames = []
+            self._is_in_speech = False
+            self._silence_count = 0
+            self._utterance_peak_rms = 0.0
             return
 
         # Keep only up to _postroll_padding frames of silence at the end of utterance
@@ -203,6 +262,10 @@ class AudioPipeline:
         if raw_chunk:
             samples_24k = np.frombuffer(raw_chunk, dtype=np.int16).astype(np.float32) / 32767.0
 
+            # Duck audio volume to 25% (-12dB) if user is actively speaking in earbud/barge-in mode
+            if self._is_in_speech and not self.software_gate:
+                samples_24k = samples_24k * 0.25
+
             if self.hw_out_rate != self.target_output_rate:
                 target_frames = int(round(len(samples_24k) * self.hw_out_rate / self.target_output_rate))
                 if target_frames > 0:
@@ -232,9 +295,17 @@ class AudioPipeline:
             self.output_buffer.clear()
             self.is_speaking = False
 
+    def reset_vad(self):
+        """Resets VAD tracking state to clean listening."""
+        self._speech_frames = []
+        self._is_in_speech = False
+        self._silence_count = 0
+        self._utterance_peak_rms = 0.0
+
     def kill_output(self):
         """Immediately halts speech playback and purges all buffered output."""
         self.clear_output_buffer()
+        self.reset_vad()
 
     def write_output_chunk(self, data: bytes):
         with self.buffer_lock:

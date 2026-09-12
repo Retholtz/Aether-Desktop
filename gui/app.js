@@ -251,7 +251,7 @@ window.aetherUI = {
     const bioCheck = document.getElementById("voiceBiometricsCheck");
     if (bioCheck) {
       bioCheck.addEventListener("change", async (e) => {
-        const threshold = parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.45");
+        const threshold = parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.40");
         if (window.pywebview && window.pywebview.api && window.pywebview.api.save_voice_biometrics_settings) {
           await window.pywebview.api.save_voice_biometrics_settings(e.target.checked, threshold);
           this.log(`Target speaker filter ${e.target.checked ? "ENABLED" : "DISABLED"} (Threshold: ${threshold})`);
@@ -637,7 +637,7 @@ window.aetherUI = {
           preferred_language: document.getElementById("preferredLanguageSelect")?.value || "en-US",
           voice_biometrics: {
             enabled: document.getElementById("voiceBiometricsCheck")?.checked || false,
-            threshold: parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.45")
+            threshold: parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.40")
           },
           mode: mode,
           safe_phrase: killPhrase,
@@ -1218,7 +1218,7 @@ window.aetherUI = {
         // If 3 samples collected, finalize voiceprint!
         if (res.sample_count >= 3) {
           if (feedbackText) feedbackText.innerText = "Synthesizing centroid voiceprint and verifying...";
-          const threshold = parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.45");
+          const threshold = parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.40");
           const finRes = await window.pywebview.api.finalize_voice_profile(threshold, true);
           if (finRes && finRes.success) {
             this.log("Voiceprint enrollment finalized and saved to profile/user_voiceprint.npy");

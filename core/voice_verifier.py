@@ -115,8 +115,11 @@ class VoiceProfileVerifier:
             frame_rms = np.sqrt(np.mean(frames**2, axis=1))
             max_rms = float(np.max(frame_rms))
 
-            # Speech threshold is 8% of peak frame energy or floor 0.002
-            speech_thresh = max(0.002, 0.08 * max_rms)
+            # Estimate ambient background noise floor from quiet frames (25th percentile)
+            ambient_floor = float(np.percentile(frame_rms, 25))
+
+            # Speech threshold: must be clearly above ambient room noise floor AND at least 12% of peak vocal energy
+            speech_thresh = max(ambient_floor * 1.5, 0.12 * max_rms, 0.008)
             speech_frames = np.where(frame_rms >= speech_thresh)[0]
 
             if len(speech_frames) > 0:
@@ -228,7 +231,7 @@ class VoiceProfileVerifier:
             logger.error(f"[VOICE VERIFIER] Failed to finalize profile: {e}")
             return {"success": False, "error": str(e)}
 
-    def verify(self, wav_bytes: bytes, threshold: float = 0.45) -> Tuple[bool, float]:
+    def verify(self, wav_bytes: bytes, threshold: float = 0.40) -> Tuple[bool, float]:
         """
         Verifies if the audio belongs to the enrolled user.
         Returns: (is_match: bool, similarity_score: float)

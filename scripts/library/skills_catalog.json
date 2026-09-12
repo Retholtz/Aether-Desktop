@@ -25,5 +25,59 @@
       "right_app": "Application name to position on the right (e.g. 'chrome')"
     },
     "file": "tile_windows.py"
+  },
+  "tile_all_active_windows": {
+    "description": "Detects all open, visible non-minimized application windows on the primary display and tiles them evenly side by side across the desktop work area.",
+    "parameters": {},
+    "file": "tile_all_active_windows.py"
+  },
+  "set_formatted_html_to_clipboard": {
+    "description": "Set formatted HTML to clipboard and send Ctrl+V via ctypes",
+    "parameters": {},
+    "file": "set_formatted_html_to_clipboard.py",
+    "created_at": "2026-09-11T20:41:14.535391",
+    "updated_at": "2026-09-11T20:41:14.535391"
+  },
+  "download_rhino_srv_image_and": {
+    "description": "Download Rhino SRV image and paste into Google Doc via clipboard DIB",
+    "parameters": {},
+    "file": "download_rhino_srv_image_and.py",
+    "created_at": "2026-09-11T20:46:35.408905",
+    "updated_at": "2026-09-11T20:46:35.408905"
+  },
+  "insert_dss_heatmap_heading_and": {
+    "description": "Insert DSS heatmap heading and image into Google Doc",
+    "parameters": {},
+    "file": "insert_dss_heatmap_heading_and.py",
+    "created_at": "2026-09-11T20:47:21.073500",
+    "updated_at": "2026-09-11T20:47:21.073500"
+  },
+  "test_fetching_actual_surface_mining": {
+    "description": "Test fetching actual surface mining and rig images",
+    "parameters": {},
+    "file": "test_fetching_actual_surface_mining.py",
+    "created_at": "2026-09-11T20:49:16.753352",
+    "updated_at": "2026-09-11T20:49:16.753352"
+  },
+  "update_google_doc_with_accurate": {
+    "description": "Update Google Doc with accurate surface mining details, images, and new DSS site info",
+    "parameters": {},
+    "file": "update_google_doc_with_accurate.py",
+    "created_at": "2026-09-11T20:50:16.190496",
+    "updated_at": "2026-09-11T20:50:16.190496"
+  },
+  "inspect_youtube_thumbnails_for_surface": {
+    "description": "Inspect YouTube thumbnails for surface scanning and hotspot details",
+    "parameters": {},
+    "file": "inspect_youtube_thumbnails_for_surface.py",
+    "created_at": "2026-09-11T20:50:51.622345",
+    "updated_at": "2026-09-11T20:50:51.622345"
+  },
+  "append_yellow_hotspots_and_purple": {
+    "description": "Append Yellow Hotspots and Purple Scanner Seams section and image",
+    "parameters": {},
+    "file": "append_yellow_hotspots_and_purple.py",
+    "created_at": "2026-09-11T20:52:34.372361",
+    "updated_at": "2026-09-11T20:52:34.372361"
   }
 }

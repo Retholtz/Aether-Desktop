@@ -14,6 +14,7 @@ init_dpi_awareness()
 ensure_thread_desktop()
 
 from core.gui_bridge import GuiBridge
+from tools.script_runner import prune_script_cache
 from ui.hud_window import HudWindow
 
 
@@ -28,6 +29,9 @@ def main():
     print("=" * 60)
     print("           AETHER DESKTOP - MODULAR ARCHITECTURE")
     print("=" * 60)
+
+    # 0. Fire-and-forget background cache maintenance (prunes scripts > 7 days old)
+    threading.Thread(target=prune_script_cache, kwargs={"max_age_days": 7}, daemon=True).start()
 
     # 1. Create a dedicated asyncio event loop on a background worker thread
     loop = asyncio.new_event_loop()

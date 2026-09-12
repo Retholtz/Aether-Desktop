@@ -16,6 +16,8 @@ ensure_thread_desktop()
 from core.audio_stream import AudioPipeline, resolve_valid_audio_devices
 from core.logger import get_logger
 from core.voice_verifier import VoiceProfileVerifier
+from core.optimizer import ScriptOptimizer
+from core.telemetry_db import TelemetryDB
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 
@@ -124,6 +126,8 @@ class AetherEngine:
         self.current_user_speech = ""
         self.is_tool_executing = False
         self._reset_context_flag = False
+        self._kill_playback_flag = False
+        self._playback_cancel_event = asyncio.Event()
 
         # Screen capture pipeline
         self.screen_pipeline = ScreenCapturePipeline()
@@ -140,6 +144,98 @@ class AetherEngine:
         # Target Speaker Verification (CAM++ Offline Biometrics)
         self.voice_verifier = VoiceProfileVerifier()
 
+        # Telemetry & Asynchronous Self-Optimization (Reflexion Engine)
+        self.telemetry_db = TelemetryDB()
+        if hasattr(self.dispatcher, "script_runner") and self.dispatcher.script_runner:
+            self.dispatcher.script_runner.telemetry_db = self.telemetry_db
+        self.last_user_turn_time = time.perf_counter()
+        self.genai_client: Optional[genai.Client] = None
+        self.optimizer = ScriptOptimizer(
+            telemetry_db=self.telemetry_db,
+            client_getter=lambda: self.genai_client,
+            model_id=self.config_getter().get("api", {}).get("model_id", "gemini-3.8-flash"),
+            is_idle_callback=self._is_engine_idle,
+            on_optimized=self._on_script_optimized,
+            skill_library=self.dispatcher.skill_library
+        )
+        self._optimizer_task: Optional[asyncio.Task] = None
+
+    def _is_engine_idle(self) -> bool:
+        """
+        Trigger Conditions: Run only when the audio pipeline is idle
+        (not audio.is_speaking and no active user turns for > 15 seconds, and no active tool execution).
+        """
+        if not self.is_running:
+            return False
+        if self.audio and self.audio.is_speaking:
+            return False
+        if self.is_tool_executing:
+            return False
+        if not self._text_queue.empty():
+            return False
+        idle_duration = time.perf_counter() - self.last_user_turn_time
+        return idle_duration >= 15.0
+
+    def _on_script_optimized(self, event_data: dict):
+        """Notifies UI of background script self-optimization."""
+        desc = event_data.get("intent_description", "Script")
+        dur = event_data.get("duration_ms", 0.0)
+        logger.info(f"[REFLEXION] Background optimization completed: '{desc}' ({dur:.0f}ms)")
+        self.notify("chat_event", {
+            "type": "tool",
+            "name": "Reflexion Self-Optimization",
+            "content": f"✨ [OPTIMIZATION] Self-refined script for '{desc}' ({dur:.0f}ms)."
+        })
+
+    def _is_kill_command(self, text: str, kill_phrase: str = "", agent_name: str = "") -> bool:
+        """
+        Determines whether the provided text is an intentional stop/kill command.
+        Matches:
+        - Configured safe/kill phrase (e.g. "Aether stop")
+        - Natural stop commands: "stop", "halt", "cancel", "shut up", "be quiet", "quiet", "silence", "stop talking", "stop speaking", "stop it"
+        - Prefix / suffix variants with agent name (e.g. "Aether stop", "Stop Aether")
+        - Natural polite/urgency decorators (e.g. "please stop", "stop please", "stop now", "aether please stop")
+        """
+        if not text:
+            return False
+        clean = "".join(c for c in text.lower() if c.isalnum() or c.isspace()).strip()
+        if not clean:
+            return False
+
+        # Configured kill phrase
+        if kill_phrase:
+            clean_kp = "".join(c for c in kill_phrase.lower() if c.isalnum() or c.isspace()).strip()
+            if clean_kp and (clean == clean_kp or clean_kp in clean):
+                return True
+
+        # Common core stop commands
+        core_stops = {
+            "stop", "halt", "cancel", "shut up", "be quiet", "quiet", "silence",
+            "stop talking", "stop speaking", "stop it"
+        }
+
+        # Check raw clean match
+        if clean in core_stops:
+            return True
+
+        # Strip polite / urgency decorators ("please", "now", "kindly", "hey", "just")
+        filler = {"please", "now", "kindly", "hey", "just", "can", "you"}
+        words = clean.split()
+        stripped_words = [w for w in words if w not in filler]
+        stripped = " ".join(stripped_words)
+        if stripped in core_stops:
+            return True
+
+        # Check with agent name removed or prefixed/suffixed
+        if agent_name:
+            name_clean = "".join(c for c in agent_name.lower() if c.isalnum()).strip()
+            if name_clean:
+                without_name = " ".join([w for w in stripped_words if w != name_clean])
+                if without_name in core_stops:
+                    return True
+
+        return False
+
     def reset_chat_context(self):
         """Signals the active pipeline loop to reset chat session state / memory."""
         self._reset_context_flag = True
@@ -148,7 +244,6 @@ class AetherEngine:
             "type": "system",
             "content": "✨ AI conversation context reset. Starting fresh task."
         })
-
 
     def _get_whitelist(self) -> list:
         cfg = self.config_getter()
@@ -179,10 +274,13 @@ class AetherEngine:
                 logger.error(f"[ENGINE EVENT ERROR] {e}")
 
     def kill_audio(self):
-        """Immediately halts audio playback and drains all output buffers."""
+        """Immediately halts audio playback, cancels in-flight synthesis, and purges all output buffers."""
+        self._kill_playback_flag = True
+        if hasattr(self, "_playback_cancel_event") and self._playback_cancel_event:
+            self._playback_cancel_event.set()
         if self.audio:
             self.audio.kill_output()
-        self.notify("status", {"state": "speaking_interrupted", "message": "Playback killed."})
+        self.notify("status", {"state": "listening", "message": "Playback killed."})
         self.notify("chat_event", {
             "type": "system",
             "content": "Playback halted by Voice Playback Kill Phrase."
@@ -205,6 +303,7 @@ class AetherEngine:
         """Queues a typed message to be sent into the active Gemini Live session."""
         if not text.strip():
             return
+        self.last_user_turn_time = time.perf_counter()
         await self._text_queue.put(text.strip())
         self.notify("chat_event", {
             "type": "user",
@@ -339,8 +438,8 @@ class AetherEngine:
                         })
 
                         # Check Voice Playback Kill Phrase
-                        if kill_phrase and kill_phrase.lower() in clean_user_speech.lower():
-                            print(f"\n[KILL PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio!")
+                        if self._is_kill_command(clean_user_speech, kill_phrase, agent_name):
+                            logger.info(f"[KILL PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio!")
                             self.kill_audio()
 
                     # 2. Model Audio Generation
@@ -424,6 +523,7 @@ class AetherEngine:
                         if self.audio:
                             self.audio.clear_output_buffer()
                         if self.is_running:
+                            self.last_user_turn_time = time.perf_counter()
                             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
                 # Avoid busy-loop if session closes
@@ -475,8 +575,7 @@ class AetherEngine:
         temperature = float(api_cfg.get("temperature", 1.0))
 
         # System instructions with strict identity directive and [Agent Name] template support
-        raw_instruction = api_cfg.get(
-            "system_instruction",
+        raw_instruction = api_cfg.get("system_instruction") or (
             "You are [Agent Name], a fast, knowledgeable desktop voice assistant. "
             "You have Google Search available to check real-time facts, weather, news, and details. "
             "When asked for live information, search the web and answer conversationally and concisely. "
@@ -645,7 +744,12 @@ class AetherEngine:
         preferred_language = audio_cfg.get("preferred_language", "en-US")
 
         client = genai.Client(api_key=api_key)
+        self.genai_client = client
         self.dispatcher.genai_client = client
+
+        # Launch background Reflexion self-optimization worker
+        if self._optimizer_task is None or self._optimizer_task.done():
+            self._optimizer_task = asyncio.create_task(self.optimizer.run_loop())
 
         self.notify("status", {
             "state": "connected",
@@ -709,6 +813,8 @@ class AetherEngine:
                     user_prompt = text_task.result().strip()
                     source = "text"
                     t_turn_start = time.perf_counter()
+                    if self.audio:
+                        self.audio.reset_vad()
                 elif audio_task in done:
                     wav_bytes = audio_task.result()
                     if not wav_bytes or len(wav_bytes) < 1000:
@@ -718,7 +824,7 @@ class AetherEngine:
                     live_audio_cfg = self.config_getter().get("audio", {})
                     live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
                     if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
-                        thresh = float(live_bio_cfg.get("threshold", 0.45))
+                        thresh = float(live_bio_cfg.get("threshold", 0.40))
                         is_user, score = self.voice_verifier.verify(wav_bytes, threshold=thresh)
                         if not is_user:
                             logger.info(f"[VOICE GATE] Utterance discarded: non-user voice (score: {score:.3f} < {thresh:.2f})")
@@ -831,9 +937,15 @@ class AetherEngine:
                 turn_counter += 1
                 logger.info(f"[TURN START #{turn_counter}] Prompt ({source}): {user_prompt}")
 
-                # Check kill phrase
-                if kill_phrase and kill_phrase.lower() in user_prompt.lower():
+                # Check kill phrase: immediately halt and do not send to Cortex
+                if self._is_kill_command(user_prompt, kill_phrase, agent_name):
+                    logger.info(f"[KILL PHRASE] Standalone kill phrase received: '{user_prompt}'. Halting audio.")
                     self.kill_audio()
+                    if self.audio:
+                        self.audio.clear_output_buffer()
+                        self.audio.reset_vad()
+                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                    continue
 
                 # Emit user speech to chat if from voice (text is already emitted in send_text)
                 if source == "voice":
@@ -856,22 +968,24 @@ class AetherEngine:
                     self.is_tool_executing = False
 
                 # Handle Search Grounding queries if present
-                if response.candidates and getattr(response.candidates[0], "grounding_metadata", None):
-                    queries = getattr(response.candidates[0], "grounding_metadata", "web_search_queries", None)
-                    if queries:
-                        for q in queries:
-                            logger.info(f"[SEARCH GROUNDING] Query: {q}")
-                            self.notify("chat_event", {
-                                "type": "tool",
-                                "name": "Google Search",
-                                "content": f"Searching: {q}"
-                            })
-                            self.notify("status", {
-                                "state": "executing",
-                                "message": f"Searching Google: {q}...",
-                                "action": "Google Search",
-                                "user_prompt": user_prompt
-                            })
+                if response.candidates:
+                    grounding = getattr(response.candidates[0], "grounding_metadata", None)
+                    if grounding:
+                        queries = getattr(grounding, "web_search_queries", None)
+                        if queries:
+                            for q in queries:
+                                logger.info(f"[SEARCH GROUNDING] Query: {q}")
+                                self.notify("chat_event", {
+                                    "type": "tool",
+                                    "name": "Google Search",
+                                    "content": f"Searching: {q}"
+                                })
+                                self.notify("status", {
+                                    "state": "executing",
+                                    "message": f"Searching Google: {q}...",
+                                    "action": "Google Search",
+                                    "user_prompt": user_prompt
+                                })
 
                 # 3. Handle Tool Calls / Dynamic Scripts Execution Loop
                 loop_count = 0
@@ -966,13 +1080,76 @@ class AetherEngine:
 
                 assistant_text = assistant_text.strip()
                 if assistant_text:
+                    # Check if user said kill phrase or typed text while Cortex was thinking/tool-executing
+                    halt_turn = False
+                    if not self._text_queue.empty():
+                        queued_input = self._text_queue.get_nowait().strip()
+                        if self._is_kill_command(queued_input, kill_phrase, agent_name):
+                            logger.info(f"[KILL PHRASE] Received kill phrase while thinking: '{queued_input}' -> Aborting speech.")
+                            self.kill_audio()
+                            halt_turn = True
+                        else:
+                            # Re-insert into queue for next turn
+                            await self._text_queue.put(queued_input)
+
+                    if not halt_turn and self.audio and not self.audio.utterance_queue.empty():
+                        queued_wav = self.audio.utterance_queue.get_nowait()
+                        if queued_wav and len(queued_wav) >= 1000:
+                            live_audio_cfg = self.config_getter().get("audio", {})
+                            live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
+                            is_auth = True
+                            if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
+                                thresh = float(live_bio_cfg.get("threshold", 0.40))
+                                is_auth, _ = self.voice_verifier.verify(queued_wav, threshold=thresh)
+                            if is_auth:
+                                try:
+                                    q_resp = await asyncio.to_thread(
+                                        client.models.generate_content,
+                                        model=stt_model,
+                                        contents=[
+                                            types.Part.from_bytes(data=queued_wav, mime_type="audio/wav"),
+                                            stt_prompt
+                                        ],
+                                        config=types.GenerateContentConfig(temperature=0.0)
+                                    )
+                                    q_text = ""
+                                    if q_resp.candidates and q_resp.candidates[0].content and q_resp.candidates[0].content.parts:
+                                        for p in q_resp.candidates[0].content.parts:
+                                            if getattr(p, "audio_transcription", None) and getattr(p.audio_transcription, "text", None):
+                                                q_text += p.audio_transcription.text
+                                            elif getattr(p, "text", None):
+                                                q_text += p.text
+                                    q_text = q_text.strip()
+                                    if q_text:
+                                        if self._is_kill_command(q_text, kill_phrase, agent_name):
+                                            logger.info(f"[KILL PHRASE] Interrupted during thinking by voice: '{q_text}'")
+                                            self.kill_audio()
+                                            halt_turn = True
+                                        else:
+                                            logger.info(f"[BARGE-IN] Queued voice prompt received during thinking: '{q_text}'")
+                                            self.notify("chat_event", {"type": "user", "content": q_text, "source": "voice"})
+                                            await self._text_queue.put(q_text)
+                                            halt_turn = True
+                                except Exception as q_err:
+                                    logger.warning(f"[QUEUED TRANSCRIPTION ERROR] {q_err}")
+
+                    if halt_turn:
+                        if self.audio:
+                            self.audio.clear_output_buffer()
+                            self.audio.reset_vad()
+                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        continue
+
                     self.notify("chat_event", {
                         "type": "assistant",
                         "agent_name": agent_name,
                         "content": assistant_text
                     })
 
-                    # 5. Synthesize & Stream Speech (Gemini Live WebSocket / Edge TTS / SAPI)
+                    # 5. Synthesize & Stream Speech with Concurrent Interruption Monitoring
+                    self._kill_playback_flag = False
+                    stop_playback_event = asyncio.Event()
+
                     self.notify("status", {
                         "state": "speaking",
                         "message": f"{agent_name} is speaking...",
@@ -980,34 +1157,135 @@ class AetherEngine:
                     })
                     t_tts_0 = time.perf_counter()
                     first_audio_ms = None
+                    barge_in_prompt = None
+
+                    def _on_pcm_chunk(chunk: bytes):
+                        nonlocal first_audio_ms
+                        if self._kill_playback_flag or stop_playback_event.is_set():
+                            return
+                        if chunk and self.audio and self.is_running:
+                            if first_audio_ms is None:
+                                first_audio_ms = (time.perf_counter() - t_tts_0) * 1000
+                            self.audio.write_output_chunk(chunk)
+
+                    async def _run_playback():
+                        try:
+                            await self._stream_synthesize_speech(
+                                text=assistant_text,
+                                tts_engine=tts_model,
+                                voice_name=voice_name,
+                                client=client,
+                                on_pcm_chunk=_on_pcm_chunk,
+                                stop_event=stop_playback_event
+                            )
+                            # Drain output buffer while listening for interruptions
+                            while self.audio and not self.audio.is_output_empty() and self.is_running:
+                                if self._kill_playback_flag or stop_playback_event.is_set():
+                                    break
+                                await asyncio.sleep(0.04)
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as p_err:
+                            logger.error(f"[TTS SYNTHESIS ERROR] {p_err}")
+
+                    playback_task = asyncio.create_task(_run_playback())
+
+                    # Concurrent Interruption Supervisor
+                    while not playback_task.done() and self.is_running and not stop_playback_event.is_set():
+                        # A. Check text queue (instant typed barge-in)
+                        if not self._text_queue.empty():
+                            typed_text = self._text_queue.get_nowait().strip()
+                            stop_playback_event.set()
+                            self.kill_audio()
+                            playback_task.cancel()
+                            if self._is_kill_command(typed_text, kill_phrase, agent_name):
+                                logger.info(f"[KILL PHRASE] Typed kill command during playback: '{typed_text}'")
+                            else:
+                                barge_in_prompt = typed_text
+                                logger.info(f"[TEXT BARGE-IN] Interrupted with new prompt: '{typed_text}'")
+                            break
+
+                        # B. Check voice utterance queue (voice kill phrase or voice barge-in)
+                        if self.audio and not self.audio.utterance_queue.empty():
+                            raw_wav = self.audio.utterance_queue.get_nowait()
+                            if raw_wav and len(raw_wav) >= 1000:
+                                live_audio_cfg = self.config_getter().get("audio", {})
+                                live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
+                                is_authorized = True
+                                if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
+                                    thresh = float(live_bio_cfg.get("threshold", 0.40))
+                                    is_user, score = self.voice_verifier.verify(raw_wav, threshold=thresh)
+                                    if not is_user:
+                                        logger.info(f"[VOICE GATE] Interruption discarded: non-user voice ({score:.3f} < {thresh:.2f})")
+                                        is_authorized = False
+
+                                if is_authorized:
+                                    try:
+                                        t_int_0 = time.perf_counter()
+                                        stt_resp = await asyncio.to_thread(
+                                            client.models.generate_content,
+                                            model=stt_model,
+                                            contents=[
+                                                types.Part.from_bytes(data=raw_wav, mime_type="audio/wav"),
+                                                stt_prompt
+                                            ],
+                                            config=types.GenerateContentConfig(temperature=0.0)
+                                        )
+                                        int_text = ""
+                                        if stt_resp.candidates and stt_resp.candidates[0].content and stt_resp.candidates[0].content.parts:
+                                            for p in stt_resp.candidates[0].content.parts:
+                                                if getattr(p, "audio_transcription", None) and getattr(p.audio_transcription, "text", None):
+                                                    int_text += p.audio_transcription.text
+                                                elif getattr(p, "text", None):
+                                                    int_text += p.text
+                                        int_text = int_text.strip()
+                                        int_ms = (time.perf_counter() - t_int_0) * 1000
+                                        logger.info(f"[INTERRUPTION STT] ({int_ms:.0f}ms): '{int_text}'")
+
+                                        if int_text:
+                                            if self._is_kill_command(int_text, kill_phrase, agent_name):
+                                                logger.info(f"[KILL PHRASE] Voice kill phrase detected during playback: '{int_text}' -> Halting audio!")
+                                                stop_playback_event.set()
+                                                self.kill_audio()
+                                                playback_task.cancel()
+                                                break
+                                            else:
+                                                logger.info(f"[VOICE BARGE-IN] Spoken command detected during playback: '{int_text}'")
+                                                self.notify("chat_event", {
+                                                    "type": "user",
+                                                    "content": int_text,
+                                                    "source": "voice"
+                                                })
+                                                stop_playback_event.set()
+                                                self.kill_audio()
+                                                playback_task.cancel()
+                                                barge_in_prompt = int_text
+                                                break
+                                    except Exception as int_err:
+                                        logger.warning(f"[INTERRUPTION STT ERROR] {int_err}")
+
+                        # C. Check if UI kill button set flag
+                        if self._kill_playback_flag:
+                            stop_playback_event.set()
+                            playback_task.cancel()
+                            break
+
+                        await asyncio.sleep(0.04)
+
                     try:
-                        def _on_pcm_chunk(chunk: bytes):
-                            nonlocal first_audio_ms
-                            if chunk and self.audio and self.is_running:
-                                if first_audio_ms is None:
-                                    first_audio_ms = (time.perf_counter() - t_tts_0) * 1000
-                                self.audio.write_output_chunk(chunk)
-
-                        await self._stream_synthesize_speech(
-                            text=assistant_text,
-                            tts_engine=tts_model,
-                            voice_name=voice_name,
-                            client=client,
-                            on_pcm_chunk=_on_pcm_chunk
-                        )
-                        tts_ms = (time.perf_counter() - t_tts_0) * 1000
-                        ttfb_str = f" | First sound: {first_audio_ms:.0f}ms" if first_audio_ms is not None else ""
-                        logger.info(f"[LATENCY] TTS ({tts_model}): {tts_ms:.1f}ms{ttfb_str}")
-
-                        # Drain output buffer while listening for interruptions
-                        while self.audio and not self.audio.is_output_empty() and self.is_running:
-                            if not self._text_queue.empty():
-                                self.kill_audio()
-                                break
-                            await asyncio.sleep(0.05)
+                        await playback_task
+                    except asyncio.CancelledError:
+                        pass
                     except Exception as tts_err:
-                        tts_ms = (time.perf_counter() - t_tts_0) * 1000
-                        logger.error(f"[TTS SYNTHESIS ERROR] ({tts_ms:.1f}ms) {tts_err}")
+                        logger.error(f"[TTS SYNTHESIS ERROR] {tts_err}")
+
+                    tts_ms = (time.perf_counter() - t_tts_0) * 1000
+                    ttfb_str = f" | First sound: {first_audio_ms:.0f}ms" if first_audio_ms is not None else ""
+                    logger.info(f"[LATENCY] TTS ({tts_model}): {tts_ms:.1f}ms{ttfb_str}")
+
+                    # If barge-in captured a new prompt, queue it so the next turn starts immediately
+                    if barge_in_prompt:
+                        await self._text_queue.put(barge_in_prompt)
 
                 # Calculate total end-to-end turnaround latency
                 total_turn_ms = (time.perf_counter() - t_turn_start) * 1000
@@ -1027,7 +1305,9 @@ class AetherEngine:
 
                 if self.audio:
                     self.audio.clear_output_buffer()
+                    self.audio.reset_vad()
                 if self.is_running:
+                    self.last_user_turn_time = time.perf_counter()
                     self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
             except asyncio.CancelledError:
@@ -1056,7 +1336,8 @@ class AetherEngine:
         tts_engine: str,
         voice_name: str,
         client: genai.Client,
-        on_pcm_chunk: Callable[[bytes], None]
+        on_pcm_chunk: Callable[[bytes], None],
+        stop_event: Optional[asyncio.Event] = None
     ):
         """
         Streams synthesized speech directly to the audio playback buffer in real time.
@@ -1066,6 +1347,9 @@ class AetherEngine:
         - "windows-local" / "sapi": Offline local Windows SAPI5 voice (<50ms)
         - "gemini-2.5-flash-preview-tts" / "gemini-3.1-flash-tts-preview": REST fallback
         """
+        if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
+            return
+
         tts_lower = (tts_engine or "").lower()
 
         # 1. Gemini Multimodal Live WebSocket Streaming (Fast ~500ms TTFB, 30 Native Gemini Voices)
@@ -1091,7 +1375,7 @@ class AetherEngine:
                 async with client.aio.live.connect(model=live_model, config=config) as session:
                     await session.send_realtime_input(text=text)
                     async for response in session.receive():
-                        if not self.is_running:
+                        if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
                             break
                         if not self._text_queue.empty():
                             self.kill_audio()
@@ -1101,7 +1385,8 @@ class AetherEngine:
                             for part in sc.model_turn.parts:
                                 inline_data = getattr(part, "inline_data", None)
                                 if inline_data and inline_data.data:
-                                    on_pcm_chunk(inline_data.data)
+                                    if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                                        on_pcm_chunk(inline_data.data)
                         if sc and sc.turn_complete:
                             break
                 return
@@ -1115,7 +1400,7 @@ class AetherEngine:
                     edge_voice = self._resolve_edge_voice(voice_name)
                     comm = edge_tts.Communicate(text, edge_voice)
                     async for chunk in comm.stream():
-                        if not self.is_running:
+                        if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
                             break
                         if not self._text_queue.empty():
                             self.kill_audio()
@@ -1123,13 +1408,16 @@ class AetherEngine:
                         if chunk["type"] == "audio":
                             decoded = miniaudio.decode(chunk["data"], nchannels=1, sample_rate=24000)
                             if decoded and decoded.samples:
-                                on_pcm_chunk(decoded.samples.tobytes())
+                                if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                                    on_pcm_chunk(decoded.samples.tobytes())
                     return
                 except Exception as edge_err:
                     logger.warning(f"[EDGE TTS ERROR] {edge_err}, falling back...")
 
         # 3. Windows Local SAPI5 (Instantaneous < 50ms)
         if "windows" in tts_lower or "sapi" in tts_lower or "local" in tts_lower:
+            if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
+                return
             def _speak_sapi():
                 try:
                     import win32com.client
@@ -1150,11 +1438,13 @@ class AetherEngine:
                     return None
 
             pcm = await asyncio.to_thread(_speak_sapi)
-            if pcm:
+            if pcm and not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
                 on_pcm_chunk(pcm)
                 return
 
         # 4. Fallback / REST Non-streaming Gemini TTS
+        if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
+            return
         model = tts_engine if "gemini" in tts_lower else "gemini-3.1-flash-tts-preview"
         try:
             tts_resp = await asyncio.to_thread(
@@ -1165,8 +1455,9 @@ class AetherEngine:
                 generation_config={"speech_config": [{"voice": voice_name}]}
             )
             if getattr(tts_resp, "output_audio", None) and getattr(tts_resp.output_audio, "data", None):
-                pcm = base64.b64decode(tts_resp.output_audio.data)
-                on_pcm_chunk(pcm)
+                if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                    pcm = base64.b64decode(tts_resp.output_audio.data)
+                    on_pcm_chunk(pcm)
         except Exception as gem_err:
             logger.error(f"[GEMINI REST TTS ERROR] {gem_err}")
 
@@ -1282,10 +1573,16 @@ class AetherEngine:
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
-        """Stops the assistant engine and closes connections."""
+        """Stops the assistant engine, background workers, and closes connections."""
         self.is_running = False
         if self.audio:
             self.audio.stop()
+        if self._optimizer_task and not self._optimizer_task.done():
+            self._optimizer_task.cancel()
+        if self.optimizer:
+            self.optimizer.stop()
         if self._main_task and not self._main_task.done():
             self._main_task.cancel()
+        if self.telemetry_db:
+            self.telemetry_db.close()
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})

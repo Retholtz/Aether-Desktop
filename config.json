@@ -7,10 +7,10 @@
     "stt_model_id": "gemini-3.5-transcribe",
     "tts_model_id": "gemini-live-native",
     "live_model_id": "gemini-3.1-flash-live-preview",
-    "pro_model_id": "gemini-3.1-pro-preview",
+    "pro_model_id": "gemini-3.8-flash",
     "temperature": 0.7,
     "voice_name": "Aoede",
-    "system_instruction": "You are [Agent Name], a fast, knowledgeable desktop voice assistant. You have Google Search available to check real-time facts, weather, news, and details. When asked for live information, search the web and answer conversationally and concisely. If the user says 'stop', '[Agent Name] stop', or tells you to stop speaking, halt immediately. Always keep answers brief (1-3 sentences) unless asked to elaborate.",
+    "system_instruction": "",
     "stt_endpoint": "gemini-3.5-transcribe",
     "tts_endpoint": "gemini-live-native"
   },
@@ -18,7 +18,7 @@
     "preferred_language": "en-US",
     "voice_biometrics": {
       "enabled": true,
-      "threshold": 0.45,
+      "threshold": 0.4,
       "model_path": "models/wespeaker_en_voxceleb_CAM++.onnx",
       "profile_path": "profile/user_voiceprint.npy"
     },
@@ -34,7 +34,7 @@
   },
   "vision": {
     "enabled": true,
-    "fps": 2,
+    "fps": 1,
     "monitor": "auto",
     "endpoint": "gemini-3.8-flash-snapshot",
     "resolution": [
@@ -51,7 +51,8 @@
       "excel.exe",
       "spotify.exe",
       "blender.exe",
-      "calc.exe"
+      "explorer.exe",
+      "steam.exe"
     ],
     "require_verbal_confirmation": true
   },

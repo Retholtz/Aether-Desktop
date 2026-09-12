@@ -414,11 +414,33 @@ SAVE_SCRIPT_TO_LIBRARY_DECLARATION = {
 LIST_SAVED_SKILLS_DECLARATION = {
     "name": "list_saved_skills",
     "description": (
-        "Lists all available reusable automation skills currently in the permanent Skill Library, including descriptions and required parameters."
+        "Lists or searches available reusable automation skills currently in the permanent Skill Library, including descriptions and required parameters."
     ),
     "parameters": {
         "type": "OBJECT",
-        "properties": {},
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "Optional keyword or task query to search for relevant skills (e.g. 'table', 'word', 'tile windows')."
+            }
+        },
+        "required": []
+    }
+}
+
+LIST_AVAILABLE_SKILLS_DECLARATION = {
+    "name": "list_available_skills",
+    "description": (
+        "Searches and lists reusable automation skills in the permanent Skill Library by keyword or intent query."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "Optional keyword or task query to search for relevant skills (e.g. 'table', 'word', 'tile windows')."
+            }
+        },
         "required": []
     }
 }
@@ -474,6 +496,7 @@ def get_all_tool_declarations() -> List[dict]:
         RUN_SAVED_SCRIPT_DECLARATION,
         SAVE_SCRIPT_TO_LIBRARY_DECLARATION,
         LIST_SAVED_SKILLS_DECLARATION,
+        LIST_AVAILABLE_SKILLS_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
     ]
 
@@ -935,13 +958,20 @@ class ToolDispatcher:
                 })
                 return result
 
-            elif fn_name == "list_saved_skills":
-                manifest = self.skill_library.get_skills_manifest()
+            elif fn_name in ("list_saved_skills", "list_available_skills"):
+                query = str(args.get("query", "")).strip()
+                if query:
+                    matched = self.skill_library.find_relevant_skills(query, top_k=5)
+                    summary = self.skill_library.get_manifest_summary(query=query)
+                else:
+                    matched = self.skill_library.get_skills_manifest()
+                    summary = self.skill_library.get_manifest_summary()
                 return {
                     "status": "success",
-                    "skills": manifest,
-                    "count": len(manifest),
-                    "summary": self.skill_library.get_manifest_summary()
+                    "skills": matched,
+                    "count": len(matched),
+                    "total_library_skills": len(self.skill_library.get_skills_manifest()),
+                    "summary": summary
                 }
 
             elif fn_name == "execute_automation_script":
