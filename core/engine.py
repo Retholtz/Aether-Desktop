@@ -21,6 +21,7 @@ from core.optimizer import ScriptOptimizer
 from core.telemetry_db import TelemetryDB
 from core.user_memory import UserMemory
 from core.proactive_engine import ProactiveEngine
+from core.session_lifecycle import SessionLifecycleManager
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 
@@ -120,13 +121,13 @@ class AetherEngine:
     """
     def __init__(
         self,
-        config_getter: Callable[[], dict],
-        on_event: Callable[[str, dict], None],
+        config_getter: Optional[Callable[[], dict]] = None,
+        on_event: Optional[Callable[[str, dict], None]] = None,
         on_whitelist_update: Optional[Callable[[list], dict]] = None,
         config_path: str = "config.json"
     ):
-        self.config_getter = config_getter
-        self.on_event = on_event
+        self.config_getter = config_getter or (lambda: {})
+        self.on_event = on_event or (lambda ev, data: None)
         self.on_whitelist_update = on_whitelist_update
         self.config_path = config_path
         self.is_running = False
@@ -176,6 +177,38 @@ class AetherEngine:
         self.user_memory = UserMemory()
         self.dispatcher.user_memory = self.user_memory
         self.proactive_engine = ProactiveEngine(self.user_memory)
+
+        # Rolling Session Lifecycle & Compactor (Layer B Context Optimization)
+        self.session_lifecycle = SessionLifecycleManager()
+        self._active_cm = None
+        self._active_recv_task: Optional[asyncio.Task] = None
+        self._base_system_instruction: str = ""
+
+        try:
+            import main
+            main.active_engine = self
+            main.update_session_state(
+                session=None,
+                turns=0,
+                start_time=self.session_lifecycle.session_start_time
+            )
+        except Exception:
+            pass
+
+    def _is_audio_idle_for_rotation(self) -> bool:
+        """
+        Determines if the audio pipeline is safe for silent session reconnection:
+        not audio.is_speaking and not user currently speaking and not tool executing.
+        """
+        if not self.is_running:
+            return False
+        if self.audio and self.audio.is_speaking:
+            return False
+        if self.audio and getattr(self.audio, "_is_in_speech", False):
+            return False
+        if self.is_tool_executing:
+            return False
+        return True
 
     def _is_engine_idle(self) -> bool:
         """
@@ -328,11 +361,16 @@ class AetherEngine:
             "source": "text"
         })
 
-    async def _send_loop(self, session):
+    async def _send_loop(self, session=None):
         """Streams microphone PCM audio, real-time desktop vision frames, and typed messages to the Live session."""
         last_vision_time = 0.0
         try:
             while self.is_running:
+                active_session = self.session or session
+                if active_session is None:
+                    await asyncio.sleep(0.01)
+                    continue
+
                 current_cfg = self.config_getter()
 
                 # If a tool call is actively executing, pause streaming to prevent 1011 state conflicts
@@ -353,12 +391,12 @@ class AetherEngine:
                         role="user",
                         parts=[types.Part.from_text(text=typed_text)]
                     )
-                    await session.send_client_content(turns=[content], turn_complete=True)
+                    await active_session.send_client_content(turns=[content], turn_complete=True)
 
                 # 2. Check for microphone audio
                 try:
                     pcm_data = await asyncio.wait_for(self.audio.input_queue.get(), timeout=0.02)
-                    await session.send_realtime_input(
+                    await active_session.send_realtime_input(
                         audio=types.Blob(
                             data=pcm_data,
                             mime_type="audio/pcm;rate=16000"
@@ -378,7 +416,7 @@ class AetherEngine:
                         try:
                             target_mon = vision_cfg.get("monitor", "auto")
                             jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target=target_mon)
-                            await session.send_realtime_input(
+                            await active_session.send_realtime_input(
                                 video=types.Blob(
                                     data=jpeg_bytes,
                                     mime_type="image/jpeg"
@@ -393,7 +431,16 @@ class AetherEngine:
         except Exception as e:
             print(f"[SEND LOOP ERROR] {e}")
 
-    async def _receive_loop(self, session, kill_phrase: str, agent_name: str):
+    async def _receive_loop(
+        self,
+        session,
+        kill_phrase: str,
+        agent_name: str,
+        client: Optional[genai.Client] = None,
+        model_id: Optional[str] = None,
+        voice_name: Optional[str] = None,
+        temperature: Optional[float] = None
+    ):
         """Processes incoming model audio, speech transcriptions, and interruption events across multiple turns."""
         try:
             self.current_user_speech = ""
@@ -418,6 +465,11 @@ class AetherEngine:
                                 print(f"[TOOL CALL] Function: {fn_name}, Args: {fn_args}, ID: {fc_id}")
 
                                 result = await self.dispatcher.dispatch(fn_name, fn_args)
+                                try:
+                                    res_chars = len(json.dumps(result, default=str))
+                                    self.session_lifecycle.record_tool_chars(res_chars)
+                                except Exception:
+                                    pass
 
                                 # If a snapshot was requested, stream the JPEG frame back to the live session
                                 if fn_name == "capture_screen_snapshot" and "_jpeg_bytes" in result:
@@ -515,21 +567,32 @@ class AetherEngine:
                     # 6. Turn Complete
                     if server_content.turn_complete:
                         # Finalize user speech if not already finalized
-                        if self.current_user_speech.strip():
+                        clean_user_speech = self.current_user_speech.strip()
+                        if clean_user_speech:
                             self.notify("chat_event", {
                                 "type": "user",
-                                "content": self.current_user_speech.strip(),
+                                "content": clean_user_speech,
                                 "source": "voice"
                             })
+                            self.session_lifecycle.record_turn("user", clean_user_speech)
                             self.current_user_speech = ""
 
-                        if self.current_turn_text.strip():
+                        clean_turn_text = self.current_turn_text.strip()
+                        if clean_turn_text:
                             self.notify("chat_event", {
                                 "type": "assistant",
                                 "agent_name": agent_name,
-                                "content": self.current_turn_text.strip()
+                                "content": clean_turn_text
                             })
+                            self.session_lifecycle.record_turn("assistant", clean_turn_text)
                         self.current_turn_text = ""
+
+                        # Sync telemetry with main.py
+                        try:
+                            import main
+                            main.update_session_state(turns=self.session_lifecycle.turn_count)
+                        except Exception:
+                            pass
 
                         # Wait for hardware buffer to drain
                         wait_count = 0
@@ -542,6 +605,25 @@ class AetherEngine:
                         if self.is_running:
                             self.last_user_turn_time = time.perf_counter()
                             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+
+                        # Layer B: Check if session needs rolling compaction & silent reconnect
+                        if (
+                            self.session_lifecycle.needs_rotation()
+                            and not self.session_lifecycle.rotation_in_progress
+                            and client is not None
+                            and model_id is not None
+                        ):
+                            logger.info("[LIFECYCLE] Rotation threshold reached after turn completion. Launching silent reconnect...")
+                            asyncio.create_task(
+                                self.rotate_live_session(
+                                    client=client,
+                                    model_id=model_id,
+                                    kill_phrase=kill_phrase,
+                                    agent_name=agent_name,
+                                    voice_name=voice_name or "Aoede",
+                                    temperature=temperature if temperature is not None else 0.7
+                                )
+                            )
 
                 # Avoid busy-loop if session closes
                 if self.is_running:
@@ -677,12 +759,22 @@ class AetherEngine:
         user_name = self.user_memory.get_user_name(default="")
         user_name_directive = f"USER IDENTITY DIRECTIVE:\nThe user's name is {user_name}. Always address the user by their name ({user_name}) when speaking to them.\n\n" if user_name else ""
 
-        user_memory_summary = self.user_memory.get_memory_summary()
-        memory_facts_block = f"Stored user facts:\n{user_memory_summary}\n\n" if user_memory_summary else "No personal facts stored yet.\n\n"
+        # Time-sensitive startup alerts flagged by ProactiveEngine (lean, no full database dump)
+        try:
+            startup_alerts = self.proactive_engine.evaluate_candidates()
+            alerts_directive = ""
+            if startup_alerts:
+                alert_lines = [f"- {a['description']}" for a in startup_alerts[:3]]
+                alerts_directive = "TIME-SENSITIVE STARTUP ALERTS:\n" + "\n".join(alert_lines) + "\n\n"
+        except Exception:
+            alerts_directive = ""
 
+        # Layer C: Dynamic On-Demand Knowledge Retrieval Directive
         user_memory_directive = (
-            "USER PROFILE & PERSONAL KNOWLEDGE (MEMORY):\n"
-            f"{memory_facts_block}"
+            "USER PROFILE & PERSONAL KNOWLEDGE RETRIEVAL (MEMORY HYGIENE):\n"
+            "- You have a persistent local database of user facts, family details, dates, preferences, and projects. "
+            "If the user refers to personal context, family members, or past setups not currently present in your active conversation, "
+            "call `query_user_memory` with a concise keyword to inspect their profile before answering.\n"
             "- PROACTIVE MEMORY LEARNING DIRECTIVE:\n"
             "  * When the user shares personal facts, details about family, spouse, children, birthdays, anniversaries, hobbies, vehicles, or requests 'remember this' / 'remember that' (e.g. 'My wife\\'s birthday is 5-1-1977. Her name is Traci, please remember it'):\n"
             "    1. Immediately invoke `remember_user_fact` for each distinct fact revealed in their message.\n"
@@ -692,7 +784,8 @@ class AetherEngine:
             "  * If the user asks you to forget or delete information, invoke `forget_user_fact`.\n\n"
         )
 
-        system_instruction_text = strict_identity + user_name_directive + desktop_tools_directive + user_memory_directive + templated_instruction
+        system_instruction_text = strict_identity + user_name_directive + alerts_directive + desktop_tools_directive + user_memory_directive + templated_instruction
+        self._base_system_instruction = system_instruction_text
 
         audio_mode = audio_cfg.get("mode", "always_on")
         kill_phrase = audio_cfg.get("safe_phrase", f"{agent_name} stop").strip()
@@ -1103,6 +1196,11 @@ class AetherEngine:
                             })
 
                             result = await self.dispatcher.dispatch(fn_name, fn_args)
+                            try:
+                                res_chars = len(json.dumps(result, default=str))
+                                self.session_lifecycle.record_tool_chars(res_chars)
+                            except Exception:
+                                pass
                             if isinstance(result, dict) and result.get("status") == "blocked":
                                 blocked_by_whitelist = True
 
@@ -1382,6 +1480,48 @@ class AetherEngine:
                     f"[LATENCY SUMMARY] Turn #{turn_counter} Completed in {total_turn_ms:.0f}ms | "
                     f"STT: {stt_ms:.0f}ms | LLM: {llm_ms:.0f}ms | Tools: {tools_ms:.0f}ms | TTS: {tts_ms:.0f}ms"
                 )
+
+                # Record turn in lifecycle telemetry
+                self.session_lifecycle.record_turn("user", user_prompt)
+                if assistant_text:
+                    self.session_lifecycle.record_turn("assistant", assistant_text)
+
+                try:
+                    import main
+                    main.update_session_state(turns=self.session_lifecycle.turn_count)
+                except Exception:
+                    pass
+
+                # Layer B: Check if modular session needs context compaction
+                if self.session_lifecycle.needs_rotation():
+                    logger.info("[LIFECYCLE] Modular rotation threshold reached. Compacting context via background compactor...")
+                    summary = await self.session_lifecycle.generate_session_summary(client)
+                    updated_instruction = self.session_lifecycle.build_compacted_instruction(
+                        self._base_system_instruction,
+                        summary=summary
+                    )
+                    chat = client.chats.create(
+                        model=cortex_model,
+                        config=types.GenerateContentConfig(
+                            system_instruction=updated_instruction,
+                            tools=[
+                                types.Tool(google_search=types.GoogleSearch()),
+                                types.Tool(function_declarations=get_all_tool_declarations())
+                            ],
+                            tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
+                            temperature=temperature
+                        )
+                    )
+                    self.session_lifecycle.reset_metrics()
+                    try:
+                        import main
+                        main.update_session_state(turns=0, start_time=time.time())
+                    except Exception:
+                        pass
+                    self.notify("chat_event", {
+                        "type": "system",
+                        "content": "🔄 Context compacted into 4-6 operational state bullets."
+                    })
 
                 # Push real-time latency telemetry to the UI dashboard
                 self.notify("telemetry_update", {
@@ -1664,27 +1804,20 @@ class AetherEngine:
         )
         return b"".join(chunks) if chunks else None
 
-    async def _run_live_pipeline(
+    def _build_live_config(
         self,
-        api_key: str,
-        agent_name: str,
-        kill_phrase: str,
-        api_cfg: dict,
         system_instruction_text: str,
         voice_name: str,
         temperature: float
-    ):
-        """Executes the original Gemini Multimodal Live WebSocket session (Fallback/Live Mode)."""
-        model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
-        live_tools = [
-            types.Tool(google_search=types.GoogleSearch()),
-            types.Tool(function_declarations=get_all_tool_declarations())
-        ]
-
-        live_config = types.LiveConnectConfig(
+    ) -> types.LiveConnectConfig:
+        """Constructs types.LiveConnectConfig with Google Search, tool declarations, and voice."""
+        return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             temperature=temperature,
-            tools=live_tools,
+            tools=[
+                types.Tool(google_search=types.GoogleSearch()),
+                types.Tool(function_declarations=get_all_tool_declarations())
+            ],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(
@@ -1699,6 +1832,120 @@ class AetherEngine:
             )
         )
 
+    async def rotate_live_session(
+        self,
+        client: genai.Client,
+        model_id: str,
+        kill_phrase: str,
+        agent_name: str,
+        voice_name: str = "Aoede",
+        temperature: float = 0.7
+    ) -> bool:
+        """
+        Executes a seamless silent reconnection of the Gemini Live WebSocket session:
+        1. Waits until audio pipeline is idle.
+        2. Non-blocking call to gemini-2.5-flash to summarize conversation state into 4-6 bullet points.
+        3. Pre-seeds new connection's system_instruction with the state summary.
+        4. Opens new WebSocket connection (client.aio.live.connect).
+        5. Atomically swaps self.session reference used by _send_loop.
+        6. Spawns new _receive_loop on the new session and cancels old receive task.
+        7. Gracefully closes the old session.
+        8. Audio hardware streams remain active and unaffected.
+        """
+        if self.session_lifecycle.rotation_in_progress or not self.is_running:
+            return False
+
+        self.session_lifecycle.rotation_in_progress = True
+        logger.info("[ROTATION] Commencing silent session rotation & context compaction...")
+
+        try:
+            # 1. Wait until audio pipeline is idle (max 5 seconds)
+            for _ in range(50):
+                if self._is_audio_idle_for_rotation():
+                    break
+                await asyncio.sleep(0.1)
+
+            # 2. Asynchronous background summarization via gemini-2.5-flash
+            summary = await self.session_lifecycle.generate_session_summary(client)
+
+            # 3. Pre-seed new connection system instruction with the 4-6 bullet state summary
+            new_instruction = self.session_lifecycle.build_compacted_instruction(
+                self._base_system_instruction,
+                summary=summary
+            )
+            new_config = self._build_live_config(new_instruction, voice_name, temperature)
+
+            # 4. Open new WebSocket connection
+            logger.info(f"[ROTATION] Connecting new live session ({model_id})...")
+            new_cm = client.aio.live.connect(model=model_id, config=new_config)
+            new_session = await new_cm.__aenter__()
+
+            # 5. Atomically swap active session references
+            old_session = self.session
+            old_cm = self._active_cm
+            old_recv_task = self._active_recv_task
+
+            self.session = new_session
+            self._active_cm = new_cm
+
+            # Sync with main.py
+            try:
+                import main
+                main.update_session_state(
+                    session=new_session,
+                    turns=0,
+                    start_time=time.time()
+                )
+            except Exception:
+                pass
+
+            # 6. Start new receive loop
+            self._active_recv_task = asyncio.create_task(
+                self._receive_loop(new_session, kill_phrase, agent_name, client, model_id, voice_name, temperature)
+            )
+
+            # 7. Cancel previous receive loop and close old session
+            if old_recv_task and not old_recv_task.done():
+                old_recv_task.cancel()
+
+            if old_session:
+                try:
+                    await old_session.close()
+                except Exception:
+                    pass
+            if old_cm:
+                try:
+                    await old_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+
+            # 8. Reset lifecycle metrics
+            self.session_lifecycle.reset_metrics()
+
+            self.notify("chat_event", {
+                "type": "system",
+                "content": "🔄 Context compacted seamlessly. Active session re-anchored with zero audio disruption."
+            })
+            logger.info("[ROTATION] Silent live session rotation completed successfully!")
+            return True
+        except Exception as rot_err:
+            logger.error(f"[ROTATION ERROR] Failed silent reconnect: {rot_err}", exc_info=True)
+            self.session_lifecycle.rotation_in_progress = False
+            return False
+
+    async def _run_live_pipeline(
+        self,
+        api_key: str,
+        agent_name: str,
+        kill_phrase: str,
+        api_cfg: dict,
+        system_instruction_text: str,
+        voice_name: str,
+        temperature: float
+    ):
+        """Executes Gemini Multimodal Live WebSocket session with Silent Reconnect Lifecycle."""
+        model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
+        self._base_system_instruction = system_instruction_text
         reconnect_delay = 1.0
 
         while self.is_running:
@@ -1706,34 +1953,67 @@ class AetherEngine:
 
             try:
                 client = genai.Client(api_key=api_key)
+                self.genai_client = client
                 self.dispatcher.genai_client = client
 
-                async with client.aio.live.connect(model=model_id, config=live_config) as session:
-                    self.session = session
-                    reconnect_delay = 1.0
-                    self.notify("status", {"state": "connected", "message": f"Connected to Gemini Live. {agent_name} is listening."})
-                    self.notify("chat_event", {
-                        "type": "system",
-                        "content": f"Connected to Gemini Live ({model_id}, Voice: {voice_name}). {agent_name} is listening..."
-                    })
+                live_config = self._build_live_config(system_instruction_text, voice_name, temperature)
+                self._active_cm = client.aio.live.connect(model=model_id, config=live_config)
+                session = await self._active_cm.__aenter__()
+                self.session = session
 
-                    send_task = asyncio.create_task(self._send_loop(session))
-                    recv_task = asyncio.create_task(self._receive_loop(session, kill_phrase, agent_name))
-                    tasks = {send_task, recv_task}
+                try:
+                    import main
+                    main.update_session_state(
+                        session=session,
+                        turns=0,
+                        start_time=time.time()
+                    )
+                except Exception:
+                    pass
 
+                reconnect_delay = 1.0
+                self.notify("status", {"state": "connected", "message": f"Connected to Gemini Live. {agent_name} is listening."})
+                self.notify("chat_event", {
+                    "type": "system",
+                    "content": f"Connected to Gemini Live ({model_id}, Voice: {voice_name}). {agent_name} is listening..."
+                })
+
+                send_task = asyncio.create_task(self._send_loop())
+                self._active_recv_task = asyncio.create_task(
+                    self._receive_loop(session, kill_phrase, agent_name, client, model_id, voice_name, temperature)
+                )
+
+                while self.is_running:
+                    tasks = {send_task, self._active_recv_task}
                     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                    for task in pending:
-                        task.cancel()
-                    await asyncio.gather(*pending, return_exceptions=True)
-
-                    for task in done:
+                    if send_task in done:
+                        break
+                    if self._active_recv_task in done:
                         try:
-                            task.result()
+                            self._active_recv_task.result()
                         except asyncio.CancelledError:
-                            pass
+                            # Old receive loop was cancelled during rotation; wait for new active_recv_task
+                            continue
                         except Exception as e:
                             if self.is_running and "1000" not in str(e):
                                 print(f"[TASK FINISHED WITH ERROR] {e}")
+                            break
+
+                # Teardown current connection
+                if send_task and not send_task.done():
+                    send_task.cancel()
+                if self._active_recv_task and not self._active_recv_task.done():
+                    self._active_recv_task.cancel()
+                if self.session:
+                    try:
+                        await self.session.close()
+                    except Exception:
+                        pass
+                if self._active_cm:
+                    try:
+                        await self._active_cm.__aexit__(None, None, None)
+                    except Exception:
+                        pass
 
             except asyncio.CancelledError:
                 break

@@ -121,5 +121,26 @@
     "file": "format_and_paste_comprehensive_fury.py",
     "created_at": "2026-09-12T11:04:26.165619",
     "updated_at": "2026-09-12T11:04:26.165619"
+  },
+  "replace_document_contents_with_a": {
+    "description": "Replace document contents with a beautifully formatted S-to-F competitive tier explanation table",
+    "parameters": {},
+    "file": "replace_document_contents_with_a.py",
+    "created_at": "2026-09-12T15:51:51.308905",
+    "updated_at": "2026-09-12T15:51:51.308905"
+  },
+  "expand_selection_to_entire_document": {
+    "description": "Expand selection to entire document (triple Ctrl+A), delete, and paste formatted tier table",
+    "parameters": {},
+    "file": "expand_selection_to_entire_document.py",
+    "created_at": "2026-09-12T15:55:19.733217",
+    "updated_at": "2026-09-12T15:55:19.733217"
+  },
+  "wait_for_google_docs_canvas": {
+    "description": "Wait for Google Docs canvas to initialize, focus canvas, and paste styled tier explanation table",
+    "parameters": {},
+    "file": "wait_for_google_docs_canvas.py",
+    "created_at": "2026-09-12T15:55:47.831613",
+    "updated_at": "2026-09-12T15:55:47.831613"
   }
 }

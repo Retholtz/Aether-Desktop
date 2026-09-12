@@ -52,3 +52,21 @@ def get_user_profile(
         "count": len(facts),
         "facts": facts
     }
+
+
+def query_user_memory(
+    search_term: str,
+    category: Optional[str] = None,
+    memory: Optional[UserMemory] = None
+) -> Dict[str, Any]:
+    """Queries user memory dynamically for keywords, family facts, dates, preferences, or setups."""
+    mem = memory or get_user_memory()
+    results = mem.query_facts(search_term=search_term, category=category, limit=5)
+    return {
+        "status": "success",
+        "search_term": search_term,
+        "category_filter": category or "all",
+        "count": len(results),
+        "results": results
+    }
+

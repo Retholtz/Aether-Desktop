@@ -32,6 +32,7 @@ from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
 from tools.skill_library import SkillLibrary
 from core.user_memory import UserMemory
+from tools.payload_sanitizer import sanitize_tool_result
 
 
 
@@ -531,6 +532,29 @@ GET_USER_PROFILE_DECLARATION = {
     }
 }
 
+QUERY_USER_MEMORY_DECLARATION = {
+    "name": "query_user_memory",
+    "description": (
+        "Queries the local persistent user knowledge database for facts, preferences, dates, family details, "
+        "or project context matching a search keyword. Call this on-demand when the user refers to personal context, "
+        "family members, or past setups not currently present in your active conversation."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "search_term": {
+                "type": "STRING",
+                "description": "The search keyword or term to look up in user memory (e.g., 'birthday', 'wife', 'gpu', 'coffee', 'project')."
+            },
+            "category": {
+                "type": "STRING",
+                "description": "Optional category filter (e.g., 'dates', 'family', 'preferences', 'hardware', 'work', 'general')."
+            }
+        },
+        "required": ["search_term"]
+    }
+}
+
 EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
@@ -587,6 +611,7 @@ def get_all_tool_declarations() -> List[dict]:
         REMEMBER_USER_FACT_DECLARATION,
         FORGET_USER_FACT_DECLARATION,
         GET_USER_PROFILE_DECLARATION,
+        QUERY_USER_MEMORY_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
     ]
 
@@ -750,7 +775,7 @@ class ToolDispatcher:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             st = result.get("status", "success") if isinstance(result, dict) else "success"
             logger.info(f"[TOOL RESULT] {fn_name} | Duration: {elapsed_ms:.1f}ms | Status: {st}")
-            return result
+            return sanitize_tool_result(result)
         except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             err_msg = f"Tool execution failed for '{fn_name}': {str(e)}"
@@ -759,11 +784,11 @@ class ToolDispatcher:
                 "type": "error",
                 "content": err_msg
             })
-            return {
+            return sanitize_tool_result({
                 "status": "error",
                 "error": str(e),
                 "message": err_msg
-            }
+            })
 
     async def _dispatch_internal(self, fn_name: str, args: dict) -> dict:
         try:
@@ -1113,6 +1138,27 @@ class ToolDispatcher:
                     "category": str(cat).strip() if cat else "all",
                     "count": len(facts),
                     "facts": facts
+                }
+
+            elif fn_name == "query_user_memory":
+                search_term = str(args.get("search_term", "")).strip()
+                category = args.get("category")
+                results = self.user_memory.query_facts(
+                    search_term=search_term,
+                    category=str(category).strip() if category else None,
+                    limit=5
+                )
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "User Memory",
+                    "content": f"🧠 [MEMORY QUERY] '{search_term}' -> {len(results)} matches"
+                })
+                return {
+                    "status": "success",
+                    "search_term": search_term,
+                    "category": str(category).strip() if category else "all",
+                    "count": len(results),
+                    "results": results
                 }
 
             elif fn_name == "execute_automation_script":

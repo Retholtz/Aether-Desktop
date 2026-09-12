@@ -60,6 +60,7 @@ class UserMemory:
                     );
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_key ON user_facts(key);")
 
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS notification_preferences (
@@ -179,6 +180,51 @@ class UserMemory:
                 """).fetchall()
 
         return [dict(r) for r in rows]
+
+    def query_facts(
+        self,
+        search_term: str,
+        category: Optional[str] = None,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Performs an indexed text search (LIKE %search_term%) against user_facts.
+        Searches key, value, and category, and returns a compact list of matching
+        key-value pairs up to the specified limit (default 5).
+        """
+        clean_term = search_term.strip().lower()
+        if not clean_term:
+            return []
+
+        pattern = f"%{clean_term}%"
+        with self._lock:
+            conn = self._get_connection()
+            if category and category.strip():
+                cat_clean = category.strip().lower()
+                rows = conn.execute("""
+                    SELECT category, key, value, data_type
+                    FROM user_facts
+                    WHERE category = ? AND (key LIKE ? OR value LIKE ?)
+                    ORDER BY last_updated DESC
+                    LIMIT ?;
+                """, (cat_clean, pattern, pattern, max(1, limit))).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT category, key, value, data_type
+                    FROM user_facts
+                    WHERE key LIKE ? OR value LIKE ? OR category LIKE ?
+                    ORDER BY last_updated DESC
+                    LIMIT ?;
+                """, (pattern, pattern, pattern, max(1, limit))).fetchall()
+
+        return [
+            {
+                "category": r["category"],
+                "key": r["key"],
+                "value": r["value"]
+            }
+            for r in rows
+        ]
 
     def get_preferences(self) -> List[Dict[str, Any]]:
         """Returns all notification preference rows."""
