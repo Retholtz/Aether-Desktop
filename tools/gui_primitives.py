@@ -48,14 +48,23 @@ VK_RETURN = 0x0D
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
 VK_MENU = 0x12  # Alt
+VK_CAPITAL = 0x14  # Caps Lock
 VK_ESCAPE = 0x1B
 VK_SPACE = 0x20
+VK_PRIOR = 0x21  # Page Up
+VK_NEXT = 0x22   # Page Down
+VK_END = 0x23    # End
+VK_HOME = 0x24   # Home
 VK_LEFT = 0x25
 VK_UP = 0x26
 VK_RIGHT = 0x27
 VK_DOWN = 0x28
+VK_SNAPSHOT = 0x2C  # Print Screen
+VK_INSERT = 0x2D
 VK_DELETE = 0x2E
 VK_LWIN = 0x5B
+VK_NUMLOCK = 0x90
+VK_SCROLL = 0x91
 
 KEY_MAP = {
     "backspace": VK_BACK,
@@ -73,10 +82,24 @@ KEY_MAP = {
     "up": VK_UP,
     "right": VK_RIGHT,
     "down": VK_DOWN,
+    "home": VK_HOME,
+    "end": VK_END,
+    "pageup": VK_PRIOR,
+    "pgup": VK_PRIOR,
+    "pagedown": VK_NEXT,
+    "pgdn": VK_NEXT,
+    "insert": VK_INSERT,
+    "ins": VK_INSERT,
     "delete": VK_DELETE,
     "del": VK_DELETE,
     "win": VK_LWIN,
     "windows": VK_LWIN,
+    "capslock": VK_CAPITAL,
+    "caps": VK_CAPITAL,
+    "printscreen": VK_SNAPSHOT,
+    "prtscn": VK_SNAPSHOT,
+    "numlock": VK_NUMLOCK,
+    "scrolllock": VK_SCROLL,
 }
 
 # 64-bit safe SendInput Structures (ULONG_PTR = 8 bytes on Win64; sizeof(INPUT) == 40)

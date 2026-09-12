@@ -445,6 +445,25 @@ LIST_AVAILABLE_SKILLS_DECLARATION = {
     }
 }
 
+READ_SAVED_SKILL_DECLARATION = {
+    "name": "read_saved_skill",
+    "description": (
+        "Inspects and returns the full source code and documentation of a saved skill from the permanent Skill Library. "
+        "Use this tool whenever you want to see how a saved skill was implemented (e.g. how it formats tables, images, or documents) "
+        "instead of running scripts to inspect files."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "skill_name": {
+                "type": "STRING",
+                "description": "The exact identifier name of the skill to inspect (e.g. 'create_table_google_docs', 'insert_dss_heatmap_heading_and')."
+            }
+        },
+        "required": ["skill_name"]
+    }
+}
+
 EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
@@ -497,6 +516,7 @@ def get_all_tool_declarations() -> List[dict]:
         SAVE_SCRIPT_TO_LIBRARY_DECLARATION,
         LIST_SAVED_SKILLS_DECLARATION,
         LIST_AVAILABLE_SKILLS_DECLARATION,
+        READ_SAVED_SKILL_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
     ]
 
@@ -973,6 +993,22 @@ class ToolDispatcher:
                     "total_library_skills": len(self.skill_library.get_skills_manifest()),
                     "summary": summary
                 }
+
+            elif fn_name == "read_saved_skill":
+                skill_name = str(args.get("skill_name", "")).strip()
+                code = self.skill_library.get_skill_code(skill_name)
+                if code is not None:
+                    return {
+                        "status": "success",
+                        "skill_name": skill_name,
+                        "code": code,
+                        "message": f"Successfully retrieved source code for skill '{skill_name}'."
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": f"Skill '{skill_name}' not found in permanent library."
+                    }
 
             elif fn_name == "execute_automation_script":
                 script_code = str(args.get("script_code", ""))

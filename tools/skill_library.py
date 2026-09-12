@@ -304,3 +304,24 @@ class SkillLibrary:
             }
         except Exception as e:
             return {"status": "error", "error": str(e), "message": f"Failed to save skill: {e}"}
+
+    def get_skill_code(self, skill_name: str) -> Optional[str]:
+        """Retrieves the source code of a saved skill by name or file name."""
+        clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", skill_name).strip("_").lower()
+        catalog = self._load_catalog()
+        meta = catalog.get(clean_name) or catalog.get(skill_name)
+        if meta:
+            script_path = os.path.join(self.library_dir, meta.get("file", f"{clean_name}.py"))
+            if os.path.exists(script_path):
+                with open(script_path, "r", encoding="utf-8") as f:
+                    return f.read()
+
+        # Fallback: check if file directly exists with .py or clean_name.py
+        for candidate_name in [f"{clean_name}.py", f"{skill_name}.py", skill_name]:
+            candidate_path = os.path.join(self.library_dir, candidate_name)
+            if os.path.exists(candidate_path):
+                with open(candidate_path, "r", encoding="utf-8") as f:
+                    return f.read()
+
+        return None
+
