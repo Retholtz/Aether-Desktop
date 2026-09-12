@@ -29,6 +29,9 @@
         <button class="hud-tab" data-tab="settings">
           <span class="tab-icon">⚙️</span> SETTINGS
         </button>
+        <button class="hud-tab" data-tab="preferences">
+          <span class="tab-icon">🧠</span> USER PREFERENCES
+        </button>
         <button class="hud-tab" data-tab="telemetry">
           <span class="tab-icon">📊</span> TELEMETRY
         </button>
@@ -473,7 +476,232 @@
       </section>
 
       <!-- ============================================================= -->
-      <!-- TAB 3: TELEMETRY & SYSTEM STATUS                              -->
+      <!-- TAB 3: USER PREFERENCES & KNOWLEDGE MEMORY                     -->
+      <!-- ============================================================= -->
+      <section id="tab-preferences" class="tab-pane" tabindex="0">
+        
+        <!-- Card: User Identity & Callsign -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">USER IDENTITY & CALLSIGN</span>
+            <span class="card-tag secure">PERSONALIZATION</span>
+          </div>
+          <div class="card-body">
+            <div class="form-grid">
+              <div class="form-group full">
+                <label for="userNameInput">Your Preferred Name / Callsign</label>
+                <div class="input-with-action">
+                  <input type="text" id="userNameInput" class="hud-input" placeholder="e.g. Mike, Sarah, Dave">
+                  <button type="button" class="hud-btn-primary" id="saveUserNameBtn">SAVE NAME</button>
+                </div>
+                <span class="input-hint">The name Aether will call you conversationally and in proactive startup greetings.</span>
+                <div id="userNameStatus" class="fact-status-msg"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Proactive Briefing Notification Preferences -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">PROACTIVE BRIEFINGS & NOTIFICATION PREFERENCES</span>
+            <span class="card-tag secure">STARTUP INTELLIGENCE</span>
+          </div>
+          <div class="card-body">
+            <p class="section-desc" style="color: var(--text-dim); margin-bottom: 16px; font-size: 13px;">
+              Configure life events, milestones, and personal interests Aether proactively checks and presents as a spoken morning briefing upon startup.
+            </p>
+            
+            <div class="form-grid">
+              <!-- Dates & Milestones Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">📅</span>
+                    <div>
+                      <div class="pref-name">Upcoming Dates & Milestones</div>
+                      <div class="pref-desc">Birthdays, anniversaries, and annual occasions</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefDatesToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+                <div class="pref-subsetting" id="leadTimeContainer">
+                  <label for="prefDatesLeadTime" class="sublabel">Alert Lead Time</label>
+                  <select id="prefDatesLeadTime" class="hud-select sm">
+                    <option value="0">Day of event only (0 days)</option>
+                    <option value="1">1 day in advance</option>
+                    <option value="3">3 days in advance</option>
+                    <option value="7" selected>7 days in advance (1 week)</option>
+                    <option value="14">14 days in advance (2 weeks)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Interests & Gaming Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">🎮</span>
+                    <div>
+                      <div class="pref-name">Gaming, Hobbies & Interests</div>
+                      <div class="pref-desc">Game releases, updates, and tracked personal topics</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefInterestsToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Work & Career Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">💼</span>
+                    <div>
+                      <div class="pref-name">Work & Schedule</div>
+                      <div class="pref-desc">Career details, project milestones, and schedules</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefWorkToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- General Knowledge Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">💡</span>
+                    <div>
+                      <div class="pref-name">General Facts & Reminders</div>
+                      <div class="pref-desc">Hardware specs, vehicles, and arbitrary user memory</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefGeneralToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div id="prefSaveFeedback" class="pref-feedback-msg"></div>
+          </div>
+        </div>
+
+        <!-- Card: Stored User Facts & Long-Term Memory Profile -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">STORED USER KNOWLEDGE & PROFILE MEMORY</span>
+            <div class="card-header-actions">
+              <span id="factsCountBadge" class="card-tag">0 FACTS</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <p class="section-desc" style="color: var(--text-dim); margin-bottom: 16px; font-size: 13px;">
+              Personal facts and preferences remembered by Aether dynamically during conversation, or manually registered below. All data resides strictly in your local SQLite profile (<code style="font-family: var(--font-mono); color: var(--win-accent);">data/user_profile.db</code>).
+            </p>
+
+            <!-- Add Fact Inline Form -->
+            <div class="add-fact-panel">
+              <div class="add-fact-title">ADD NEW FACT TO PROFILE</div>
+              <div class="add-fact-grid">
+                <div class="form-group">
+                  <label for="newFactCategory">Category</label>
+                  <select id="newFactCategory" class="hud-select">
+                    <option value="dates">Dates (Birthdays / Anniversaries)</option>
+                    <option value="family">Family & Friends</option>
+                    <option value="interests">Interests & Gaming</option>
+                    <option value="work">Work & Career</option>
+                    <option value="devices">Hardware & Devices</option>
+                    <option value="general" selected>General</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="newFactKey">Fact Key / Label</label>
+                  <input type="text" id="newFactKey" class="hud-input" placeholder="e.g. wife_birthday, favorite_hobby, car_model">
+                </div>
+                <div class="form-group">
+                  <label for="newFactValue">Value</label>
+                  <input type="text" id="newFactValue" class="hud-input" placeholder="e.g. 1977-05-01, Photography, Honda Civic">
+                </div>
+                <div class="form-group">
+                  <label for="newFactType">Type</label>
+                  <select id="newFactType" class="hud-select">
+                    <option value="string" selected>string</option>
+                    <option value="date">date (YYYY-MM-DD)</option>
+                    <option value="number">number</option>
+                    <option value="json">json</option>
+                  </select>
+                </div>
+                <div class="form-group action-col">
+                  <label>&nbsp;</label>
+                  <button type="button" id="addFactBtn" class="hud-btn-primary">
+                    <span>+ ADD FACT</span>
+                  </button>
+                </div>
+              </div>
+              <div id="addFactStatus" class="fact-status-msg"></div>
+            </div>
+
+            <!-- Filter and Search Row -->
+            <div class="facts-filter-toolbar">
+              <div class="search-input-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="factsSearchInput" class="hud-input" placeholder="Filter remembered facts by key or value...">
+              </div>
+              <div class="filter-category-wrapper">
+                <select id="factsCategoryFilter" class="hud-select">
+                  <option value="all" selected>All Categories</option>
+                  <option value="dates">Dates</option>
+                  <option value="family">Family</option>
+                  <option value="interests">Interests</option>
+                  <option value="work">Work</option>
+                  <option value="devices">Devices</option>
+                  <option value="general">General</option>
+                </select>
+              </div>
+              <button type="button" id="refreshFactsBtn" class="hud-btn-secondary sm" title="Refresh facts from database">
+                <span>REFRESH</span>
+              </button>
+            </div>
+
+            <!-- Facts Table -->
+            <div class="facts-table-wrap">
+              <table class="facts-table" id="factsTable">
+                <thead>
+                  <tr>
+                    <th style="width: 110px;">CATEGORY</th>
+                    <th style="width: 160px;">KEY</th>
+                    <th>VALUE</th>
+                    <th style="width: 80px;">TYPE</th>
+                    <th style="width: 130px;">UPDATED</th>
+                    <th style="width: 70px; text-align: center;">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody id="factsTableBody">
+                  <!-- Rendered dynamically -->
+                </tbody>
+              </table>
+              <div id="factsEmptyState" class="facts-empty-state" style="display: none;">
+                <span>🧠 No facts found matching your filter. Tell Aether to remember facts or add them above!</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB 4: TELEMETRY & SYSTEM STATUS                              -->
       <!-- ============================================================= -->
       <section id="tab-telemetry" class="tab-pane">
         <div class="telemetry-grid">

@@ -426,7 +426,8 @@ body {
    Tab 2: Settings Cards & Scroll Pane
    ========================================================================== */
 
-#tab-settings.tab-pane.active {
+#tab-settings.tab-pane.active,
+#tab-preferences.tab-pane.active {
   display: block !important;
   flex: 1 1 0%;
   min-height: 0;
@@ -1181,3 +1182,308 @@ label {
   color: var(--text-bright);
   background: rgba(52, 199, 89, 0.08);
 }
+
+/* ==========================================================================
+   USER PREFERENCES & KNOWLEDGE MEMORY (CONCEPT #3)
+   ========================================================================== */
+
+/* Windows Fluent Switch Component */
+.hud-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.hud-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--border-subtle);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 22px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hud-switch input:checked + .switch-slider {
+  background-color: var(--win-accent);
+  border-color: var(--win-accent);
+}
+
+.hud-switch input:checked + .switch-slider:before {
+  transform: translateX(22px);
+  background-color: #ffffff;
+}
+
+.hud-switch input:focus + .switch-slider {
+  box-shadow: 0 0 0 2px var(--win-accent-glow);
+}
+
+.hud-select.sm {
+  padding: 4px 8px;
+  font-size: 12px;
+  height: 30px;
+}
+
+/* Preference Category Cards */
+.pref-category-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s ease;
+}
+
+.pref-category-card:hover {
+  border-color: #555555;
+}
+
+.pref-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.pref-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pref-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.pref-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.pref-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pref-subsetting {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.pref-subsetting .sublabel {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.pref-feedback-msg {
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #34c759;
+  min-height: 16px;
+  transition: opacity 0.2s ease;
+}
+
+/* Stored Facts Panel */
+.add-fact-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.add-fact-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--win-accent);
+  margin-bottom: 12px;
+}
+
+.add-fact-grid {
+  display: grid;
+  grid-template-columns: 180px 1fr 1fr 120px 110px;
+  gap: 12px;
+  align-items: end;
+}
+
+.add-fact-grid .action-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.fact-status-msg {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  min-height: 16px;
+}
+
+.facts-filter-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.search-input-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+.search-input-wrapper .search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.search-input-wrapper input {
+  padding-left: 32px;
+  width: 100%;
+}
+
+.filter-category-wrapper select {
+  min-width: 150px;
+}
+
+.facts-table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.facts-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+.facts-table th {
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.facts-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  vertical-align: middle;
+}
+
+.facts-table tr:hover td {
+  background: var(--bg-hover);
+}
+
+.fact-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.fact-badge.dates { background: rgba(255, 159, 10, 0.2); color: #ff9f0a; border: 1px solid rgba(255, 159, 10, 0.3); }
+.fact-badge.family { background: rgba(255, 45, 85, 0.2); color: #ff2d55; border: 1px solid rgba(255, 45, 85, 0.3); }
+.fact-badge.interests { background: rgba(90, 200, 250, 0.2); color: #5ac8fa; border: 1px solid rgba(90, 200, 250, 0.3); }
+.fact-badge.work { background: rgba(52, 199, 89, 0.2); color: #34c759; border: 1px solid rgba(52, 199, 89, 0.3); }
+.fact-badge.devices { background: rgba(175, 82, 222, 0.2); color: #af52de; border: 1px solid rgba(175, 82, 222, 0.3); }
+.fact-badge.general { background: rgba(142, 142, 147, 0.2); color: #8e8e93; border: 1px solid rgba(142, 142, 147, 0.3); }
+
+.fact-key {
+  font-family: var(--font-mono);
+  color: var(--win-accent);
+  font-weight: 600;
+}
+
+.fact-value {
+  color: var(--text-main);
+  word-break: break-word;
+}
+
+.fact-type {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.fact-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.fact-delete-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  transition: all 0.15s ease;
+}
+
+.fact-delete-btn:hover {
+  background: rgba(232, 17, 35, 0.15);
+  border-color: rgba(232, 17, 35, 0.4);
+  color: #ff4d4f;
+}
+
+.facts-empty-state {
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+

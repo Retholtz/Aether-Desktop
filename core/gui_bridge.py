@@ -523,5 +523,80 @@ class GuiBridge:
         ok = open_logs_folder()
         return {"success": ok}
 
+    # =========================================================================
+    # Dynamic User Knowledge & Notification Preferences (Concept #3)
+    # =========================================================================
+
+    def get_user_preferences(self) -> dict:
+        """Retrieves notification preferences from user memory."""
+        try:
+            prefs = self._engine.user_memory.get_preferences()
+            return {"success": True, "preferences": prefs}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_user_preferences: {e}")
+            return {"success": False, "error": str(e), "preferences": {}}
+
+    def update_user_preference(self, category: str, enabled: bool, lead_time_days: Optional[int] = None) -> dict:
+        """Updates notification preference category toggle and lead time."""
+        try:
+            self._engine.user_memory.update_preference(category, enabled, lead_time_days)
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] update_user_preference: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_user_facts(self, category: Optional[str] = None) -> dict:
+        """Retrieves stored user facts optionally filtered by category."""
+        try:
+            facts = self._engine.user_memory.get_facts(category=category if category else None)
+            return {"success": True, "facts": facts}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_user_facts: {e}")
+            return {"success": False, "error": str(e), "facts": []}
+
+    def add_user_fact(self, category: str, key: str, value: str, data_type: str = "string") -> dict:
+        """Adds or updates a user fact in the profile database."""
+        try:
+            res = self._engine.user_memory.remember_fact(category, key, value, data_type)
+            return {"success": True, "fact": res}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] add_user_fact: {e}")
+            return {"success": False, "error": str(e)}
+
+    def delete_user_fact(self, fact_id: int) -> dict:
+        """Deletes a fact from the user profile database by ID."""
+        try:
+            deleted = self._engine.user_memory.delete_fact_by_id(fact_id)
+            return {"success": True, "deleted": deleted}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] delete_user_fact: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_user_name(self) -> dict:
+        """Retrieves the user's preferred name from memory and config."""
+        try:
+            name = self._engine.user_memory.get_user_name(default="")
+            if not name:
+                name = self._config.get("user", {}).get("name", "")
+            return {"success": True, "name": name}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_user_name: {e}")
+            return {"success": False, "error": str(e), "name": ""}
+
+    def set_user_name(self, name: str) -> dict:
+        """Sets the user's preferred name in memory and configuration."""
+        try:
+            clean = str(name).strip()
+            self._engine.user_memory.set_user_name(clean)
+            self._config.setdefault("user", {})["name"] = clean
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2)
+            self._on_engine_event("config_updated", self._config)
+            return {"success": True, "name": clean}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] set_user_name: {e}")
+            return {"success": False, "error": str(e)}
+
+
 
 

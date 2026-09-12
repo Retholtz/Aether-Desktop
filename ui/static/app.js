@@ -19,6 +19,9 @@ window.aetherUI = {
     await this.loadMonitors();
     await this.loadConfig();
     await this.loadVoiceProfileStatus();
+    await this.loadUserName();
+    await this.loadUserPreferences();
+    await this.loadUserFacts();
     await this.loadRecentLogs();
     this.startTelemetryLoop();
     this.log("Aether Desktop initialized and ready.");
@@ -55,27 +58,34 @@ window.aetherUI = {
           targetPane.classList.add("active");
           if (tab.dataset.tab === "settings") {
             targetPane.focus();
+          } else if (tab.dataset.tab === "preferences") {
+            targetPane.focus();
+            this.loadUserName();
+            this.loadUserPreferences();
+            this.loadUserFacts();
           }
         }
       });
     });
 
-    // Smooth wheel scrolling for Settings tab pane
-    const settingsPane = document.getElementById("tab-settings");
-    if (settingsPane) {
-      settingsPane.addEventListener("wheel", (e) => {
-        if (e.target.tagName === "TEXTAREA") {
-          const ta = e.target;
-          const atTop = ta.scrollTop === 0 && e.deltaY < 0;
-          const atBottom = (ta.scrollHeight - ta.clientHeight <= ta.scrollTop + 1) && e.deltaY > 0;
-          if (!atTop && !atBottom) return;
-        }
-        settingsPane.scrollBy({
-          top: e.deltaY,
-          behavior: "auto"
-        });
-      }, { passive: true });
-    }
+    // Smooth wheel scrolling for Settings & User Preferences tab panes
+    ["tab-settings", "tab-preferences"].forEach(paneId => {
+      const pane = document.getElementById(paneId);
+      if (pane) {
+        pane.addEventListener("wheel", (e) => {
+          if (e.target.tagName === "TEXTAREA" || e.target.closest(".facts-table-wrap")) {
+            const el = e.target.tagName === "TEXTAREA" ? e.target : e.target.closest(".facts-table-wrap");
+            const atTop = el.scrollTop === 0 && e.deltaY < 0;
+            const atBottom = (el.scrollHeight - el.clientHeight <= el.scrollTop + 1) && e.deltaY > 0;
+            if (!atTop && !atBottom) return;
+          }
+          pane.scrollBy({
+            top: e.deltaY,
+            behavior: "auto"
+          });
+        }, { passive: true });
+      }
+    });
   },
 
   // =========================================================================
@@ -292,6 +302,8 @@ window.aetherUI = {
     if (retrainProfileBtn) {
       retrainProfileBtn.addEventListener("click", () => this.retrainVoiceProfile());
     }
+
+    this.setupPreferencesHandlers();
   },
 
   updateAgentNameUI: function(name) {
@@ -1265,6 +1277,317 @@ window.aetherUI = {
       }
     } catch (e) {
       console.error("Failed to reset voice profile:", e);
+    }
+  },
+
+  // =========================================================================
+  // User Preferences & Knowledge Store (Concept #3)
+  // =========================================================================
+  userFactsCache: [],
+
+  setupPreferencesHandlers: function() {
+    // Category Toggles
+    const toggles = [
+      { id: "prefDatesToggle", category: "dates" },
+      { id: "prefInterestsToggle", category: "interests" },
+      { id: "prefWorkToggle", category: "work" },
+      { id: "prefGeneralToggle", category: "general" }
+    ];
+
+    toggles.forEach(({ id, category }) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("change", async (e) => {
+          const enabled = e.target.checked;
+          const leadSelect = document.getElementById("prefDatesLeadTime");
+          const leadTime = (category === "dates" && leadSelect) ? parseInt(leadSelect.value, 10) : null;
+          await this.saveCategoryPreference(category, enabled, leadTime);
+        });
+      }
+    });
+
+    // Dates Lead Time Select
+    const leadSelect = document.getElementById("prefDatesLeadTime");
+    if (leadSelect) {
+      leadSelect.addEventListener("change", async (e) => {
+        const datesToggle = document.getElementById("prefDatesToggle");
+        const enabled = datesToggle ? datesToggle.checked : true;
+        const leadTime = parseInt(e.target.value, 10);
+        await this.saveCategoryPreference("dates", enabled, leadTime);
+      });
+    }
+
+    // Add Fact Button
+    const addFactBtn = document.getElementById("addFactBtn");
+    if (addFactBtn) {
+      addFactBtn.addEventListener("click", () => this.handleAddFact());
+    }
+
+    // Search and Category Filter
+    const searchInput = document.getElementById("factsSearchInput");
+    if (searchInput) {
+      searchInput.addEventListener("input", () => this.filterAndRenderFacts());
+    }
+
+    const catFilter = document.getElementById("factsCategoryFilter");
+    if (catFilter) {
+      catFilter.addEventListener("change", () => this.filterAndRenderFacts());
+    }
+
+    // User Name Save Button & Enter Key / Change
+    const saveNameBtn = document.getElementById("saveUserNameBtn");
+    const nameInput = document.getElementById("userNameInput");
+    if (saveNameBtn) {
+      saveNameBtn.addEventListener("click", () => this.handleSaveUserName());
+    }
+    if (nameInput) {
+      nameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this.handleSaveUserName();
+        }
+      });
+      nameInput.addEventListener("change", () => this.handleSaveUserName());
+    }
+
+    // Refresh Facts Button
+    const refreshBtn = document.getElementById("refreshFactsBtn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => this.loadUserFacts());
+    }
+  },
+
+  loadUserName: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_user_name) return;
+    try {
+      const res = await window.pywebview.api.get_user_name();
+      if (res && res.success && res.name) {
+        const input = document.getElementById("userNameInput");
+        if (input) input.value = res.name;
+      }
+    } catch (e) {
+      console.error("Failed to load user name:", e);
+    }
+  },
+
+  handleSaveUserName: async function() {
+    const input = document.getElementById("userNameInput");
+    const statusEl = document.getElementById("userNameStatus");
+    const name = input?.value?.trim() || "";
+    if (!name) return;
+
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.set_user_name) return;
+    try {
+      const res = await window.pywebview.api.set_user_name(name);
+      if (res && res.success) {
+        if (statusEl) {
+          statusEl.innerText = `✓ Saved preferred name: ${name}`;
+          statusEl.style.color = "#34c759";
+          setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 2500);
+        }
+        this.log(`Preferred user name updated: ${name}`);
+      } else {
+        if (statusEl) {
+          statusEl.innerText = `Error: ${res?.error || 'Failed to save name'}`;
+          statusEl.style.color = "var(--status-red)";
+        }
+      }
+    } catch (e) {
+      console.error("Failed to save user name:", e);
+    }
+  },
+
+  saveCategoryPreference: async function(category, enabled, leadTimeDays) {
+    const feedback = document.getElementById("prefSaveFeedback");
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.update_user_preference) return;
+    try {
+      const res = await window.pywebview.api.update_user_preference(category, enabled, leadTimeDays);
+      if (res && res.success && feedback) {
+        feedback.innerText = `✓ Updated preference for ${category}`;
+        feedback.style.opacity = "1";
+        setTimeout(() => { if (feedback) feedback.style.opacity = "0"; }, 2500);
+      }
+    } catch (e) {
+      console.error(`Failed to update preference for ${category}:`, e);
+      if (feedback) {
+        feedback.innerText = `Error saving preference: ${e}`;
+        feedback.style.opacity = "1";
+      }
+    }
+  },
+
+  loadUserPreferences: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_user_preferences) return;
+    try {
+      const res = await window.pywebview.api.get_user_preferences();
+      if (res && res.success && res.preferences) {
+        res.preferences.forEach(pref => {
+          const cat = pref.category;
+          const enabled = Boolean(pref.enabled);
+          if (cat === "dates") {
+            const toggle = document.getElementById("prefDatesToggle");
+            if (toggle) toggle.checked = enabled;
+            const lead = document.getElementById("prefDatesLeadTime");
+            if (lead && pref.lead_time_days !== undefined && pref.lead_time_days !== null) {
+              lead.value = String(pref.lead_time_days);
+            }
+          } else if (cat === "interests") {
+            const toggle = document.getElementById("prefInterestsToggle");
+            if (toggle) toggle.checked = enabled;
+          } else if (cat === "work") {
+            const toggle = document.getElementById("prefWorkToggle");
+            if (toggle) toggle.checked = enabled;
+          } else if (cat === "general") {
+            const toggle = document.getElementById("prefGeneralToggle");
+            if (toggle) toggle.checked = enabled;
+          }
+        });
+      }
+    } catch (e) {
+      console.error("Failed to load user preferences:", e);
+    }
+  },
+
+  loadUserFacts: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_user_facts) return;
+    try {
+      const res = await window.pywebview.api.get_user_facts();
+      if (res && res.success) {
+        this.userFactsCache = res.facts || [];
+        this.filterAndRenderFacts();
+      }
+    } catch (e) {
+      console.error("Failed to load user facts:", e);
+    }
+  },
+
+  filterAndRenderFacts: function() {
+    const searchVal = (document.getElementById("factsSearchInput")?.value || "").toLowerCase().trim();
+    const catVal = document.getElementById("factsCategoryFilter")?.value || "all";
+
+    const filtered = this.userFactsCache.filter(f => {
+      const matchesCategory = (catVal === "all" || f.category === catVal);
+      const matchesSearch = !searchVal || 
+        (f.key && f.key.toLowerCase().includes(searchVal)) || 
+        (f.value && f.value.toLowerCase().includes(searchVal)) ||
+        (f.category && f.category.toLowerCase().includes(searchVal));
+      return matchesCategory && matchesSearch;
+    });
+
+    this.renderFactsTable(filtered);
+  },
+
+  renderFactsTable: function(facts) {
+    const tbody = document.getElementById("factsTableBody");
+    const emptyState = document.getElementById("factsEmptyState");
+    const countBadge = document.getElementById("factsCountBadge");
+
+    if (countBadge) {
+      countBadge.innerText = `${this.userFactsCache.length} FACT${this.userFactsCache.length === 1 ? '' : 'S'}`;
+    }
+
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (!facts || facts.length === 0) {
+      if (emptyState) emptyState.style.display = "block";
+      return;
+    }
+
+    if (emptyState) emptyState.style.display = "none";
+
+    facts.forEach(fact => {
+      const tr = document.createElement("tr");
+
+      let dateDisplay = "";
+      const ts = fact.last_updated || fact.updated_at;
+      if (ts) {
+        try {
+          const d = new Date(ts);
+          dateDisplay = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        } catch (e) {
+          dateDisplay = ts.split("T")[0] || ts;
+        }
+      }
+
+      tr.innerHTML = `
+        <td><span class="fact-badge ${this.escapeHtml(fact.category)}">${this.escapeHtml(fact.category)}</span></td>
+        <td class="fact-key">${this.escapeHtml(fact.key)}</td>
+        <td class="fact-value">${this.escapeHtml(fact.value)}</td>
+        <td class="fact-type">${this.escapeHtml(fact.data_type || "string")}</td>
+        <td class="fact-time">${this.escapeHtml(dateDisplay)}</td>
+        <td style="text-align: center;">
+          <button type="button" class="fact-delete-btn" data-id="${fact.id}" title="Forget / Delete this fact">🗑️ DELETE</button>
+        </td>
+      `;
+
+      const delBtn = tr.querySelector(".fact-delete-btn");
+      if (delBtn) {
+        delBtn.addEventListener("click", () => this.handleDeleteFact(fact.id, fact.category, fact.key));
+      }
+
+      tbody.appendChild(tr);
+    });
+  },
+
+  handleAddFact: async function() {
+    const catEl = document.getElementById("newFactCategory");
+    const keyEl = document.getElementById("newFactKey");
+    const valEl = document.getElementById("newFactValue");
+    const typeEl = document.getElementById("newFactType");
+    const statusEl = document.getElementById("addFactStatus");
+
+    const category = catEl?.value || "general";
+    const key = keyEl?.value?.trim();
+    const value = valEl?.value?.trim();
+    const dataType = typeEl?.value || "string";
+
+    if (!key || !value) {
+      if (statusEl) {
+        statusEl.innerText = "⚠️ Please provide both a key and a value.";
+        statusEl.style.color = "var(--status-yellow)";
+      }
+      return;
+    }
+
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.add_user_fact) return;
+
+    try {
+      const res = await window.pywebview.api.add_user_fact(category, key, value, dataType);
+      if (res && res.success) {
+        if (keyEl) keyEl.value = "";
+        if (valEl) valEl.value = "";
+        if (statusEl) {
+          statusEl.innerText = `✓ Remembered: [${category}] ${key}`;
+          statusEl.style.color = "#34c759";
+          setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 3000);
+        }
+        await this.loadUserFacts();
+      } else {
+        if (statusEl) {
+          statusEl.innerText = `Error: ${res?.error || 'Failed to add fact'}`;
+          statusEl.style.color = "var(--status-red)";
+        }
+      }
+    } catch (e) {
+      console.error("Failed to add user fact:", e);
+      if (statusEl) {
+        statusEl.innerText = `Error: ${e}`;
+        statusEl.style.color = "var(--status-red)";
+      }
+    }
+  },
+
+  handleDeleteFact: async function(factId, category, key) {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.delete_user_fact) return;
+    try {
+      const res = await window.pywebview.api.delete_user_fact(factId);
+      if (res && res.success) {
+        this.log(`Deleted user fact: [${category}] ${key}`);
+        await this.loadUserFacts();
+      }
+    } catch (e) {
+      console.error("Failed to delete user fact:", e);
     }
   }
 };

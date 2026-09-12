@@ -59,5 +59,8 @@
   "ui": {
     "floating_overlay": "always",
     "minimize_to_tray": true
+  },
+  "user": {
+    "name": "Mike"
   }
 }

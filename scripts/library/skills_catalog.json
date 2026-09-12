@@ -114,5 +114,12 @@
     "file": "paste_recipe_using_guiprimitivescontroller_and.py",
     "created_at": "2026-09-11T21:04:41.933389",
     "updated_at": "2026-09-11T21:04:41.933389"
+  },
+  "format_and_paste_comprehensive_fury": {
+    "description": "Format and paste comprehensive Fury Warrior WoW Meta Template into Google Docs",
+    "parameters": {},
+    "file": "format_and_paste_comprehensive_fury.py",
+    "created_at": "2026-09-12T11:04:26.165619",
+    "updated_at": "2026-09-12T11:04:26.165619"
   }
 }

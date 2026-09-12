@@ -5,10 +5,11 @@ import os
 import sys
 import time
 import traceback
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from google import genai
-from google.genai import types
+from google.genai import types, errors
+import httpx
 
 from core.screen_stream import ScreenCapturePipeline, ensure_thread_desktop
 ensure_thread_desktop()
@@ -18,10 +19,21 @@ from core.logger import get_logger
 from core.voice_verifier import VoiceProfileVerifier
 from core.optimizer import ScriptOptimizer
 from core.telemetry_db import TelemetryDB
+from core.user_memory import UserMemory
+from core.proactive_engine import ProactiveEngine
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 
 logger = get_logger("Engine")
+
+# Transient socket/transport errors eligible for automatic retry
+TRANSIENT_NETWORK_ERRORS = (
+    httpx.TransportError,
+    httpx.NetworkError,
+    ConnectionError,
+    OSError,
+    errors.ServerError,
+)
 
 # The 30 Gemini Live prebuilt voices - Alphabetized
 RAW_GEMINI_VOICES = [
@@ -159,6 +171,11 @@ class AetherEngine:
             skill_library=self.dispatcher.skill_library
         )
         self._optimizer_task: Optional[asyncio.Task] = None
+
+        # Dynamic User Memory & Proactive Briefing Engine
+        self.user_memory = UserMemory()
+        self.dispatcher.user_memory = self.user_memory
+        self.proactive_engine = ProactiveEngine(self.user_memory)
 
     def _is_engine_idle(self) -> bool:
         """
@@ -657,7 +674,25 @@ class AetherEngine:
             "MULTI-STEP WORKFLOW AUTONOMY:\n"
             "- When given a multi-step instruction (e.g. 'Find X in Gmail, calculate the total, and export it into a table in Google Docs'), do NOT stop prematurely after the first step to ask if you should proceed. Autonomously continue executing subsequent steps through to the final deliverable unless you encounter an unresolvable error or need user credentials.\n\n"
         )
-        system_instruction_text = strict_identity + desktop_tools_directive + templated_instruction
+        user_name = self.user_memory.get_user_name(default="")
+        user_name_directive = f"USER IDENTITY DIRECTIVE:\nThe user's name is {user_name}. Always address the user by their name ({user_name}) when speaking to them.\n\n" if user_name else ""
+
+        user_memory_summary = self.user_memory.get_memory_summary()
+        memory_facts_block = f"Stored user facts:\n{user_memory_summary}\n\n" if user_memory_summary else "No personal facts stored yet.\n\n"
+
+        user_memory_directive = (
+            "USER PROFILE & PERSONAL KNOWLEDGE (MEMORY):\n"
+            f"{memory_facts_block}"
+            "- PROACTIVE MEMORY LEARNING DIRECTIVE:\n"
+            "  * When the user shares personal facts, details about family, spouse, children, birthdays, anniversaries, hobbies, vehicles, or requests 'remember this' / 'remember that' (e.g. 'My wife\\'s birthday is 5-1-1977. Her name is Traci, please remember it'):\n"
+            "    1. Immediately invoke `remember_user_fact` for each distinct fact revealed in their message.\n"
+            "    2. For calendar dates (birthdays, anniversaries), always convert to standard ISO 'YYYY-MM-DD' format (e.g. '1977-05-01') under category 'dates' with data_type='date'.\n"
+            "    3. For family and relationship names, store under category 'family' (e.g. key='wife_name', value='Traci').\n"
+            "    4. After executing the tool(s), confirm warmly and concisely in 1 sentence that you have saved their facts.\n"
+            "  * If the user asks you to forget or delete information, invoke `forget_user_fact`.\n\n"
+        )
+
+        system_instruction_text = strict_identity + user_name_directive + desktop_tools_directive + user_memory_directive + templated_instruction
 
         audio_mode = audio_cfg.get("mode", "always_on")
         kill_phrase = audio_cfg.get("safe_phrase", f"{agent_name} stop").strip()
@@ -788,6 +823,52 @@ class AetherEngine:
 
         chat = create_fresh_chat()
 
+        # Proactive Startup Briefing Evaluation
+        try:
+            current_user_name = self.user_memory.get_user_name(default="User")
+            briefing_res = await self.proactive_engine.check_proactive_briefing(
+                user_name=current_user_name,
+                client=client,
+                model_id=cortex_model,
+                agent_name=agent_name
+            )
+            briefing_text = briefing_res.get("greeting_text") if isinstance(briefing_res, dict) else (briefing_res or "")
+            if briefing_text and self.is_running:
+                logger.info(f"[PROACTIVE] Triggering startup briefing: '{briefing_text}'")
+                self.notify("chat_event", {
+                    "type": "assistant",
+                    "agent_name": agent_name,
+                    "content": briefing_text
+                })
+                stop_briefing_event = asyncio.Event()
+
+                def _on_briefing_chunk(chunk: bytes):
+                    if not self._kill_playback_flag and not stop_briefing_event.is_set():
+                        if chunk and self.audio and self.is_running:
+                            self.audio.write_output_chunk(chunk)
+
+                self.notify("status", {
+                    "state": "speaking",
+                    "message": f"{agent_name} is delivering briefing...",
+                    "user_prompt": ""
+                })
+                await self._stream_synthesize_speech(
+                    text=briefing_text,
+                    tts_engine=tts_model,
+                    voice_name=voice_name,
+                    client=client,
+                    on_pcm_chunk=_on_briefing_chunk,
+                    stop_event=stop_briefing_event
+                )
+                while self.audio and not self.audio.is_output_empty() and self.is_running:
+                    if self._kill_playback_flag:
+                        break
+                    await asyncio.sleep(0.04)
+
+                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+        except Exception as proactive_err:
+            logger.warning(f"[PROACTIVE BRIEFING ERROR] {proactive_err}")
+
         turn_counter = 0
         while self.is_running:
             try:
@@ -855,8 +936,8 @@ class AetherEngine:
                             f"If the audio contains background chatter, noise, sighs, breathing, non-speech vocalizations, "
                             f"or speech in another language, output NOTHING (empty string). Do not guess or translate."
                         )
-                        stt_resp = await asyncio.to_thread(
-                            client.models.generate_content,
+                        stt_resp = await self._generate_content_resilient(
+                            client=client,
                             model=stt_model,
                             contents=[
                                 types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
@@ -969,7 +1050,7 @@ class AetherEngine:
                 self.is_tool_executing = True
                 t_llm_0 = time.perf_counter()
                 try:
-                    response = await asyncio.to_thread(chat.send_message, user_prompt)
+                    response = await self._send_chat_message_resilient(chat, user_prompt)
                     llm_ms = (time.perf_counter() - t_llm_0) * 1000
                     logger.info(f"[LATENCY] Cortex LLM ({cortex_model}): {llm_ms:.1f}ms")
                 finally:
@@ -1043,7 +1124,7 @@ class AetherEngine:
                             "message": f"{agent_name} is reasoning with tool output...",
                             "user_prompt": user_prompt
                         })
-                        response = await asyncio.to_thread(chat.send_message, tool_parts)
+                        response = await self._send_chat_message_resilient(chat, tool_parts)
 
                         # Latency optimization: prune older image parts from chat._curated_history so subsequent turns don't re-upload stale multi-megabyte screenshots
                         if hasattr(chat, "_curated_history") and chat._curated_history:
@@ -1077,7 +1158,7 @@ class AetherEngine:
                 # If loop reached max turns and model is still proposing tools without text, request verbal answer
                 if not assistant_text.strip() and getattr(response, "function_calls", None):
                     try:
-                        summary_resp = await asyncio.to_thread(chat.send_message, "Please provide your concise verbal response and summary to the user now.")
+                        summary_resp = await self._send_chat_message_resilient(chat, "Please provide your concise verbal response and summary to the user now.")
                         assistant_text = getattr(summary_resp, "text", "") or ""
                         if not assistant_text and summary_resp.candidates and summary_resp.candidates[0].content:
                             for part in summary_resp.candidates[0].content.parts or []:
@@ -1111,8 +1192,8 @@ class AetherEngine:
                                 is_auth, _ = self.voice_verifier.verify(queued_wav, threshold=thresh)
                             if is_auth:
                                 try:
-                                    q_resp = await asyncio.to_thread(
-                                        client.models.generate_content,
+                                    q_resp = await self._generate_content_resilient(
+                                        client=client,
                                         model=stt_model,
                                         contents=[
                                             types.Part.from_bytes(data=queued_wav, mime_type="audio/wav"),
@@ -1230,8 +1311,8 @@ class AetherEngine:
                                 if is_authorized:
                                     try:
                                         t_int_0 = time.perf_counter()
-                                        stt_resp = await asyncio.to_thread(
-                                            client.models.generate_content,
+                                        stt_resp = await self._generate_content_resilient(
+                                            client=client,
                                             model=stt_model,
                                             contents=[
                                                 types.Part.from_bytes(data=raw_wav, mime_type="audio/wav"),
@@ -1327,8 +1408,104 @@ class AetherEngine:
                     self.notify("status", {"state": "error", "message": f"Error: {turn_err}"})
                     await asyncio.sleep(1.0)
 
-                    self.notify("status", {"state": "error", "message": f"Error: {turn_err}"})
-                    await asyncio.sleep(1.0)
+    async def _send_chat_message_resilient(
+        self,
+        chat,
+        message: Any,
+        max_retries: int = 3,
+        initial_delay: float = 0.4,
+        backoff_factor: float = 1.5
+    ):
+        """
+        Sends a message to the Cortex Gemini chat session with automatic retry on transient
+        network/socket drops (e.g. WinError 10054, httpx.ReadError, idle keep-alive disconnects).
+        """
+        delay = initial_delay
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await asyncio.to_thread(chat.send_message, message)
+            except TRANSIENT_NETWORK_ERRORS as exc:
+                last_err = exc
+                err_msg = str(exc)
+                if attempt < max_retries:
+                    logger.warning(
+                        f"[CORTEX RESILIENCE] Transient network/socket error in chat.send_message "
+                        f"(attempt {attempt}/{max_retries}): {type(exc).__name__}: {err_msg}. "
+                        f"Retrying in {delay:.2f}s with fresh socket..."
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= backoff_factor
+                else:
+                    logger.error(
+                        f"[CORTEX RESILIENCE] chat.send_message failed after {max_retries} attempts: "
+                        f"{type(exc).__name__}: {err_msg}"
+                    )
+                    raise last_err
+            except Exception as exc:
+                exc_str = str(exc).lower()
+                if "10054" in exc_str or "forcibly closed" in exc_str or "connection reset" in exc_str:
+                    last_err = exc
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"[CORTEX RESILIENCE] Detected socket reset in chat.send_message "
+                            f"(attempt {attempt}/{max_retries}): {exc}. "
+                            f"Retrying in {delay:.2f}s with fresh socket..."
+                        )
+                        await asyncio.sleep(delay)
+                        delay *= backoff_factor
+                        continue
+                raise exc
+
+    async def _generate_content_resilient(
+        self,
+        client,
+        model: str,
+        contents: Any,
+        config: Optional[Any] = None,
+        max_retries: int = 2,
+        initial_delay: float = 0.3
+    ):
+        """
+        Calls client.models.generate_content with transient socket drop retry.
+        """
+        delay = initial_delay
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model,
+                    contents=contents,
+                    config=config
+                )
+            except TRANSIENT_NETWORK_ERRORS as exc:
+                last_err = exc
+                if attempt < max_retries:
+                    logger.warning(
+                        f"[STT RESILIENCE] Transient socket drop in generate_content "
+                        f"(attempt {attempt}/{max_retries}): {type(exc).__name__}: {exc}. "
+                        f"Retrying in {delay:.2f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2.0
+                else:
+                    raise last_err
+            except Exception as exc:
+                exc_str = str(exc).lower()
+                if "10054" in exc_str or "forcibly closed" in exc_str or "connection reset" in exc_str:
+                    last_err = exc
+                    if attempt < max_retries:
+                        logger.warning(
+                            f"[STT RESILIENCE] Socket reset in generate_content "
+                            f"(attempt {attempt}/{max_retries}): {exc}. "
+                            f"Retrying in {delay:.2f}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        delay *= 2.0
+                        continue
+                raise exc
+
 
     def _resolve_edge_voice(self, voice_name: str) -> str:
         """Maps Gemini or generic voice names to Microsoft Edge Neural voices."""

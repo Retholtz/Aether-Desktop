@@ -31,6 +31,7 @@ from tools.os_controls import (
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
 from tools.skill_library import SkillLibrary
+from core.user_memory import UserMemory
 
 
 
@@ -464,6 +465,72 @@ READ_SAVED_SKILL_DECLARATION = {
     }
 }
 
+REMEMBER_USER_FACT_DECLARATION = {
+    "name": "remember_user_fact",
+    "description": (
+        "Stores or updates a persistent personal fact about the user (e.g. spouse, family members, birthdays, anniversaries, career, hobbies, vehicles) "
+        "into the user's permanent profile. Call this whenever the user asks you to remember something or reveals personal facts. "
+        "For calendar dates (birthdays, anniversaries), always convert to 'YYYY-MM-DD' (e.g. '1977-05-01') under category 'dates' with data_type='date'. "
+        "If the user shares multiple facts at once (e.g. wife's name and birthday), call remember_user_fact for each fact."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "category": {
+                "type": "STRING",
+                "description": "Category: 'family', 'dates', 'work', 'interests', 'devices', or 'general'."
+            },
+            "key": {
+                "type": "STRING",
+                "description": "Unique key (e.g. 'wife_name', 'wife_birthday', 'employer', 'favorite_hobby')."
+            },
+            "value": {
+                "type": "STRING",
+                "description": "Value to remember (e.g. 'Traci', '1977-05-01', 'Acme Corp', 'Photography')."
+            },
+            "data_type": {
+                "type": "STRING",
+                "description": "Data type: 'string', 'date' (format YYYY-MM-DD), 'number', or 'json'. Default is 'string'."
+            }
+        },
+        "required": ["category", "key", "value"]
+    }
+}
+
+FORGET_USER_FACT_DECLARATION = {
+    "name": "forget_user_fact",
+    "description": "Removes a specific fact from the user's persistent profile by category and key.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "category": {
+                "type": "STRING",
+                "description": "Category of the fact to remove."
+            },
+            "key": {
+                "type": "STRING",
+                "description": "Key of the fact to remove."
+            }
+        },
+        "required": ["category", "key"]
+    }
+}
+
+GET_USER_PROFILE_DECLARATION = {
+    "name": "get_user_profile",
+    "description": "Retrieves active stored facts about the user from their persistent profile, optionally filtered by category.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "category": {
+                "type": "STRING",
+                "description": "Optional category filter: 'family', 'dates', 'work', 'interests', 'devices', or 'general'."
+            }
+        },
+        "required": []
+    }
+}
+
 EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
@@ -517,6 +584,9 @@ def get_all_tool_declarations() -> List[dict]:
         LIST_SAVED_SKILLS_DECLARATION,
         LIST_AVAILABLE_SKILLS_DECLARATION,
         READ_SAVED_SKILL_DECLARATION,
+        REMEMBER_USER_FACT_DECLARATION,
+        FORGET_USER_FACT_DECLARATION,
+        GET_USER_PROFILE_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
     ]
 
@@ -540,6 +610,7 @@ class ToolDispatcher:
         self.gui_controller = GuiPrimitivesController(self.screen_pipeline)
         self.script_runner = ScriptRunner()
         self.skill_library = SkillLibrary()
+        self.user_memory = UserMemory()
         self.on_event = on_event
         self.whitelist_getter = whitelist_getter or (lambda: [])
         self.whitelist_updater = whitelist_updater
@@ -1009,6 +1080,40 @@ class ToolDispatcher:
                         "status": "error",
                         "message": f"Skill '{skill_name}' not found in permanent library."
                     }
+
+            elif fn_name == "remember_user_fact":
+                cat = str(args.get("category", "general")).strip()
+                key = str(args.get("key", "")).strip()
+                val = str(args.get("value", "")).strip()
+                dtype = str(args.get("data_type", "string")).strip()
+                result = self.user_memory.remember_fact(cat, key, val, dtype)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "User Memory",
+                    "content": f"🧠 [REMEMBERED] [{cat}] {key} = {val}"
+                })
+                return result
+
+            elif fn_name == "forget_user_fact":
+                cat = str(args.get("category", "general")).strip()
+                key = str(args.get("key", "")).strip()
+                result = self.user_memory.forget_fact(cat, key)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "User Memory",
+                    "content": f"🧠 [FORGOTTEN] [{cat}] {key}"
+                })
+                return result
+
+            elif fn_name == "get_user_profile":
+                cat = args.get("category")
+                facts = self.user_memory.get_facts(category=str(cat).strip() if cat else None)
+                return {
+                    "status": "success",
+                    "category": str(cat).strip() if cat else "all",
+                    "count": len(facts),
+                    "facts": facts
+                }
 
             elif fn_name == "execute_automation_script":
                 script_code = str(args.get("script_code", ""))
