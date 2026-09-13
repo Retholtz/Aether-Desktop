@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import sounddevice as sd
 from typing import Optional
 
@@ -17,6 +18,186 @@ from core.logger import (
 from core.security import protect_secret, unprotect_secret
 
 logger = get_logger("Bridge")
+
+KOKORO_VOICES = [
+    {"name": "af_heart", "trait": "Warm & Expressive (Quality Grade A)", "gender": "Female (US)"},
+    {"name": "af_bella", "trait": "Bright & Crisp", "gender": "Female (US)"},
+    {"name": "af_nicole", "trait": "Smooth & Professional", "gender": "Female (US)"},
+    {"name": "af_aoede", "trait": "Breezy & Melodic", "gender": "Female (US)"},
+    {"name": "af_kore", "trait": "Firm & Clear", "gender": "Female (US)"},
+    {"name": "af_sarah", "trait": "Natural & Friendly", "gender": "Female (US)"},
+    {"name": "af_nova", "trait": "Modern & Dynamic", "gender": "Female (US)"},
+    {"name": "af_sky", "trait": "Light & Youthful", "gender": "Female (US)"},
+    {"name": "am_adam", "trait": "Deep & Grounded", "gender": "Male (US)"},
+    {"name": "am_michael", "trait": "Clear & Conversational", "gender": "Male (US)"},
+    {"name": "am_puck", "trait": "Upbeat & Energetic", "gender": "Male (US)"},
+    {"name": "am_echo", "trait": "Balanced & Informative", "gender": "Male (US)"},
+    {"name": "am_eric", "trait": "Warm & Friendly", "gender": "Male (US)"},
+    {"name": "am_fenrir", "trait": "Intense & Confident", "gender": "Male (US)"},
+    {"name": "am_liam", "trait": "Casual & Easy-going", "gender": "Male (US)"},
+    {"name": "am_onyx", "trait": "Authoritative & Deep", "gender": "Male (US)"},
+    {"name": "bf_emma", "trait": "Polished & Articulate (UK)", "gender": "Female (GB)"},
+    {"name": "bf_isabella", "trait": "Refined & Warm (UK)", "gender": "Female (GB)"},
+    {"name": "bf_alice", "trait": "Clear & Expressive (UK)", "gender": "Female (GB)"},
+    {"name": "bf_lily", "trait": "Gentle & Soft (UK)", "gender": "Female (GB)"},
+    {"name": "bm_george", "trait": "Sophisticated & Measured (UK)", "gender": "Male (GB)"},
+    {"name": "bm_fable", "trait": "Engaging & Upbeat (UK)", "gender": "Male (GB)"},
+    {"name": "bm_lewis", "trait": "Deep & Resonant (UK)", "gender": "Male (GB)"},
+    {"name": "bm_daniel", "trait": "Calm & Authoritative (UK)", "gender": "Male (GB)"},
+    {"name": "alloy", "trait": "OpenAI Compatible", "gender": "Neutral"},
+    {"name": "echo", "trait": "OpenAI Compatible", "gender": "Male"},
+    {"name": "fable", "trait": "OpenAI Compatible", "gender": "British"},
+    {"name": "onyx", "trait": "OpenAI Compatible", "gender": "Male"},
+    {"name": "nova", "trait": "OpenAI Compatible", "gender": "Female"},
+    {"name": "shimmer", "trait": "OpenAI Compatible", "gender": "Female"}
+]
+
+_CACHED_EDGE_VOICES = []
+_CACHED_EDGE_CATALOG = None
+
+def _get_edge_voice_catalog():
+    global _CACHED_EDGE_CATALOG
+    if _CACHED_EDGE_CATALOG is not None:
+        return _CACHED_EDGE_CATALOG
+    try:
+        import edge_tts
+        loop = asyncio.new_event_loop()
+        try:
+            raw = loop.run_until_complete(edge_tts.list_voices())
+        finally:
+            loop.close()
+
+        priority_order = ["en-US", "en-GB", "en-AU", "en-CA", "en-IE", "en-NZ", "en-IN", "en-ZA", "en-SG"]
+        locales = {}
+
+        for v in raw:
+            loc = v.get("Locale", "")
+            loc_name = v.get("LocaleName", loc)
+            short = v.get("ShortName", "")
+            gender = v.get("Gender", "Unknown")
+
+            parts = short.split("-")
+            suffix = parts[-1] if len(parts) > 2 else short
+            is_multi = "Multilingual" in suffix
+            clean_name = suffix.replace("MultilingualNeural", "").replace("Neural", "")
+
+            display_label = f"{clean_name} ({gender})"
+            if is_multi:
+                display_label = f"{clean_name} (Multilingual, {gender})"
+
+            if loc not in locales:
+                parts_loc = loc.split("-")
+                region_code = parts_loc[1] if len(parts_loc) > 1 else loc
+                country = loc_name
+                if "(" in loc_name and ")" in loc_name:
+                    country = loc_name[loc_name.find("(") + 1:loc_name.find(")")]
+                    lang = loc_name[:loc_name.find("(")].strip()
+                    region_label = f"{country} ({region_code}) — {lang}"
+                else:
+                    region_label = f"{loc_name} ({region_code})"
+                locales[loc] = {
+                    "id": loc,
+                    "label": region_label,
+                    "country": country,
+                    "voices": []
+                }
+            locales[loc]["voices"].append({
+                "id": short,
+                "name": clean_name,
+                "label": display_label,
+                "gender": gender
+            })
+
+        for loc, data in locales.items():
+            data["voices"].sort(key=lambda x: x["name"])
+
+        sorted_keys = sorted(locales.keys(), key=lambda k: (
+            0 if k in priority_order else 1,
+            priority_order.index(k) if k in priority_order else locales[k]["country"].lower()
+        ))
+
+        regions_list = [{"id": k, "label": locales[k]["label"]} for k in sorted_keys]
+        voices_map = {k: locales[k]["voices"] for k in sorted_keys}
+
+        _CACHED_EDGE_CATALOG = {
+            "regions": regions_list,
+            "voices": voices_map
+        }
+        return _CACHED_EDGE_CATALOG
+    except Exception as e:
+        logger.warning(f"Failed to fetch Edge TTS voice catalog: {e}")
+        return {
+            "regions": [
+                {"id": "en-US", "label": "United States (US) — English"},
+                {"id": "en-GB", "label": "United Kingdom (GB) — English"},
+                {"id": "en-AU", "label": "Australia (AU) — English"},
+                {"id": "en-CA", "label": "Canada (CA) — English"}
+            ],
+            "voices": {
+                "en-US": [
+                    {"id": "en-US-GuyNeural", "name": "Guy", "label": "Guy (Male)", "gender": "Male"},
+                    {"id": "en-US-JennyNeural", "name": "Jenny", "label": "Jenny (Female)", "gender": "Female"}
+                ],
+                "en-GB": [
+                    {"id": "en-GB-LibbyNeural", "name": "Libby", "label": "Libby (Female)", "gender": "Female"},
+                    {"id": "en-GB-RyanNeural", "name": "Ryan", "label": "Ryan (Male)", "gender": "Male"}
+                ],
+                "en-AU": [
+                    {"id": "en-AU-NatashaNeural", "name": "Natasha", "label": "Natasha (Female)", "gender": "Female"},
+                    {"id": "en-AU-WilliamMultilingualNeural", "name": "William", "label": "William (Multilingual, Male)", "gender": "Male"}
+                ],
+                "en-CA": [
+                    {"id": "en-CA-ClaraNeural", "name": "Clara", "label": "Clara (Female)", "gender": "Female"},
+                    {"id": "en-CA-LiamNeural", "name": "Liam", "label": "Liam (Male)", "gender": "Male"}
+                ]
+            }
+        }
+
+def _get_edge_voices():
+    global _CACHED_EDGE_VOICES
+    if _CACHED_EDGE_VOICES:
+        return _CACHED_EDGE_VOICES
+    catalog = _get_edge_voice_catalog()
+    flat = []
+    for reg_id, vlist in catalog.get("voices", {}).items():
+        for v in vlist:
+            flat.append({
+                "name": v["id"],
+                "trait": reg_id,
+                "gender": v["gender"]
+            })
+    _CACHED_EDGE_VOICES = flat
+    return _CACHED_EDGE_VOICES
+
+def _get_sapi_voices():
+    try:
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()
+        try:
+            speaker = win32com.client.Dispatch("SAPI.SpVoice")
+            sapi_voices = []
+            voices = speaker.GetVoices()
+            for i in range(voices.Count):
+                v = voices.Item(i)
+                desc = v.GetDescription()
+                sapi_voices.append({
+                    "name": desc,
+                    "trait": "Local SAPI5",
+                    "gender": "System Voice"
+                })
+            voices = None
+            speaker = None
+            return sapi_voices if sapi_voices else [{"name": "Default Windows Voice", "trait": "Local SAPI5", "gender": "System Voice"}]
+        finally:
+            speaker = None
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Failed to fetch SAPI voices: {e}")
+        return [{"name": "Default Windows Voice", "trait": "Local SAPI5", "gender": "System Voice"}]
 
 class GuiBridge:
     """
@@ -36,6 +217,7 @@ class GuiBridge:
         self._window = None
         self._overlay_window = None
         self._overlay_visible = False
+        self._js_lock = threading.Lock()
         self._config = self._load_config()
         self._engine = AetherEngine(
             config_getter=self.get_raw_config,
@@ -79,23 +261,24 @@ class GuiBridge:
         try:
             payload = json.dumps({"type": event_type, "data": data})
             
-            # Dispatch to Main Window
-            if self._window:
-                try:
-                    js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
-                    self._window.evaluate_js(js_code)
-                except Exception:
-                    pass
+            with self._js_lock:
+                # Dispatch to Main Window
+                if self._window:
+                    try:
+                        js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
+                        self._window.evaluate_js(js_code)
+                    except Exception:
+                        pass
 
-            # Dispatch to Floating Overlay Window
-            if self._overlay_window:
-                try:
-                    overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
-                    self._overlay_window.evaluate_js(overlay_js)
-                except Exception:
-                    pass
+                # Dispatch to Floating Overlay Window
+                if self._overlay_window:
+                    try:
+                        overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
+                        self._overlay_window.evaluate_js(overlay_js)
+                    except Exception:
+                        pass
         except Exception as err:
-            print(f"[BRIDGE DISPATCH ERROR] {err}")
+            logger.warning(f"[BRIDGE DISPATCH ERROR] {err}")
 
     # =========================================================================
     # Methods exposed to JavaScript (via window.pywebview.api)
@@ -153,6 +336,12 @@ class GuiBridge:
                 self._config.setdefault("api", {})["temperature"] = float(api_cfg["temperature"])
             if "voice_name" in api_cfg:
                 self._config.setdefault("api", {})["voice_name"] = api_cfg["voice_name"]
+            if "voice_accent" in api_cfg:
+                self._config.setdefault("api", {})["voice_accent"] = api_cfg["voice_accent"]
+            if "voice_speed" in api_cfg:
+                self._config.setdefault("api", {})["voice_speed"] = float(api_cfg["voice_speed"])
+            if "local_tts_url" in api_cfg:
+                self._config.setdefault("api", {})["local_tts_url"] = api_cfg["local_tts_url"]
             if "system_instruction" in api_cfg:
                 self._config.setdefault("api", {})["system_instruction"] = api_cfg["system_instruction"]
 
@@ -190,9 +379,45 @@ class GuiBridge:
         """Enumerates truly active, available microphones and speakers on the system."""
         return get_available_audio_devices()
 
-    def get_available_voices(self) -> list:
-        """Returns list of the 30 Google Gemini official TTS voices."""
-        return GEMINI_VOICES
+    def get_edge_voice_catalog(self) -> dict:
+        """Returns structured Edge TTS catalog with priority sorted regions and clean voice names."""
+        return _get_edge_voice_catalog()
+
+    def get_available_voices(self, engine: str = "gemini-live-native", region: Optional[str] = None) -> list:
+        """Returns list of voices tailored to the selected TTS engine (Gemini, Edge, SAPI5, or Local TTS)."""
+        eng = (engine or "").lower()
+        if "edge" in eng:
+            if region:
+                catalog = _get_edge_voice_catalog()
+                reg_voices = catalog.get("voices", {}).get(region, [])
+                if reg_voices:
+                    return [{"name": v["id"], "trait": region, "gender": v["gender"], "clean_name": v["name"], "label": v["label"]} for v in reg_voices]
+            return _get_edge_voices()
+        elif "windows" in eng or "sapi" in eng:
+            return _get_sapi_voices()
+        elif "local" in eng or "kokoro" in eng:
+            return KOKORO_VOICES
+        else:
+            return GEMINI_VOICES
+
+    def get_available_accents(self) -> list:
+        """Returns list of natural language voice accents for Gemini speech."""
+        return [
+            {"id": "default", "label": "Default (Native / Standard)"},
+            {"id": "British", "label": "British (Received Pronunciation / BBC English)"},
+            {"id": "Cockney", "label": "British (Cockney / East London)"},
+            {"id": "Scottish", "label": "Scottish"},
+            {"id": "Irish", "label": "Irish"},
+            {"id": "Australian", "label": "Australian"},
+            {"id": "American Southern", "label": "American (Southern / Texan)"},
+            {"id": "American New York", "label": "American (New York)"},
+            {"id": "French", "label": "French Accent"},
+            {"id": "German", "label": "German Accent"},
+            {"id": "Italian", "label": "Italian Accent"},
+            {"id": "Spanish", "label": "Spanish Accent"},
+            {"id": "Indian", "label": "Indian Accent"},
+            {"id": "Japanese", "label": "Japanese Accent"}
+        ]
 
     def get_monitors(self) -> list:
         """Enumerates connected monitors for the frontend settings."""
@@ -217,6 +442,7 @@ class GuiBridge:
             self._engine.stop()
             return {"success": True, "status": "stopped"}
         except Exception as e:
+            logger.error(f"[STOP ASSISTANT ERROR] {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
     def kill_audio(self) -> dict:
@@ -523,6 +749,8 @@ class GuiBridge:
 
     def _on_log_record(self, log_entry: dict):
         """Pushes real-time log records to pywebview."""
+        if log_entry.get("level") == "DEBUG":
+            return
         self._on_engine_event("log_event", log_entry)
 
     def get_recent_logs(self) -> list:

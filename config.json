@@ -9,7 +9,10 @@
     "live_model_id": "gemini-3.1-flash-live-preview",
     "pro_model_id": "gemini-3.8-flash",
     "temperature": 0.7,
-    "voice_name": "Aoede",
+    "voice_name": "Sulafat",
+    "voice_accent": "British",
+    "voice_speed": 1.0,
+    "local_tts_url": "http://localhost:8880/v1/audio/speech",
     "system_instruction": "",
     "stt_endpoint": "gemini-3.5-transcribe",
     "tts_endpoint": "gemini-live-native"

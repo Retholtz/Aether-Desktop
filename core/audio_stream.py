@@ -40,6 +40,9 @@ class AudioPipeline:
         
         self.loop = None
         self._running = False
+        self._stop_lock = threading.Lock()
+        self.in_stream = None
+        self.out_stream = None
         self.is_speaking = False
         self.is_calibrating = False
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
@@ -240,6 +243,10 @@ class AudioPipeline:
                 self.loop.call_soon_threadsafe(self.utterance_queue.put_nowait, wav_bytes)
 
     def _output_callback(self, outdata, frames, time_info, status):
+        if not self._running:
+            outdata.fill(0)
+            return
+
         if self.hw_out_rate != self.target_output_rate:
             needed_model_samples = int(round(frames * self.target_output_rate / self.hw_out_rate))
         else:
@@ -341,20 +348,29 @@ class AudioPipeline:
         self.out_stream.start()
 
     def stop(self):
-        self._running = False
-        self.clear_output_buffer()
-        if hasattr(self, 'in_stream'):
-            try:
-                self.in_stream.stop()
-                self.in_stream.close()
-            except Exception:
-                pass
-        if hasattr(self, 'out_stream'):
-            try:
-                self.out_stream.stop()
-                self.out_stream.close()
-            except Exception:
-                pass
+        with self._stop_lock:
+            if not self._running and self.in_stream is None and self.out_stream is None:
+                return
+            self._running = False
+            self.clear_output_buffer()
+
+            in_s = self.in_stream
+            self.in_stream = None
+            if in_s is not None:
+                try:
+                    in_s.abort(ignore_errors=True)
+                    in_s.close(ignore_errors=True)
+                except Exception:
+                    pass
+
+            out_s = self.out_stream
+            self.out_stream = None
+            if out_s is not None:
+                try:
+                    out_s.abort(ignore_errors=True)
+                    out_s.close(ignore_errors=True)
+                except Exception:
+                    pass
 
 
 def get_available_audio_devices() -> dict:

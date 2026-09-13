@@ -93,6 +93,11 @@ def main():
     finally:
         print("\n[SHUTDOWN] Window closed. Stopping assistant engine...")
         bridge.stop_assistant()
+        if hasattr(bridge._engine, "telemetry_db") and bridge._engine.telemetry_db:
+            try:
+                bridge._engine.telemetry_db.close()
+            except Exception:
+                pass
         loop.call_soon_threadsafe(loop.stop)
         print("[SHUTDOWN] Clean exit.")
 

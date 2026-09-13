@@ -16,12 +16,13 @@ window.aetherUI = {
   isRecordingKeybind: false,
   logEntries: [],
   activeLogFilter: "all",
+  edgeCatalog: null,
 
   init: async function() {
     this.setupTabs();
     this.setupEventHandlers();
     await this.applyWindowsTheme();
-    await this.loadVoices();
+    await this.loadAccents();
     await this.loadAudioDevices();
     await this.loadMonitors();
     await this.loadConfig();
@@ -420,7 +421,80 @@ window.aetherUI = {
       retrainProfileBtn.addEventListener("click", () => this.retrainVoiceProfile());
     }
 
+    // TTS Provider & Voice Swapping Listeners
+    const ttsSelect = document.getElementById("ttsSelect");
+    if (ttsSelect) {
+      ttsSelect.addEventListener("change", async (e) => {
+        await this.loadVoices(e.target.value);
+      });
+    }
+
+    const edgeRegionSelect = document.getElementById("edgeRegionSelect");
+    if (edgeRegionSelect) {
+      edgeRegionSelect.addEventListener("change", (e) => {
+        this.populateEdgeVoicesForRegion(e.target.value);
+        this.updateVoiceLabels();
+      });
+    }
+
+    const voiceSelect = document.getElementById("voiceSelect");
+    if (voiceSelect) {
+      voiceSelect.addEventListener("change", () => {
+        this.updateVoiceLabels();
+      });
+    }
+
+    const voiceTextInput = document.getElementById("voiceTextInput");
+    if (voiceTextInput) {
+      voiceTextInput.addEventListener("input", () => {
+        this.updateVoiceLabels();
+      });
+    }
+
+    const voiceAccentSelect = document.getElementById("voiceAccentSelect");
+    if (voiceAccentSelect) {
+      voiceAccentSelect.addEventListener("change", () => {
+        this.updateVoiceLabels();
+      });
+    }
+
+    const speedSlider = document.getElementById("voiceSpeedSlider");
+    const speedVal = document.getElementById("voiceSpeedVal");
+    if (speedSlider) {
+      speedSlider.addEventListener("input", (e) => {
+        if (speedVal) speedVal.innerText = `${parseFloat(e.target.value).toFixed(2)}x`;
+      });
+    }
+
     this.setupPreferencesHandlers();
+  },
+
+  updateVoiceLabels: function() {
+    const eng = (document.getElementById("ttsSelect")?.value || "").toLowerCase();
+    const isLocal = eng.includes("local") && !eng.includes("windows");
+    const select = document.getElementById("voiceSelect");
+    const textInput = document.getElementById("voiceTextInput");
+    const v = isLocal ? (textInput?.value.trim() || "") : (select?.value || "");
+    const selectedOpt = select?.selectedOptions ? select.selectedOptions[0] : null;
+    const a = document.getElementById("voiceAccentSelect")?.value || "default";
+    const accentSuffix = (a && a !== "default" && !isLocal) ? ` (${a})` : "";
+
+    let displayVoice = v;
+    if (isLocal) {
+      displayVoice = v || "Default / None";
+    } else if (selectedOpt && selectedOpt.dataset.cleanName) {
+      const regSelect = document.getElementById("edgeRegionSelect");
+      const regId = regSelect?.value || "";
+      const regCode = regId.includes("-") ? regId.split("-")[1] : regId;
+      displayVoice = `${selectedOpt.dataset.cleanName} (${regCode})`;
+    }
+
+    if (document.getElementById("threadVoiceLabel")) {
+      document.getElementById("threadVoiceLabel").innerText = `VOICE: ${displayVoice}${accentSuffix}`;
+    }
+    if (document.getElementById("telVoice")) {
+      document.getElementById("telVoice").innerText = `${displayVoice}${accentSuffix}`;
+    }
   },
 
   updateAgentNameUI: function(name) {
@@ -536,21 +610,184 @@ window.aetherUI = {
   // =========================================================================
   // Data Loading from Python Backend
   // =========================================================================
-  loadVoices: async function() {
+  loadAccents: async function() {
     if (!window.pywebview || !window.pywebview.api) return;
     try {
-      const voices = await window.pywebview.api.get_available_voices();
-      // Alphabetize by voice name
-      voices.sort((a, b) => a.name.localeCompare(b.name));
-
-      const select = document.getElementById("voiceSelect");
+      const accents = await window.pywebview.api.get_available_accents();
+      const select = document.getElementById("voiceAccentSelect");
+      if (!select) return;
+      const prevVal = select.value || "default";
       select.innerHTML = "";
-      voices.forEach(v => {
+      accents.forEach(a => {
         const opt = document.createElement("option");
-        opt.value = v.name;
-        opt.innerText = `${v.name} — ${v.trait} (${v.gender})`;
+        opt.value = a.id;
+        opt.innerText = a.label;
         select.appendChild(opt);
       });
+      if (prevVal && Array.from(select.options).some(o => o.value === prevVal)) {
+        select.value = prevVal;
+      }
+    } catch (e) {
+      console.error("Failed to load accents:", e);
+    }
+  },
+
+  loadEdgeCatalog: async function() {
+    if (this.edgeCatalog) return this.edgeCatalog;
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_edge_voice_catalog) return null;
+    try {
+      this.edgeCatalog = await window.pywebview.api.get_edge_voice_catalog();
+      return this.edgeCatalog;
+    } catch (e) {
+      console.error("Failed to load Edge voice catalog:", e);
+      return null;
+    }
+  },
+
+  populateEdgeVoicesForRegion: function(regionId, selectedVoice) {
+    if (!this.edgeCatalog || !this.edgeCatalog.voices) return;
+    const voices = this.edgeCatalog.voices[regionId] || [];
+    const select = document.getElementById("voiceSelect");
+    if (!select) return;
+    const prevVal = selectedVoice || select.value;
+    select.innerHTML = "";
+
+    voices.forEach(v => {
+      const opt = document.createElement("option");
+      opt.value = v.id;
+      opt.innerText = v.label;
+      opt.dataset.cleanName = v.name;
+      opt.dataset.gender = v.gender;
+      select.appendChild(opt);
+    });
+
+    if (prevVal && Array.from(select.options).some(o => o.value === prevVal)) {
+      select.value = prevVal;
+    } else if (select.options.length > 0) {
+      select.selectedIndex = 0;
+    }
+  },
+
+  updateTtsUiVisibility: function(engine) {
+    const eng = (engine || document.getElementById("ttsSelect")?.value || "").toLowerCase();
+    const isEdge = eng.includes("edge");
+    const isGemini = eng.startsWith("gemini") || !eng;
+    const isLocal = eng.includes("local") && !eng.includes("windows");
+    const isWindows = eng.includes("windows") || eng.includes("sapi");
+
+    const edgeRegionGroup = document.getElementById("edgeRegionGroup");
+    const accentGroup = document.getElementById("voiceAccentGroup");
+    const localGroup = document.getElementById("localTtsGroup");
+    const speedGroup = document.getElementById("voiceSpeedGroup");
+
+    const voiceSelect = document.getElementById("voiceSelect");
+    const voiceTextInput = document.getElementById("voiceTextInput");
+    const voiceSelectLabel = document.getElementById("voiceSelectLabel");
+    const voiceSelectHint = document.getElementById("voiceSelectHint");
+
+    const subLeft = document.getElementById("ttsSubSettingsLeft");
+    const subRight = document.getElementById("ttsSubSettingsRight");
+
+    if (voiceSelect) {
+      voiceSelect.style.display = isLocal ? "none" : "block";
+    }
+    if (voiceTextInput) {
+      voiceTextInput.style.display = isLocal ? "block" : "none";
+    }
+    if (voiceSelectLabel) {
+      voiceSelectLabel.innerText = isLocal ? "AI Output Voice / Model (Local TTS)" : "AI Output Voice";
+    }
+    if (voiceSelectHint) {
+      voiceSelectHint.innerText = isLocal
+        ? "Enter your Local TTS model/speaker name (leave blank to use server default)."
+        : "Synthesizer voice tailored to your selected TTS engine.";
+    }
+
+    if (edgeRegionGroup) {
+      edgeRegionGroup.style.display = isEdge ? "flex" : "none";
+    }
+    if (accentGroup) {
+      accentGroup.style.display = isGemini ? "flex" : "none";
+    }
+    if (localGroup) {
+      localGroup.style.display = isLocal ? "flex" : "none";
+    }
+    if (speedGroup) {
+      speedGroup.style.display = isWindows ? "flex" : "none";
+    }
+
+    if (subLeft) {
+      subLeft.style.display = (isWindows || isLocal) ? "flex" : "none";
+    }
+    if (subRight) {
+      subRight.style.display = (isEdge || isGemini) ? "flex" : "none";
+    }
+  },
+
+  loadVoices: async function(ttsEngine, selectedVoice) {
+    if (!window.pywebview || !window.pywebview.api) return;
+    try {
+      const engine = ttsEngine || document.getElementById("ttsSelect")?.value || "gemini-live-native";
+      const isEdge = engine.toLowerCase().includes("edge");
+      const isLocal = engine.toLowerCase().includes("local") && !engine.toLowerCase().includes("windows");
+
+      if (isLocal) {
+        const textInput = document.getElementById("voiceTextInput");
+        if (textInput && selectedVoice !== undefined) {
+          textInput.value = selectedVoice;
+        }
+      } else if (isEdge) {
+        await this.loadEdgeCatalog();
+        const regSelect = document.getElementById("edgeRegionSelect");
+        if (regSelect && this.edgeCatalog && this.edgeCatalog.regions) {
+          const prevReg = regSelect.value;
+          regSelect.innerHTML = "";
+          this.edgeCatalog.regions.forEach(r => {
+            const opt = document.createElement("option");
+            opt.value = r.id;
+            opt.innerText = r.label;
+            regSelect.appendChild(opt);
+          });
+
+          // Determine which region to select
+          let targetRegion = "en-US";
+          if (selectedVoice) {
+            for (const [regId, vList] of Object.entries(this.edgeCatalog.voices || {})) {
+              if (vList.some(v => v.id === selectedVoice)) {
+                targetRegion = regId;
+                break;
+              }
+            }
+          } else if (prevReg && Array.from(regSelect.options).some(o => o.value === prevReg)) {
+            targetRegion = prevReg;
+          }
+
+          regSelect.value = targetRegion;
+          this.populateEdgeVoicesForRegion(targetRegion, selectedVoice);
+        }
+      } else {
+        const voices = await window.pywebview.api.get_available_voices(engine);
+        const select = document.getElementById("voiceSelect");
+        if (!select) return;
+        const prevVal = selectedVoice || select.value;
+        select.innerHTML = "";
+
+        voices.forEach(v => {
+          const opt = document.createElement("option");
+          opt.value = v.name;
+          opt.innerText = `${v.name} — ${v.trait} (${v.gender})`;
+          select.appendChild(opt);
+        });
+
+        if (prevVal && Array.from(select.options).some(o => o.value === prevVal)) {
+          select.value = prevVal;
+        } else if (select.options.length > 0) {
+          select.selectedIndex = 0;
+        }
+      }
+
+      this.updateTtsUiVisibility(engine);
+      this.updateVoiceLabels();
     } catch (e) {
       console.error("Failed to load voices:", e);
     }
@@ -659,20 +896,33 @@ window.aetherUI = {
         document.getElementById("apiKeyHint").innerText = "No key saved. Enter your Gemini API key above.";
       }
 
-      if (api.voice_name) {
-        document.getElementById("voiceSelect").value = api.voice_name;
-        document.getElementById("threadVoiceLabel").innerText = `VOICE: ${api.voice_name}`;
-        document.getElementById("telVoice").innerText = api.voice_name;
-      }
       if (api.model_id) document.getElementById("modelSelect").value = api.model_id;
       const currentStt = api.stt_model_id || api.stt_endpoint;
       if (currentStt && document.getElementById("sttSelect")) {
         document.getElementById("sttSelect").value = currentStt;
       }
-      const currentTts = api.tts_model_id || api.tts_endpoint;
-      if (currentTts && document.getElementById("ttsSelect")) {
+
+      // TTS Engine, Voice, Accent & Local TTS URL
+      const currentTts = api.tts_model_id || api.tts_endpoint || "gemini-live-native";
+      if (document.getElementById("ttsSelect")) {
         document.getElementById("ttsSelect").value = currentTts;
       }
+      if (document.getElementById("localTtsUrlInput")) {
+        document.getElementById("localTtsUrlInput").value = api.local_tts_url || "http://localhost:8880/v1/audio/speech";
+      }
+      await this.loadAccents();
+      if (document.getElementById("voiceAccentSelect")) {
+        document.getElementById("voiceAccentSelect").value = api.voice_accent || "default";
+      }
+      await this.loadVoices(currentTts, api.voice_name);
+      if (api.voice_speed !== undefined) {
+        const speedVal = parseFloat(api.voice_speed).toFixed(2);
+        const speedSlider = document.getElementById("voiceSpeedSlider");
+        if (speedSlider) speedSlider.value = api.voice_speed;
+        const speedValDisplay = document.getElementById("voiceSpeedVal");
+        if (speedValDisplay) speedValDisplay.innerText = `${speedVal}x`;
+      }
+      this.updateVoiceLabels();
       if (api.pro_model_id && document.getElementById("proModelSelect")) {
         document.getElementById("proModelSelect").value = api.pro_model_id;
       }
@@ -851,18 +1101,27 @@ window.aetherUI = {
       const whitelistRaw = document.getElementById("whitelistInput").value;
       const whitelist = whitelistRaw.split(",").map(s => s.trim()).filter(Boolean);
 
+      const ttsVal = document.getElementById("ttsSelect")?.value || "gemini-live-native";
+      const isLocal = ttsVal.toLowerCase().includes("local") && !ttsVal.toLowerCase().includes("windows");
+      const voiceName = isLocal
+        ? (document.getElementById("voiceTextInput")?.value.trim() || "")
+        : (document.getElementById("voiceSelect")?.value || "");
+
       const payload = {
         api: {
           new_api_key: newKey,
           agent_name: agentName,
-          voice_name: document.getElementById("voiceSelect").value,
+          voice_name: voiceName,
+          voice_accent: document.getElementById("voiceAccentSelect")?.value || "default",
+          voice_speed: parseFloat(document.getElementById("voiceSpeedSlider")?.value || "1.00"),
+          local_tts_url: document.getElementById("localTtsUrlInput")?.value || "http://localhost:8880/v1/audio/speech",
           model_id: document.getElementById("modelSelect").value,
           pipeline_mode: document.getElementById("modelSelect").value.includes("live") ? "live" : "modular",
           stt_model_id: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
-          tts_model_id: document.getElementById("ttsSelect")?.value || "gemini-live-native",
+          tts_model_id: ttsVal,
           live_model_id: "gemini-3.1-flash-live-preview",
           stt_endpoint: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
-          tts_endpoint: document.getElementById("ttsSelect")?.value || "gemini-live-native",
+          tts_endpoint: ttsVal,
           pro_model_id: document.getElementById("proModelSelect")?.value || "gemini-3.1-pro-preview",
           temperature: parseFloat(document.getElementById("temperatureSlider").value),
           system_instruction: document.getElementById("systemPromptInput").value
@@ -975,10 +1234,15 @@ window.aetherUI = {
     } else {
       btn.disabled = true;
       label.innerText = "STOPPING...";
-      await window.pywebview.api.stop_assistant();
+      try {
+        await window.pywebview.api.stop_assistant();
+      } catch (err) {
+        console.warn("stop_assistant error:", err);
+      }
       btn.disabled = false;
       this.isAssistantRunning = false;
       this.updateAssistantButtonState(false);
+      this.updateStatus("disconnected", "Assistant stopped.");
     }
   },
 

@@ -526,6 +526,34 @@ body {
   grid-column: 1 / -1;
 }
 
+.voice-controls-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tts-sub-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tts-sub-col.left {
+  grid-column: 1;
+}
+
+.tts-sub-col.right {
+  grid-column: 2;
+}
+
 label {
   font-size: 13px;
   font-weight: 600;

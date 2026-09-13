@@ -2,7 +2,9 @@ import asyncio
 import base64
 import json
 import os
+import re
 import sys
+import numpy as np
 import time
 import traceback
 from typing import Any, Callable, Optional
@@ -459,7 +461,8 @@ class AetherEngine:
         client: Optional[genai.Client] = None,
         model_id: Optional[str] = None,
         voice_name: Optional[str] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        voice_accent: Optional[str] = "default"
     ):
         """Processes incoming model audio, speech transcriptions, and interruption events across multiple turns."""
         try:
@@ -641,7 +644,8 @@ class AetherEngine:
                                     kill_phrase=kill_phrase,
                                     agent_name=agent_name,
                                     voice_name=voice_name or "Aoede",
-                                    temperature=temperature if temperature is not None else 0.7
+                                    temperature=temperature if temperature is not None else 0.7,
+                                    voice_accent=voice_accent or "default"
                                 )
                             )
 
@@ -691,6 +695,7 @@ class AetherEngine:
             model_id = "gemini-2.5-flash-native-audio-latest"
 
         voice_name = api_cfg.get("voice_name", "Aoede")
+        voice_accent = api_cfg.get("voice_accent", "default")
         temperature = float(api_cfg.get("temperature", 1.0))
 
         # System instructions with strict identity directive and [Agent Name] template support
@@ -805,6 +810,15 @@ class AetherEngine:
         )
 
         system_instruction_text = strict_identity + user_name_directive + alerts_directive + desktop_tools_directive + user_memory_directive + templated_instruction
+        if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
+            accent_directive = (
+                f"SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+                f"- You must speak with a natural, distinct {voice_accent} accent in all spoken responses.\n"
+                f"- Consistently articulate all words with {voice_accent} pronunciation, cadence, and intonation.\n"
+                f"- Maintain standard English vocabulary and phrasing unless asked otherwise, but always express speech with your {voice_accent} accent.\n\n"
+            )
+            system_instruction_text = accent_directive + system_instruction_text
+
         self._base_system_instruction = system_instruction_text
 
         audio_mode = audio_cfg.get("mode", "always_on")
@@ -857,6 +871,7 @@ class AetherEngine:
                     api_cfg=api_cfg,
                     system_instruction_text=system_instruction_text,
                     voice_name=voice_name,
+                    voice_accent=voice_accent,
                     temperature=temperature
                 )
             else:
@@ -867,12 +882,17 @@ class AetherEngine:
                     api_cfg=api_cfg,
                     system_instruction_text=system_instruction_text,
                     voice_name=voice_name,
+                    voice_accent=voice_accent,
                     temperature=temperature
                 )
         finally:
-            if self.audio:
-                self.audio.stop()
-                self.audio = None
+            audio_ref = self.audio
+            self.audio = None
+            if audio_ref:
+                try:
+                    audio_ref.stop()
+                except Exception:
+                    pass
             self.session = None
             self.is_running = False
             self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
@@ -885,7 +905,8 @@ class AetherEngine:
         api_cfg: dict,
         system_instruction_text: str,
         voice_name: str,
-        temperature: float
+        temperature: float,
+        voice_accent: str = "default"
     ):
         """
         Executes Option #2: High-Reasoning Modular 3-Stage Pipeline.
@@ -897,6 +918,7 @@ class AetherEngine:
         stt_model = api_cfg.get("stt_model_id", "gemini-3.5-transcribe")
         cortex_model = api_cfg.get("model_id", "gemini-3.8-flash")
         tts_model = api_cfg.get("tts_model_id", "gemini-live-native")
+        voice_speed = float(api_cfg.get("voice_speed", 1.0))
         audio_cfg = self.config_getter().get("audio", {})
         preferred_language = audio_cfg.get("preferred_language", "en-US")
 
@@ -908,13 +930,14 @@ class AetherEngine:
         if self._optimizer_task is None or self._optimizer_task.done():
             self._optimizer_task = asyncio.create_task(self.optimizer.run_loop())
 
+        accent_info = f", Accent: {voice_accent}" if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", "") else ""
         self.notify("status", {
             "state": "connected",
             "message": f"Modular Pipeline active ({cortex_model}). {agent_name} is listening."
         })
         self.notify("chat_event", {
             "type": "system",
-            "content": f"Ready in Modular Pipeline mode.\n- Cortex: {cortex_model}\n- STT: {stt_model} (Language: {preferred_language})\n- TTS: {tts_model} (Voice: {voice_name})\n{agent_name} is listening..."
+            "content": f"Ready in Modular Pipeline mode.\n- Cortex: {cortex_model}\n- STT: {stt_model} (Language: {preferred_language})\n- TTS: {tts_model} (Voice: {voice_name}{accent_info})\n{agent_name} is listening..."
         })
 
         # Multi-turn Cortex chat session factory with Google Search & Function Calling
@@ -972,7 +995,9 @@ class AetherEngine:
                     voice_name=voice_name,
                     client=client,
                     on_pcm_chunk=_on_briefing_chunk,
-                    stop_event=stop_briefing_event
+                    stop_event=stop_briefing_event,
+                    voice_accent=voice_accent,
+                    voice_speed=voice_speed
                 )
                 while self.audio and not self.audio.is_output_empty() and self.is_running:
                     if self._kill_playback_flag:
@@ -1076,7 +1101,6 @@ class AetherEngine:
                         if user_prompt:
                             # If preferred language is English, reject non-Latin scripts (Devanagari, Gurmukhi/Punjabi, Arabic, Asian scripts)
                             if preferred_language.lower().startswith("en"):
-                                import re
                                 if re.search(r'[\u0600-\u06FF\u0900-\u097F\u0A00-\u0A7F\u4E00-\u9FFF\u3040-\u30FF]', user_prompt):
                                     logger.warning(f"[STT FILTER] Discarded non-English transcription hallucination: '{user_prompt}'")
                                     user_prompt = ""
@@ -1114,9 +1138,13 @@ class AetherEngine:
                     })
                     if tts_model:
                         await self._stream_synthesize_speech(
-                            client=client,
+                            text="Context cleared. What would you like to do next?",
+                            tts_engine=tts_model,
                             voice_name=voice_name,
-                            text="Context cleared. What would you like to do next?"
+                            client=client,
+                            on_pcm_chunk=lambda c: self.audio.write_output_chunk(c) if self.audio else None,
+                            voice_accent=voice_accent,
+                            voice_speed=voice_speed
                         )
                     continue
 
@@ -1384,7 +1412,9 @@ class AetherEngine:
                                 voice_name=voice_name,
                                 client=client,
                                 on_pcm_chunk=_on_pcm_chunk,
-                                stop_event=stop_playback_event
+                                stop_event=stop_playback_event,
+                                voice_accent=voice_accent,
+                                voice_speed=voice_speed
                             )
                             # Drain output buffer while listening for interruptions
                             while self.audio and not self.audio.is_output_empty() and self.is_running:
@@ -1674,7 +1704,26 @@ class AetherEngine:
             return "en-US-JennyNeural"
         if "-" in voice_name and "Neural" in voice_name:
             return voice_name
-        return GEMINI_TO_EDGE_VOICE.get(voice_name, "en-US-JennyNeural")
+        if voice_name in GEMINI_TO_EDGE_VOICE:
+            return GEMINI_TO_EDGE_VOICE[voice_name]
+        v_low = voice_name.lower().strip()
+        if "natasha" in v_low:
+            return "en-AU-NatashaNeural"
+        if "william" in v_low:
+            return "en-AU-WilliamMultilingualNeural"
+        if "clara" in v_low:
+            return "en-CA-ClaraNeural"
+        if "liam" in v_low:
+            return "en-CA-LiamNeural"
+        if "libby" in v_low:
+            return "en-GB-LibbyNeural"
+        if "ryan" in v_low:
+            return "en-GB-RyanNeural"
+        if "guy" in v_low:
+            return "en-US-GuyNeural"
+        if "jenny" in v_low:
+            return "en-US-JennyNeural"
+        return "en-US-JennyNeural"
 
     async def _stream_synthesize_speech(
         self,
@@ -1683,7 +1732,9 @@ class AetherEngine:
         voice_name: str,
         client: genai.Client,
         on_pcm_chunk: Callable[[bytes], None],
-        stop_event: Optional[asyncio.Event] = None
+        stop_event: Optional[asyncio.Event] = None,
+        voice_accent: str = "default",
+        voice_speed: Optional[float] = None
     ):
         """
         Streams synthesized speech directly to the audio playback buffer in real time.
@@ -1691,17 +1742,29 @@ class AetherEngine:
         - "gemini-live-native" / "gemini" / "multimodal": Real-Time WebSocket streaming (~500ms TTFB)
         - "edge-tts" / "edge": Ultra-fast Microsoft Neural TTS (~300ms TTFB)
         - "windows-local" / "sapi": Offline local Windows SAPI5 voice (<50ms)
-        - "gemini-2.5-flash-preview-tts" / "gemini-3.1-flash-tts-preview": REST fallback
+        - "local-tts" / "kokoro": Local OpenAI-compatible TTS server (e.g. Kokoro-FastAPI)
+        - "gemini-3.1-flash-tts-preview" / "gemini-2.5-flash-preview-tts": Cloud TTS REST fallback
         """
         if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
             return
 
+        if voice_speed is None:
+            try:
+                voice_speed = float(self.config_getter().get("api", {}).get("voice_speed", 1.0))
+            except Exception:
+                voice_speed = 1.0
+        voice_speed = max(0.5, min(2.0, float(voice_speed)))
+
         tts_lower = (tts_engine or "").lower()
 
         # 1. Gemini Multimodal Live WebSocket Streaming (Fast ~500ms TTFB, 30 Native Gemini Voices)
-        if "live" in tts_lower or tts_lower == "gemini-live-native" or ("gemini" in tts_lower and "preview" not in tts_lower and "2.5" not in tts_lower):
+        if "live" in tts_lower or tts_lower == "gemini-live-native" or ("gemini" in tts_lower and "preview" not in tts_lower and "2.5" not in tts_lower and "3.1" not in tts_lower):
             try:
                 live_model = "gemini-3.1-flash-live-preview"
+                accent_phrase = ""
+                if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
+                    accent_phrase = f" with a natural, distinct {voice_accent} accent"
+
                 config = types.LiveConnectConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
@@ -1713,7 +1776,7 @@ class AetherEngine:
                     ),
                     system_instruction=types.Content(
                         parts=[types.Part.from_text(
-                            text="You are a vocal speech synthesis engine. Read the user input aloud directly with natural, pleasant expression. Do not add any commentary, greetings, or conversational filler. Only vocalize the exact text provided."
+                            text=f"You are a vocal speech synthesis engine. Read the user input aloud directly{accent_phrase} with natural, pleasant expression. Do not add any commentary, greetings, or conversational filler. Only vocalize the exact text provided."
                         )]
                     )
                 )
@@ -1739,66 +1802,250 @@ class AetherEngine:
             except Exception as live_tts_err:
                 logger.warning(f"[GEMINI LIVE TTS STREAM ERROR] {live_tts_err}, falling back...")
 
-        # 2. Edge Neural TTS (Ultra-Fast ~300ms TTFB)
+        # 2. Edge Neural TTS (High-Fidelity Streamed Sentence-by-Sentence)
         if "edge" in tts_lower:
             if edge_tts is not None and miniaudio is not None:
                 try:
                     edge_voice = self._resolve_edge_voice(voice_name)
-                    comm = edge_tts.Communicate(text, edge_voice)
-                    async for chunk in comm.stream():
+
+                    # Split by sentence boundaries for ultra-low TTFB and pristine gapless decoding
+                    sentences = re.split(r'(?<=[.!?\n])\s+', text.strip())
+                    sentences = [s.strip() for s in sentences if s.strip()]
+                    if not sentences:
+                        sentences = [text.strip()]
+
+                    for sent in sentences:
                         if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
                             break
                         if not self._text_queue.empty():
                             self.kill_audio()
                             break
-                        if chunk["type"] == "audio":
-                            decoded = miniaudio.decode(chunk["data"], nchannels=1, sample_rate=24000)
-                            if decoded and decoded.samples:
-                                if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
-                                    on_pcm_chunk(decoded.samples.tobytes())
+
+                        comm = edge_tts.Communicate(sent, edge_voice)
+                        mp3_buffers = []
+                        async for chunk in comm.stream():
+                            if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
+                                break
+                            if not self._text_queue.empty():
+                                self.kill_audio()
+                                break
+                            if chunk["type"] == "audio" and chunk.get("data"):
+                                mp3_buffers.append(chunk["data"])
+
+                        if mp3_buffers and not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                            raw_mp3 = b"".join(mp3_buffers)
+                            try:
+                                decoded = miniaudio.decode(raw_mp3, nchannels=1, sample_rate=24000)
+                                if decoded and decoded.samples:
+                                    pcm = decoded.samples.tobytes()
+                                    chunk_size = 4800  # 2400 samples * 2 bytes = 100ms
+                                    for offset in range(0, len(pcm), chunk_size):
+                                        if self._kill_playback_flag or (stop_event and stop_event.is_set()):
+                                            break
+                                        on_pcm_chunk(pcm[offset:offset + chunk_size])
+                            except Exception as dec_err:
+                                logger.warning(f"[EDGE TTS DECODE ERROR] {dec_err}")
                     return
                 except Exception as edge_err:
                     logger.warning(f"[EDGE TTS ERROR] {edge_err}, falling back...")
 
-        # 3. Windows Local SAPI5 (Instantaneous < 50ms)
-        if "windows" in tts_lower or "sapi" in tts_lower or "local" in tts_lower:
+        # 3. Windows Local SAPI5 (Sentence-Streaming < 50ms, Rate-Optimized, Safe COM Release)
+        if "windows" in tts_lower or "sapi" in tts_lower:
             if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
                 return
-            def _speak_sapi():
-                try:
-                    import win32com.client
-                    speaker = win32com.client.Dispatch("SAPI.SpVoice")
-                    if voice_name:
-                        for i in range(speaker.GetVoices().Count):
-                            v = speaker.GetVoices().Item(i)
-                            if voice_name.lower() in v.GetDescription().lower():
-                                speaker.Voice = v
+            try:
+                import pythoncom
+                import win32com.client
+                import gc
+
+                sent_parts = [s.strip() for s in re.split(r'(?<=[.?!])\s+', text) if s.strip()]
+                if not sent_parts:
+                    sent_parts = [text]
+
+                for sent in sent_parts:
+                    if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
+                        break
+                    if not self._text_queue.empty():
+                        self.kill_audio()
+                        break
+
+                    def _synthesize_sentence(s_text: str):
+                        sp = None
+                        st = None
+                        voices = None
+                        target_token = None
+                        try:
+                            pythoncom.CoInitialize()
+                            sp = win32com.client.Dispatch("SAPI.SpVoice")
+                            # sp.Rate ranges from -10 to +10.
+                            # 1.0x -> 0, 1.1x -> 1, 1.2x -> 2, 0.9x -> -1, 0.8x -> -2
+                            sapi_rate = int(round((voice_speed - 1.0) * 10))
+                            sapi_rate = max(-10, min(10, sapi_rate))
+                            try:
+                                sp.Rate = sapi_rate
+                            except Exception:
+                                pass
+
+                            if voice_name:
+                                v_target = voice_name.lower()
+                                voices = sp.GetVoices()
+                                for i in range(voices.Count):
+                                    t = voices.Item(i)
+                                    desc = t.GetDescription().lower()
+                                    if v_target in desc or desc in v_target:
+                                        target_token = t
+                                        break
+                                if target_token is not None:
+                                    sp.Voice = target_token
+
+                            st = win32com.client.Dispatch("SAPI.SpMemoryStream")
+                            try:
+                                # Type 26 = SAFT24kHz16BitMono (matches AudioPipeline 24,000Hz mono output exactly)
+                                st.Format.Type = 26
+                            except Exception:
+                                pass
+
+                            sp.AudioOutputStream = st
+                            sp.Speak(s_text)
+                            raw_bytes = bytes(st.GetData())
+                            sp.AudioOutputStream = None
+
+                            if not raw_bytes:
+                                return None
+
+                            # Inspect actual format returned by SAPI stream
+                            try:
+                                wf = st.Format.GetWaveFormatEx()
+                                sample_rate = getattr(wf, "SamplesPerSec", 24000)
+                                channels = getattr(wf, "Channels", 1)
+                                bits = getattr(wf, "BitsPerSample", 16)
+                            except Exception:
+                                sample_rate = 24000
+                                channels = 1
+                                bits = 16
+
+                            # Convert to 16-bit PCM numpy array
+                            if bits == 16:
+                                audio_arr = np.frombuffer(raw_bytes, dtype=np.int16).copy()
+                            elif bits == 8:
+                                audio_arr = ((np.frombuffer(raw_bytes, dtype=np.uint8).astype(np.int16) - 128) * 256)
+                            elif bits == 32:
+                                audio_arr = (np.frombuffer(raw_bytes, dtype=np.int32) >> 16).astype(np.int16)
+                            else:
+                                audio_arr = np.frombuffer(raw_bytes, dtype=np.int16).copy()
+
+                            # Downmix multi-channel to mono if needed
+                            if channels > 1:
+                                audio_arr = audio_arr.reshape(-1, channels).mean(axis=1).astype(np.int16)
+
+                            # Resample to exact 24,000 Hz if native SAPI format differs
+                            if sample_rate != 24000 and len(audio_arr) > 0:
+                                target_len = int(round(len(audio_arr) * 24000 / sample_rate))
+                                if target_len > 0:
+                                    orig_indices = np.linspace(0.0, 1.0, len(audio_arr), endpoint=False)
+                                    target_indices = np.linspace(0.0, 1.0, target_len, endpoint=False)
+                                    audio_arr = np.interp(target_indices, orig_indices, audio_arr.astype(np.float32)).astype(np.int16)
+
+                            return audio_arr.tobytes()
+                        except Exception as sapi_err:
+                            logger.error(f"[SAPI ERROR] {sapi_err}")
+                            return None
+                        finally:
+                            if target_token is not None:
+                                target_token = None
+                            if voices is not None:
+                                voices = None
+                            if st is not None:
+                                st = None
+                            if sp is not None:
+                                try:
+                                    sp.AudioOutputStream = None
+                                except Exception:
+                                    pass
+                                sp = None
+                            gc.collect()
+                            try:
+                                pythoncom.CoUninitialize()
+                            except Exception:
+                                pass
+
+                    pcm = await asyncio.to_thread(_synthesize_sentence, sent)
+                    if pcm and not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                        chunk_size = 4800  # 24000Hz * 1ch * 2 bytes * 0.1s (100ms chunks)
+                        for offset in range(0, len(pcm), chunk_size):
+                            if self._kill_playback_flag or (stop_event and stop_event.is_set()):
                                 break
-                    stream = win32com.client.Dispatch("SAPI.SpMemoryStream")
-                    stream.Format.Type = 30  # SAFT24kHz16BitMono
-                    speaker.AudioOutputStream = stream
-                    speaker.Speak(text)
-                    return bytes(stream.GetData())
-                except Exception as sapi_err:
-                    logger.error(f"[SAPI ERROR] {sapi_err}")
-                    return None
-
-            pcm = await asyncio.to_thread(_speak_sapi)
-            if pcm and not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
-                on_pcm_chunk(pcm)
+                            on_pcm_chunk(pcm[offset:offset + chunk_size])
                 return
+            except Exception as sapi_outer_err:
+                logger.error(f"[SAPI ERROR] {sapi_outer_err}")
 
-        # 4. Fallback / REST Non-streaming Gemini TTS
+        # 4. Local TTS Server (Kokoro / OpenAI / FastTTS - http://localhost:8880)
+        if "local" in tts_lower or "kokoro" in tts_lower:
+            if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
+                return
+            try:
+                import httpx
+                api_cfg = self.config_getter().get("api", {})
+                local_url = api_cfg.get("local_tts_url", "http://localhost:8880/v1/audio/speech").strip()
+                if not local_url.endswith("/speech"):
+                    if local_url.endswith("/v1"):
+                        local_url += "/audio/speech"
+                    elif not local_url.endswith("/v1/audio/speech"):
+                        local_url = local_url.rstrip("/") + "/v1/audio/speech"
+
+                custom_voice = (voice_name or "").strip()
+                payload = {
+                    "input": text,
+                    "response_format": "wav"
+                }
+                if custom_voice:
+                    if ":" in custom_voice:
+                        m_part, v_part = custom_voice.split(":", 1)
+                        payload["model"] = m_part.strip()
+                        payload["voice"] = v_part.strip()
+                    elif custom_voice.lower().startswith(("af_", "am_", "bf_", "bm_", "zf_", "zm_")):
+                        payload["model"] = "kokoro"
+                        payload["voice"] = custom_voice
+                    else:
+                        payload["model"] = custom_voice
+                        payload["voice"] = custom_voice
+                else:
+                    payload["model"] = "kokoro"
+                    payload["voice"] = "af_heart"
+                async with httpx.AsyncClient(timeout=12.0) as http_client:
+                    resp = await http_client.post(local_url, json=payload, headers={"Content-Type": "application/json"})
+                    if resp.status_code == 200:
+                        raw_audio = resp.content
+                        if miniaudio is not None:
+                            decoded = miniaudio.decode(raw_audio, nchannels=1, sample_rate=24000)
+                            if decoded and decoded.samples:
+                                if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                                    on_pcm_chunk(decoded.samples.tobytes())
+                                    return
+                        else:
+                            if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                                on_pcm_chunk(raw_audio)
+                                return
+                    else:
+                        logger.warning(f"[LOCAL TTS HTTP ERROR] {resp.status_code}: {resp.text}")
+            except Exception as local_err:
+                logger.warning(f"[LOCAL TTS ERROR] {local_err}, falling back...")
+
+        # 5. Fallback / REST Non-streaming Gemini TTS
         if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
             return
-        model = tts_engine if "gemini" in tts_lower else "gemini-3.1-flash-tts-preview"
+        model = tts_engine if ("gemini" in tts_lower and ("preview" in tts_lower or "tts" in tts_lower)) else "gemini-3.1-flash-tts-preview"
         try:
+            input_text = text
+            if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
+                input_text = f"Say with a {voice_accent} accent: {input_text}"
             tts_resp = await asyncio.to_thread(
                 client.interactions.create,
                 model=model,
-                input=text,
+                input=input_text,
                 response_format={"type": "audio"},
-                generation_config={"speech_config": [{"voice": voice_name}]}
+                generation_config={"speech_config": [{"voice": voice_name or "Aoede"}]}
             )
             if getattr(tts_resp, "output_audio", None) and getattr(tts_resp.output_audio, "data", None):
                 if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
@@ -1812,7 +2059,9 @@ class AetherEngine:
         text: str,
         tts_engine: str,
         voice_name: str,
-        client: genai.Client
+        client: genai.Client,
+        voice_accent: str = "default",
+        voice_speed: Optional[float] = None
     ) -> Optional[bytes]:
         """Convenience helper collecting all chunks into a single byte buffer."""
         chunks = []
@@ -1821,7 +2070,9 @@ class AetherEngine:
             tts_engine=tts_engine,
             voice_name=voice_name,
             client=client,
-            on_pcm_chunk=lambda c: chunks.append(c)
+            on_pcm_chunk=lambda c: chunks.append(c),
+            voice_accent=voice_accent,
+            voice_speed=voice_speed
         )
         return b"".join(chunks) if chunks else None
 
@@ -1860,7 +2111,8 @@ class AetherEngine:
         kill_phrase: str,
         agent_name: str,
         voice_name: str = "Aoede",
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        voice_accent: str = "default"
     ) -> bool:
         """
         Executes a seamless silent reconnection of the Gemini Live WebSocket session:
@@ -1922,7 +2174,7 @@ class AetherEngine:
 
             # 6. Start new receive loop
             self._active_recv_task = asyncio.create_task(
-                self._receive_loop(new_session, kill_phrase, agent_name, client, model_id, voice_name, temperature)
+                self._receive_loop(new_session, kill_phrase, agent_name, client, model_id, voice_name, temperature, voice_accent)
             )
 
             # 7. Cancel previous receive loop and close old session
@@ -1962,15 +2214,18 @@ class AetherEngine:
         api_cfg: dict,
         system_instruction_text: str,
         voice_name: str,
-        temperature: float
+        temperature: float,
+        voice_accent: str = "default"
     ):
         """Executes Gemini Multimodal Live WebSocket session with Silent Reconnect Lifecycle."""
         model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
         self._base_system_instruction = system_instruction_text
         reconnect_delay = 1.0
 
+        accent_info = f", Accent: {voice_accent}" if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", "") else ""
+
         while self.is_running:
-            self.notify("status", {"state": "connecting", "message": f"Connecting to Gemini Live ({model_id}, Voice: {voice_name})..."})
+            self.notify("status", {"state": "connecting", "message": f"Connecting to Gemini Live ({model_id}, Voice: {voice_name}{accent_info})..."})
 
             try:
                 client = genai.Client(api_key=api_key)
@@ -1996,12 +2251,12 @@ class AetherEngine:
                 self.notify("status", {"state": "connected", "message": f"Connected to Gemini Live. {agent_name} is listening."})
                 self.notify("chat_event", {
                     "type": "system",
-                    "content": f"Connected to Gemini Live ({model_id}, Voice: {voice_name}). {agent_name} is listening..."
+                    "content": f"Connected to Gemini Live ({model_id}, Voice: {voice_name}{accent_info}). {agent_name} is listening..."
                 })
 
                 send_task = asyncio.create_task(self._send_loop())
                 self._active_recv_task = asyncio.create_task(
-                    self._receive_loop(session, kill_phrase, agent_name, client, model_id, voice_name, temperature)
+                    self._receive_loop(session, kill_phrase, agent_name, client, model_id, voice_name, temperature, voice_accent)
                 )
 
                 while self.is_running:
@@ -2061,16 +2316,39 @@ class AetherEngine:
 
     def stop(self):
         """Stops the assistant engine, background workers, and closes connections."""
+        if not self.is_running:
+            return
         self.is_running = False
-        self.hotkey_manager.stop()
-        if self.audio:
-            self.audio.stop()
+        self.kill_audio()
+
+        try:
+            self.hotkey_manager.stop()
+        except Exception as e:
+            logger.warning(f"[STOP] Hotkey manager stop warning: {e}")
+
+        audio_ref = self.audio
+        self.audio = None
+        if audio_ref:
+            try:
+                audio_ref.stop()
+            except Exception as e:
+                logger.warning(f"[STOP] Audio stop warning: {e}")
+
         if self._optimizer_task and not self._optimizer_task.done():
             self._optimizer_task.cancel()
         if self.optimizer:
-            self.optimizer.stop()
+            try:
+                self.optimizer.stop()
+            except Exception as e:
+                logger.warning(f"[STOP] Optimizer stop warning: {e}")
+
         if self._main_task and not self._main_task.done():
             self._main_task.cancel()
-        if self.telemetry_db:
-            self.telemetry_db.close()
+
+        # Wake up any blocked queues so event loop task exits cleanly
+        try:
+            self._text_queue.put_nowait("")
+        except Exception:
+            pass
+
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
