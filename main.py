@@ -17,6 +17,12 @@ ensure_thread_desktop()
 from core.gui_bridge import GuiBridge
 from tools.script_runner import prune_script_cache
 from ui.hud_window import HudWindow
+from core.user_memory import (
+    build_lexicon_instruction,
+    add_dictionary_term,
+    remove_dictionary_term,
+    get_all_dictionary_terms,
+)
 
 # ---------------------------------------------------------------------------
 # Session Telemetry & Lifecycle State (Layer B Context Optimization)

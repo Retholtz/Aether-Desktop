@@ -81,6 +81,17 @@ class UserMemory:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_history_fact ON prompt_history(fact_id);")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_history_time ON prompt_history(timestamp);")
 
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS custom_dictionary (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        term TEXT NOT NULL UNIQUE,
+                        phonetic_guide TEXT NOT NULL,
+                        category TEXT DEFAULT 'name',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_custom_dict_term ON custom_dictionary(term);")
+
                 # Seed default notification categories
                 default_categories = [
                     ('dates', 1, 7),
@@ -336,6 +347,85 @@ class UserMemory:
         clean = str(name).strip()
         return self.remember_fact(category="general", key="user_name", value=clean, data_type="string")
 
+    def add_dictionary_term(self, term: str, phonetic_guide: str, category: str = "name") -> Dict[str, Any]:
+        """Inserts or updates a custom lexicon entry for STT/TTS phonetic biasing."""
+        term_clean = str(term).strip()
+        phonetic_clean = str(phonetic_guide).strip()
+        cat_clean = (category or "name").strip().lower()
+
+        if not term_clean or not phonetic_clean:
+            return {
+                "status": "error",
+                "message": "Both term and phonetic guide must be non-empty."
+            }
+
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                cursor = conn.execute("""
+                    INSERT INTO custom_dictionary (term, phonetic_guide, category, created_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(term) DO UPDATE SET
+                        phonetic_guide = excluded.phonetic_guide,
+                        category = excluded.category;
+                """, (term_clean, phonetic_clean, cat_clean))
+                term_id = cursor.lastrowid
+
+            if not term_id or cursor.rowcount == 0:
+                row = conn.execute("SELECT id FROM custom_dictionary WHERE term = ? COLLATE NOCASE", (term_clean,)).fetchone()
+                term_id = row["id"] if row else 0
+
+        logger.info(f"[USER MEMORY] Stored lexicon term '{term_clean}' -> '{phonetic_clean}' ({cat_clean})")
+        return {
+            "status": "success",
+            "id": term_id,
+            "term": term_clean,
+            "phonetic_guide": phonetic_clean,
+            "category": cat_clean,
+            "message": f"Added term '{term_clean}' with phonetic guide '{phonetic_clean}'."
+        }
+
+    def remove_dictionary_term(self, term: str) -> Dict[str, Any]:
+        """Removes a term from the custom lexicon dictionary."""
+        term_clean = str(term).strip()
+        with self._lock:
+            conn = self._get_connection()
+            with conn:
+                cursor = conn.execute("DELETE FROM custom_dictionary WHERE term = ? COLLATE NOCASE;", (term_clean,))
+                deleted = cursor.rowcount > 0
+
+        logger.info(f"[USER MEMORY] Removed lexicon term '{term_clean}' (deleted={deleted})")
+        return {
+            "status": "success" if deleted else "not_found",
+            "deleted": deleted,
+            "term": term_clean,
+            "message": f"Removed dictionary term '{term_clean}'." if deleted else f"Term '{term_clean}' was not found in dictionary."
+        }
+
+    def get_all_dictionary_terms(self) -> List[Dict[str, Any]]:
+        """Returns all custom lexicon terms ordered alphabetically by term."""
+        with self._lock:
+            conn = self._get_connection()
+            rows = conn.execute("""
+                SELECT id, term, phonetic_guide, category, created_at
+                FROM custom_dictionary
+                ORDER BY term COLLATE NOCASE ASC;
+            """).fetchall()
+        return [dict(r) for r in rows]
+
+    def build_lexicon_instruction(self) -> str:
+        """Constructs a structured pronunciation and transcription guide block for system instructions."""
+        terms = self.get_all_dictionary_terms()
+        if not terms:
+            return ""
+
+        lines = ["\n[CUSTOM USER LEXICON & PRONUNCIATION GUIDE]"]
+        lines.append("Use this lexicon to resolve ambiguous audio input (STT) and guide phonetic speech output (TTS):")
+        for item in terms:
+            lines.append(f"- Term: '{item['term']}' | Phonetic Sound: '{item['phonetic_guide']}' (Type: {item['category']})")
+        lines.append("Always use the canonical spelling in text/tool calls, and adhere to the phonetic syllable stress when speaking.\n")
+        return "\n".join(lines)
+
     def close(self):
         """Closes database connection safely."""
         with self._lock:
@@ -345,3 +435,31 @@ class UserMemory:
                 except Exception:
                     pass
                 self._conn = None
+
+
+# Default user memory singleton reference
+_default_memory: Optional[UserMemory] = None
+
+
+def get_user_memory() -> UserMemory:
+    global _default_memory
+    if _default_memory is None:
+        _default_memory = UserMemory()
+    return _default_memory
+
+
+def add_dictionary_term(term: str, phonetic_guide: str, category: str = "name") -> Dict[str, Any]:
+    return get_user_memory().add_dictionary_term(term=term, phonetic_guide=phonetic_guide, category=category)
+
+
+def remove_dictionary_term(term: str) -> Dict[str, Any]:
+    return get_user_memory().remove_dictionary_term(term=term)
+
+
+def get_all_dictionary_terms() -> List[Dict[str, Any]]:
+    return get_user_memory().get_all_dictionary_terms()
+
+
+def build_lexicon_instruction() -> str:
+    return get_user_memory().build_lexicon_instruction()
+

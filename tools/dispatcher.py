@@ -555,6 +555,34 @@ QUERY_USER_MEMORY_DECLARATION = {
     }
 }
 
+TEACH_WORD_PRONUNCIATION_DECLARATION = {
+    "name": "teach_word_pronunciation",
+    "description": (
+        "Teaches the assistant how to transcribe and pronounce atypical words, proper nouns, surnames, or technical jargon. "
+        "Persists the canonical written spelling and phonetic pronunciation guide to the user's custom lexicon dictionary. "
+        "Call this whenever the user clarifies how a name, term, or jargon is spelled or pronounced "
+        "(e.g., 'My last name is spelled Retholtz and pronounced RETH-holtz')."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "term": {
+                "type": "STRING",
+                "description": "The canonical written spelling of the word or name (e.g. 'Retholtz', 'Kubernetes', 'Aoede')."
+            },
+            "phonetic_guide": {
+                "type": "STRING",
+                "description": "How it sounds or its phonetic syllable breakdown (e.g. 'RETH-holtz', 'koo-ber-NET-eez', 'ay-EE-dee')."
+            },
+            "category": {
+                "type": "STRING",
+                "description": "Category for the term: 'name', 'medical', 'gaming', or 'tech'. Default is 'name'."
+            }
+        },
+        "required": ["term", "phonetic_guide"]
+    }
+}
+
 EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
@@ -612,6 +640,7 @@ def get_all_tool_declarations() -> List[dict]:
         FORGET_USER_FACT_DECLARATION,
         GET_USER_PROFILE_DECLARATION,
         QUERY_USER_MEMORY_DECLARATION,
+        TEACH_WORD_PRONUNCIATION_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
     ]
 
@@ -1160,6 +1189,23 @@ class ToolDispatcher:
                     "count": len(results),
                     "results": results
                 }
+
+            elif fn_name == "teach_word_pronunciation":
+                term = str(args.get("term", "")).strip()
+                phonetic = str(args.get("phonetic_guide", "")).strip()
+                cat = str(args.get("category", "name")).strip()
+                result = self.user_memory.add_dictionary_term(term, phonetic, cat)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Custom Lexicon",
+                    "content": f"📖 [LEXICON] Learned: '{term}' -> '{phonetic}' ({cat})"
+                })
+                if hasattr(self, "engine") and self.engine and hasattr(self.engine, "update_lexicon_context"):
+                    try:
+                        self.engine.update_lexicon_context()
+                    except Exception as e:
+                        logger.warning(f"[DISPATCHER] Failed to update active engine lexicon: {e}")
+                return result
 
             elif fn_name == "execute_automation_script":
                 script_code = str(args.get("script_code", ""))

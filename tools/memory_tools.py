@@ -70,3 +70,18 @@ def query_user_memory(
         "results": results
     }
 
+
+def teach_word_pronunciation(
+    term: str,
+    phonetic_guide: str,
+    category: str = "name",
+    memory: Optional[UserMemory] = None
+) -> Dict[str, Any]:
+    """
+    Teaches the assistant how to pronounce and transcribe an atypical word, surname, or technical jargon.
+    Persists the term and its phonetic syllable breakdown into the custom lexicon dictionary.
+    """
+    mem = memory or get_user_memory()
+    return mem.add_dictionary_term(term=term, phonetic_guide=phonetic_guide, category=category)
+
+

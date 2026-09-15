@@ -36,6 +36,7 @@ window.aetherUI = {
     await this.loadUserName();
     await this.loadUserPreferences();
     await this.loadUserFacts();
+    await this.loadDictionaryTerms();
     await this.loadRecentLogs();
     this.startTelemetryLoop();
     this.log("Aether Desktop initialized and ready.");
@@ -77,6 +78,7 @@ window.aetherUI = {
             this.loadUserName();
             this.loadUserPreferences();
             this.loadUserFacts();
+            this.loadDictionaryTerms();
           }
         }
       });
@@ -1975,6 +1977,38 @@ window.aetherUI = {
     if (refreshBtn) {
       refreshBtn.addEventListener("click", () => this.loadUserFacts());
     }
+
+    // Custom Dictionary Event Listeners
+    const addDictBtn = document.getElementById("addDictBtn");
+    if (addDictBtn) {
+      addDictBtn.addEventListener("click", () => this.handleAddDictionaryTerm());
+    }
+    const dictTermInput = document.getElementById("newDictTerm");
+    const dictPhoneticInput = document.getElementById("newDictPhonetic");
+    [dictTermInput, dictPhoneticInput].forEach(inp => {
+      if (inp) {
+        inp.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            this.handleAddDictionaryTerm();
+          }
+        });
+      }
+    });
+
+    const dictSearchInput = document.getElementById("dictSearchInput");
+    if (dictSearchInput) {
+      dictSearchInput.addEventListener("input", () => this.filterAndRenderDictionary());
+    }
+    const dictCatFilter = document.getElementById("dictCategoryFilter");
+    if (dictCatFilter) {
+      dictCatFilter.addEventListener("change", () => this.filterAndRenderDictionary());
+    }
+
+    const refreshDictBtn = document.getElementById("refreshDictBtn");
+    if (refreshDictBtn) {
+      refreshDictBtn.addEventListener("click", () => this.loadDictionaryTerms());
+    }
   },
 
   loadUserName: async function() {
@@ -2208,6 +2242,152 @@ window.aetherUI = {
       }
     } catch (e) {
       console.error("Failed to delete user fact:", e);
+    }
+  },
+
+  // =========================================================================
+  // Custom Lexicon & Phonetic Dictionary (STT/TTS Biasing)
+  // =========================================================================
+  dictionaryCache: [],
+
+  loadDictionaryTerms: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_dictionary_terms) return;
+    try {
+      const res = await window.pywebview.api.get_dictionary_terms();
+      if (res && res.success) {
+        this.dictionaryCache = res.terms || [];
+        this.filterAndRenderDictionary();
+      }
+    } catch (e) {
+      console.error("Failed to load dictionary terms:", e);
+    }
+  },
+
+  filterAndRenderDictionary: function() {
+    const searchVal = (document.getElementById("dictSearchInput")?.value || "").toLowerCase().trim();
+    const catVal = document.getElementById("dictCategoryFilter")?.value || "all";
+
+    const filtered = this.dictionaryCache.filter(item => {
+      const matchesCategory = (catVal === "all" || (item.category || "").toLowerCase() === catVal.toLowerCase());
+      const matchesSearch = !searchVal ||
+        (item.term && item.term.toLowerCase().includes(searchVal)) ||
+        (item.phonetic_guide && item.phonetic_guide.toLowerCase().includes(searchVal)) ||
+        (item.category && item.category.toLowerCase().includes(searchVal));
+      return matchesCategory && matchesSearch;
+    });
+
+    this.renderDictionaryTable(filtered);
+  },
+
+  renderDictionaryTable: function(terms) {
+    const tbody = document.getElementById("dictTableBody");
+    const emptyState = document.getElementById("dictEmptyState");
+    const countBadge = document.getElementById("dictCountBadge");
+
+    if (countBadge) {
+      countBadge.innerText = `${this.dictionaryCache.length} WORD${this.dictionaryCache.length === 1 ? '' : 'S'}`;
+    }
+
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (!terms || terms.length === 0) {
+      if (emptyState) emptyState.style.display = "block";
+      return;
+    }
+
+    if (emptyState) emptyState.style.display = "none";
+
+    terms.forEach(item => {
+      const tr = document.createElement("tr");
+
+      let dateDisplay = "";
+      const ts = item.created_at;
+      if (ts) {
+        try {
+          const d = new Date(ts);
+          dateDisplay = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        } catch (e) {
+          dateDisplay = ts.split("T")[0] || ts;
+        }
+      }
+
+      tr.innerHTML = `
+        <td><span class="fact-badge ${this.escapeHtml(item.category || 'name')}">${this.escapeHtml(item.category || 'name')}</span></td>
+        <td class="fact-key" style="font-weight: 600; color: #fff;">${this.escapeHtml(item.term)}</td>
+        <td class="fact-value" style="font-style: italic; color: var(--win-accent);">${this.escapeHtml(item.phonetic_guide)}</td>
+        <td class="fact-time">${this.escapeHtml(dateDisplay)}</td>
+        <td style="text-align: center;">
+          <button type="button" class="dict-delete-btn" data-term="${this.escapeHtml(item.term)}" title="Delete word from dictionary">✕</button>
+        </td>
+      `;
+
+      const delBtn = tr.querySelector(".dict-delete-btn");
+      if (delBtn) {
+        delBtn.addEventListener("click", () => this.handleDeleteDictionaryTerm(item.term));
+      }
+
+      tbody.appendChild(tr);
+    });
+  },
+
+  handleAddDictionaryTerm: async function() {
+    const termEl = document.getElementById("newDictTerm");
+    const phoneticEl = document.getElementById("newDictPhonetic");
+    const catEl = document.getElementById("newDictCategory");
+    const statusEl = document.getElementById("addDictStatus");
+
+    const term = termEl?.value?.trim();
+    const phonetic = phoneticEl?.value?.trim();
+    const category = catEl?.value || "name";
+
+    if (!term || !phonetic) {
+      if (statusEl) {
+        statusEl.innerText = "⚠️ Please provide both a term and a pronunciation hint.";
+        statusEl.style.color = "var(--status-yellow)";
+      }
+      return;
+    }
+
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.add_dictionary_term) return;
+
+    try {
+      const res = await window.pywebview.api.add_dictionary_term(term, phonetic, category);
+      if (res && res.success) {
+        if (termEl) termEl.value = "";
+        if (phoneticEl) phoneticEl.value = "";
+        if (statusEl) {
+          statusEl.innerText = `✓ Added word: '${term}' (${phonetic})`;
+          statusEl.style.color = "#34c759";
+          setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 3000);
+        }
+        this.log(`Added dictionary term: '${term}' -> '${phonetic}' (${category})`);
+        await this.loadDictionaryTerms();
+      } else {
+        if (statusEl) {
+          statusEl.innerText = `Error: ${res?.error || 'Failed to add word'}`;
+          statusEl.style.color = "var(--status-red)";
+        }
+      }
+    } catch (e) {
+      console.error("Failed to add dictionary term:", e);
+      if (statusEl) {
+        statusEl.innerText = `Error: ${e}`;
+        statusEl.style.color = "var(--status-red)";
+      }
+    }
+  },
+
+  handleDeleteDictionaryTerm: async function(term) {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.remove_dictionary_term) return;
+    try {
+      const res = await window.pywebview.api.remove_dictionary_term(term);
+      if (res && res.success) {
+        this.log(`Deleted dictionary term: '${term}'`);
+        await this.loadDictionaryTerms();
+      }
+    } catch (e) {
+      console.error("Failed to delete dictionary term:", e);
     }
   }
 };

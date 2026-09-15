@@ -933,6 +933,38 @@ class GuiBridge:
             logger.error(f"[BRIDGE ERROR] set_user_name: {e}")
             return {"success": False, "error": str(e)}
 
+    def get_dictionary_terms(self) -> dict:
+        """Retrieves all custom dictionary / lexicon terms."""
+        try:
+            terms = self._engine.user_memory.get_all_dictionary_terms()
+            return {"success": True, "terms": terms}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_dictionary_terms: {e}")
+            return {"success": False, "error": str(e), "terms": []}
+
+    def add_dictionary_term(self, term: str, phonetic_guide: str, category: str = "name") -> dict:
+        """Adds or updates a custom lexicon entry and refreshes session prompt context."""
+        try:
+            res = self._engine.user_memory.add_dictionary_term(term, phonetic_guide, category)
+            if hasattr(self._engine, "update_lexicon_context"):
+                self._engine.update_lexicon_context()
+            return {"success": True, "result": res}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] add_dictionary_term: {e}")
+            return {"success": False, "error": str(e)}
+
+    def remove_dictionary_term(self, term: str) -> dict:
+        """Removes a custom lexicon entry and refreshes session prompt context."""
+        try:
+            res = self._engine.user_memory.remove_dictionary_term(term)
+            if hasattr(self._engine, "update_lexicon_context"):
+                self._engine.update_lexicon_context()
+            return {"success": True, "result": res}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] remove_dictionary_term: {e}")
+            return {"success": False, "error": str(e)}
+
+
 
 
 

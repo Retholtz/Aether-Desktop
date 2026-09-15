@@ -794,6 +794,96 @@
           </div>
         </div>
 
+        <!-- Card: Custom Lexicon & Phonetic Dictionary -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">CUSTOM LEXICON & PHONETIC DICTIONARY</span>
+            <div class="card-header-actions">
+              <span id="dictCountBadge" class="card-tag">0 WORDS</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <p class="section-desc" style="color: var(--text-dim); margin-bottom: 16px; font-size: 13px;">
+              Manage canonical spellings, syllable breakdowns, and phonetic pronunciation guides for atypical names, surnames, medical terms, and jargon. This guides STT transcription and TTS vocal speech synthesis accurately.
+            </p>
+
+            <!-- Quick-Entry Form -->
+            <div class="add-fact-panel">
+              <div class="add-fact-title">ADD WORD TO DICTIONARY</div>
+              <div class="add-fact-grid dict-grid">
+                <div class="form-group">
+                  <label for="newDictTerm">Term (Canonical Spelling)</label>
+                  <input type="text" id="newDictTerm" class="hud-input" placeholder="e.g. Retholtz, Kubernetes">
+                </div>
+                <div class="form-group">
+                  <label for="newDictPhonetic">Pronunciation Hint / Phonetic Sound</label>
+                  <input type="text" id="newDictPhonetic" class="hud-input" placeholder="e.g. RETH-holtz, koo-ber-NET-eez">
+                </div>
+                <div class="form-group">
+                  <label for="newDictCategory">Category</label>
+                  <select id="newDictCategory" class="hud-select">
+                    <option value="name" selected>Name / Surname</option>
+                    <option value="tech">Tech / Jargon</option>
+                    <option value="medical">Medical</option>
+                    <option value="gaming">Gaming</option>
+                    <option value="general">General</option>
+                  </select>
+                </div>
+                <div class="form-group action-col">
+                  <label>&nbsp;</label>
+                  <button type="button" id="addDictBtn" class="hud-btn-primary">
+                    <span>+ ADD WORD</span>
+                  </button>
+                </div>
+              </div>
+              <div id="addDictStatus" class="fact-status-msg"></div>
+            </div>
+
+            <!-- Dictionary Filter & Refresh Toolbar -->
+            <div class="facts-filter-toolbar">
+              <div class="search-input-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="dictSearchInput" class="hud-input" placeholder="Filter dictionary by term or pronunciation...">
+              </div>
+              <div class="filter-category-wrapper">
+                <select id="dictCategoryFilter" class="hud-select">
+                  <option value="all" selected>All Categories</option>
+                  <option value="name">Name</option>
+                  <option value="tech">Tech</option>
+                  <option value="medical">Medical</option>
+                  <option value="gaming">Gaming</option>
+                  <option value="general">General</option>
+                </select>
+              </div>
+              <button type="button" id="refreshDictBtn" class="hud-btn-secondary sm" title="Refresh dictionary from database">
+                <span>REFRESH</span>
+              </button>
+            </div>
+
+            <!-- Dictionary Table -->
+            <div class="facts-table-wrap">
+              <table class="facts-table" id="dictTable">
+                <thead>
+                  <tr>
+                    <th style="width: 130px;">CATEGORY</th>
+                    <th style="width: 180px;">TERM</th>
+                    <th>PHONETIC GUIDE</th>
+                    <th style="width: 130px;">ADDED</th>
+                    <th style="width: 70px; text-align: center;">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody id="dictTableBody">
+                  <!-- Populated dynamically via JS -->
+                </tbody>
+              </table>
+              <div id="dictEmptyState" class="facts-empty-state" style="display: none;">
+                <span>📖 No custom dictionary terms recorded yet. Add atypical words or names above!</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
       </section>
 
       <!-- ============================================================= -->

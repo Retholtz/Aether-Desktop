@@ -180,6 +180,7 @@ class AetherEngine:
         # Dynamic User Memory & Proactive Briefing Engine
         self.user_memory = UserMemory()
         self.dispatcher.user_memory = self.user_memory
+        self.dispatcher.engine = self
         self.proactive_engine = ProactiveEngine(self.user_memory)
 
         # Rolling Session Lifecycle & Compactor (Layer B Context Optimization)
@@ -306,6 +307,18 @@ class AetherEngine:
             "type": "system",
             "content": "✨ AI conversation context reset. Starting fresh task."
         })
+
+    def update_lexicon_context(self):
+        """Updates the active session prompt context with the latest custom lexicon."""
+        lexicon_guide = self.user_memory.build_lexicon_instruction()
+        marker = "\n[CUSTOM USER LEXICON & PRONUNCIATION GUIDE]"
+        if marker in self._base_system_instruction:
+            self._base_system_instruction = self._base_system_instruction.split(marker)[0].rstrip()
+
+        if lexicon_guide:
+            self._base_system_instruction = self._base_system_instruction.rstrip() + "\n" + lexicon_guide
+
+        logger.info("[ENGINE] Updated active lexicon context in base system instruction.")
 
     def _get_whitelist(self) -> list:
         cfg = self.config_getter()
@@ -824,6 +837,11 @@ class AetherEngine:
             )
             system_instruction_text = accent_directive + system_instruction_text
 
+        # Layer D: Custom User Lexicon & Phonetic Pronunciation Guide (STT/TTS Biasing)
+        lexicon_directive = self.user_memory.build_lexicon_instruction()
+        if lexicon_directive:
+            system_instruction_text += "\n" + lexicon_directive
+
         self._base_system_instruction = system_instruction_text
 
         audio_mode = audio_cfg.get("mode", "always_on")
@@ -1080,6 +1098,9 @@ class AetherEngine:
                             f"If the audio contains background chatter, noise, sighs, breathing, non-speech vocalizations, "
                             f"or speech in another language, output NOTHING (empty string). Do not guess or translate."
                         )
+                        lexicon_guide = self.user_memory.build_lexicon_instruction()
+                        if lexicon_guide:
+                            stt_prompt += f"\nCustom lexicon vocabulary & phonetic spelling reference:\n{lexicon_guide}"
                         stt_resp = await self._generate_content_resilient(
                             client=client,
                             model=stt_model,
@@ -1772,6 +1793,11 @@ class AetherEngine:
                 if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
                     accent_phrase = f" with a natural, distinct {voice_accent} accent"
 
+                tts_text = f"You are a vocal speech synthesis engine. Read the user input aloud directly{accent_phrase} with natural, pleasant expression. Do not add any commentary, greetings, or conversational filler. Only vocalize the exact text provided."
+                tts_lexicon = self.user_memory.build_lexicon_instruction()
+                if tts_lexicon:
+                    tts_text += f"\n{tts_lexicon}"
+
                 config = types.LiveConnectConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
@@ -1783,7 +1809,7 @@ class AetherEngine:
                     ),
                     system_instruction=types.Content(
                         parts=[types.Part.from_text(
-                            text=f"You are a vocal speech synthesis engine. Read the user input aloud directly{accent_phrase} with natural, pleasant expression. Do not add any commentary, greetings, or conversational filler. Only vocalize the exact text provided."
+                            text=tts_text
                         )]
                     )
                 )

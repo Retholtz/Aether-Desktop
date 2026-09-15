@@ -1569,3 +1569,27 @@ label {
   font-size: 13px;
 }
 
+.add-fact-grid.dict-grid {
+  grid-template-columns: 1fr 1fr 150px 120px;
+}
+
+.dict-delete-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: bold;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.dict-delete-btn:hover {
+  background: rgba(232, 17, 35, 0.15);
+  border-color: rgba(232, 17, 35, 0.4);
+  color: #ff4d4f;
+}
+
+
