@@ -51,6 +51,27 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
         print(f"[HUD SHAPE ERROR] Failed to apply window shape: {e}")
 
 
+def is_position_visible_on_screens(x: int, y: int, width: int = 180, height: int = 52) -> bool:
+    """
+    Verifies that at least a 30x30 portion of the window intersects
+    a currently connected, active monitor to prevent off-screen windows.
+    """
+    try:
+        screens = webview.screens
+        if not screens:
+            return True
+        for s in screens:
+            inter_left = max(s.x, x)
+            inter_top = max(s.y, y)
+            inter_right = min(s.x + s.width, x + width)
+            inter_bottom = min(s.y + s.height, y + height)
+            if (inter_right - inter_left) >= 30 and (inter_bottom - inter_top) >= 30:
+                return True
+        return False
+    except Exception:
+        return True
+
+
 class HUDBridge:
     """
     Exposes HUD-specific view mode and window resizing APIs to PyWebView.
@@ -62,6 +83,38 @@ class HUDBridge:
         self._bridge = bridge
         self._normal_size = (440, 180)
         self._max_size = (560, 480)
+
+    def get_agent_name(self) -> dict:
+        """Returns configured agent name for the HUD overlay."""
+        name = self._bridge.get_raw_config().get("api", {}).get("agent_name", "Aether")
+        return {"success": True, "agent_name": name}
+
+    def get_overlay_config(self) -> dict:
+        """Returns initial overlay configuration including agent name, hud mode, and engine state."""
+        cfg = self._bridge.get_raw_config()
+        agent_name = cfg.get("api", {}).get("agent_name", "Aether")
+        hud_mode = cfg.get("ui", {}).get("hud_mode", "normal")
+        is_running = getattr(self._bridge._engine, "is_running", False) if self._bridge._engine else False
+        return {
+            "success": True,
+            "agent_name": agent_name,
+            "hud_mode": hud_mode,
+            "is_running": is_running,
+            "state": "listening" if is_running else "standby",
+        }
+
+    def save_hud_position(self, x: Optional[int] = None, y: Optional[int] = None) -> dict:
+        """Saves current HUD overlay window position to config and disk."""
+        try:
+            if x is None or y is None:
+                if self._window:
+                    x = getattr(self._window, "x", None)
+                    y = getattr(self._window, "y", None)
+            if x is not None and y is not None:
+                return self._bridge.save_overlay_position(int(x), int(y))
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Invalid coordinates"}
 
     def set_mode(self, mode: str) -> dict:
         """Resizes the HUD overlay window according to requested tier (mini, normal, max)."""
@@ -98,6 +151,7 @@ class HUDBridge:
                 self._window.resize(w, h)
                 if x is not None and y is not None:
                     self._window.move(int(x), int(y))
+                    self._bridge.save_overlay_position(int(x), int(y))
                 cur_mode = self.get_hud_mode().get("mode", "normal")
                 apply_hud_window_shape(self._window, cur_mode)
                 return {"success": True, "width": w, "height": h}
@@ -145,6 +199,7 @@ class HUDBridge:
         try:
             if self._window:
                 self._window.move(int(x), int(y))
+                self._bridge.save_overlay_position(int(x), int(y))
                 return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -215,30 +270,65 @@ class HudWindow:
 
         # 2. Create Floating HUD Overlay Window with dedicated HUDBridge
         self.hud_bridge = HUDBridge(window=None, bridge=self.bridge)
-        cfg_mode = self.bridge.get_raw_config().get("ui", {}).get("hud_mode", "normal")
+        cfg_ui = self.bridge.get_raw_config().get("ui", {})
+        cfg_mode = cfg_ui.get("hud_mode", "normal")
         init_w, init_h = (440, 180)
         if cfg_mode == "mini":
             init_w, init_h = (180, 52)
         elif cfg_mode == "max":
             init_w, init_h = (560, 480)
 
-        self.overlay_window = webview.create_window(
-            title="Aether Overlay",
-            url=self.overlay_html_path,
-            js_api=self.hud_bridge,
-            width=init_w,
-            height=init_h,
-            min_size=(10, 10),
-            frameless=True,
-            on_top=True,
-            easy_drag=True,
-            hidden=True,
-            transparent=False,
-            background_color="#121620"
-        )
+        init_x = cfg_ui.get("overlay_x")
+        init_y = cfg_ui.get("overlay_y")
+        overlay_kwargs = {
+            "title": "Aether Overlay",
+            "url": self.overlay_html_path,
+            "js_api": self.hud_bridge,
+            "width": init_w,
+            "height": init_h,
+            "min_size": (10, 10),
+            "frameless": True,
+            "on_top": True,
+            "easy_drag": True,
+            "hidden": True,
+            "transparent": False,
+            "background_color": "#121620"
+        }
+        if init_x is not None and init_y is not None:
+            try:
+                ix, iy = int(init_x), int(init_y)
+                if is_position_visible_on_screens(ix, iy, init_w, init_h):
+                    overlay_kwargs["x"] = ix
+                    overlay_kwargs["y"] = iy
+            except (ValueError, TypeError):
+                pass
+
+        self.overlay_window = webview.create_window(**overlay_kwargs)
         self.hud_bridge._window = self.overlay_window
         self.bridge.set_overlay_window(self.overlay_window)
         self.bridge.set_hud_bridge(self.hud_bridge)
+
+        # Wire window moved event for debounced position persistence
+        self._pos_save_timer = None
+        self._last_moved_pos = None
+
+        def _save_debounced_pos():
+            if self._last_moved_pos:
+                mx, my = self._last_moved_pos
+                self.bridge.save_overlay_position(mx, my)
+
+        def _on_overlay_moved(x, y):
+            try:
+                self._last_moved_pos = (int(x), int(y))
+                if self._pos_save_timer:
+                    self._pos_save_timer.cancel()
+                self._pos_save_timer = threading.Timer(0.5, _save_debounced_pos)
+                self._pos_save_timer.daemon = True
+                self._pos_save_timer.start()
+            except Exception:
+                pass
+
+        self.overlay_window.events.moved += _on_overlay_moved
 
         # 3. Wire window minimize and restore events for overlay mode
         def on_minimized():
@@ -276,6 +366,17 @@ class HudWindow:
 
     def close_all(self):
         """Cleanly closes all windows and stops tray."""
+        if hasattr(self, "_pos_save_timer") and self._pos_save_timer:
+            try:
+                self._pos_save_timer.cancel()
+            except Exception:
+                pass
+        if hasattr(self, "_last_moved_pos") and self._last_moved_pos:
+            try:
+                mx, my = self._last_moved_pos
+                self.bridge.save_overlay_position(mx, my)
+            except Exception:
+                pass
         try:
             self.tray.stop()
         except Exception:

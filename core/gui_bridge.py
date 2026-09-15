@@ -376,7 +376,7 @@ class GuiBridge:
             if "security" in new_config:
                 self._config["security"] = new_config["security"]
             if "ui" in new_config:
-                self._config["ui"] = new_config["ui"]
+                self._config.setdefault("ui", {}).update(new_config["ui"])
                 if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
                     self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
                 if "hud_mode" in new_config["ui"]:
@@ -384,6 +384,8 @@ class GuiBridge:
 
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2)
+
+            self._on_engine_event("config_updated", self.get_config())
 
             return {"success": True, "message": "Settings saved successfully."}
         except Exception as e:
@@ -454,6 +456,8 @@ class GuiBridge:
         """Stops the Aether assistant engine."""
         try:
             self._engine.stop()
+            agent_name = self._config.get("api", {}).get("agent_name", "Aether")
+            self._on_engine_event("status", {"state": "standby", "message": f"{agent_name} on standby."})
             return {"success": True, "status": "stopped"}
         except Exception as e:
             logger.error(f"[STOP ASSISTANT ERROR] {e}", exc_info=True)
@@ -752,11 +756,27 @@ class GuiBridge:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def save_overlay_position(self, x: int, y: int) -> dict:
+        """Persists the floating overlay window coordinates to config."""
+        try:
+            ui_cfg = self._config.setdefault("ui", {})
+            if ui_cfg.get("overlay_x") == int(x) and ui_cfg.get("overlay_y") == int(y):
+                return {"success": True, "x": int(x), "y": int(y)}
+            ui_cfg["overlay_x"] = int(x)
+            ui_cfg["overlay_y"] = int(y)
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2)
+            return {"success": True, "x": int(x), "y": int(y)}
+        except Exception as e:
+            logger.warning(f"[OVERLAY POSITION SAVE ERROR] {e}")
+            return {"success": False, "error": str(e)}
+
     def move_overlay(self, x: int, y: int) -> dict:
         """Moves the floating HUD overlay window to screen coordinates (x, y)."""
         try:
             if getattr(self, "_overlay_window", None):
                 self._overlay_window.move(int(x), int(y))
+                self.save_overlay_position(x, y)
                 return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

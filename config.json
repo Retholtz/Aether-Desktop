@@ -73,7 +73,9 @@
     "hud_mode_vk": 32,
     "hud_mode_modifiers": [
       "Control"
-    ]
+    ],
+    "overlay_x": 1820,
+    "overlay_y": 21
   },
   "user": {
     "name": "Mike"

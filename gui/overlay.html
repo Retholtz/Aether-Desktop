@@ -654,23 +654,45 @@
       opacity: 1;
       stroke: var(--accent, #00d2ff);
     }
+
+    /* Standby / Greyed-out State Styling */
+    body.status-standby {
+      --current-status-color: #8e9bb0;
+    }
+
+    body.status-standby .status-dot,
+    body.status-standby .mini-status-dot {
+      background: #8e9bb0 !important;
+      box-shadow: none !important;
+      animation: none !important;
+    }
+
+    body.status-standby .status-label,
+    body.status-standby .mini-status-label {
+      color: #8e9bb0 !important;
+    }
+
+    body.status-standby .overlay-card {
+      border-color: rgba(255, 255, 255, 0.09);
+      filter: saturate(0.65);
+    }
   </style>
 </head>
-<body class="mode-normal">
+<body class="mode-normal status-standby">
   <div class="overlay-card pywebview-drag-region" id="overlayCard" title="Drag to reposition (Click pill to expand in Mini Mode)">
     
     <!-- Mini Mode Pill Layout (visible only in .mode-mini) -->
     <div class="mini-pill-content pywebview-drag-region" id="miniPillContent">
-      <div class="mini-status-dot pulse" id="miniStatusDot"></div>
-      <span class="mini-status-label" id="miniStatusLabel">Aether: Listening</span>
+      <div class="mini-status-dot" id="miniStatusDot"></div>
+      <span class="mini-status-label" id="miniStatusLabel">Aether: Standby</span>
     </div>
 
     <!-- Top Bar (Normal and Max Modes) -->
     <div class="top-bar">
       <!-- Status Badge -->
       <div class="status-group">
-        <div class="status-dot pulse" id="statusDot"></div>
-        <span class="status-label" id="statusLabel">LISTENING</span>
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-label" id="statusLabel">STANDBY</span>
       </div>
 
       <!-- 3-Segment Toggle: [ — | ▢ | ⤢ ] -->
@@ -700,7 +722,7 @@
         <div class="exchange-header">
           <span class="speaker-badge agent" id="normalAgentTag">AETHER</span>
         </div>
-        <div class="exchange-body agent-text" id="normalAgentText">Aether ready. Speak into your microphone or press your hotkey.</div>
+        <div class="exchange-body agent-text" id="normalAgentText">Aether on standby. Start assistant from main window.</div>
       </div>
     </div>
 
@@ -710,14 +732,14 @@
         <div class="turn-header">
           <span class="turn-speaker agent" id="initialTurnSpeaker">AETHER</span>
         </div>
-        <div class="turn-body">Aether ready. Speak into your microphone or press your hotkey.</div>
+        <div class="turn-body">Aether on standby. Start assistant from main window.</div>
       </div>
     </div>
 
     <!-- Agent Action Prompt Row -->
     <div class="agent-action-row" id="actionRow">
-      <span class="action-icon" id="actionIcon">⚡</span>
-      <span class="action-text" id="agentActionText">Aether ready</span>
+      <span class="action-icon" id="actionIcon">💤</span>
+      <span class="action-text" id="agentActionText">Aether on standby</span>
     </div>
 
     <!-- 8-Directional Resize Handles (Normal and Max Modes) -->
@@ -765,23 +787,90 @@
       let isMuted = false;
       let currentMode = "normal";
       let agentName = "Aether";
+      let currentStatusState = "standby";
+
+      // Color maps for states
+      const stateLabels = {
+        listening: "Listening",
+        hearing: "Hearing...",
+        transcribing: "Transcribing...",
+        thinking: "Thinking...",
+        executing: "Executing...",
+        speaking: "Speaking...",
+        connected: "Connected",
+        disconnected: "Standby",
+        idle: "Standby",
+        standby: "Standby",
+        offline: "Standby",
+        error: "Error"
+      };
+
+      function getMiniStatus(state) {
+        const action = stateLabels[state] || (state ? state.charAt(0).toUpperCase() + state.slice(1) : "Standby");
+        return `${agentName}: ${action}`;
+      }
+
+      function updateAgentName(newName) {
+        if (!newName || typeof newName !== "string") return;
+        const oldName = agentName;
+        agentName = newName.trim() || "Aether";
+
+        // 1. Update Normal mode speaker badge
+        if (normalAgentTag) {
+          normalAgentTag.innerText = agentName.toUpperCase();
+        }
+
+        // 2. Update Max mode initial turn speaker tag
+        const initialSpeaker = document.getElementById("initialTurnSpeaker");
+        if (initialSpeaker) {
+          initialSpeaker.innerText = agentName.toUpperCase();
+        }
+
+        // 3. Update any existing agent turns in transcript
+        if (transcriptPane) {
+          transcriptPane.querySelectorAll(".turn-speaker.agent").forEach(el => {
+            el.innerText = agentName.toUpperCase();
+          });
+        }
+
+        // 4. Update initial greeting texts if still showing default greeting
+        const isStandby = (currentStatusState === "standby" || currentStatusState === "idle" || currentStatusState === "disconnected" || currentStatusState === "offline");
+        const statusDesc = isStandby ? "on standby. Start assistant from main window." : "ready. Speak into your microphone or press your hotkey.";
+        if (normalAgentText && (normalAgentText.innerText.includes("standby") || normalAgentText.innerText.includes("ready") || (oldName && normalAgentText.innerText.startsWith(oldName)))) {
+          normalAgentText.innerHTML = renderMarkdown(`${agentName} ${statusDesc}`);
+        }
+        const initialTurnBody = document.querySelector("#initialTranscriptTurn .turn-body");
+        if (initialTurnBody && (initialTurnBody.innerText.includes("standby") || initialTurnBody.innerText.includes("ready") || (oldName && initialTurnBody.innerText.startsWith(oldName)))) {
+          initialTurnBody.innerHTML = renderMarkdown(`${agentName} ${statusDesc}`);
+        }
+        if (agentActionText && (agentActionText.innerText.includes("standby") || agentActionText.innerText.includes("ready") || (oldName && agentActionText.innerText.startsWith(oldName)))) {
+          agentActionText.innerText = `${agentName} ${isStandby ? 'on standby' : 'ready'}`;
+        }
+
+        // 5. Update Pill (Mini) label
+        if (miniStatusLabel) {
+          miniStatusLabel.innerText = getMiniStatus(currentStatusState);
+        }
+      }
 
       // Active Teleprompter Turn References
       let currentTurnDiv = null;
       let currentTurnSpan = null;
       let currentTurnRawText = "";
 
-      // Color maps for states
       const stateStyles = {
-        listening: { color: "#00d2ff", label: "LISTENING", icon: "👂", mini: "Aether: Listening" },
-        hearing: { color: "#ffd166", label: "HEARING SPEECH", icon: "🎙️", mini: "Aether: Hearing..." },
-        transcribing: { color: "#b388ff", label: "TRANSCRIBING", icon: "✍️", mini: "Aether: Transcribing..." },
-        thinking: { color: "#bd00ff", label: "THINKING", icon: "🧠", mini: "Aether: Thinking..." },
-        executing: { color: "#ff9f1c", label: "EXECUTING TASK", icon: "⚙️", mini: "Aether: Executing..." },
-        speaking: { color: "#06d6a0", label: "SPEAKING", icon: "🔊", mini: "Aether: Speaking..." },
-        connected: { color: "#00d2ff", label: "CONNECTED", icon: "⚡", mini: "Aether: Connected" },
-        disconnected: { color: "#8e9bb0", label: "OFFLINE", icon: "💤", mini: "Aether: Standby" },
-        error: { color: "#ef476f", label: "ERROR", icon: "⚠️", mini: "Aether: Error" }
+        listening: { color: "#00d2ff", label: "LISTENING", icon: "👂" },
+        hearing: { color: "#ffd166", label: "HEARING SPEECH", icon: "🎙️" },
+        transcribing: { color: "#b388ff", label: "TRANSCRIBING", icon: "✍️" },
+        thinking: { color: "#bd00ff", label: "THINKING", icon: "🧠" },
+        executing: { color: "#ff9f1c", label: "EXECUTING TASK", icon: "⚙️" },
+        speaking: { color: "#06d6a0", label: "SPEAKING", icon: "🔊" },
+        connected: { color: "#00d2ff", label: "CONNECTED", icon: "⚡" },
+        disconnected: { color: "#8e9bb0", label: "STANDBY", icon: "💤" },
+        idle: { color: "#8e9bb0", label: "STANDBY", icon: "💤" },
+        standby: { color: "#8e9bb0", label: "STANDBY", icon: "💤" },
+        offline: { color: "#8e9bb0", label: "STANDBY", icon: "💤" },
+        error: { color: "#ef476f", label: "ERROR", icon: "⚠️" }
       };
 
       // =========================================================================
@@ -935,7 +1024,11 @@
       let isDragging = false;
       let dragStartX = 0;
       let dragStartY = 0;
+      let dragStartScreenX = 0;
+      let dragStartScreenY = 0;
       let hasMovedDuringDrag = false;
+      let suppressNextClick = false;
+      let suppressTimeoutId = null;
 
       function onDragMouseDown(e) {
         // Exclude interactive buttons, toggles, controls, scrollable text, and resize handles
@@ -948,6 +1041,8 @@
         hasMovedDuringDrag = false;
         dragStartX = e.clientX;
         dragStartY = e.clientY;
+        dragStartScreenX = e.screenX;
+        dragStartScreenY = e.screenY;
         overlayCard.classList.add("dragging");
 
         window.addEventListener("mousemove", onDragMouseMove);
@@ -956,10 +1051,11 @@
 
       function onDragMouseMove(e) {
         if (!isDragging) return;
-        const dx = Math.abs(e.clientX - dragStartX);
-        const dy = Math.abs(e.clientY - dragStartY);
+        const dx = Math.abs(e.screenX - dragStartScreenX);
+        const dy = Math.abs(e.screenY - dragStartScreenY);
         if (dx > 3 || dy > 3) {
           hasMovedDuringDrag = true;
+          suppressNextClick = true;
         }
 
         const newX = e.screenX - dragStartX;
@@ -979,6 +1075,19 @@
           overlayCard.classList.remove("dragging");
           window.removeEventListener("mousemove", onDragMouseMove);
           window.removeEventListener("mouseup", onDragMouseUp);
+
+          if (hasMovedDuringDrag) {
+            suppressNextClick = true;
+            if (suppressTimeoutId) clearTimeout(suppressTimeoutId);
+            suppressTimeoutId = setTimeout(() => {
+              suppressNextClick = false;
+              hasMovedDuringDrag = false;
+            }, 300);
+
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.save_hud_position) {
+              window.pywebview.api.save_hud_position();
+            }
+          }
         }
       }
 
@@ -1113,40 +1222,57 @@
 
       // Mini mode pill clicking toggles back to Normal mode (suppressed if dragged)
       overlayCard.addEventListener("click", (e) => {
+        if (suppressNextClick || hasMovedDuringDrag) {
+          suppressNextClick = false;
+          hasMovedDuringDrag = false;
+          e.stopPropagation();
+          e.preventDefault();
+          return;
+        }
         if (currentMode === "mini") {
-          if (hasMovedDuringDrag) {
-            hasMovedDuringDrag = false;
-            return;
-          }
           e.stopPropagation();
           switchMode("normal");
         }
-      });
+      }, true);
 
       // =========================================================================
       // Status & State Indicator
       // =========================================================================
       function setStatus(state, message, userPrompt, action) {
-        const style = stateStyles[state] || {
-          color: "#00d2ff",
-          label: (state || "READY").toUpperCase(),
-          icon: "⚡",
-          mini: `${agentName}: ${(state || "Ready")}`
+        currentStatusState = state || "standby";
+        const isStandby = (currentStatusState === "standby" || currentStatusState === "idle" || currentStatusState === "disconnected" || currentStatusState === "offline");
+
+        document.body.classList.toggle("status-standby", isStandby);
+
+        const style = stateStyles[currentStatusState] || {
+          color: isStandby ? "#8e9bb0" : "#00d2ff",
+          label: (currentStatusState || "STANDBY").toUpperCase(),
+          icon: isStandby ? "💤" : "⚡"
         };
 
         document.documentElement.style.setProperty("--current-status-color", style.color);
 
         // Standard status indicator
         statusDot.style.background = style.color;
-        statusDot.style.boxShadow = `0 0 8px ${style.color}`;
+        statusDot.style.boxShadow = isStandby ? "none" : `0 0 8px ${style.color}`;
+        if (isStandby) {
+          statusDot.classList.remove("pulse");
+        } else {
+          statusDot.classList.add("pulse");
+        }
         statusLabel.style.color = style.color;
         statusLabel.innerText = style.label;
 
         // Mini status indicator
         miniStatusDot.style.background = style.color;
-        miniStatusDot.style.boxShadow = `0 0 10px ${style.color}`;
+        miniStatusDot.style.boxShadow = isStandby ? "none" : `0 0 10px ${style.color}`;
+        if (isStandby) {
+          miniStatusDot.classList.remove("pulse");
+        } else {
+          miniStatusDot.classList.add("pulse");
+        }
         miniStatusLabel.style.color = style.color;
-        miniStatusLabel.innerText = style.mini;
+        miniStatusLabel.innerText = getMiniStatus(currentStatusState);
 
         if (action) {
           actionIcon.innerText = "⚙️";
@@ -1154,6 +1280,9 @@
         } else if (message) {
           actionIcon.innerText = style.icon;
           agentActionText.innerText = message;
+        } else if (isStandby) {
+          actionIcon.innerText = "💤";
+          agentActionText.innerText = `${agentName} on standby`;
         }
 
         // Only update user prompt if not currently speaking/answering
@@ -1407,13 +1536,21 @@
         setMode: function(mode) {
           applyModeClasses(mode);
         },
+        setAgentName: function(name) {
+          updateAgentName(name);
+        },
 
         handleEvent: function(event) {
           if (!event) return;
           const type = event.type;
           const data = event.data || {};
 
-          if (type === "hud_mode_changed") {
+          if (type === "config_updated") {
+            const apiCfg = (data && data.api) || {};
+            if (apiCfg.agent_name) {
+              updateAgentName(apiCfg.agent_name);
+            }
+          } else if (type === "hud_mode_changed") {
             if (data.mode) {
               applyModeClasses(data.mode);
             }
@@ -1499,10 +1636,32 @@
                 document.documentElement.style.setProperty("--accent", theme.accent_color);
               }
             }
-            if (window.pywebview.api.get_hud_mode) {
-              const modeRes = await window.pywebview.api.get_hud_mode();
-              if (modeRes && modeRes.mode) {
-                applyModeClasses(modeRes.mode);
+            if (window.pywebview.api.get_overlay_config) {
+              const oCfg = await window.pywebview.api.get_overlay_config();
+              if (oCfg && oCfg.state) {
+                setStatus(oCfg.state);
+              } else {
+                setStatus("standby");
+              }
+              if (oCfg && oCfg.agent_name) {
+                updateAgentName(oCfg.agent_name);
+              }
+              if (oCfg && oCfg.hud_mode) {
+                applyModeClasses(oCfg.hud_mode);
+              }
+            } else {
+              setStatus("standby");
+              if (window.pywebview.api.get_hud_mode) {
+                const modeRes = await window.pywebview.api.get_hud_mode();
+                if (modeRes && modeRes.mode) {
+                  applyModeClasses(modeRes.mode);
+                }
+              }
+              if (window.pywebview.api.get_agent_name) {
+                const nameRes = await window.pywebview.api.get_agent_name();
+                if (nameRes && nameRes.agent_name) {
+                  updateAgentName(nameRes.agent_name);
+                }
               }
             }
             if (window.pywebview.api.apply_shape) {
