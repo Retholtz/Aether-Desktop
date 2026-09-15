@@ -66,7 +66,14 @@
   },
   "ui": {
     "floating_overlay": "always",
-    "minimize_to_tray": true
+    "minimize_to_tray": true,
+    "hud_mode": "mini",
+    "hud_mode_hotkey": "Ctrl+Space",
+    "hud_mode_key_display": "Ctrl+Space",
+    "hud_mode_vk": 32,
+    "hud_mode_modifiers": [
+      "Control"
+    ]
   },
   "user": {
     "name": "Mike"

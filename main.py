@@ -74,6 +74,8 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(base_dir, "config.json")
     bridge = GuiBridge(config_path=config_path, loop=loop)
+    if hasattr(bridge._engine, "hotkey_manager") and bridge._engine.hotkey_manager:
+        bridge._engine.hotkey_manager.start()
 
     # 3. Create PyWebView HUD window runner (loading from ui/static/)
     hud = HudWindow(
@@ -93,6 +95,11 @@ def main():
     finally:
         print("\n[SHUTDOWN] Window closed. Stopping assistant engine...")
         bridge.stop_assistant()
+        if hasattr(bridge._engine, "hotkey_manager") and bridge._engine.hotkey_manager:
+            try:
+                bridge._engine.hotkey_manager.stop()
+            except Exception:
+                pass
         if hasattr(bridge._engine, "telemetry_db") and bridge._engine.telemetry_db:
             try:
                 bridge._engine.telemetry_db.close()

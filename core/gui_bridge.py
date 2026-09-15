@@ -217,8 +217,11 @@ class GuiBridge:
         self._window = None
         self._overlay_window = None
         self._overlay_visible = False
+        self._hud_bridge = None
+        self._current_hud_mode = "normal"
         self._js_lock = threading.Lock()
         self._config = self._load_config()
+        self._current_hud_mode = self._config.get("ui", {}).get("hud_mode", "normal")
         self._engine = AetherEngine(
             config_getter=self.get_raw_config,
             on_event=self._on_engine_event,
@@ -231,6 +234,9 @@ class GuiBridge:
 
     def set_overlay_window(self, window):
         self._overlay_window = window
+
+    def set_hud_bridge(self, hud_bridge):
+        self._hud_bridge = hud_bridge
 
     def update_whitelist(self, new_whitelist: list) -> dict:
         """Updates security app_whitelist in config, persists to disk, and pushes config_updated event."""
@@ -259,6 +265,10 @@ class GuiBridge:
     def _on_engine_event(self, event_type: str, data: dict):
         """Pushes events to both the Main Window and Floating Overlay JavaScript runtimes."""
         try:
+            if event_type == "hud_cycle_mode":
+                self.cycle_hud_mode()
+                return
+
             payload = json.dumps({"type": event_type, "data": data})
             
             with self._js_lock:
@@ -359,7 +369,7 @@ class GuiBridge:
                         self._engine.audio.set_mode(self._config["audio"].get("mode", "always_on"))
                         self._engine.audio.set_software_gate(self._config["audio"].get("software_gate", False))
                     if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
-                        self._engine.hotkey_manager.update_config(self._config["audio"])
+                        self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
 
             if "vision" in new_config:
                 self._config["vision"] = new_config["vision"]
@@ -367,6 +377,10 @@ class GuiBridge:
                 self._config["security"] = new_config["security"]
             if "ui" in new_config:
                 self._config["ui"] = new_config["ui"]
+                if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
+                    self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
+                if "hud_mode" in new_config["ui"]:
+                    self.set_mode(new_config["ui"]["hud_mode"])
 
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2)
@@ -702,6 +716,8 @@ class GuiBridge:
             if getattr(self, "_overlay_window", None):
                 self._overlay_window.show()
                 self._overlay_visible = True
+                cur_mode = getattr(self, "_current_hud_mode", "normal")
+                self.set_mode(cur_mode)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -726,9 +742,85 @@ class GuiBridge:
                 else:
                     self._overlay_window.show()
                     self._overlay_visible = True
+                    try:
+                        from ui.hud_window import apply_hud_window_shape
+                        cur_mode = getattr(self, "_current_hud_mode", "normal")
+                        apply_hud_window_shape(self._overlay_window, cur_mode)
+                    except Exception:
+                        pass
             return {"success": True, "visible": getattr(self, "_overlay_visible", False)}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def move_overlay(self, x: int, y: int) -> dict:
+        """Moves the floating HUD overlay window to screen coordinates (x, y)."""
+        try:
+            if getattr(self, "_overlay_window", None):
+                self._overlay_window.move(int(x), int(y))
+                return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Overlay window not initialized"}
+
+    def set_mode(self, mode: str) -> dict:
+        """Sets the HUD overlay view mode (mini, normal, max) and resizes window."""
+        mode = mode.lower() if mode else "normal"
+        if mode not in ("mini", "normal", "max"):
+            mode = "normal"
+        self._current_hud_mode = mode
+        self._config.setdefault("ui", {})["hud_mode"] = mode
+
+        # Delegate resize to hud_bridge if registered, or direct to overlay_window
+        if self._hud_bridge:
+            try:
+                self._hud_bridge.set_mode(mode)
+            except Exception as ex:
+                logger.warning(f"[HUD BRIDGE RESIZE ERROR] {ex}")
+        elif getattr(self, "_overlay_window", None):
+            try:
+                if mode == "mini":
+                    self._overlay_window.resize(180, 52)
+                elif mode == "normal":
+                    self._overlay_window.resize(440, 180)
+                elif mode == "max":
+                    self._overlay_window.resize(560, 480)
+                from ui.hud_window import apply_hud_window_shape
+                apply_hud_window_shape(self._overlay_window, mode)
+            except Exception as ex:
+                logger.warning(f"[OVERLAY RESIZE ERROR] {ex}")
+            self.on_hud_mode_changed(mode)
+
+        return {"success": True, "mode": mode}
+
+    def cycle_hud_mode(self) -> str:
+        """Cycles through HUD modes: mini -> normal -> max -> mini."""
+        order = ["mini", "normal", "max"]
+        cur = getattr(self, "_current_hud_mode", "normal")
+        try:
+            next_idx = (order.index(cur) + 1) % len(order)
+            next_mode = order[next_idx]
+        except ValueError:
+            next_mode = "normal"
+
+        if not getattr(self, "_overlay_visible", False):
+            self.show_overlay()
+
+        self.set_mode(next_mode)
+        return next_mode
+
+    def on_hud_mode_changed(self, mode: str):
+        """Notifies JavaScript in the floating overlay window of mode change."""
+        self._current_hud_mode = mode
+        if getattr(self, "_overlay_window", None) and getattr(self, "_overlay_visible", False):
+            try:
+                js_code = f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
+                self._overlay_window.evaluate_js(js_code)
+            except Exception:
+                pass
+
+    def get_hud_mode(self) -> dict:
+        """Returns the current HUD mode."""
+        return {"success": True, "mode": getattr(self, "_current_hud_mode", "normal")}
 
     def toggle_mic_mute(self) -> dict:
         """Toggles microphone mute state."""

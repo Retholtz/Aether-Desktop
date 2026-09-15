@@ -538,6 +538,27 @@
                   </label>
                   <span class="input-hint">Keeps Aether running in the background notification area when minimized.</span>
                 </div>
+
+                <div class="form-group">
+                  <label for="defaultHudModeSelect">Default HUD Overlay View Tier</label>
+                  <select id="defaultHudModeSelect" class="hud-select">
+                    <option value="mini">Mini Mode (Utilitarian Pill - 220x52)</option>
+                    <option value="normal" selected>Normal Mode (Card Dock - 480x240)</option>
+                    <option value="max">Max Mode (Teleprompter Transcript - 560x480)</option>
+                  </select>
+                  <span class="input-hint">Initial view mode of the HUD overlay window upon startup.</span>
+                </div>
+
+                <div class="form-group full" style="margin-top: 6px;">
+                  <label style="display: block; margin-bottom: 5px;">HUD Mode Switch Keybind (Global Hotkey)</label>
+                  <div class="keybind-recorder-container">
+                    <button type="button" id="hudModeKeybindBtn" class="hud-btn-keybind" title="Click to assign a keybind">
+                      <span id="hudModeKeybindDisplay">Ctrl+Space</span>
+                    </button>
+                    <button type="button" id="hudModeKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Ctrl+Space)">RESET</button>
+                  </div>
+                  <span class="input-hint" id="hudModeKeybindHint">Click the button and press any key or combo (default: Ctrl+Space) to cycle HUD modes (Mini &rarr; Normal &rarr; Max) globally across all apps.</span>
+                </div>
               </div>
             </div>
           </div>

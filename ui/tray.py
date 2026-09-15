@@ -40,13 +40,17 @@ class SystemTrayManager:
         on_open_main: Callable[[], None],
         on_toggle_overlay: Callable[[], None],
         on_toggle_mute: Callable[[], None],
-        on_exit: Callable[[], None],
+        on_set_hud_mode: Optional[Callable[[str], None]] = None,
+        on_cycle_hud_mode: Optional[Callable[[], None]] = None,
+        on_exit: Optional[Callable[[], None]] = None,
         title: str = "Aether Desktop"
     ):
         self.on_open_main = on_open_main
         self.on_toggle_overlay = on_toggle_overlay
         self.on_toggle_mute = on_toggle_mute
-        self.on_exit = on_exit
+        self.on_set_hud_mode = on_set_hud_mode
+        self.on_cycle_hud_mode = on_cycle_hud_mode
+        self.on_exit = on_exit or (lambda: None)
         self.title = title
         self._icon: Optional[pystray.Icon] = None
         self._is_running = False
@@ -74,6 +78,16 @@ class SystemTrayManager:
         menu = pystray.Menu(
             pystray.MenuItem("Open Aether Desktop", _action_open, default=True),
             pystray.MenuItem("Toggle Floating Overlay", _action_toggle_overlay),
+            pystray.MenuItem(
+                "HUD Mode",
+                pystray.Menu(
+                    pystray.MenuItem("Mini Mode (Pill)", lambda icon, item: self.on_set_hud_mode("mini") if self.on_set_hud_mode else None),
+                    pystray.MenuItem("Normal Mode (Card)", lambda icon, item: self.on_set_hud_mode("normal") if self.on_set_hud_mode else None),
+                    pystray.MenuItem("Max Mode (Transcript)", lambda icon, item: self.on_set_hud_mode("max") if self.on_set_hud_mode else None),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem("Cycle HUD Mode (Ctrl+Space)", lambda icon, item: self.on_cycle_hud_mode() if self.on_cycle_hud_mode else None),
+                )
+            ),
             pystray.MenuItem("Mute Microphone", _action_mute),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", _action_exit)

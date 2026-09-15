@@ -163,10 +163,12 @@ class HotkeyManager:
         self,
         on_ptt_change: Optional[Callable[[bool], None]] = None,
         on_ptt_toggle: Optional[Callable[[], None]] = None,
+        on_hud_mode_cycle: Optional[Callable[[], None]] = None,
         config_getter: Optional[Callable[[], dict]] = None,
     ):
         self.on_ptt_change = on_ptt_change
         self.on_ptt_toggle = on_ptt_toggle
+        self.on_hud_mode_cycle = on_hud_mode_cycle
         self.config_getter = config_getter or (lambda: {})
 
         self.enabled = False
@@ -175,6 +177,12 @@ class HotkeyManager:
         self.target_vk = 0x20           # Default: VK_SPACE
         self.target_modifiers: List[str] = []
         self.key_display = "Space"
+
+        # HUD Overlay Mode Switch Hotkey (default Ctrl+Space)
+        self.hud_mode_vk: Optional[int] = 0x20
+        self.hud_mode_modifiers: List[str] = ["Control"]
+        self.hud_mode_display: str = "Ctrl+Space"
+        self._is_hud_key_down = False
 
         self._is_key_down = False
         self._input_focused = False
@@ -191,18 +199,24 @@ class HotkeyManager:
         self._load_from_config()
 
     def _load_from_config(self):
-        """Loads PTT configuration from the application config getter."""
+        """Loads PTT and HUD mode configuration from the application config getter."""
         try:
             cfg = self.config_getter()
             audio_cfg = cfg.get("audio", {})
-            self.update_config(audio_cfg)
+            ui_cfg = cfg.get("ui", {})
+            self.update_config(audio_cfg, ui_cfg)
         except Exception as e:
             logger.warning(f"Could not load initial hotkey config: {e}")
 
-    def update_config(self, audio_cfg: dict):
+    def update_config(self, audio_cfg: Optional[dict] = None, ui_cfg: Optional[dict] = None):
         """
-        Dynamically updates PTT keybind settings without restarting the background hook.
+        Dynamically updates PTT and HUD mode keybind settings without restarting the background hook.
         """
+        if audio_cfg is None:
+            audio_cfg = self.config_getter().get("audio", {})
+        if ui_cfg is None:
+            ui_cfg = self.config_getter().get("ui", {})
+
         self.audio_mode = audio_cfg.get("mode", "always_on")
         self.ptt_type = audio_cfg.get("ptt_type", "hold")
         self.key_display = audio_cfg.get("ptt_key_display", "Space")
@@ -217,13 +231,26 @@ class HotkeyManager:
             key_str = audio_cfg.get("ptt_key", "Space")
             self.target_vk, self.target_modifiers = parse_keybind_string(key_str)
 
+        # HUD mode hotkey settings
+        self.hud_mode_display = ui_cfg.get("hud_mode_key_display", "Ctrl+Space")
+        explicit_hud_vk = ui_cfg.get("hud_mode_vk")
+        explicit_hud_mods = ui_cfg.get("hud_mode_modifiers")
+
+        if explicit_hud_vk is not None:
+            self.hud_mode_vk = int(explicit_hud_vk)
+            self.hud_mode_modifiers = list(explicit_hud_mods or [])
+        else:
+            hud_key_str = ui_cfg.get("hud_mode_hotkey", "Ctrl+Space")
+            self.hud_mode_vk, self.hud_mode_modifiers = parse_keybind_string(hud_key_str)
+
         self.enabled = (self.audio_mode == "ptt")
         self._is_key_down = False
+        self._is_hud_key_down = False
 
         logger.info(
-            f"[HOTKEY] Config updated: mode={self.audio_mode}, ptt_type={self.ptt_type}, "
-            f"key={self.key_display} (VK={self.target_vk:#04x}, mods={self.target_modifiers}), "
-            f"enabled={self.enabled}"
+            f"[HOTKEY] Config updated: PTT(mode={self.audio_mode}, ptt_type={self.ptt_type}, "
+            f"key={self.key_display}, VK={self.target_vk:#04x}, mods={self.target_modifiers}) | "
+            f"HUD(key={self.hud_mode_display}, VK={self.hud_mode_vk:#04x}, mods={self.hud_mode_modifiers})"
         )
 
     def set_input_focused(self, focused: bool):
@@ -237,19 +264,22 @@ class HotkeyManager:
             if self.on_ptt_change:
                 self.on_ptt_change(False)
 
-    def _check_modifiers(self) -> bool:
+    def _check_modifiers(self, target_modifiers: Optional[List[str]] = None) -> bool:
         """Verifies if the current physical modifier state matches target modifiers."""
         if sys.platform != "win32":
             return True
+
+        if target_modifiers is None:
+            target_modifiers = self.target_modifiers
 
         user32 = ctypes.windll.user32
         ctrl_down = bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
         alt_down = bool(user32.GetAsyncKeyState(VK_MENU) & 0x8000)
         shift_down = bool(user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
 
-        req_ctrl = "Control" in self.target_modifiers
-        req_alt = "Alt" in self.target_modifiers
-        req_shift = "Shift" in self.target_modifiers
+        req_ctrl = "Control" in target_modifiers
+        req_alt = "Alt" in target_modifiers
+        req_shift = "Shift" in target_modifiers
 
         if req_ctrl != ctrl_down:
             return False
@@ -262,7 +292,7 @@ class HotkeyManager:
 
     def _low_level_keyboard_proc(self, nCode: int, wParam: int, lParam: int) -> int:
         """Low-level Windows keyboard callback executed for every keystroke system-wide."""
-        if nCode >= 0 and self.enabled and self._running:
+        if nCode >= 0 and self._running:
             try:
                 kb = KBDLLHOOKSTRUCT.from_address(lParam)
                 vk = kb.vkCode
@@ -270,13 +300,25 @@ class HotkeyManager:
                 is_down = wParam in (WM_KEYDOWN, WM_SYSKEYDOWN)
                 is_up = wParam in (WM_KEYUP, WM_SYSKEYUP)
 
-                # Check if this event targets our configured PTT key
-                if vk == self.target_vk:
+                # 1. Check HUD Mode Cycle Hotkey (system-wide global hotkey)
+                if self.hud_mode_vk is not None and vk == self.hud_mode_vk:
+                    if is_down:
+                        if self._check_modifiers(self.hud_mode_modifiers):
+                            if not self._is_hud_key_down:
+                                self._is_hud_key_down = True
+                                logger.debug("[HUD HOTKEY] Key down -> Cycle HUD Mode")
+                                if self.on_hud_mode_cycle:
+                                    self.on_hud_mode_cycle()
+                    elif is_up:
+                        self._is_hud_key_down = False
+
+                # 2. Check Push-to-Talk Hotkey (active when audio mode is PTT)
+                if self.enabled and vk == self.target_vk:
                     # Smart typing safeguard: suppress single-key hotkeys if user is typing text in Aether
                     if self._input_focused and not self.target_modifiers:
                         pass
                     elif is_down:
-                        if self._check_modifiers():
+                        if self._check_modifiers(self.target_modifiers):
                             if not self._is_key_down:
                                 self._is_key_down = True
                                 if self.ptt_type == "hold":

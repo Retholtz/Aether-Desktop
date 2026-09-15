@@ -14,6 +14,12 @@ window.aetherUI = {
   pttModifiers: [],
   isPttActive: false,
   isRecordingKeybind: false,
+  hudMode: "normal",
+  hudModeKey: "Ctrl+Space",
+  hudModeKeyDisplay: "Ctrl+Space",
+  hudModeVk: 32,
+  hudModeModifiers: ["Control"],
+  isRecordingHudModeKeybind: false,
   logEntries: [],
   activeLogFilter: "all",
   edgeCatalog: null,
@@ -282,6 +288,43 @@ window.aetherUI = {
       });
     }
 
+    // HUD Mode Keybind Recorder Controls
+    const hudModeBtn = document.getElementById("hudModeKeybindBtn");
+    if (hudModeBtn) {
+      hudModeBtn.addEventListener("click", () => {
+        if (this.isRecordingHudModeKeybind) {
+          this.stopHudModeKeybindRecording();
+        } else {
+          this.startHudModeKeybindRecording();
+        }
+      });
+    }
+
+    const resetHudModeBtn = document.getElementById("hudModeKeybindResetBtn");
+    if (resetHudModeBtn) {
+      resetHudModeBtn.addEventListener("click", () => {
+        this.hudModeKey = "Ctrl+Space";
+        this.hudModeKeyDisplay = "Ctrl+Space";
+        this.hudModeVk = 32;
+        this.hudModeModifiers = ["Control"];
+        const disp = document.getElementById("hudModeKeybindDisplay");
+        if (disp) disp.innerText = "Ctrl+Space";
+        this.saveSettings(true);
+        this.log("HUD Mode Keybind reset to default (Ctrl+Space).");
+      });
+    }
+
+    const defaultHudModeSel = document.getElementById("defaultHudModeSelect");
+    if (defaultHudModeSel) {
+      defaultHudModeSel.addEventListener("change", (e) => {
+        this.hudMode = e.target.value;
+        this.saveSettings(true);
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.set_mode) {
+          window.pywebview.api.set_mode(e.target.value);
+        }
+      });
+    }
+
     // Push-To-Talk Button Events (Supports both Hold and Toggle interactions)
     const pttBtn = document.getElementById("pttButton");
     const startHoldPTT = (e) => {
@@ -317,6 +360,12 @@ window.aetherUI = {
 
     // Window Key Listeners for Keybind Recording & In-Window PTT Trigger
     window.addEventListener("keydown", (e) => {
+      if (this.isRecordingHudModeKeybind) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handleRecordedHudModeKey(e);
+        return;
+      }
       if (this.isRecordingKeybind) {
         e.preventDefault();
         e.stopPropagation();
@@ -595,6 +644,58 @@ window.aetherUI = {
     this.updatePttButtonUI();
     this.saveSettings(true);
     this.log(`PTT Keybind set to: ${this.pttKeyDisplay}`);
+  },
+
+  startHudModeKeybindRecording: function() {
+    this.isRecordingHudModeKeybind = true;
+    this.stopKeybindRecording();
+    const btn = document.getElementById("hudModeKeybindBtn");
+    const display = document.getElementById("hudModeKeybindDisplay");
+    if (btn) btn.classList.add("recording");
+    if (display) display.innerText = "PRESS ANY KEY COMBO...";
+  },
+
+  stopHudModeKeybindRecording: function() {
+    this.isRecordingHudModeKeybind = false;
+    const btn = document.getElementById("hudModeKeybindBtn");
+    const display = document.getElementById("hudModeKeybindDisplay");
+    if (btn) btn.classList.remove("recording");
+    if (display) display.innerText = this.hudModeKeyDisplay || "Ctrl+Space";
+  },
+
+  handleRecordedHudModeKey: function(e) {
+    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+      return;
+    }
+
+    const mods = [];
+    if (e.ctrlKey) mods.push("Control");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+
+    let keyName = e.code || e.key;
+    if (keyName.startsWith("Key")) keyName = keyName.substring(3);
+    if (keyName.startsWith("Digit")) keyName = keyName.substring(5);
+
+    let displayKey = keyName;
+    if (keyName === "Space") displayKey = "Space";
+    else if (keyName === "Backquote") displayKey = "~";
+    else if (keyName === "Escape") displayKey = "Esc";
+
+    const displayParts = [];
+    if (e.ctrlKey) displayParts.push("Ctrl");
+    if (e.altKey) displayParts.push("Alt");
+    if (e.shiftKey) displayParts.push("Shift");
+    displayParts.push(displayKey);
+
+    this.hudModeKey = displayParts.join("+");
+    this.hudModeKeyDisplay = displayParts.join("+");
+    this.hudModeVk = e.keyCode || 32;
+    this.hudModeModifiers = mods;
+
+    this.stopHudModeKeybindRecording();
+    this.saveSettings(true);
+    this.log(`HUD Mode Keybind set to: ${this.hudModeKeyDisplay}`);
   },
 
   matchesPttKey: function(e) {
@@ -1060,6 +1161,26 @@ window.aetherUI = {
 
         const trayCheck = document.getElementById("minimizeToTrayCheck");
         if (trayCheck) trayCheck.checked = (cfg.ui.minimize_to_tray !== false);
+
+        if (cfg.ui.hud_mode) {
+          this.hudMode = cfg.ui.hud_mode;
+          const hudModeSel = document.getElementById("defaultHudModeSelect");
+          if (hudModeSel) hudModeSel.value = cfg.ui.hud_mode;
+        }
+        if (cfg.ui.hud_mode_hotkey) {
+          this.hudModeKey = cfg.ui.hud_mode_hotkey;
+        }
+        if (cfg.ui.hud_mode_key_display) {
+          this.hudModeKeyDisplay = cfg.ui.hud_mode_key_display;
+          const disp = document.getElementById("hudModeKeybindDisplay");
+          if (disp) disp.innerText = cfg.ui.hud_mode_key_display;
+        }
+        if (cfg.ui.hud_mode_vk !== undefined) {
+          this.hudModeVk = cfg.ui.hud_mode_vk;
+        }
+        if (cfg.ui.hud_mode_modifiers) {
+          this.hudModeModifiers = cfg.ui.hud_mode_modifiers;
+        }
       }
 
       this.updateTelemetryDeviceLabels();
@@ -1161,7 +1282,12 @@ window.aetherUI = {
         },
         ui: {
           floating_overlay: document.getElementById("floatingOverlayMode")?.value || "on_minimize",
-          minimize_to_tray: document.getElementById("minimizeToTrayCheck")?.checked !== false
+          minimize_to_tray: document.getElementById("minimizeToTrayCheck")?.checked !== false,
+          hud_mode: document.getElementById("defaultHudModeSelect")?.value || this.hudMode || "normal",
+          hud_mode_hotkey: this.hudModeKey || "Ctrl+Space",
+          hud_mode_key_display: this.hudModeKeyDisplay || "Ctrl+Space",
+          hud_mode_vk: this.hudModeVk !== undefined ? this.hudModeVk : 32,
+          hud_mode_modifiers: this.hudModeModifiers || ["Control"]
         }
       };
 

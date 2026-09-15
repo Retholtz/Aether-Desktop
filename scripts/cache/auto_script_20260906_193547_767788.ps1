@@ -1,1 +1,0 @@
-Write-Output "PowerShell Automation Active: $(Get-Date -Format yyyy-MM-dd)"

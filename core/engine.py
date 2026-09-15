@@ -192,6 +192,7 @@ class AetherEngine:
         self.hotkey_manager = HotkeyManager(
             on_ptt_change=self.set_ptt,
             on_ptt_toggle=self.toggle_ptt,
+            on_hud_mode_cycle=lambda: self.notify("hud_cycle_mode", {}),
             config_getter=self.config_getter
         )
 
@@ -556,11 +557,13 @@ class AetherEngine:
                             text_part = getattr(part, "text", None)
                             if text_part:
                                 self.current_turn_text += text_part
+                                self.notify("agent_speech_chunk", {"chunk": text_part})
 
                     # 3. Model Output Transcription
                     output_trans = getattr(server_content, "output_transcription", None)
                     if output_trans and output_trans.text:
                         self.current_turn_text += output_trans.text
+                        self.notify("agent_speech_chunk", {"chunk": output_trans.text})
 
                     # 4. Search Grounding / Tool Events
                     grounding = getattr(server_content, "grounding_metadata", None)
@@ -578,6 +581,7 @@ class AetherEngine:
                     if server_content.interrupted:
                         print("\n[USER INTERRUPTED - BARGE-IN]")
                         self.kill_audio()
+                        self.notify("agent_turn_interrupted", {})
                         self.current_turn_text = ""
                         if self.current_user_speech.strip():
                             self.notify("chat_event", {
@@ -608,6 +612,7 @@ class AetherEngine:
                                 "content": clean_turn_text
                             })
                             self.session_lifecycle.record_turn("assistant", clean_turn_text)
+                        self.notify("agent_turn_complete", {"content": clean_turn_text})
                         self.current_turn_text = ""
 
                         # Sync telemetry with main.py
@@ -1381,6 +1386,7 @@ class AetherEngine:
                         "agent_name": agent_name,
                         "content": assistant_text
                     })
+                    self.notify("agent_speech_chunk", {"chunk": assistant_text})
 
                     # 5. Synthesize & Stream Speech with Concurrent Interruption Monitoring
                     self._kill_playback_flag = False
@@ -1582,6 +1588,7 @@ class AetherEngine:
                     "tts_ms": round(tts_ms),
                     "total_ms": round(total_turn_ms)
                 })
+                self.notify("agent_turn_complete", {"content": assistant_text})
 
                 if self.audio:
                     self.audio.clear_output_buffer()
