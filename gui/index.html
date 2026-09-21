@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aether Desktop</title>
+  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="hud-window">
+    <!-- Top Windows-Style Header Bar -->
+    <header class="hud-header">
+      <div class="hud-brand">
+        <div class="hud-logo-icon">▲</div>
+        <div class="hud-titles">
+          <span class="hud-title" id="hudAgentTitle">AETHER DESKTOP</span>
+          <span class="hud-subtitle">AI VOICE & DESKTOP ASSISTANT</span>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="hud-tabs">
+        <button class="hud-tab active" data-tab="chat">
+          <span class="tab-icon">💬</span> CHAT THREAD
+        </button>
+        <button class="hud-tab" data-tab="settings">
+          <span class="tab-icon">⚙️</span> SETTINGS
+        </button>
+        <button class="hud-tab" data-tab="preferences">
+          <span class="tab-icon">🧠</span> USER PREFERENCES
+        </button>
+        <button class="hud-tab" data-tab="telemetry">
+          <span class="tab-icon">📊</span> TELEMETRY
+        </button>
+        <button class="hud-tab" data-tab="logs">
+          <span class="tab-icon">📄</span> LOGS
+        </button>
+      </nav>
+
+      <!-- Real-time Status Badge & Mic Meter -->
+      <div class="hud-status-panel">
+        <div class="hud-meter-container" title="Live Microphone Input Level">
+          <span class="meter-label">MIC</span>
+          <div class="meter-bar-track">
+            <div id="micMeterFill" class="meter-bar-fill"></div>
+          </div>
+        </div>
+        <div id="statusBadge" class="status-pill offline">
+          <span class="status-dot"></span>
+          <span id="statusText">STANDBY</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="hud-main">
+      <!-- ============================================================= -->
+      <!-- TAB 1: CHAT THREAD                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-chat" class="tab-pane active">
+        <div class="chat-thread-container">
+          <div class="thread-header">
+            <div class="thread-title-wrap">
+              <span class="thread-title">CONVERSATION STREAM</span>
+              <span class="thread-status" id="threadVoiceLabel">VOICE: Aoede</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button class="hud-btn-secondary sm" id="newSessionBtn" title="Reset AI memory and start fresh task">✨ NEW TASK</button>
+              <button class="hud-btn-ghost sm" id="clearChatBtn" title="Clear chat thread">CLEAR LOG</button>
+            </div>
+          </div>
+
+          <!-- Message History -->
+          <div id="chatHistory" class="chat-history">
+            <div class="chat-bubble system">
+              <div class="bubble-meta">
+                <span class="sender-tag system">SYSTEM</span>
+                <span class="timestamp">READY</span>
+              </div>
+              <div class="bubble-body">
+                Assistant initialized. Click <strong class="text-accent" id="startHintText">START ASSISTANT</strong> below or speak into your microphone once connected.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB 2: SETTINGS MENU                                          -->
+      <!-- ============================================================= -->
+      <section id="tab-settings" class="tab-pane" tabindex="0">
+          
+          <!-- Card: Agent & Voice Settings -->
+          <div class="hud-card">
+            <div class="card-header">
+              <span class="card-title">ASSISTANT IDENTITY & AI VOICE</span>
+              <div class="card-header-actions">
+                <button type="button" class="hud-btn-primary sm" id="topSaveSettingsBtn" title="Save all settings and agent name">SAVE SETTINGS</button>
+                <span class="card-tag dpapi">🔒 WINDOWS DPAPI SECURE</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                
+                <!-- Agent Name (Top Line Left) -->
+                <div class="form-group">
+                  <label for="agentNameInput">Agent Name</label>
+                  <input type="text" id="agentNameInput" class="hud-input" value="Aether" placeholder="e.g. Aether">
+                  <span class="input-hint">Name of your assistant. Use [Agent Name] in the instructions below.</span>
+                </div>
+
+                <!-- Voice Playback Kill Phrase (Top Line Right) -->
+                <div class="form-group">
+                  <label for="safePhraseInput">Voice Playback Kill Phrase</label>
+                  <input type="text" id="safePhraseInput" class="hud-input" value="Aether stop" placeholder="e.g. Aether stop">
+                  <span class="input-hint">Saying this phrase or clicking Stop Playback immediately silences audio.</span>
+                </div>
+
+                <!-- Text to Speech (TTS) Endpoint (Second Line Left) -->
+                <div class="form-group">
+                  <label for="ttsSelect">Text to Speech (TTS) Endpoint</label>
+                  <select id="ttsSelect" class="hud-select">
+                    <option value="gemini-live-native" selected>Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)</option>
+                    <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 Flash TTS (Streaming Cloud Speech Preview)</option>
+                    <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash TTS (Legacy Cloud Speech Preview)</option>
+                    <option value="edge-tts">Edge Neural TTS (300+ Regional & Accent Voices)</option>
+                    <option value="windows-local">Windows Native SAPI5 / Local Voices (Instantaneous Offline)</option>
+                    <option value="local-tts">Local TTS Server (Kokoro / OpenAI / FastTTS)</option>
+                  </select>
+                  <span class="input-hint">Voice synthesis engine for assistant speech playback.</span>
+                </div>
+
+                <!-- AI Output Voice (Second Line Right) -->
+                <div class="form-group" id="voiceSelectGroup">
+                  <label for="voiceSelect" id="voiceSelectLabel">AI Output Voice</label>
+                  <select id="voiceSelect" class="hud-select">
+                    <!-- Populated dynamically via JS in alphabetical order -->
+                  </select>
+                  <input type="text" id="voiceTextInput" class="hud-input" style="display: none;" placeholder="e.g. af_heart, kokoro, or custom model">
+                  <span class="input-hint" id="voiceSelectHint">Synthesizer voice tailored to your selected TTS engine.</span>
+                </div>
+
+                <!-- Sub-settings under TTS Endpoint (Left Column) -->
+                <div class="tts-sub-col left" id="ttsSubSettingsLeft">
+                  <!-- Speech Speed Slider (Windows Native SAPI5 only) -->
+                  <div class="form-group" id="voiceSpeedGroup" style="display: none;">
+                    <div class="slider-header">
+                      <label for="voiceSpeedSlider">Speech Speed</label>
+                      <span class="slider-val" id="voiceSpeedVal">1.00x</span>
+                    </div>
+                    <input type="range" id="voiceSpeedSlider" min="0.50" max="1.50" step="0.05" value="1.00" class="hud-slider">
+                    <div class="slider-ticks">
+                      <span>0.50x (Slower)</span>
+                      <span>1.00x (Normal)</span>
+                      <span>1.50x (Faster)</span>
+                    </div>
+                    <span class="input-hint">Speech rate adjustment for Windows Native SAPI5 voices.</span>
+                  </div>
+
+                  <!-- Local TTS Server Endpoint URL -->
+                  <div class="form-group" id="localTtsGroup" style="display: none;">
+                    <label for="localTtsUrlInput">Local TTS Server Endpoint URL</label>
+                    <input type="text" id="localTtsUrlInput" class="hud-input" value="http://localhost:8880/v1/audio/speech" placeholder="http://localhost:8880/v1/audio/speech">
+                    <span class="input-hint">OpenAI-compatible speech endpoint (e.g. Kokoro-FastAPI, LocalAI).</span>
+                  </div>
+                </div>
+
+                <!-- Regional/Accent Sub-settings under AI Output Voice (Right Column) -->
+                <div class="tts-sub-col right" id="ttsSubSettingsRight">
+                  <!-- Voice Region / Country (Edge TTS) -->
+                  <div class="form-group" id="edgeRegionGroup" style="display: none;">
+                    <label for="edgeRegionSelect">Voice Region / Country</label>
+                    <select id="edgeRegionSelect" class="hud-select">
+                      <!-- Populated dynamically via JS -->
+                    </select>
+                    <span class="input-hint">Select region or dialect to filter available neural voices.</span>
+                  </div>
+
+                  <!-- Voice Accent / Dialect (Gemini Speech) -->
+                  <div class="form-group" id="voiceAccentGroup">
+                    <label for="voiceAccentSelect">Voice Accent / Dialect (Gemini)</label>
+                    <select id="voiceAccentSelect" class="hud-select">
+                      <!-- Populated dynamically via JS -->
+                    </select>
+                    <span class="input-hint">Natural language vocal accent steering (e.g. Puck + British).</span>
+                  </div>
+                </div>
+
+                <!-- API Key -->
+                <div class="form-group full">
+                  <label for="apiKeyInput">Gemini API Key</label>
+                  <div class="input-with-action">
+                    <input type="password" id="apiKeyInput" placeholder="Enter Gemini API key...">
+                    <button type="button" class="hud-btn-secondary" id="toggleKeyVisibilityBtn">SHOW</button>
+                  </div>
+                  <span class="input-hint" id="apiKeyHint">Stored securely in your Windows user DPAPI vault.</span>
+                </div>
+
+                <!-- Model Endpoint -->
+                <div class="form-group">
+                  <label for="modelSelect">Primary Model Endpoint</label>
+                  <select id="modelSelect" class="hud-select">
+                    <option value="gemini-3.8-flash" selected>gemini-3.8-flash (Modular Cortex - Recommended: Superfast Reasoning & Coding)</option>
+                    <option value="gemini-3.7-flash">gemini-3.7-flash (Hybrid Thinking & Quick Execution)</option>
+                    <option value="gemini-3.6-flash">gemini-3.6-flash (Fast Everyday Reasoning)</option>
+                    <option value="gemini-3.5-flash">gemini-3.5-flash (Balanced Multimodal Agent)</option>
+                    <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Deep Complex Reasoning & Advanced Scripts)</option>
+                    <option value="gemini-2.5-pro">gemini-2.5-pro (Deep Reasoning)</option>
+                    <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview (Gemini Live WebSocket Bidirectional)</option>
+                    <option value="gemini-2.5-flash-native-audio-latest">gemini-2.5-flash-native-audio-latest (Legacy Live Audio WebSocket)</option>
+                  </select>
+                  <span class="input-hint">Primary reasoning and orchestration model.</span>
+                </div>
+
+                <!-- LLM Temperature Slider -->
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="temperatureSlider">Creativity / Temperature</label>
+                    <span class="slider-val" id="tempValDisplay">0.70</span>
+                  </div>
+                  <input type="range" id="temperatureSlider" min="0.0" max="2.0" step="0.05" value="0.7" class="hud-slider">
+                  <div class="slider-ticks">
+                    <span>0.0 (Precise)</span>
+                    <span>1.0 (Balanced)</span>
+                    <span>2.0 (Creative)</span>
+                  </div>
+                </div>
+
+                <!-- Speech to Text (STT) Endpoint -->
+                <div class="form-group full">
+                  <label for="sttSelect">Speech to Text (STT) Endpoint</label>
+                  <select id="sttSelect" class="hud-select">
+                    <option value="gemini-3.5-transcribe" selected>gemini-3.5-transcribe (High Accuracy Cloud STT - Recommended)</option>
+                    <option value="gemini-3.5-transcribe-live">gemini-3.5-transcribe-live (Streaming Cloud STT)</option>
+                    <option value="gemini-live-native">Gemini Live Native Audio Stream (Real-Time Bidirectional)</option>
+                  </select>
+                  <span class="input-hint">Microphone speech recognition pipeline.</span>
+                </div>
+
+                <!-- Complex Problem-Solving LLM Endpoint -->
+                <div class="form-group full">
+                  <label for="proModelSelect">Problem Solving LLM Endpoint (Complex Tasks & Reasoning)</label>
+                  <select id="proModelSelect" class="hud-select">
+                    <option value="gemini-3.1-pro-preview" selected>gemini-3.1-pro-preview (Deep Reasoning, Desktop Automation & Coding - Recommended)</option>
+                    <option value="gemini-3.8-flash">gemini-3.8-flash (Fast Everyday Reasoning)</option>
+                    <option value="gemini-3.7-flash">gemini-3.7-flash (Hybrid Thinking & Quick Execution)</option>
+                    <option value="gemini-2.5-pro">gemini-2.5-pro (Deep Reasoning)</option>
+                  </select>
+                  <span class="input-hint">Heavy reasoning model for desktop problem-solving, code editing, and complex actions.</span>
+                </div>
+
+                <!-- System Instruction -->
+                <div class="form-group full">
+                  <label for="systemPromptInput">Personality & Instructions</label>
+                  <textarea id="systemPromptInput" rows="3" class="hud-textarea"></textarea>
+                  <span class="input-hint">Use <strong>[Agent Name]</strong> anywhere to dynamically insert the agent's name.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: Audio & Hands-Free Protocols -->
+          <div class="hud-card">
+            <div class="card-header">
+              <span class="card-title">AUDIO HARDWARE & SPEECH CONTROLS</span>
+              <button class="hud-btn-ghost sm" id="refreshDevicesBtn">REFRESH HARDWARE</button>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                
+                <!-- Audio Mode: Hands-Free vs PTT -->
+                <div class="form-group">
+                  <label>Audio Input Mode</label>
+                  <div class="radio-row">
+                    <label class="hud-radio">
+                      <input type="radio" name="audioMode" value="always_on" id="modeAlwaysOn" checked>
+                      <span>Always-On (Hands-Free)</span>
+                    </label>
+                    <label class="hud-radio">
+                      <input type="radio" name="audioMode" value="ptt" id="modePTT">
+                      <span>Push-To-Talk (PTT)</span>
+                    </label>
+                  </div>
+                  <span class="input-hint">Always-On enables natural conversational flow.</span>
+                </div>
+
+                <!-- Push-To-Talk Options Panel (Behavior & Keybind) -->
+                <div class="form-group ptt-sub-settings" id="pttSettingsGroup" style="display: none;">
+                  <label>Push-To-Talk Behavior</label>
+                  <div class="radio-row">
+                    <label class="hud-radio">
+                      <input type="radio" name="pttType" value="hold" id="pttTypeHold" checked>
+                      <span>Push to Talk - Hold (Microphone is on while Keybind is held down)</span>
+                    </label>
+                    <label class="hud-radio">
+                      <input type="radio" name="pttType" value="toggle" id="pttTypeToggle">
+                      <span>Push to Talk - Toggle (Keybind turns microphone on/off)</span>
+                    </label>
+                  </div>
+                  <span class="input-hint">Select how your keypress controls the microphone.</span>
+
+                  <div style="margin-top: 10px;">
+                    <label style="display: block; margin-bottom: 5px;">PTT Keybind (Global Hotkey)</label>
+                    <div class="keybind-recorder-container">
+                      <button type="button" id="pttKeybindBtn" class="hud-btn-keybind" title="Click to assign a keybind">
+                        <span id="pttKeybindDisplay">Space</span>
+                      </button>
+                      <button type="button" id="pttKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Space)">RESET</button>
+                    </div>
+                    <span class="input-hint" id="pttKeybindHint">Click the keybind button and press any key (or combo like Ctrl+Space) to set your hotkey. Works globally across all apps.</span>
+                  </div>
+                </div>
+
+                <!-- Input Microphone Dropdown -->
+                <div class="form-group">
+                  <label for="inputDeviceSelect">Microphone (Audio Capture)</label>
+                  <select id="inputDeviceSelect" class="hud-select">
+                    <!-- Populated dynamically -->
+                  </select>
+                </div>
+
+                <!-- Output Speaker Dropdown -->
+                <div class="form-group">
+                  <label for="outputDeviceSelect">Speakers (Audio Playback)</label>
+                  <select id="outputDeviceSelect" class="hud-select">
+                    <!-- Populated dynamically -->
+                  </select>
+                </div>
+
+                <!-- Preferred Spoken Language (STT Strict Filter) -->
+                <div class="form-group full">
+                  <label for="preferredLanguageSelect">Preferred Language (STT Strict Filter)</label>
+                  <select id="preferredLanguageSelect" class="hud-select">
+                    <option value="en-US">English (United States)</option>
+                    <option value="en-GB">English (United Kingdom)</option>
+                    <option value="es-ES">Spanish (Español)</option>
+                    <option value="fr-FR">French (Français)</option>
+                    <option value="de-DE">German (Deutsch)</option>
+                    <option value="it-IT">Italian (Italiano)</option>
+                    <option value="pt-BR">Portuguese (Português - Brasil)</option>
+                    <option value="ja-JP">Japanese (日本語)</option>
+                  </select>
+                  <span class="input-hint">Restricts speech-to-text to this language and filters out ambient foreign noise or hallucinations.</span>
+                </div>
+
+                <!-- Software Gating -->
+                <div class="form-group full">
+                  <label class="hud-checkbox">
+                    <input type="checkbox" id="softwareGateCheck">
+                    <span>Mute microphone while speaking (Recommended when using open room speakers without headphones)</span>
+                  </label>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: User Voice Biometrics & Target Speaker Filter -->
+          <div class="hud-card" id="voiceBiometricsCard">
+            <div class="card-header">
+              <span class="card-title">USER VOICE TRAINING & TARGET SPEAKER FILTER</span>
+              <span id="voiceProfileBadge" class="card-tag not-enrolled">NOT CALIBRATED</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <!-- Biometric Gating Toggle -->
+                <div class="form-group full">
+                  <label class="hud-checkbox">
+                    <input type="checkbox" id="voiceBiometricsCheck">
+                    <span>Enable Target Speaker Filtering (Only respond to enrolled user voice)</span>
+                  </label>
+                  <span class="input-hint">When active, Aether extracts a deep neural speaker embedding from incoming speech in real-time (&lt;20ms) and silently drops background TV, room chatter, or secondary speakers.</span>
+                </div>
+
+                <!-- Match Sensitivity Threshold Slider -->
+                <div class="form-group full">
+                  <div class="slider-header">
+                    <label for="bioThresholdSlider">Speaker Verification Sensitivity (Cosine Similarity Threshold)</label>
+                    <span id="bioThresholdVal" class="slider-val">0.40</span>
+                  </div>
+                  <input type="range" id="bioThresholdSlider" min="0.30" max="0.70" step="0.01" value="0.40" class="hud-slider">
+                  <span class="input-hint">Default is 0.40 (Acoustically balanced for near-field headset/earbud mics). Values 0.45 - 0.65 offer strict rejection; values 0.35 - 0.39 provide maximum tolerance for quieter speech or greater room noise.</span>
+                </div>
+
+                <!-- Calibration Onboarding Wizard Section -->
+                <div class="form-group full">
+                  <div class="calibration-container">
+                    <div class="calibration-header-row">
+                      <div class="calibration-title-group">
+                        <span class="calibration-section-title">VOICEPRINT CALIBRATION WIZARD</span>
+                        <span class="calibration-subtext">Record 3 brief utterances into your active microphone to generate your centroid voiceprint.</span>
+                      </div>
+                      <button type="button" id="retrainProfileBtn" class="hud-btn-secondary" title="Clear current voice profile and re-record samples">
+                        <span>RESET / RETRAIN</span>
+                      </button>
+                    </div>
+
+                    <div class="calibration-steps">
+                      <!-- Step 1 -->
+                      <div class="calibration-step-card" id="calibStep1Card">
+                        <div class="step-num-badge">1</div>
+                        <div class="step-content">
+                          <span class="step-prompt-label">Prompt 1 of 3:</span>
+                          <p class="step-prompt-text">"Aether is my personal AI desktop assistant."</p>
+                          <div class="step-action-row">
+                            <button type="button" id="recStep1Btn" class="hud-btn-record">
+                              <span class="rec-icon">🎙️</span>
+                              <span class="rec-btn-text">RECORD SAMPLE 1</span>
+                            </button>
+                            <span id="step1Status" class="step-status-pill pending">PENDING</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Step 2 -->
+                      <div class="calibration-step-card" id="calibStep2Card">
+                        <div class="step-num-badge">2</div>
+                        <div class="step-content">
+                          <span class="step-prompt-label">Prompt 2 of 3:</span>
+                          <p class="step-prompt-text">"Open my documents and check today's schedule."</p>
+                          <div class="step-action-row">
+                            <button type="button" id="recStep2Btn" class="hud-btn-record" disabled>
+                              <span class="rec-icon">🎙️</span>
+                              <span class="rec-btn-text">RECORD SAMPLE 2</span>
+                            </button>
+                            <span id="step2Status" class="step-status-pill pending">PENDING</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Step 3 -->
+                      <div class="calibration-step-card" id="calibStep3Card">
+                        <div class="step-num-badge">3</div>
+                        <div class="step-content">
+                          <span class="step-prompt-label">Prompt 3 of 3:</span>
+                          <p class="step-prompt-text">"Organize my files and create a summary comparison table."</p>
+                          <div class="step-action-row">
+                            <button type="button" id="recStep3Btn" class="hud-btn-record" disabled>
+                              <span class="rec-icon">🎙️</span>
+                              <span class="rec-btn-text">RECORD SAMPLE 3</span>
+                            </button>
+                            <span id="step3Status" class="step-status-pill pending">PENDING</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div id="calibrationFeedback" class="calibration-feedback-banner">
+                      <span class="feedback-icon">ℹ️</span>
+                      <span id="calibrationFeedbackText">Click "Record Sample 1" and speak the prompt naturally. Each recording captures 3.5 seconds.</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: Desktop Vision & Automation Hook (Preparatory) -->
+          <div class="hud-card">
+            <div class="card-header">
+              <span class="card-title">DESKTOP VISION & AUTOMATION HOOK</span>
+              <span class="card-tag">DESKTOP HOOK</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label class="hud-checkbox">
+                    <input type="checkbox" id="visionEnabledCheck">
+                    <span>Enable Desktop Screen Capture</span>
+                  </label>
+                  <span class="input-hint">Periodically streams your desktop screen to Gemini Multimodal Live.</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="visionFps">Vision Frame Rate</label>
+                  <select id="visionFps" class="hud-select">
+                    <option value="0.5">0.5 FPS (Bandwidth Saver)</option>
+                    <option value="1.0" selected>1.0 FPS (Standard Desktop)</option>
+                    <option value="2.0">2.0 FPS (Fast Updates)</option>
+                  </select>
+                </div>
+
+                <div class="form-group full">
+                  <label for="monitorSelect">Monitor Capture Source</label>
+                  <select id="monitorSelect" class="hud-select">
+                    <option value="auto" selected>Auto (Follow Active / Focused Window)</option>
+                    <option value="all">All Displays Combined (Virtual Desktop)</option>
+                  </select>
+                  <span class="input-hint">Automatically focuses vision on your active screen or locks to a specific display.</span>
+                </div>
+
+                <div class="form-group full">
+                  <label for="visionEndpointSelect">Vision Screen Analysis Endpoint</label>
+                  <select id="visionEndpointSelect" class="hud-select">
+                    <option value="gemini-3.8-flash-snapshot" selected>gemini-3.8-flash (High-Precision Snapshot & Visual Grounding - Recommended)</option>
+                    <option value="gemini-3.1-pro-snapshot">gemini-3.1-pro (Deep Snapshot Inspection & Grounding)</option>
+                    <option value="live-stream">Live Model Stream (Direct to WebSocket @ 1 FPS - Realtime Awareness)</option>
+                  </select>
+                  <span class="input-hint">High-precision visual grounding finds links and clicks with pixel-perfect accuracy.</span>
+
+                </div>
+
+                <div class="form-group full">
+                  <label for="whitelistInput">Allowed Applications Whitelist (Comma separated)</label>
+                  <input type="text" id="whitelistInput" class="hud-input" value="chrome.exe, notepad.exe, winword.exe, excel.exe, spotify.exe, blender.exe">
+                  <span class="input-hint">Only programs in this list can be opened or controlled.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: Floating HUD Overlay & System Tray -->
+          <div class="hud-card">
+            <div class="card-header">
+              <span class="card-title">FLOATING HUD OVERLAY & SYSTEM TRAY</span>
+              <span class="card-tag">DESKTOP HUD</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="floatingOverlayMode">Floating HUD Overlay Mode</label>
+                  <select id="floatingOverlayMode" class="hud-select">
+                    <option value="on_minimize" selected>Show On Minimize (Recommended)</option>
+                    <option value="always">Always On Top (Always Visible)</option>
+                    <option value="disabled">Disabled (Hidden)</option>
+                  </select>
+                  <span class="input-hint">Displays a sleek floating widget showing live speech, status, and task actions.</span>
+                </div>
+
+                <div class="form-group">
+                  <label class="hud-checkbox" style="margin-top: 26px;">
+                    <input type="checkbox" id="minimizeToTrayCheck" checked>
+                    <span>Minimize To System Tray</span>
+                  </label>
+                  <span class="input-hint">Keeps Aether running in the background notification area when minimized.</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="defaultHudModeSelect">Default HUD Overlay View Tier</label>
+                  <select id="defaultHudModeSelect" class="hud-select">
+                    <option value="mini">Mini Mode (Utilitarian Pill - 220x52)</option>
+                    <option value="normal" selected>Normal Mode (Card Dock - 480x240)</option>
+                    <option value="max">Max Mode (Teleprompter Transcript - 560x480)</option>
+                  </select>
+                  <span class="input-hint">Initial view mode of the HUD overlay window upon startup.</span>
+                </div>
+
+                <div class="form-group full" style="margin-top: 6px;">
+                  <label style="display: block; margin-bottom: 5px;">HUD Mode Switch Keybind (Global Hotkey)</label>
+                  <div class="keybind-recorder-container">
+                    <button type="button" id="hudModeKeybindBtn" class="hud-btn-keybind" title="Click to assign a keybind">
+                      <span id="hudModeKeybindDisplay">Ctrl+Space</span>
+                    </button>
+                    <button type="button" id="hudModeKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Ctrl+Space)">RESET</button>
+                  </div>
+                  <span class="input-hint" id="hudModeKeybindHint">Click the button and press any key or combo (default: Ctrl+Space) to cycle HUD modes (Mini &rarr; Normal &rarr; Max) globally across all apps.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Save Settings Action Bar -->
+          <div class="settings-actions">
+            <span id="saveStatusMsg" class="save-status-text"></span>
+            <button type="button" class="hud-btn-primary" id="saveSettingsBtn">SAVE ALL SETTINGS</button>
+          </div>
+
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB 3: USER PREFERENCES & KNOWLEDGE MEMORY                     -->
+      <!-- ============================================================= -->
+      <section id="tab-preferences" class="tab-pane" tabindex="0">
+        
+        <!-- Card: User Identity & Callsign -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">USER IDENTITY & CALLSIGN</span>
+            <span class="card-tag secure">PERSONALIZATION</span>
+          </div>
+          <div class="card-body">
+            <div class="form-grid">
+              <div class="form-group full">
+                <label for="userNameInput">Your Preferred Name / Callsign</label>
+                <div class="input-with-action">
+                  <input type="text" id="userNameInput" class="hud-input" placeholder="e.g. Mike, Sarah, Dave">
+                  <button type="button" class="hud-btn-primary" id="saveUserNameBtn">SAVE NAME</button>
+                </div>
+                <span class="input-hint">The name Aether will call you conversationally and in proactive startup greetings.</span>
+                <div id="userNameStatus" class="fact-status-msg"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Proactive Briefing Notification Preferences -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">PROACTIVE BRIEFINGS & NOTIFICATION PREFERENCES</span>
+            <span class="card-tag secure">STARTUP INTELLIGENCE</span>
+          </div>
+          <div class="card-body">
+            <p class="section-desc" style="color: var(--text-dim); margin-bottom: 16px; font-size: 13px;">
+              Configure life events, milestones, and personal interests Aether proactively checks and presents as a spoken morning briefing upon startup.
+            </p>
+            
+            <div class="form-grid">
+              <!-- Dates & Milestones Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">📅</span>
+                    <div>
+                      <div class="pref-name">Upcoming Dates & Milestones</div>
+                      <div class="pref-desc">Birthdays, anniversaries, and annual occasions</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefDatesToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+                <div class="pref-subsetting" id="leadTimeContainer">
+                  <label for="prefDatesLeadTime" class="sublabel">Alert Lead Time</label>
+                  <select id="prefDatesLeadTime" class="hud-select sm">
+                    <option value="0">Day of event only (0 days)</option>
+                    <option value="1">1 day in advance</option>
+                    <option value="3">3 days in advance</option>
+                    <option value="7" selected>7 days in advance (1 week)</option>
+                    <option value="14">14 days in advance (2 weeks)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Interests & Gaming Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">🎮</span>
+                    <div>
+                      <div class="pref-name">Gaming, Hobbies & Interests</div>
+                      <div class="pref-desc">Game releases, updates, and tracked personal topics</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefInterestsToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Work & Career Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">💼</span>
+                    <div>
+                      <div class="pref-name">Work & Schedule</div>
+                      <div class="pref-desc">Career details, project milestones, and schedules</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefWorkToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- General Knowledge Toggle -->
+              <div class="pref-category-card">
+                <div class="pref-card-header">
+                  <div class="pref-title-group">
+                    <span class="pref-icon">💡</span>
+                    <div>
+                      <div class="pref-name">General Facts & Reminders</div>
+                      <div class="pref-desc">Hardware specs, vehicles, and arbitrary user memory</div>
+                    </div>
+                  </div>
+                  <label class="hud-switch">
+                    <input type="checkbox" id="prefGeneralToggle" checked>
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div id="prefSaveFeedback" class="pref-feedback-msg"></div>
+          </div>
+        </div>
+
+        <!-- Card: Stored User Facts & Long-Term Memory Profile -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">STORED USER KNOWLEDGE & PROFILE MEMORY</span>
+            <div class="card-header-actions">
+              <span id="factsCountBadge" class="card-tag">0 FACTS</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <p class="section-desc" style="color: var(--text-dim); margin-bottom: 16px; font-size: 13px;">
+              Personal facts and preferences remembered by Aether dynamically during conversation, or manually registered below. All data resides strictly in your local SQLite profile (<code style="font-family: var(--font-mono); color: var(--win-accent);">data/user_profile.db</code>).
+            </p>
+
+            <!-- Add Fact Inline Form -->
+            <div class="add-fact-panel">
+              <div class="add-fact-title">ADD NEW FACT TO PROFILE</div>
+              <div class="add-fact-grid">
+                <div class="form-group">
+                  <label for="newFactCategory">Category</label>
+                  <select id="newFactCategory" class="hud-select">
+                    <option value="dates">Dates (Birthdays / Anniversaries)</option>
+                    <option value="family">Family & Friends</option>
+                    <option value="interests">Interests & Gaming</option>
+                    <option value="work">Work & Career</option>
+                    <option value="devices">Hardware & Devices</option>
+                    <option value="general" selected>General</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="newFactKey">Fact Key / Label</label>
+                  <input type="text" id="newFactKey" class="hud-input" placeholder="e.g. wife_birthday, favorite_hobby, car_model">
+                </div>
+                <div class="form-group">
+                  <label for="newFactValue">Value</label>
+                  <input type="text" id="newFactValue" class="hud-input" placeholder="e.g. 1977-05-01, Photography, Honda Civic">
+                </div>
+                <div class="form-group">
+                  <label for="newFactType">Type</label>
+                  <select id="newFactType" class="hud-select">
+                    <option value="string" selected>string</option>
+                    <option value="date">date (YYYY-MM-DD)</option>
+                    <option value="number">number</option>
+                    <option value="json">json</option>
+                  </select>
+                </div>
+                <div class="form-group action-col">
+                  <label>&nbsp;</label>
+                  <button type="button" id="addFactBtn" class="hud-btn-primary">
+                    <span>+ ADD FACT</span>
+                  </button>
+                </div>
+              </div>
+              <div id="addFactStatus" class="fact-status-msg"></div>
+            </div>
+
+            <!-- Filter and Search Row -->
+            <div class="facts-filter-toolbar">
+              <div class="search-input-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="factsSearchInput" class="hud-input" placeholder="Filter remembered facts by key or value...">
+              </div>
+              <div class="filter-category-wrapper">
+                <select id="factsCategoryFilter" class="hud-select">
+                  <option value="all" selected>All Categories</option>
+                  <option value="dates">Dates</option>
+                  <option value="family">Family</option>
+                  <option value="interests">Interests</option>
+                  <option value="work">Work</option>
+                  <option value="devices">Devices</option>
+                  <option value="general">General</option>
+                </select>
+              </div>
+              <button type="button" id="refreshFactsBtn" class="hud-btn-secondary sm" title="Refresh facts from database">
+                <span>REFRESH</span>
+              </button>
+            </div>
+
+            <!-- Facts Table -->
+            <div class="facts-table-wrap">
+              <table class="facts-table" id="factsTable">
+                <thead>
+                  <tr>
+                    <th style="width: 110px;">CATEGORY</th>
+                    <th style="width: 160px;">KEY</th>
+                    <th>VALUE</th>
+                    <th style="width: 80px;">TYPE</th>
+                    <th style="width: 130px;">UPDATED</th>
+                    <th style="width: 70px; text-align: center;">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody id="factsTableBody">
+                  <!-- Rendered dynamically -->
+                </tbody>
+              </table>
+              <div id="factsEmptyState" class="facts-empty-state" style="display: none;">
+                <span>🧠 No facts found matching your filter. Tell Aether to remember facts or add them above!</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Card: Custom Lexicon & Phonetic Dictionary -->
+        <div class="hud-card">
+          <div class="card-header">
+            <span class="card-title">CUSTOM LEXICON & PHONETIC DICTIONARY</span>
+            <div class="card-header-actions">
+              <span id="dictCountBadge" class="card-tag">0 WORDS</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <p class="section-desc" style="color: var(--text-dim); margin-bottom: 16px; font-size: 13px;">
+              Manage canonical spellings, syllable breakdowns, and phonetic pronunciation guides for atypical names, surnames, medical terms, and jargon. This guides STT transcription and TTS vocal speech synthesis accurately.
+            </p>
+
+            <!-- Quick-Entry Form -->
+            <div class="add-fact-panel">
+              <div class="add-fact-title">ADD WORD TO DICTIONARY</div>
+              <div class="add-fact-grid dict-grid">
+                <div class="form-group">
+                  <label for="newDictTerm">Term (Canonical Spelling)</label>
+                  <input type="text" id="newDictTerm" class="hud-input" placeholder="e.g. Retholtz, Kubernetes">
+                </div>
+                <div class="form-group">
+                  <label for="newDictPhonetic">Pronunciation Hint / Phonetic Sound</label>
+                  <input type="text" id="newDictPhonetic" class="hud-input" placeholder="e.g. RETH-holtz, koo-ber-NET-eez">
+                </div>
+                <div class="form-group">
+                  <label for="newDictCategory">Category</label>
+                  <select id="newDictCategory" class="hud-select">
+                    <option value="name" selected>Name / Surname</option>
+                    <option value="tech">Tech / Jargon</option>
+                    <option value="medical">Medical</option>
+                    <option value="gaming">Gaming</option>
+                    <option value="general">General</option>
+                  </select>
+                </div>
+                <div class="form-group action-col">
+                  <label>&nbsp;</label>
+                  <button type="button" id="addDictBtn" class="hud-btn-primary">
+                    <span>+ ADD WORD</span>
+                  </button>
+                </div>
+              </div>
+              <div id="addDictStatus" class="fact-status-msg"></div>
+            </div>
+
+            <!-- Dictionary Filter & Refresh Toolbar -->
+            <div class="facts-filter-toolbar">
+              <div class="search-input-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="dictSearchInput" class="hud-input" placeholder="Filter dictionary by term or pronunciation...">
+              </div>
+              <div class="filter-category-wrapper">
+                <select id="dictCategoryFilter" class="hud-select">
+                  <option value="all" selected>All Categories</option>
+                  <option value="name">Name</option>
+                  <option value="tech">Tech</option>
+                  <option value="medical">Medical</option>
+                  <option value="gaming">Gaming</option>
+                  <option value="general">General</option>
+                </select>
+              </div>
+              <button type="button" id="refreshDictBtn" class="hud-btn-secondary sm" title="Refresh dictionary from database">
+                <span>REFRESH</span>
+              </button>
+            </div>
+
+            <!-- Dictionary Table -->
+            <div class="facts-table-wrap">
+              <table class="facts-table" id="dictTable">
+                <thead>
+                  <tr>
+                    <th style="width: 130px;">CATEGORY</th>
+                    <th style="width: 180px;">TERM</th>
+                    <th>PHONETIC GUIDE</th>
+                    <th style="width: 130px;">ADDED</th>
+                    <th style="width: 70px; text-align: center;">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody id="dictTableBody">
+                  <!-- Populated dynamically via JS -->
+                </tbody>
+              </table>
+              <div id="dictEmptyState" class="facts-empty-state" style="display: none;">
+                <span>📖 No custom dictionary terms recorded yet. Add atypical words or names above!</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB 4: TELEMETRY & SYSTEM STATUS                              -->
+      <!-- ============================================================= -->
+      <section id="tab-telemetry" class="tab-pane">
+        <div class="telemetry-grid">
+          <div class="telemetry-box">
+            <div class="telemetry-label">CORE STATE</div>
+            <div class="telemetry-val" id="telCoreState">OFFLINE</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">AGENT NAME</div>
+            <div class="telemetry-val" id="telAgentName">Aether</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">ACTIVE VOICE</div>
+            <div class="telemetry-val" id="telVoice">Aoede</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">LLM TEMPERATURE</div>
+            <div class="telemetry-val" id="telTemp">1.00</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">AUDIO MODE</div>
+            <div class="telemetry-val" id="telAudioMode">ALWAYS-ON</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">ACTIVE MIC</div>
+            <div class="telemetry-val sm" id="telMicName">--</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">ACTIVE SPEAKER</div>
+            <div class="telemetry-val sm" id="telSpeakerName">--</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">KILL PHRASE</div>
+            <div class="telemetry-val sm" id="telSafePhrase">"Aether stop"</div>
+          </div>
+          <div class="telemetry-box highlight">
+            <div class="telemetry-label">TOTAL TURN LATENCY</div>
+            <div class="telemetry-val" id="telTotalLatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">STT TRANSCRIBE LATENCY</div>
+            <div class="telemetry-val" id="telSttLatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">CORTEX LLM LATENCY</div>
+            <div class="telemetry-val" id="telLlmlatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">TOOLS & SCRIPT LATENCY</div>
+            <div class="telemetry-val" id="telToolsLatency">-- ms</div>
+          </div>
+          <div class="telemetry-box">
+            <div class="telemetry-label">TTS AUDIO LATENCY</div>
+            <div class="telemetry-val" id="telTtsLatency">-- ms</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB 4: SYSTEM LOGS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-logs" class="tab-pane">
+        <div class="logs-container">
+          <div class="logs-header">
+            <span>LIVE SYSTEM CONSOLE & PROTOCOL LOGS</span>
+            <div class="logs-filter-bar">
+              <button type="button" class="hud-btn-ghost sm active" id="filterAllLogsBtn" data-filter="all">ALL</button>
+              <button type="button" class="hud-btn-ghost sm" id="filterScriptLogsBtn" data-filter="script">SCRIPTS & TOOLS</button>
+              <button type="button" class="hud-btn-ghost sm" id="filterLatencyLogsBtn" data-filter="latency">LATENCY</button>
+              <button type="button" class="hud-btn-ghost sm" id="filterErrorLogsBtn" data-filter="error">ERRORS</button>
+            </div>
+            <div class="logs-actions">
+              <button type="button" class="hud-btn-ghost sm" id="copyLogsBtn" title="Copy all visible logs to clipboard">COPY</button>
+              <button type="button" class="hud-btn-ghost sm" id="openLogsFolderBtn" title="Open logs directory in Windows Explorer">OPEN LOGS</button>
+              <button type="button" class="hud-btn-ghost sm" id="clearLogsBtn" title="Clear console output">CLEAR</button>
+            </div>
+          </div>
+          <div id="logConsole" class="log-console"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Action Footer -->
+    <footer class="hud-footer">
+      <!-- PTT Trigger Button -->
+      <button id="pttButton" class="hud-btn-ptt" style="display: none;">
+        <span id="pttButtonLabel">🎙️ HOLD TO SPEAK (PTT)</span>
+      </button>
+
+      <!-- Chat Text Input Form -->
+      <form id="chatForm" class="chat-input-form">
+        <input type="text" id="chatTextInput" class="chat-input" placeholder="Type a message or speak into your microphone..." autocomplete="off">
+        <button type="submit" class="hud-btn-secondary" id="sendChatBtn">SEND</button>
+      </form>
+
+      <!-- Instant Voice Kill Switch -->
+      <button id="killAudioBtn" class="hud-btn-kill" title="Instantly silence playback">
+        <span>🛑 STOP PLAYBACK</span>
+      </button>
+
+      <!-- Assistant Start / Stop Action Button -->
+      <button id="toggleAssistantBtn" class="hud-fab-assistant start">
+        <span class="fab-icon">▶</span>
+        <span class="fab-text" id="fabButtonText">START ASSISTANT</span>
+      </button>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

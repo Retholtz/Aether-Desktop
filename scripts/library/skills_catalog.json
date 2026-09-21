@@ -1,0 +1,146 @@
+{
+  "create_table_google_docs": {
+    "description": "Formats and pastes a rich HTML/TSV table directly into Google Docs or a web document in Chrome.",
+    "parameters": {
+      "headers": "List of string column titles (e.g. ['Model', 'Range', 'Price'])",
+      "rows": "2D list of row strings (e.g. [['Tesla 3', '341 mi', '$38,990']])",
+      "title": "Optional table title heading string",
+      "app_name": "Optional target window (default 'Google Docs')"
+    },
+    "file": "create_table_google_docs.py"
+  },
+  "create_table_word": {
+    "description": "Creates and populates a native formatted table in Microsoft Word via COM automation.",
+    "parameters": {
+      "headers": "List of string column titles",
+      "rows": "2D list of row strings",
+      "title": "Optional table title heading string"
+    },
+    "file": "create_table_word.py"
+  },
+  "tile_windows": {
+    "description": "Tiles two open applications side-by-side (50% left, 50% right) on the screen.",
+    "parameters": {
+      "left_app": "Application name to position on the left (e.g. 'notepad')",
+      "right_app": "Application name to position on the right (e.g. 'chrome')"
+    },
+    "file": "tile_windows.py"
+  },
+  "tile_all_active_windows": {
+    "description": "Detects all open, visible non-minimized application windows on the primary display and tiles them evenly side by side across the desktop work area.",
+    "parameters": {},
+    "file": "tile_all_active_windows.py"
+  },
+  "set_formatted_html_to_clipboard": {
+    "description": "Set formatted HTML to clipboard and send Ctrl+V via ctypes",
+    "parameters": {},
+    "file": "set_formatted_html_to_clipboard.py",
+    "created_at": "2026-09-11T20:41:14.535391",
+    "updated_at": "2026-09-11T20:41:14.535391"
+  },
+  "download_rhino_srv_image_and": {
+    "description": "Download Rhino SRV image and paste into Google Doc via clipboard DIB",
+    "parameters": {},
+    "file": "download_rhino_srv_image_and.py",
+    "created_at": "2026-09-11T20:46:35.408905",
+    "updated_at": "2026-09-11T21:00:45.947698"
+  },
+  "insert_dss_heatmap_heading_and": {
+    "description": "Insert DSS heatmap heading and image into Google Doc",
+    "parameters": {},
+    "file": "insert_dss_heatmap_heading_and.py",
+    "created_at": "2026-09-11T20:47:21.073500",
+    "updated_at": "2026-09-11T20:47:21.073500"
+  },
+  "test_fetching_actual_surface_mining": {
+    "description": "Test fetching actual surface mining and rig images",
+    "parameters": {},
+    "file": "test_fetching_actual_surface_mining.py",
+    "created_at": "2026-09-11T20:49:16.753352",
+    "updated_at": "2026-09-11T20:49:16.753352"
+  },
+  "update_google_doc_with_accurate": {
+    "description": "Update Google Doc with accurate surface mining details, images, and new DSS site info",
+    "parameters": {},
+    "file": "update_google_doc_with_accurate.py",
+    "created_at": "2026-09-11T20:50:16.190496",
+    "updated_at": "2026-09-11T20:50:16.190496"
+  },
+  "inspect_youtube_thumbnails_for_surface": {
+    "description": "Inspect YouTube thumbnails for surface scanning and hotspot details",
+    "parameters": {},
+    "file": "inspect_youtube_thumbnails_for_surface.py",
+    "created_at": "2026-09-11T20:50:51.622345",
+    "updated_at": "2026-09-11T20:50:51.622345"
+  },
+  "append_yellow_hotspots_and_purple": {
+    "description": "Append Yellow Hotspots and Purple Scanner Seams section and image",
+    "parameters": {},
+    "file": "append_yellow_hotspots_and_purple.py",
+    "created_at": "2026-09-11T20:52:34.372361",
+    "updated_at": "2026-09-11T20:52:34.372361"
+  },
+  "use_find_and_replace_to": {
+    "description": "Use Find and Replace to clarify Vodel manufacturer in Google Docs",
+    "parameters": {},
+    "file": "use_find_and_replace_to.py",
+    "created_at": "2026-09-11T20:59:03.324192",
+    "updated_at": "2026-09-11T20:59:03.324192"
+  },
+  "paste_ina_garten_s_perfect": {
+    "description": "Paste Ina Garten's Perfect Roast Chicken recipe into Google Docs",
+    "parameters": {},
+    "file": "paste_ina_garten_s_perfect.py",
+    "created_at": "2026-09-11T21:03:29.191924",
+    "updated_at": "2026-09-11T21:03:29.191924"
+  },
+  "inspect_create_table_google_docs": {
+    "description": "Inspect create_table_google_docs implementation",
+    "parameters": {},
+    "file": "inspect_create_table_google_docs.py",
+    "created_at": "2026-09-11T21:04:14.180139",
+    "updated_at": "2026-09-11T21:04:14.180139"
+  },
+  "find_skill_location": {
+    "description": "Find skill location",
+    "parameters": {},
+    "file": "find_skill_location.py",
+    "created_at": "2026-09-11T21:04:27.907840",
+    "updated_at": "2026-09-11T21:04:27.907840"
+  },
+  "paste_recipe_using_guiprimitivescontroller_and": {
+    "description": "Paste recipe using GuiPrimitivesController and verified focus",
+    "parameters": {},
+    "file": "paste_recipe_using_guiprimitivescontroller_and.py",
+    "created_at": "2026-09-11T21:04:41.933389",
+    "updated_at": "2026-09-11T21:04:41.933389"
+  },
+  "format_and_paste_comprehensive_fury": {
+    "description": "Format and paste comprehensive Fury Warrior WoW Meta Template into Google Docs",
+    "parameters": {},
+    "file": "format_and_paste_comprehensive_fury.py",
+    "created_at": "2026-09-12T11:04:26.165619",
+    "updated_at": "2026-09-12T11:04:26.165619"
+  },
+  "replace_document_contents_with_a": {
+    "description": "Replace document contents with a beautifully formatted S-to-F competitive tier explanation table",
+    "parameters": {},
+    "file": "replace_document_contents_with_a.py",
+    "created_at": "2026-09-12T15:51:51.308905",
+    "updated_at": "2026-09-12T15:51:51.308905"
+  },
+  "expand_selection_to_entire_document": {
+    "description": "Expand selection to entire document (triple Ctrl+A), delete, and paste formatted tier table",
+    "parameters": {},
+    "file": "expand_selection_to_entire_document.py",
+    "created_at": "2026-09-12T15:55:19.733217",
+    "updated_at": "2026-09-12T15:55:19.733217"
+  },
+  "wait_for_google_docs_canvas": {
+    "description": "Wait for Google Docs canvas to initialize, focus canvas, and paste styled tier explanation table",
+    "parameters": {},
+    "file": "wait_for_google_docs_canvas.py",
+    "created_at": "2026-09-12T15:55:47.831613",
+    "updated_at": "2026-09-12T15:55:47.831613"
+  }
+}
