@@ -703,8 +703,25 @@ class GuiBridge:
         """Restores the main window from minimized or hidden state and focuses it."""
         try:
             if self._window:
-                self._window.restore()
                 self._window.show()
+                self._window.restore()
+                if sys.platform == "win32":
+                    try:
+                        import win32gui
+                        import win32con
+                        hwnd = None
+                        if hasattr(self._window, "native") and self._window.native and hasattr(self._window.native, "Handle"):
+                            try:
+                                hwnd = self._window.native.Handle.ToInt64()
+                            except Exception:
+                                hwnd = None
+                        if not hwnd:
+                            hwnd = win32gui.FindWindow(None, "Aether Desktop")
+                        if hwnd and win32gui.IsWindow(hwnd):
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            win32gui.SetForegroundWindow(hwnd)
+                    except Exception as ex:
+                        logger.warning(f"[RESTORE MAIN WIN32 ERROR] {ex}")
                 cfg = self._config.get("ui", {})
                 mode = cfg.get("floating_overlay", "on_minimize")
                 if mode == "on_minimize" and getattr(self, "_overlay_window", None):
@@ -712,6 +729,22 @@ class GuiBridge:
                     self._overlay_visible = False
             return {"success": True}
         except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def reset_overlay_position(self) -> dict:
+        """Snaps the floating overlay window back to the top-right of the primary display."""
+        try:
+            from ui.hud_window import clamp_window_position
+            cur_mode = getattr(self, "_current_hud_mode", "normal")
+            w, h = (180, 52) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+            cx, cy = clamp_window_position(None, None, width=w, height=h)
+            if getattr(self, "_overlay_window", None):
+                self._overlay_window.move(cx, cy)
+                self.show_overlay()
+            self.save_overlay_position(cx, cy)
+            return {"success": True, "x": cx, "y": cy}
+        except Exception as e:
+            logger.warning(f"[RESET OVERLAY ERROR] {e}")
             return {"success": False, "error": str(e)}
 
     def show_overlay(self) -> dict:
@@ -759,14 +792,18 @@ class GuiBridge:
     def save_overlay_position(self, x: int, y: int) -> dict:
         """Persists the floating overlay window coordinates to config."""
         try:
+            from ui.hud_window import clamp_window_position
+            cur_mode = getattr(self, "_current_hud_mode", "normal")
+            w, h = (180, 52) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+            cx, cy = clamp_window_position(x, y, width=w, height=h)
             ui_cfg = self._config.setdefault("ui", {})
-            if ui_cfg.get("overlay_x") == int(x) and ui_cfg.get("overlay_y") == int(y):
-                return {"success": True, "x": int(x), "y": int(y)}
-            ui_cfg["overlay_x"] = int(x)
-            ui_cfg["overlay_y"] = int(y)
+            if ui_cfg.get("overlay_x") == cx and ui_cfg.get("overlay_y") == cy:
+                return {"success": True, "x": cx, "y": cy}
+            ui_cfg["overlay_x"] = cx
+            ui_cfg["overlay_y"] = cy
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2)
-            return {"success": True, "x": int(x), "y": int(y)}
+            return {"success": True, "x": cx, "y": cy}
         except Exception as e:
             logger.warning(f"[OVERLAY POSITION SAVE ERROR] {e}")
             return {"success": False, "error": str(e)}

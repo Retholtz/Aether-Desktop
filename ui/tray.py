@@ -42,6 +42,7 @@ class SystemTrayManager:
         on_toggle_mute: Callable[[], None],
         on_set_hud_mode: Optional[Callable[[str], None]] = None,
         on_cycle_hud_mode: Optional[Callable[[], None]] = None,
+        on_reset_overlay: Optional[Callable[[], None]] = None,
         on_exit: Optional[Callable[[], None]] = None,
         title: str = "Aether Desktop"
     ):
@@ -50,6 +51,7 @@ class SystemTrayManager:
         self.on_toggle_mute = on_toggle_mute
         self.on_set_hud_mode = on_set_hud_mode
         self.on_cycle_hud_mode = on_cycle_hud_mode
+        self.on_reset_overlay = on_reset_overlay
         self.on_exit = on_exit or (lambda: None)
         self.title = title
         self._icon: Optional[pystray.Icon] = None
@@ -68,6 +70,10 @@ class SystemTrayManager:
         def _action_toggle_overlay(icon, item):
             self.on_toggle_overlay()
 
+        def _action_reset_overlay(icon, item):
+            if self.on_reset_overlay:
+                self.on_reset_overlay()
+
         def _action_mute(icon, item):
             self.on_toggle_mute()
 
@@ -78,6 +84,7 @@ class SystemTrayManager:
         menu = pystray.Menu(
             pystray.MenuItem("Open Aether Desktop", _action_open, default=True),
             pystray.MenuItem("Toggle Floating Overlay", _action_toggle_overlay),
+            pystray.MenuItem("Reset Overlay Position", _action_reset_overlay),
             pystray.MenuItem(
                 "HUD Mode",
                 pystray.Menu(

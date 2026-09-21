@@ -51,25 +51,105 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
         print(f"[HUD SHAPE ERROR] Failed to apply window shape: {e}")
 
 
-def is_position_visible_on_screens(x: int, y: int, width: int = 180, height: int = 52) -> bool:
+def get_monitor_work_areas() -> list:
     """
-    Verifies that at least a 30x30 portion of the window intersects
-    a currently connected, active monitor to prevent off-screen windows.
+    Returns a list of connected monitor work areas (excluding taskbars)
+    with per-monitor bounds and primary monitor indicator.
     """
-    try:
-        screens = webview.screens
-        if not screens:
-            return True
-        for s in screens:
-            inter_left = max(s.x, x)
-            inter_top = max(s.y, y)
-            inter_right = min(s.x + s.width, x + width)
-            inter_bottom = min(s.y + s.height, y + height)
-            if (inter_right - inter_left) >= 30 and (inter_bottom - inter_top) >= 30:
-                return True
-        return False
-    except Exception:
-        return True
+    monitors = []
+    if sys.platform == "win32":
+        try:
+            import win32api
+            for hmon, _, _ in win32api.EnumDisplayMonitors():
+                info = win32api.GetMonitorInfo(hmon)
+                work = info.get("Work") or info.get("rcWork") or info.get("Monitor")
+                is_primary = bool(info.get("Flags", 0) & 1)
+                if work:
+                    monitors.append({
+                        "left": work[0],
+                        "top": work[1],
+                        "right": work[2],
+                        "bottom": work[3],
+                        "is_primary": is_primary
+                    })
+        except Exception:
+            pass
+
+    if not monitors:
+        try:
+            for s in webview.screens:
+                monitors.append({
+                    "left": s.x,
+                    "top": s.y,
+                    "right": s.x + s.width,
+                    "bottom": s.y + s.height,
+                    "is_primary": (s.x == 0 and s.y == 0)
+                })
+        except Exception:
+            pass
+
+    if not monitors:
+        monitors.append({"left": 0, "top": 0, "right": 1920, "bottom": 1080, "is_primary": True})
+    return monitors
+
+
+def clamp_window_position(
+    x: Optional[int],
+    y: Optional[int],
+    width: int = 180,
+    height: int = 52,
+    margin: int = 16
+) -> tuple[int, int]:
+    """
+    Ensures that a window of given width and height is completely visible on
+    the most appropriate active monitor's work area, with a safe margin.
+    If coordinates are missing, off-screen, or invalid, defaults to the
+    top-right corner of the primary display.
+    """
+    monitors = get_monitor_work_areas()
+    primary = next((m for m in monitors if m["is_primary"]), monitors[0])
+
+    if x is None or y is None:
+        def_x = primary["right"] - width - 24
+        def_y = primary["top"] + 24
+        return (int(def_x), int(def_y))
+
+    x, y = int(x), int(y)
+
+    # Find monitor that has the largest overlap with the window rectangle
+    best_mon = None
+    best_area = 0
+    for m in monitors:
+        iw = max(0, min(x + width, m["right"]) - max(x, m["left"]))
+        ih = max(0, min(y + height, m["bottom"]) - max(y, m["top"]))
+        area = iw * ih
+        if area > best_area:
+            best_area = area
+            best_mon = m
+
+    # If zero overlap with any monitor, find the closest monitor
+    if best_area <= 0 or not best_mon:
+        cx, cy = x + width / 2, y + height / 2
+        closest_mon = None
+        min_dist = float("inf")
+        for m in monitors:
+            mcx = (m["left"] + m["right"]) / 2
+            mcy = (m["top"] + m["bottom"]) / 2
+            dist = (cx - mcx) ** 2 + (cy - mcy) ** 2
+            if dist < min_dist:
+                min_dist = dist
+                closest_mon = m
+        best_mon = closest_mon or primary
+
+    min_x = best_mon["left"] + margin
+    max_x = max(min_x, best_mon["right"] - width - margin)
+    clamped_x = max(min_x, min(x, max_x))
+
+    min_y = best_mon["top"] + margin
+    max_y = max(min_y, best_mon["bottom"] - height - margin)
+    clamped_y = max(min_y, min(y, max_y))
+
+    return (int(clamped_x), int(clamped_y))
 
 
 class HUDBridge:
@@ -122,12 +202,22 @@ class HUDBridge:
         if mode not in ("mini", "normal", "max"):
             mode = "normal"
         if self._window:
-            if mode == "mini":
-                self._window.resize(180, 52)
-            elif mode == "normal":
-                self._window.resize(self._normal_size[0], self._normal_size[1])
+            w, h = (180, 52)
+            if mode == "normal":
+                w, h = self._normal_size[0], self._normal_size[1]
             elif mode == "max":
-                self._window.resize(self._max_size[0], self._max_size[1])
+                w, h = self._max_size[0], self._max_size[1]
+
+            # Re-clamp position so expanding width/height does not push window off screen
+            cur_x = getattr(self._window, "x", None)
+            cur_y = getattr(self._window, "y", None)
+            if cur_x is not None and cur_y is not None:
+                cx, cy = clamp_window_position(cur_x, cur_y, width=w, height=h)
+                if cx != cur_x or cy != cur_y:
+                    self._window.move(cx, cy)
+                    self._bridge.save_overlay_position(cx, cy)
+
+            self._window.resize(w, h)
 
             # Apply OS-level window shape clipping both immediately and post-resize
             apply_hud_window_shape(self._window, mode)
@@ -195,15 +285,22 @@ class HUDBridge:
         return {"success": True}
 
     def move_overlay(self, x: int, y: int) -> dict:
-        """Moves the HUD overlay window to screen coordinates (x, y)."""
+        """Moves the HUD overlay window to screen coordinates (x, y) with boundary clamping."""
         try:
             if self._window:
-                self._window.move(int(x), int(y))
-                self._bridge.save_overlay_position(int(x), int(y))
+                w = getattr(self._window, "width", 180)
+                h = getattr(self._window, "height", 52)
+                cx, cy = clamp_window_position(x, y, width=w, height=h)
+                self._window.move(cx, cy)
+                self._bridge.save_overlay_position(cx, cy)
                 return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
         return {"success": False, "error": "Window not initialized"}
+
+    def reset_overlay_position(self) -> dict:
+        """Snaps the HUD overlay back to the top-right of the primary display."""
+        return self._bridge.reset_overlay_position()
 
     def restore_main_window(self) -> dict:
         return self._bridge.restore_main_window()
@@ -245,16 +342,12 @@ class HudWindow:
         self.height = height
         self.min_width = min_width
         self.min_height = min_height
+        self._is_closing_permanently = False
 
         # Determine path to static UI assets
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.html_path = os.path.join(base_dir, "ui", "static", "index.html")
-        if not os.path.exists(self.html_path):
-            self.html_path = os.path.join(base_dir, "gui", "index.html")
-
         self.overlay_html_path = os.path.join(base_dir, "ui", "static", "overlay.html")
-        if not os.path.exists(self.overlay_html_path):
-            self.overlay_html_path = os.path.join(base_dir, "gui", "overlay.html")
 
         # 1. Create Main Application Window
         self.window = webview.create_window(
@@ -280,12 +373,16 @@ class HudWindow:
 
         init_x = cfg_ui.get("overlay_x")
         init_y = cfg_ui.get("overlay_y")
+        cx, cy = clamp_window_position(init_x, init_y, width=init_w, height=init_h)
+
         overlay_kwargs = {
             "title": "Aether Overlay",
             "url": self.overlay_html_path,
             "js_api": self.hud_bridge,
             "width": init_w,
             "height": init_h,
+            "x": cx,
+            "y": cy,
             "min_size": (10, 10),
             "frameless": True,
             "on_top": True,
@@ -294,19 +391,15 @@ class HudWindow:
             "transparent": False,
             "background_color": "#121620"
         }
-        if init_x is not None and init_y is not None:
-            try:
-                ix, iy = int(init_x), int(init_y)
-                if is_position_visible_on_screens(ix, iy, init_w, init_h):
-                    overlay_kwargs["x"] = ix
-                    overlay_kwargs["y"] = iy
-            except (ValueError, TypeError):
-                pass
 
         self.overlay_window = webview.create_window(**overlay_kwargs)
         self.hud_bridge._window = self.overlay_window
         self.bridge.set_overlay_window(self.overlay_window)
         self.bridge.set_hud_bridge(self.hud_bridge)
+
+        # If clamped position differed from config, persist clamped coordinates
+        if init_x != cx or init_y != cy:
+            self.bridge.save_overlay_position(cx, cy)
 
         # Wire window moved event for debounced position persistence
         self._pos_save_timer = None
@@ -319,7 +412,10 @@ class HudWindow:
 
         def _on_overlay_moved(x, y):
             try:
-                self._last_moved_pos = (int(x), int(y))
+                w = getattr(self.overlay_window, "width", 180)
+                h = getattr(self.overlay_window, "height", 52)
+                cx, cy = clamp_window_position(x, y, width=w, height=h)
+                self._last_moved_pos = (cx, cy)
                 if self._pos_save_timer:
                     self._pos_save_timer.cancel()
                 self._pos_save_timer = threading.Timer(0.5, _save_debounced_pos)
@@ -330,9 +426,25 @@ class HudWindow:
 
         self.overlay_window.events.moved += _on_overlay_moved
 
-        # 3. Wire window minimize and restore events for overlay mode
+        # 3. Wire window close, minimize, and restore events
+        def on_closing():
+            if getattr(self, "_is_closing_permanently", False):
+                return True
+            cfg = self.bridge.get_raw_config().get("ui", {})
+            if cfg.get("minimize_to_tray", True):
+                self.window.hide()
+                overlay_mode = cfg.get("floating_overlay", "on_minimize")
+                if overlay_mode == "on_minimize":
+                    self.bridge.show_overlay()
+                return False  # Cancels window destruction to keep running in tray
+            else:
+                self.close_all()
+                return True
+
         def on_minimized():
             cfg = self.bridge.get_raw_config().get("ui", {})
+            if cfg.get("minimize_to_tray", True):
+                self.window.hide()
             overlay_mode = cfg.get("floating_overlay", "on_minimize")
             if overlay_mode == "on_minimize":
                 self.bridge.show_overlay()
@@ -343,6 +455,7 @@ class HudWindow:
             if overlay_mode == "on_minimize":
                 self.bridge.hide_overlay()
 
+        self.window.events.closing += on_closing
         self.window.events.minimized += on_minimized
         self.window.events.restored += on_restored
 
@@ -353,6 +466,7 @@ class HudWindow:
             on_toggle_mute=self.bridge.toggle_mic_mute,
             on_set_hud_mode=self.bridge.set_mode,
             on_cycle_hud_mode=self.bridge.cycle_hud_mode,
+            on_reset_overlay=self.bridge.reset_overlay_position,
             on_exit=self.close_all,
             title="Aether Desktop"
         )
@@ -366,6 +480,7 @@ class HudWindow:
 
     def close_all(self):
         """Cleanly closes all windows and stops tray."""
+        self._is_closing_permanently = True
         if hasattr(self, "_pos_save_timer") and self._pos_save_timer:
             try:
                 self._pos_save_timer.cancel()
