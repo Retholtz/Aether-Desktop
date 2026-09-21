@@ -1,13 +1,58 @@
 import asyncio
+import ctypes
 import io
 import logging
+import sys
 import threading
+import time
 import wave
 from typing import Callable, Optional
 import numpy as np
 import sounddevice as sd
 
 logger = logging.getLogger("Aether.Audio")
+
+
+class VADTurnDetector:
+    def __init__(self, silence_timeout_ms: int = 1400):
+        self.silence_timeout_ms = silence_timeout_ms
+        self.is_speech_active = False
+        self.silence_start_time = None
+
+    def update_silence_threshold(self, silence_timeout_ms: int):
+        """Allows dynamic adjustment from GUI settings without restarting audio thread."""
+        self.silence_timeout_ms = max(500, min(silence_timeout_ms, 4000))
+
+    def process_frame(self, is_voice_detected: bool) -> str:
+        """
+        State logic:
+        - Returns 'SPEECH_CONTINUING' if currently speaking.
+        - Returns 'SILENCE_WAITING' if inside the trailing silence grace window.
+        - Returns 'TURN_COMPLETE' once trailing silence exceeds silence_timeout_ms.
+        - Returns 'IDLE' when waiting for new speech.
+        """
+        now = time.monotonic() * 1000.0
+
+        if is_voice_detected:
+            self.is_speech_active = True
+            self.silence_start_time = None
+            return "SPEECH_CONTINUING"
+
+        if self.is_speech_active:
+            if self.silence_start_time is None:
+                self.silence_start_time = now
+                return "SILENCE_WAITING"
+
+            elapsed_silence = now - self.silence_start_time
+            if elapsed_silence >= self.silence_timeout_ms:
+                self.is_speech_active = False
+                self.silence_start_time = None
+                return "TURN_COMPLETE"
+            else:
+                return "SILENCE_WAITING"
+
+        return "IDLE"
+
 
 class AudioPipeline:
     def __init__(
@@ -16,7 +61,8 @@ class AudioPipeline:
         output_device: int,
         mode: str = "always_on",
         software_gate: bool = False,
-        on_speech_state: Optional[Callable[[str], None]] = None
+        on_speech_state: Optional[Callable[[str], None]] = None,
+        vad_trailing_silence_ms: int = 1400
     ):
         self.input_device = input_device
         self.output_device = output_device
@@ -24,6 +70,8 @@ class AudioPipeline:
         self.software_gate = software_gate  # if True, drops mic while Aether speaks
         self.on_speech_state = on_speech_state
         self.ptt_active = False
+        self.vad_trailing_silence_ms = vad_trailing_silence_ms
+        self.vad_turn_detector = VADTurnDetector(silence_timeout_ms=vad_trailing_silence_ms)
 
         self.target_input_rate = 16000
         self.target_output_rate = 24000
@@ -69,10 +117,31 @@ class AudioPipeline:
         # Near-field speaker dominance tracking (ensures loud speaker is separated from room noise)
         self._utterance_peak_rms = 0.0
 
+    def set_vad_trailing_silence(self, silence_ms: int):
+        """Allows dynamic adjustment from GUI settings without restarting audio thread."""
+        self.vad_trailing_silence_ms = silence_ms
+        if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
+            self.vad_turn_detector.update_silence_threshold(silence_ms)
+            logger.info(f"[AUDIO] VAD trailing silence threshold updated to {self.vad_turn_detector.silence_timeout_ms}ms")
+
     def set_ptt(self, active: bool):
         was_active = self.ptt_active
         self.ptt_active = active
-        if was_active and not active:
+        if active and not was_active:
+            # PTT pressed: begin speech capture immediately
+            self._is_in_speech = True
+            self._speech_frames = list(self._preroll_frames)
+            self._utterance_peak_rms = 0.0
+            self._silence_count = 0
+            if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
+                self.vad_turn_detector.is_speech_active = True
+                self.vad_turn_detector.silence_start_time = None
+            if self.on_speech_state:
+                try:
+                    self.on_speech_state("speech_detected")
+                except Exception:
+                    pass
+        elif was_active and not active:
             # PTT released: finalize any speech immediately
             self._finalize_utterance()
 
@@ -84,14 +153,6 @@ class AudioPipeline:
 
     def _input_callback(self, indata, frames, time_info, status):
         if not self._running:
-            return
-        
-        # Calculate approximate RMS for UI audio meter
-        rms = float(np.sqrt(np.mean(indata**2)))
-        self.current_mic_level = min(1.0, rms * 8.0)
-
-        # Check PTT condition
-        if self.mode == "ptt" and not self.ptt_active:
             return
 
         # Check software echo-cancellation gate (if enabled)
@@ -137,7 +198,7 @@ class AudioPipeline:
         self._hp_prev_y = prev_y
         resampled = filtered
 
-        # Recalculate RMS from the filtered speech signal
+        # Recalculate RMS from the filtered speech signal and update UI meter
         rms = float(np.sqrt(np.mean(resampled**2)))
         self.current_mic_level = min(1.0, rms * 8.0)
 
@@ -145,6 +206,31 @@ class AudioPipeline:
         
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.input_queue.put_nowait, pcm16)
+
+        # Check PTT condition & direct speech ingestion
+        if self.mode == "ptt":
+            if not self.ptt_active:
+                self._preroll_frames.append(pcm16)
+                if len(self._preroll_frames) > self._preroll_limit:
+                    self._preroll_frames.pop(0)
+                return
+            # While PTT is held: directly capture incoming audio without premature VAD cutoffs
+            if not self._is_in_speech:
+                self._is_in_speech = True
+                self._speech_frames = list(self._preroll_frames)
+                self._utterance_peak_rms = rms
+                if self.on_speech_state:
+                    try:
+                        self.on_speech_state("speech_detected")
+                    except Exception:
+                        pass
+            self._speech_frames.append(pcm16)
+            if rms > self._utterance_peak_rms:
+                self._utterance_peak_rms = rms
+            # Failsafe: max ~30 seconds continuous PTT hold guard
+            if len(self._speech_frames) >= 600:
+                self._finalize_utterance()
+            return
 
         # Adaptive noise floor tracking (exponential moving average over non-speech)
         if not self._is_in_speech:
@@ -154,12 +240,31 @@ class AudioPipeline:
             self._vad_hangover_threshold = max(0.016, self._noise_floor * 1.35 + 0.004)
 
         # Dual-threshold hysteresis VAD & Utterance Segmentation for Modular Pipeline
-        if self._is_in_speech:
+        # When in silence grace window, require onset threshold to resume speech (prevents ambient flutter from resetting timer)
+        is_silence_waiting = (
+            hasattr(self, "vad_turn_detector")
+            and self.vad_turn_detector
+            and self.vad_turn_detector.silence_start_time is not None
+        )
+        if is_silence_waiting:
+            is_speech_energy = (rms >= self._vad_onset_threshold)
+        elif self._is_in_speech:
             is_speech_energy = (rms >= self._vad_hangover_threshold)
         else:
             is_speech_energy = (rms >= self._vad_onset_threshold)
 
-        if is_speech_energy:
+        vad_state = self.vad_turn_detector.process_frame(is_speech_energy)
+
+        # Snappy barge-in / kill phrase: finalize faster (~400ms) when assistant is actively speaking
+        if vad_state == "SILENCE_WAITING" and self.is_speaking and not self.software_gate:
+            if self.vad_turn_detector.silence_start_time:
+                now_ms = time.monotonic() * 1000.0
+                if (now_ms - self.vad_turn_detector.silence_start_time) >= 400.0:
+                    vad_state = "TURN_COMPLETE"
+                    self.vad_turn_detector.is_speech_active = False
+                    self.vad_turn_detector.silence_start_time = None
+
+        if vad_state == "SPEECH_CONTINUING":
             if not self._is_in_speech:
                 self._is_in_speech = True
                 self._speech_frames = list(self._preroll_frames)
@@ -177,24 +282,31 @@ class AudioPipeline:
             # Failsafe: if continuous speech exceeds ~10s, finalize immediately to avoid hanging
             if len(self._speech_frames) >= self._max_speech_frames:
                 self._finalize_utterance()
-        else:
-            if self._is_in_speech:
-                self._speech_frames.append(pcm16)
-                self._silence_count += 1
-                # Snappy barge-in / kill phrase: finalize faster (~400ms vs ~900ms) when assistant is speaking
-                active_limit = 8 if (self.is_speaking and not self.software_gate) else self._silence_limit
-                if self._silence_count >= active_limit:
-                    self._finalize_utterance()
-            else:
-                self._preroll_frames.append(pcm16)
-                if len(self._preroll_frames) > self._preroll_limit:
-                    self._preroll_frames.pop(0)
+        elif vad_state == "SILENCE_WAITING":
+            self._speech_frames.append(pcm16)
+            self._silence_count += 1
+        elif vad_state == "TURN_COMPLETE":
+            self._speech_frames.append(pcm16)
+            self._silence_count += 1
+            self._finalize_utterance()
+        else:  # IDLE
+            self._preroll_frames.append(pcm16)
+            if len(self._preroll_frames) > self._preroll_limit:
+                self._preroll_frames.pop(0)
 
     def _finalize_utterance(self):
+        if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
+            self.vad_turn_detector.is_speech_active = False
+            self.vad_turn_detector.silence_start_time = None
         if not self._speech_frames:
             self._is_in_speech = False
             self._silence_count = 0
             self._utterance_peak_rms = 0.0
+            if self.on_speech_state:
+                try:
+                    self.on_speech_state("speech_idle")
+                except Exception:
+                    pass
             return
 
         # Speaker Dominance Check: require near-field speech loudness or clear SNR above ambient floor
@@ -208,6 +320,11 @@ class AudioPipeline:
             self._is_in_speech = False
             self._silence_count = 0
             self._utterance_peak_rms = 0.0
+            if self.on_speech_state:
+                try:
+                    self.on_speech_state("speech_idle")
+                except Exception:
+                    pass
             return
 
         # Keep only up to _postroll_padding frames of silence at the end of utterance
@@ -222,6 +339,17 @@ class AudioPipeline:
         self._speech_frames = []
         self._is_in_speech = False
         self._silence_count = 0
+        self._utterance_peak_rms = 0.0
+
+        # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono)
+        if len(total_pcm) < 11200:
+            logger.debug(f"[VAD GATE] Utterance too short ({len(total_pcm)} bytes < 11200), discarding.")
+            if self.on_speech_state:
+                try:
+                    self.on_speech_state("speech_idle")
+                except Exception:
+                    pass
+            return
 
         if self.on_speech_state:
             try:
@@ -229,18 +357,16 @@ class AudioPipeline:
             except Exception:
                 pass
 
-        # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono)
-        if len(total_pcm) >= 11200:
-            buf = io.BytesIO()
-            with wave.open(buf, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(self.target_input_rate)
-                wf.writeframes(total_pcm)
-            buf.seek(0)
-            wav_bytes = buf.read()
-            if self.loop and self.loop.is_running():
-                self.loop.call_soon_threadsafe(self.utterance_queue.put_nowait, wav_bytes)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self.target_input_rate)
+            wf.writeframes(total_pcm)
+        buf.seek(0)
+        wav_bytes = buf.read()
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.utterance_queue.put_nowait, wav_bytes)
 
     def _output_callback(self, outdata, frames, time_info, status):
         if not self._running:
@@ -304,10 +430,19 @@ class AudioPipeline:
 
     def reset_vad(self):
         """Resets VAD tracking state to clean listening."""
+        was_in_speech = self._is_in_speech
         self._speech_frames = []
         self._is_in_speech = False
         self._silence_count = 0
         self._utterance_peak_rms = 0.0
+        if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
+            self.vad_turn_detector.is_speech_active = False
+            self.vad_turn_detector.silence_start_time = None
+        if was_in_speech and self.on_speech_state:
+            try:
+                self.on_speech_state("speech_idle")
+            except Exception:
+                pass
 
     def kill_output(self):
         """Immediately halts speech playback and purges all buffered output."""
@@ -326,6 +461,13 @@ class AudioPipeline:
     async def start(self):
         self.loop = asyncio.get_running_loop()
         self._running = True
+
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.ole32.CoInitializeEx(None, 0)
+            except Exception:
+                pass
         
         in_blocksize = 2400 if self.hw_in_rate == 48000 else 2048
         self.in_stream = sd.InputStream(
@@ -344,8 +486,26 @@ class AudioPipeline:
             blocksize=2048,
             callback=self._output_callback
         )
-        self.in_stream.start()
-        self.out_stream.start()
+
+        for attempt in range(3):
+            try:
+                self.in_stream.start()
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                logger.warning(f"[AUDIO] Retrying input stream start (attempt {attempt+1}): {e}")
+                await asyncio.sleep(0.05)
+
+        for attempt in range(3):
+            try:
+                self.out_stream.start()
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                logger.warning(f"[AUDIO] Retrying output stream start (attempt {attempt+1}): {e}")
+                await asyncio.sleep(0.05)
 
     def stop(self):
         with self._stop_lock:
@@ -427,8 +587,7 @@ def get_available_audio_devices() -> dict:
                 # Check and validate input
                 if dev["max_input_channels"] > 0:
                     try:
-                        with sd.InputStream(device=idx, channels=1, samplerate=sr):
-                            pass
+                        sd.check_input_settings(device=idx, channels=1, samplerate=sr)
                         is_def = (idx == def_in)
                         display = f"{dev_name} [Default]" if is_def else dev_name
                         ins.append({
@@ -448,8 +607,7 @@ def get_available_audio_devices() -> dict:
                 if dev["max_output_channels"] > 0:
                     try:
                         ch = min(int(dev["max_output_channels"]), 2)
-                        with sd.OutputStream(device=idx, channels=ch, samplerate=sr):
-                            pass
+                        sd.check_output_settings(device=idx, channels=ch, samplerate=sr)
                         is_def = (idx == def_out)
                         display = f"{dev_name} [Default]" if is_def else dev_name
                         outs.append({
@@ -492,6 +650,16 @@ def resolve_valid_audio_devices(configured_in: int, configured_out: int) -> tupl
     Validates configured audio device indices and resolves to available defaults if needed.
     Prevents engine crashes if a configured audio device is unplugged or invalid.
     """
+    # Fast path: check if configured devices are directly available and valid
+    try:
+        devs = sd.query_devices()
+        in_ok = (0 <= configured_in < len(devs) and devs[configured_in]["max_input_channels"] > 0)
+        out_ok = (0 <= configured_out < len(devs) and devs[configured_out]["max_output_channels"] > 0)
+        if in_ok and out_ok:
+            return configured_in, configured_out
+    except Exception:
+        pass
+
     avail = get_available_audio_devices()
     inputs = avail.get("inputs", [])
     outputs = avail.get("outputs", [])

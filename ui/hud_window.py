@@ -322,6 +322,18 @@ class HUDBridge:
             return self._bridge.get_hud_mode()
         return {"success": True, "mode": "normal"}
 
+    def update_vad_silence(self, silence_ms: int) -> bool:
+        """Relays dynamic silence threshold changes from HUD window to GuiBridge."""
+        if hasattr(self._bridge, "update_vad_silence"):
+            return self._bridge.update_vad_silence(silence_ms)
+        return False
+
+    def get_config(self) -> dict:
+        """Relays get_config call from HUD window to GuiBridge."""
+        if hasattr(self._bridge, "get_config"):
+            return self._bridge.get_config()
+        return {}
+
 
 class HudWindow:
     """Encapsulates the PyWebView HUD interface, floating overlay, and system tray."""

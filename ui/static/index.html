@@ -354,6 +354,28 @@
                   </label>
                 </div>
 
+                <!-- Trailing Silence Pause Protection -->
+                <div class="form-group full setting-group">
+                  <div class="setting-header slider-header">
+                    <label for="vadSilenceSlider">Speech Pause Duration (Trailing Silence)</label>
+                    <span id="vadSilenceValue" class="badge slider-val">1400 ms</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    id="vadSilenceSlider" 
+                    min="600" 
+                    max="3000" 
+                    step="100" 
+                    value="1400"
+                    class="hud-slider"
+                    oninput="updateSilenceDisplay(this.value)"
+                    onchange="persistSilenceSetting(this.value)"
+                  />
+                  <small class="description input-hint">
+                    Controls how long Aether waits during silent pauses before completing your voice input.
+                  </small>
+                </div>
+
               </div>
             </div>
           </div>

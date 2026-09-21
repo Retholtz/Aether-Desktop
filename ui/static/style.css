@@ -624,6 +624,37 @@ label {
   font-weight: 700;
 }
 
+/* Generic Setting Group & VAD Silence Controls */
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setting-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.setting-header .badge {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--win-accent);
+  font-weight: 700;
+  background: rgba(0, 210, 255, 0.15);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.setting-group .description {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+
 .hud-slider {
   accent-color: var(--win-accent);
   cursor: pointer;

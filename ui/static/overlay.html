@@ -756,9 +756,66 @@
       </svg>
     </div>
 
+    <!-- Trailing Silence Pause Protection (Settings Integration) -->
+    <div class="setting-group" id="vadSettingsGroup" style="display: none;">
+      <div class="setting-header">
+        <label for="vadSilenceSlider">Speech Pause Duration (Trailing Silence)</label>
+        <span id="vadSilenceValue" class="badge">1400 ms</span>
+      </div>
+      <input 
+        type="range" 
+        id="vadSilenceSlider" 
+        min="600" 
+        max="3000" 
+        step="100" 
+        value="1400"
+        oninput="updateSilenceDisplay(this.value)"
+        onchange="persistSilenceSetting(this.value)"
+      />
+      <small class="description">
+        Controls how long Aether waits during silent pauses before completing your voice input.
+      </small>
+    </div>
+
   </div>
 
   <script>
+    function updateSilenceDisplay(val) {
+        const el = document.getElementById("vadSilenceValue");
+        if (el) el.innerText = `${val} ms`;
+    }
+
+    async function persistSilenceSetting(val) {
+        const silenceMs = parseInt(val, 10);
+        try {
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.update_vad_silence) {
+                await window.pywebview.api.update_vad_silence(silenceMs);
+            }
+        } catch (err) {
+            console.error("Failed to persist VAD silence setting:", err);
+        }
+    }
+
+    async function loadSettings() {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.get_config) {
+            try {
+                const config = await window.pywebview.api.get_config();
+                if (config && config.vad_trailing_silence_ms) {
+                    const slider = document.getElementById("vadSilenceSlider");
+                    if (slider) slider.value = config.vad_trailing_silence_ms;
+                    const valDisp = document.getElementById("vadSilenceValue");
+                    if (valDisp) valDisp.innerText = `${config.vad_trailing_silence_ms} ms`;
+                }
+            } catch (err) {
+                console.error("Failed to load VAD silence settings:", err);
+            }
+        }
+    }
+
+    window.updateSilenceDisplay = updateSilenceDisplay;
+    window.persistSilenceSetting = persistSilenceSetting;
+    window.loadSettings = loadSettings;
+
     (function() {
       const overlayCard = document.getElementById("overlayCard");
       const miniPillContent = document.getElementById("miniPillContent");
@@ -1594,6 +1651,8 @@
             muteBtn.classList.toggle("active", isPttActive);
             if (isPttActive) {
               setStatus("hearing", "PTT Transmitting...", null, "Speaking into microphone");
+            } else if (currentStatusState === "hearing") {
+              setStatus("listening", `${agentName} is listening...`, null, null);
             }
           }
         }

@@ -59,8 +59,22 @@ async def receive_audio_loop(*args, **kwargs):
 def run_asyncio_loop(loop: asyncio.AbstractEventLoop):
     """Runs the background asyncio event loop for Gemini Live and audio tasks."""
     ensure_thread_desktop()
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.ole32.CoInitializeEx(None, 0)
+        except Exception:
+            pass
     asyncio.set_event_loop(loop)
-    loop.run_forever()
+    try:
+        loop.run_forever()
+    finally:
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.ole32.CoUninitialize()
+            except Exception:
+                pass
 
 
 def main():

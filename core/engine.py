@@ -208,6 +208,28 @@ class AetherEngine:
         except Exception:
             pass
 
+    @property
+    def config(self) -> dict:
+        cfg = self.config_getter()
+        if "vad_trailing_silence_ms" not in cfg:
+            cfg["vad_trailing_silence_ms"] = cfg.get("audio", {}).get("vad_trailing_silence_ms", 1400)
+        return cfg
+
+    @property
+    def audio_stream(self) -> Optional[AudioPipeline]:
+        return self.audio
+
+    def save_config(self) -> bool:
+        """Persists current configuration to disk."""
+        try:
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=2)
+            self.notify("config_updated", self.config)
+            return True
+        except Exception as e:
+            logger.error(f"[ENGINE SAVE_CONFIG ERROR] {e}")
+            return False
+
     def _is_audio_idle_for_rotation(self) -> bool:
         """
         Determines if the audio pipeline is safe for silent session reconnection:
@@ -384,6 +406,9 @@ class AetherEngine:
             self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
         elif state == "speech_finalized":
             self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
+        elif state in ("speech_idle", "speech_discarded"):
+            agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
     async def send_text(self, text: str):
         """Queues a typed message to be sent into the active Gemini Live session."""
@@ -864,16 +889,19 @@ class AetherEngine:
         self.notify("status", {"state": "connecting", "message": f"Opening audio devices ({in_idx}, {out_idx})..."})
 
         try:
+            vad_silence_ms = config.get("vad_trailing_silence_ms", audio_cfg.get("vad_trailing_silence_ms", 1400))
             self.audio = AudioPipeline(
                 input_device=in_idx,
                 output_device=out_idx,
                 mode=audio_mode,
                 software_gate=software_gate,
-                on_speech_state=self._on_speech_state
+                on_speech_state=self._on_speech_state,
+                vad_trailing_silence_ms=vad_silence_ms
             )
             self.audio.set_ptt(self._ptt_active)
             await self.audio.start()
         except Exception as e:
+            logger.error(f"[AUDIO INITIALIZATION ERROR] {e}", exc_info=True)
             err_msg = f"Failed to initialize audio devices (Input #{in_idx}, Output #{out_idx}): {e}"
             self.notify("status", {"state": "error", "message": err_msg})
             self.notify("chat_event", {"type": "error", "content": err_msg})
@@ -908,6 +936,10 @@ class AetherEngine:
                     voice_accent=voice_accent,
                     temperature=temperature
                 )
+        except Exception as e:
+            logger.error(f"[ENGINE PIPELINE ERROR] {e}", exc_info=True)
+            self.notify("status", {"state": "error", "message": f"Pipeline error: {e}"})
+            self.notify("chat_event", {"type": "error", "content": f"Pipeline error: {e}"})
         finally:
             audio_ref = self.audio
             self.audio = None
@@ -1069,6 +1101,8 @@ class AetherEngine:
                 elif audio_task in done:
                     wav_bytes = audio_task.result()
                     if not wav_bytes or len(wav_bytes) < 1000:
+                        agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                         continue
 
                     # Target Speaker Verification Gate (CAM++ Offline Biometrics)
@@ -1083,6 +1117,9 @@ class AetherEngine:
                                 "state": "voice_gated",
                                 "message": f"Ignored background voice (score: {score:.2f})"
                             })
+                            await asyncio.sleep(1.2)
+                            agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                             continue
                         else:
                             logger.info(f"[VOICE GATE] Authorized user verified (score: {score:.3f} >= {thresh:.2f})")
@@ -1130,6 +1167,7 @@ class AetherEngine:
                                 if re.search(r'[\u0600-\u06FF\u0900-\u097F\u0A00-\u0A7F\u4E00-\u9FFF\u3040-\u30FF]', user_prompt):
                                     logger.warning(f"[STT FILTER] Discarded non-English transcription hallucination: '{user_prompt}'")
                                     user_prompt = ""
+                                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                                     continue
                             # Reject pure filler/noise vocalizations like "hmm", "...", "uhm"
                             filler_words = {"hmm", "hmmm", "uh", "um", "ah", "uhm", "huh", "mhm"}
@@ -1137,14 +1175,17 @@ class AetherEngine:
                             if cleaned_lower in filler_words or len(cleaned_lower) <= 1:
                                 logger.info(f"[STT FILTER] Discarded vocal filler or ambient sound: '{user_prompt}'")
                                 user_prompt = ""
+                                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                                 continue
                     except Exception as stt_err:
                         stt_ms = (time.perf_counter() - t_stt_0) * 1000
                         logger.error(f"[STT TRANSCRIPTION ERROR] ({stt_ms:.1f}ms) {stt_err}")
                         self.notify("chat_event", {"type": "error", "content": f"STT error: {stt_err}"})
+                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                         continue
 
                 if not user_prompt:
+                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                     continue
 
                 # Voice-driven Context Reset Triggers

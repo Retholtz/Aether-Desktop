@@ -227,7 +227,12 @@ class GuiBridge:
             on_event=self._on_engine_event,
             on_whitelist_update=self.update_whitelist
         )
+        self.engine = self._engine
         register_ui_log_callback(self._on_log_record)
+
+    @property
+    def config(self) -> dict:
+        return self._config
 
     def set_window(self, window):
         self._window = window
@@ -251,13 +256,16 @@ class GuiBridge:
             return {"success": False, "error": str(e)}
 
     def _load_config(self) -> dict:
+        cfg = {}
         if os.path.exists(self._config_path):
             try:
                 with open(self._config_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    cfg = json.load(f)
             except Exception as e:
                 print(f"[CONFIG LOAD ERROR] {e}")
-        return {}
+        if "vad_trailing_silence_ms" not in cfg:
+            cfg["vad_trailing_silence_ms"] = cfg.get("audio", {}).get("vad_trailing_silence_ms", 1400)
+        return cfg
 
     def get_raw_config(self) -> dict:
         return self._config
@@ -297,6 +305,7 @@ class GuiBridge:
     def get_config(self) -> dict:
         """Returns application configuration for the UI (masking encrypted API key)."""
         cfg = json.loads(json.dumps(self._config))
+        cfg["vad_trailing_silence_ms"] = self._config.get("vad_trailing_silence_ms", 1400)
         api_cfg = cfg.get("api", {})
         enc_key = api_cfg.get("api_key_encrypted", "")
         decrypted = unprotect_secret(enc_key) if enc_key else os.environ.get("GEMINI_API_KEY", "")
@@ -315,9 +324,49 @@ class GuiBridge:
         cfg["api"] = api_cfg
         return cfg
 
-    def save_config(self, new_config: dict) -> dict:
+    def update_vad_silence(self, silence_ms: int) -> bool:
+        """Saves setting to disk and applies immediately to the audio pipeline."""
+        try:
+            silence_ms = int(silence_ms)
+            self._config["vad_trailing_silence_ms"] = silence_ms
+            if "audio" in self._config and isinstance(self._config["audio"], dict):
+                self._config["audio"]["vad_trailing_silence_ms"] = silence_ms
+
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2)
+
+            # Hot-update audio stream detector
+            if hasattr(self, "engine") and hasattr(self.engine, "audio_stream") and self.engine.audio_stream:
+                self.engine.audio_stream.set_vad_trailing_silence(silence_ms)
+            elif hasattr(self._engine, "audio") and self._engine.audio:
+                self._engine.audio.set_vad_trailing_silence(silence_ms)
+
+            self._on_engine_event("config_updated", self.get_config())
+            print(f"[INFO] [GUI_BRIDGE] VAD trailing silence updated to {silence_ms}ms")
+            return True
+        except Exception as e:
+            print(f"[ERROR] [GUI_BRIDGE] Failed to update VAD silence: {e}")
+            return False
+
+    def save_config(self, new_config: Optional[dict] = None) -> dict:
         """Encrypts new API key if provided and saves updated configuration."""
         try:
+            if new_config is None:
+                with open(self._config_path, "w", encoding="utf-8") as f:
+                    json.dump(self._config, f, indent=2)
+                self._on_engine_event("config_updated", self.get_config())
+                return {"success": True, "message": "Settings saved successfully."}
+
+            if "vad_trailing_silence_ms" in new_config:
+                silence_ms = int(new_config["vad_trailing_silence_ms"])
+                self._config["vad_trailing_silence_ms"] = silence_ms
+                if "audio" in self._config and isinstance(self._config["audio"], dict):
+                    self._config["audio"]["vad_trailing_silence_ms"] = silence_ms
+                if hasattr(self, "engine") and hasattr(self.engine, "audio_stream") and self.engine.audio_stream:
+                    self.engine.audio_stream.set_vad_trailing_silence(silence_ms)
+                elif hasattr(self._engine, "audio") and self._engine.audio:
+                    self._engine.audio.set_vad_trailing_silence(silence_ms)
+
             api_cfg = new_config.get("api", {})
             raw_key_input = api_cfg.get("new_api_key", "").strip()
             if raw_key_input and not raw_key_input.startswith("*") and not raw_key_input.startswith("•"):
@@ -357,6 +406,14 @@ class GuiBridge:
 
             if "audio" in new_config:
                 aud_cfg = new_config["audio"]
+                if "vad_trailing_silence_ms" in aud_cfg:
+                    silence_ms = int(aud_cfg["vad_trailing_silence_ms"])
+                    self._config["vad_trailing_silence_ms"] = silence_ms
+                    self._config.setdefault("audio", {})["vad_trailing_silence_ms"] = silence_ms
+                    if hasattr(self, "engine") and hasattr(self.engine, "audio_stream") and self.engine.audio_stream:
+                        self.engine.audio_stream.set_vad_trailing_silence(silence_ms)
+                    elif hasattr(self._engine, "audio") and self._engine.audio:
+                        self._engine.audio.set_vad_trailing_silence(silence_ms)
                 if "voice_biometrics" in aud_cfg:
                     self._config.setdefault("audio", {}).setdefault("voice_biometrics", {}).update(aud_cfg["voice_biometrics"])
                     aud_copy = dict(aud_cfg)

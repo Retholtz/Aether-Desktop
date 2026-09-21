@@ -1074,6 +1074,14 @@ window.aetherUI = {
       if (audio.software_gate !== undefined) {
         document.getElementById("softwareGateCheck").checked = audio.software_gate;
       }
+
+      // Trailing Silence Pause Duration (VAD)
+      const silenceVal = cfg.vad_trailing_silence_ms || audio.vad_trailing_silence_ms || 1400;
+      const vadSlider = document.getElementById("vadSilenceSlider");
+      if (vadSlider) vadSlider.value = silenceVal;
+      const vadVal = document.getElementById("vadSilenceValue");
+      if (vadVal) vadVal.innerText = `${silenceVal} ms`;
+
       if (audio.voice_biometrics) {
         const bio = audio.voice_biometrics;
         if (bio.enabled !== undefined && document.getElementById("voiceBiometricsCheck")) {
@@ -1230,7 +1238,10 @@ window.aetherUI = {
         ? (document.getElementById("voiceTextInput")?.value.trim() || "")
         : (document.getElementById("voiceSelect")?.value || "");
 
+      const vadSilenceMs = parseInt(document.getElementById("vadSilenceSlider")?.value || "1400", 10);
+
       const payload = {
+        vad_trailing_silence_ms: vadSilenceMs,
         api: {
           new_api_key: newKey,
           agent_name: agentName,
@@ -1250,6 +1261,7 @@ window.aetherUI = {
           system_instruction: document.getElementById("systemPromptInput").value
         },
         audio: {
+          vad_trailing_silence_ms: vadSilenceMs,
           preferred_language: document.getElementById("preferredLanguageSelect")?.value || "en-US",
           voice_biometrics: {
             enabled: document.getElementById("voiceBiometricsCheck")?.checked || false,
@@ -2400,3 +2412,40 @@ if (window.pywebview) {
     window.aetherUI.init();
   });
 }
+
+function updateSilenceDisplay(val) {
+    const el = document.getElementById("vadSilenceValue");
+    if (el) el.innerText = `${val} ms`;
+}
+
+async function persistSilenceSetting(val) {
+    const silenceMs = parseInt(val, 10);
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.update_vad_silence) {
+            await window.pywebview.api.update_vad_silence(silenceMs);
+        }
+    } catch (err) {
+        console.error("Failed to persist VAD silence setting:", err);
+    }
+}
+
+async function loadSettings() {
+    if (window.pywebview && window.pywebview.api) {
+        try {
+            const config = await window.pywebview.api.get_config();
+            if (config && config.vad_trailing_silence_ms) {
+                const slider = document.getElementById("vadSilenceSlider");
+                if (slider) slider.value = config.vad_trailing_silence_ms;
+                const valDisp = document.getElementById("vadSilenceValue");
+                if (valDisp) valDisp.innerText = `${config.vad_trailing_silence_ms} ms`;
+            }
+        } catch (err) {
+            console.error("Failed to load VAD silence settings:", err);
+        }
+    }
+}
+
+window.updateSilenceDisplay = updateSilenceDisplay;
+window.persistSilenceSetting = persistSilenceSetting;
+window.loadSettings = loadSettings;
+
