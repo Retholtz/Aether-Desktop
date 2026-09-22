@@ -1,0 +1,13 @@
+{
+  "monitors": [
+    {
+      "task_id": "real_estate_perrysburg_bg_ranch",
+      "description": "Daily monitor for 3-bedroom, 2.5-bathroom ranch homes between 1,500 and 2,500 sq ft in Perrysburg and Bowling Green, OH (1+ acre preferred).",
+      "script_path": "scripts\\startup\\real_estate_perrysburg_bg_ranch.py",
+      "interval_minutes": 1440,
+      "enabled": true,
+      "last_run_timestamp": 1790109089.3841112,
+      "last_status": "success"
+    }
+  ]
+}

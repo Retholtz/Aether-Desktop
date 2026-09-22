@@ -25,6 +25,7 @@ from core.user_memory import UserMemory
 from core.proactive_engine import ProactiveEngine
 from core.session_lifecycle import SessionLifecycleManager
 from core.hotkey_manager import HotkeyManager
+from core.startup_runner import StartupJobRunner
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 
@@ -196,6 +197,9 @@ class AetherEngine:
             on_hud_mode_cycle=lambda: self.notify("hud_cycle_mode", {}),
             config_getter=self.config_getter
         )
+
+        # Background Startup Automation & Monitor Scheduler
+        self.startup_runner = StartupJobRunner(engine=self)
 
         try:
             import main
@@ -401,6 +405,24 @@ class AetherEngine:
                 self.on_event(event_type, data)
             except Exception as e:
                 logger.error(f"[ENGINE EVENT ERROR] {e}")
+
+    def post_proactive_event(self, message: str):
+        """
+        Thread-safe entry point to post a proactive alert or background task notification.
+        Routes the event to chat events and logs.
+        """
+        try:
+            agent_name = "Aether"
+            if self.config_getter:
+                agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether")
+            logger.info(f"[PROACTIVE EVENT] {message}")
+            self.notify("chat_event", {
+                "type": "assistant",
+                "agent_name": agent_name,
+                "content": f"🔔 {message}"
+            })
+        except Exception as e:
+            logger.error(f"[PROACTIVE EVENT ERROR] {e}")
 
     def kill_audio(self):
         """Immediately halts audio playback, cancels in-flight synthesis, and purges all output buffers."""
@@ -831,7 +853,29 @@ class AetherEngine:
             "  * In dynamic scripts, NEVER call bare `win32gui.SetForegroundWindow(hwnd)` directly (which Windows blocks with a lock timeout error); instead, always import and use `from tools.os_controls import bring_hwnd_to_foreground`.\n"
             "- WEB EDITORS & GOOGLE DOCS CANVAS STABILITY:\n"
             "  * When opening or interacting with web-based editors like Google Docs (`https://docs.new`), Sheets, or Office 365, web applications take 3–5 seconds to initialize WebAssembly/Canvas components and autofocus the editing surface.\n"
-            "  * If a paste (`Ctrl+V`) or text entry does not immediately appear, DO NOT enter a diagnostic loop. Simply click into the white document canvas using `find_and_click_element(target_description='document canvas')` or wait 1.5 seconds and re-dispatch `press_key('ctrl+v')`.\n\n"
+            "  * Web editor canvases often do not have active input focus on initial load. Before pasting or typing, ensure the document body is focused by clicking into the white document canvas using `find_and_click_element(target_description='document canvas')`.\n\n"
+            "CLOSED-LOOP OUTCOME VERIFICATION & AUTONOMOUS SELF-CORRECTION (MANDATORY & CRITICAL):\n"
+            "- The Closed-Loop Execution Rule:\n"
+            "  * A script or tool returning exit code 0 or 'success' ONLY indicates keystrokes or commands were dispatched. It does NOT guarantee that the application, web document, or canvas received, registered, or rendered the input.\n"
+            "  * Web editors (Google Docs, Sheets, Word Online, Notion) and desktop apps frequently drop keystrokes if the editing surface is not actively focused.\n"
+            "- Mandatory Visual Outcome Verification:\n"
+            "  * Whenever drafting, pasting, writing, or inserting content into documents, spreadsheets, text editors, email composers, or web forms (e.g. Google Docs, Word, Sheets, Notepad, web fields):\n"
+            "    1. You MUST call `capture_screen_snapshot` immediately following the paste or text entry step to visually inspect the actual result on screen.\n"
+            "    2. Inspect the captured snapshot image: evaluate whether the expected text, letter, table, or content is clearly visible in the target document or canvas.\n"
+            "    3. Distinguish Success vs. Failure:\n"
+            "       - SUCCESS: The text/content is visibly rendered in the document editing area as intended.\n"
+            "       - FAILURE: The document canvas or target area is blank, empty, unedited, or text ended up in the wrong element (e.g. address bar or title input).\n"
+            "- Autonomous Self-Correction Loop ('Keep Trying Until It Succeeds'):\n"
+            "  * When visual failure is detected, NEVER end your turn and NEVER tell the user that the action succeeded!\n"
+            "  * Autonomously execute corrective actions within your tool loop:\n"
+            "    Step 1 (Re-assert Window Focus): Bring the target application window to the foreground (`bring_hwnd_to_foreground` or `launch_application`).\n"
+            "    Step 2 (Click Editable Canvas): Explicitly click into the document canvas or editable text area using `find_and_click_element(app_name=..., target_description='document canvas')` or click the central document area.\n"
+            "    Step 3 (Re-dispatch Input): Re-send the paste sequence (`press_key('ctrl+v')`) or re-execute the clipboard paste.\n"
+            "    Step 4 (Re-verify): Call `capture_screen_snapshot` to inspect the canvas again.\n"
+            "  * Continue this autonomous self-correction cycle (up to 3 retries) until you visually confirm the text is rendered.\n"
+            "- User Confirmation Protocol:\n"
+            "  * Only provide verbal confirmation to the user once you have visually confirmed that the content is actually on screen.\n"
+            "  * If after repeated retries an unresolvable barrier exists (e.g. user authentication required, modal blocking interaction), truthfully describe the specific obstacle encountered instead of falsely claiming success.\n\n"
             "SECURITY WHITELIST & EASY-BUTTON PERMISSION PROTOCOL (CRITICAL):\n"
             "- Desktop applications and processes are governed by the user's security whitelist.\n"
             "- When you call `launch_application` or `close_application` and it returns `status: 'blocked'`:\n"
@@ -846,7 +890,7 @@ class AetherEngine:
             "- Always prefer direct URL navigation or direct OS commands over multi-turn visual clicking:\n"
             "  * To create a new Google Doc, Sheet, or Slide, directly navigate to `https://docs.new`, `https://sheets.new`, or `https://slides.new` via `navigate_browser` or `launch_application` (instant 50ms) instead of hunting for template buttons.\n"
             "  * To open standard folders, pass the target directly (e.g. `shell:Personal` for Documents, `shell:My Pictures\\Screenshots` for Screenshots) to `launch_application(app_name='explorer', target=...)`.\n"
-            "  * Avoid calling `capture_screen_snapshot` after routine atomic actions unless visual verification is strictly necessary or requested by the user.\n\n"
+            "  * For pure read-only queries or background tasks (e.g. system status, checking files), snapshots are not needed; but for document/UI modifications, follow the Closed-Loop Outcome Verification protocol.\n\n"
             "- Whitelist: If an app is blocked by the security whitelist and the user asks to add or allow it, call `add_to_whitelist(app_name)`.\n"
             "- After executing actions, provide a brief, polite verbal confirmation (1-2 sentences). You can chain multiple actions smoothly.\n\n"
             "ATOMIC NAVIGATION & COMMAND ISOLATION (CRITICAL):\n"
@@ -2223,7 +2267,7 @@ class AetherEngine:
         """
         Executes a seamless silent reconnection of the Gemini Live WebSocket session:
         1. Waits until audio pipeline is idle.
-        2. Non-blocking call to gemini-2.5-flash to summarize conversation state into 4-6 bullet points.
+        2. Non-blocking call to gemini-3.8-flash to summarize conversation state into 4-6 bullet points.
         3. Pre-seeds new connection's system_instruction with the state summary.
         4. Opens new WebSocket connection (client.aio.live.connect).
         5. Atomically swaps self.session reference used by _send_loop.
@@ -2244,7 +2288,7 @@ class AetherEngine:
                     break
                 await asyncio.sleep(0.1)
 
-            # 2. Asynchronous background summarization via gemini-2.5-flash
+            # 2. Asynchronous background summarization via gemini-3.8-flash
             summary = await self.session_lifecycle.generate_session_summary(client)
 
             # 3. Pre-seed new connection system instruction with the 4-6 bullet state summary
@@ -2418,6 +2462,11 @@ class AetherEngine:
             return
         self.is_running = True
         self.hotkey_manager.start()
+        if hasattr(self, "startup_runner") and self.startup_runner:
+            try:
+                self.startup_runner.start()
+            except Exception as e:
+                logger.warning(f"[START] Startup runner start warning: {e}")
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
@@ -2426,6 +2475,12 @@ class AetherEngine:
             return
         self.is_running = False
         self.kill_audio()
+
+        if hasattr(self, "startup_runner") and self.startup_runner:
+            try:
+                self.startup_runner.stop()
+            except Exception as e:
+                logger.warning(f"[STOP] Startup runner stop warning: {e}")
 
         try:
             self.hotkey_manager.stop()
@@ -2458,3 +2513,8 @@ class AetherEngine:
             pass
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
+
+    def shutdown(self):
+        """Standard shutdown lifecycle method; stops engine and background jobs."""
+        self.stop()
+

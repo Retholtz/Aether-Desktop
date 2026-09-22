@@ -1,36 +1,38 @@
+"""
+Aether Skill: wait_for_google_docs_canvas
+Finds and activates Google Docs in Chrome, ensures the editable document canvas is clicked
+and focused to avoid dropped keystrokes, and pastes text via SendInput.
+"""
+
 import ctypes
 from ctypes import wintypes
+import json
+import os
+import sys
 import time
 import win32clipboard
 import win32con
 import win32gui
 from tools.os_controls import bring_hwnd_to_foreground
 
+INPUT_MOUSE = 0
 INPUT_KEYBOARD = 1
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
 KEYEVENTF_KEYUP = 0x0002
 VK_CONTROL = 0x11
 VK_V = 0x56
 
-DEFAULT_LETTER_TEMPLATE = """September 22, 2026
 
-Dr. Stanley Orlop
-[Organization / Practice Name]
-
-Dear Stanley,
-
-It is with a genuinely heavy heart that I am writing to submit my formal resignation from my position, effective [Last Working Day, e.g., October 6, 2026].
-
-Having known each other and worked together for so many years, this was an exceptionally difficult decision to reach. The journey we have shared and the deep personal friendship we have built mean more to me than words can fully express. You have been far more than an esteemed colleague and leader—you have been a trusted confidant, an inspiration, and a true friend whose guidance, warmth, and camaraderie I will always cherish.
-
-Please know that this step comes only after extensive thought and personal reflection, and it in no way diminishes my profound respect and affection for you and our work together.
-
-Over the coming weeks, my absolute priority is to ensure that this transition is as seamless and supportive as possible. I am completely dedicated to assisting in handing over my responsibilities, wrapping up active matters, and helping the team in any way needed so that no momentum is lost.
-
-Above all, Stanley, thank you from the bottom of my heart for your unwavering support, your trust, and your friendship across all these years. While my professional chapter here is drawing to a close, our friendship is something I treasure deeply and look forward to continuing for many years to come.
-
-With warmth, gratitude, and highest regard,
-
-Mike"""
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_ulong),
+    ]
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -43,18 +45,31 @@ class KEYBDINPUT(ctypes.Structure):
     ]
 
 
-class INPUT(ctypes.Structure):
-    class _U(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
-
-    _anonymous_ = ("_u",)
+class HARDWAREINPUT(ctypes.Structure):
     _fields_ = [
-        ("type", wintypes.DWORD),
-        ("_u", _U),
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
     ]
 
 
-def set_clipboard_text(text: str, retries: int = 5, delay: float = 0.05) -> None:
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [
+        ("mi", MOUSEINPUT),
+        ("ki", KEYBDINPUT),
+        ("hi", HARDWAREINPUT),
+    ]
+
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = ("_u",)
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("_u", _INPUT_UNION),
+    ]
+
+
+def set_clipboard_text(text: str, retries: int = 5, delay: float = 0.05) -> bool:
     """Sets text to Windows clipboard reliably with retry logic."""
     for attempt in range(retries):
         try:
@@ -62,13 +77,28 @@ def set_clipboard_text(text: str, retries: int = 5, delay: float = 0.05) -> None
             try:
                 win32clipboard.EmptyClipboard()
                 win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
-                return
+                return True
             finally:
                 win32clipboard.CloseClipboard()
         except Exception:
             if attempt == retries - 1:
-                raise
+                return False
             time.sleep(delay)
+    return False
+
+
+def get_clipboard_text() -> str:
+    """Retrieves current Unicode text from clipboard if present."""
+    try:
+        win32clipboard.OpenClipboard()
+        try:
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                return win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT) or ""
+        finally:
+            win32clipboard.CloseClipboard()
+    except Exception:
+        pass
+    return ""
 
 
 def locate_docs_window(timeout: float = 5.0, poll_interval: float = 0.1) -> int:
@@ -108,6 +138,16 @@ def wait_for_foreground(hwnd: int, timeout: float = 2.0, poll_interval: float = 
     return False
 
 
+def click_canvas(x: int, y: int) -> None:
+    """Moves cursor and executes a mouse click atomically via SendInput."""
+    ctypes.windll.user32.SetCursorPos(x, y)
+    mouse_inputs = (INPUT * 2)(
+        INPUT(type=INPUT_MOUSE, mi=MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTDOWN, 0, 0)),
+        INPUT(type=INPUT_MOUSE, mi=MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTUP, 0, 0)),
+    )
+    ctypes.windll.user32.SendInput(2, mouse_inputs, ctypes.sizeof(INPUT))
+
+
 def send_paste_input() -> None:
     """Dispatches atomic Ctrl+V input array via SendInput."""
     inputs = (INPUT * 4)(
@@ -121,19 +161,61 @@ def send_paste_input() -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-def paste_letter(letter_content: str = DEFAULT_LETTER_TEMPLATE) -> None:
-    # Set clipboard content first to avoid foreground delays
-    set_clipboard_text(letter_content)
+def focus_and_paste_google_docs(text: str = "") -> bool:
+    """
+    1. Sets clipboard text if provided.
+    2. Brings Google Docs / Chrome window to foreground.
+    3. Clicks into the editable document canvas to ensure focus.
+    4. Pastes content via Ctrl+V.
+    """
+    if text:
+        set_clipboard_text(text)
+    else:
+        text = get_clipboard_text()
 
-    # Locate target window and bring to focus
+    # Locate target window and bring to foreground
     target_hwnd = locate_docs_window()
     bring_hwnd_to_foreground(target_hwnd)
     wait_for_foreground(target_hwnd)
 
+    # Calculate center of upper canvas area to guarantee focus within document body
+    rect = win32gui.GetWindowRect(target_hwnd)
+    left, top, right, bottom = rect
+    win_w = max(100, right - left)
+    win_h = max(100, bottom - top)
+
+    # Google Docs editing canvas is horizontally centered, below top toolbars (~35% down)
+    canvas_x = left + int(win_w * 0.5)
+    canvas_y = top + int(win_h * 0.35)
+
+    click_canvas(canvas_x, canvas_y)
+    # Yield briefly so the document canvas registers focus
+    time.sleep(0.12)
+
     # Execute atomic paste sequence
     send_paste_input()
-    print("Letter pasted successfully.")
+    print(f"Successfully focused Google Docs canvas and dispatched paste ({len(text)} chars). Note: Remember to call capture_screen_snapshot to verify the visual outcome.")
+    return True
+
+
+def main():
+    args_str = os.environ.get("SKILL_ARGS", "")
+    if not args_str and len(sys.argv) > 1:
+        args_str = sys.argv[1]
+
+    text = ""
+    if args_str:
+        try:
+            parsed = json.loads(args_str)
+            if isinstance(parsed, dict):
+                text = parsed.get("text") or parsed.get("content") or parsed.get("letter") or ""
+            elif isinstance(parsed, str):
+                text = parsed
+        except Exception:
+            text = args_str
+
+    focus_and_paste_google_docs(text)
 
 
 if __name__ == "__main__":
-    paste_letter()
+    main()

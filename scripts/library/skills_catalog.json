@@ -137,11 +137,13 @@
     "updated_at": "2026-09-12T15:55:19.733217"
   },
   "wait_for_google_docs_canvas": {
-    "description": "Wait for Google Docs canvas to initialize, focus canvas, and paste styled tier explanation table",
-    "parameters": {},
+    "description": "Brings Google Docs to the foreground, clicks into the document canvas to ensure focus, and pastes formatted text or letter content.",
+    "parameters": {
+      "text": "The text or document content to paste into the Google Doc (optional; uses clipboard content if omitted)"
+    },
     "file": "wait_for_google_docs_canvas.py",
     "created_at": "2026-09-12T15:55:47.831613",
-    "updated_at": "2026-09-22T15:46:07.312424"
+    "updated_at": "2026-09-22T16:15:00.000000"
   },
   "check_current_audio_playback_devices": {
     "description": "Check current audio playback devices and system default output",
@@ -156,5 +158,12 @@
     "file": "click_document_canvas_copy_letter.py",
     "created_at": "2026-09-22T15:47:18.339203",
     "updated_at": "2026-09-22T15:47:18.339203"
+  },
+  "open_chrome_tabs_for_the": {
+    "description": "Open Chrome tabs for the real estate listings in Bowling Green and Perrysburg",
+    "parameters": {},
+    "file": "open_chrome_tabs_for_the.py",
+    "created_at": "2026-09-22T16:33:46.451968",
+    "updated_at": "2026-09-22T16:33:46.451968"
   }
 }

@@ -109,11 +109,11 @@ class SessionLifecycleManager:
     async def generate_session_summary(
         self,
         client: Optional[genai.Client],
-        model: str = "gemini-2.5-flash"
+        model: str = "gemini-3.8-flash"
     ) -> str:
         """
         Asynchronously compacts the active conversation history into 4-6 operational bullet points
-        using a fast, non-blocking call to gemini-2.5-flash.
+        using a fast, non-blocking call to gemini-3.8-flash.
         """
         if not self.turn_history:
             return "- Session newly initialized; no prior actions."

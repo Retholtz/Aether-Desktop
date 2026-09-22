@@ -27,6 +27,10 @@ from tools.os_controls import (
     focus_window,
     close_window,
     navigate_browser,
+    register_background_monitor,
+    list_background_monitors,
+    register_monitoring_task,
+    list_active_monitors,
 )
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
@@ -612,6 +616,87 @@ EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     }
 }
 
+REGISTER_BACKGROUND_MONITOR_DECLARATION = {
+    "name": "register_background_monitor",
+    "description": (
+        "Registers a persistent background monitor script that runs periodically on startup and boot. "
+        "Use this for long-term autonomous monitoring instructions (e.g. 'Monitor real estate listings matching criteria every 4 hours and notify me'). "
+        "Scripts should print '[NOTIFY] <message>' to proactively surface alerts to the user."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "task_id": {
+                "type": "STRING",
+                "description": "Unique slug name for the task (e.g. 'real_estate_zillow_monitor', 'server_health_check')."
+            },
+            "description": {
+                "type": "STRING",
+                "description": "Plain text explanation of what the script checks and monitors."
+            },
+            "python_code": {
+                "type": "STRING",
+                "description": "The standalone Python code that executes the check. Output lines starting with '[NOTIFY]' to alert the user."
+            },
+            "interval_minutes": {
+                "type": "INTEGER",
+                "description": "Polling frequency in minutes (e.g. 60, 240, 1440). Default is 60."
+            }
+        },
+        "required": ["task_id", "description", "python_code"]
+    }
+}
+
+REGISTER_MONITORING_TASK_DECLARATION = {
+    "name": "register_monitoring_task",
+    "description": (
+        "Registers a persistent background monitor script that runs periodically on startup and boot. "
+        "Alias for register_background_monitor."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "task_id": {
+                "type": "STRING",
+                "description": "Unique slug name for the task (e.g. 'real_estate_zillow_monitor')."
+            },
+            "description": {
+                "type": "STRING",
+                "description": "Plain text explanation of what the script checks."
+            },
+            "python_code": {
+                "type": "STRING",
+                "description": "The standalone Python code that executes the check. Output lines starting with '[NOTIFY]' to alert the user."
+            },
+            "interval_minutes": {
+                "type": "INTEGER",
+                "description": "Polling frequency in minutes (e.g. 60, 240, 1440). Default is 60."
+            }
+        },
+        "required": ["task_id", "description", "python_code"]
+    }
+}
+
+LIST_BACKGROUND_MONITORS_DECLARATION = {
+    "name": "list_background_monitors",
+    "description": "Returns a list of all scheduled background monitors, intervals, and their current execution statuses.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {},
+        "required": []
+    }
+}
+
+LIST_ACTIVE_MONITORS_DECLARATION = {
+    "name": "list_active_monitors",
+    "description": "Returns a list of all active scheduled monitors and their current execution statuses. Alias for list_background_monitors.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {},
+        "required": []
+    }
+}
+
 
 def get_all_tool_declarations() -> List[dict]:
     """Returns the full list of tool declarations for Gemini Multimodal Live."""
@@ -642,6 +727,10 @@ def get_all_tool_declarations() -> List[dict]:
         QUERY_USER_MEMORY_DECLARATION,
         TEACH_WORD_PRONUNCIATION_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
+        REGISTER_BACKGROUND_MONITOR_DECLARATION,
+        REGISTER_MONITORING_TASK_DECLARATION,
+        LIST_BACKGROUND_MONITORS_DECLARATION,
+        LIST_ACTIVE_MONITORS_DECLARATION,
     ]
 
 
@@ -1223,6 +1312,43 @@ class ToolDispatcher:
                     "content": f"⚙️ [{script_type.upper()}] {result.get('message', 'Script executed.')}"
                 })
                 return result
+
+            elif fn_name in ("register_background_monitor", "register_monitoring_task"):
+                task_id = str(args.get("task_id", "")).strip()
+                description = str(args.get("description", "")).strip()
+                python_code = str(args.get("python_code", "")).strip()
+                interval_minutes = int(args.get("interval_minutes", 60))
+                res_str = register_background_monitor(
+                    task_id=task_id,
+                    description=description,
+                    python_code=python_code,
+                    interval_minutes=interval_minutes
+                )
+                status_key = "success" if "successfully" in res_str.lower() else "error"
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Background Scheduler",
+                    "content": f"⏱️ [MONITOR] {res_str}"
+                })
+                return {
+                    "status": status_key,
+                    "message": res_str,
+                    "task_id": task_id,
+                    "interval_minutes": interval_minutes
+                }
+
+            elif fn_name in ("list_background_monitors", "list_active_monitors"):
+                monitors = list_background_monitors()
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Background Scheduler",
+                    "content": f"📋 [MONITORS] Listed {len(monitors)} scheduled background monitors."
+                })
+                return {
+                    "status": "success",
+                    "count": len(monitors),
+                    "monitors": monitors
+                }
 
             else:
                 return {
