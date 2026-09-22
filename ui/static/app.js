@@ -23,6 +23,8 @@ window.aetherUI = {
   logEntries: [],
   activeLogFilter: "all",
   edgeCatalog: null,
+  storedSessions: [],
+  selectedStoredSessionId: null,
 
   init: async function() {
     this.setupTabs();
@@ -79,18 +81,21 @@ window.aetherUI = {
             this.loadUserPreferences();
             this.loadUserFacts();
             this.loadDictionaryTerms();
+          } else if (tab.dataset.tab === "chats") {
+            targetPane.focus();
+            this.loadStoredSessions();
           }
         }
       });
     });
 
-    // Smooth wheel scrolling for Settings & User Preferences tab panes
-    ["tab-settings", "tab-preferences"].forEach(paneId => {
+    // Smooth wheel scrolling for Settings, User Preferences, and Stored Chats tab panes
+    ["tab-settings", "tab-preferences", "tab-chats"].forEach(paneId => {
       const pane = document.getElementById(paneId);
       if (pane) {
         pane.addEventListener("wheel", (e) => {
-          if (e.target.tagName === "TEXTAREA" || e.target.closest(".facts-table-wrap")) {
-            const el = e.target.tagName === "TEXTAREA" ? e.target : e.target.closest(".facts-table-wrap");
+          if (e.target.tagName === "TEXTAREA" || e.target.closest(".facts-table-wrap") || e.target.closest(".stored-sessions-list") || e.target.closest(".stored-turns-scroll")) {
+            const el = e.target.tagName === "TEXTAREA" ? e.target : (e.target.closest(".facts-table-wrap") || e.target.closest(".stored-sessions-list") || e.target.closest(".stored-turns-scroll"));
             const atTop = el.scrollTop === 0 && e.deltaY < 0;
             const atBottom = (el.scrollHeight - el.clientHeight <= el.scrollTop + 1) && e.deltaY > 0;
             if (!atTop && !atBottom) return;
@@ -518,6 +523,7 @@ window.aetherUI = {
     }
 
     this.setupPreferencesHandlers();
+    this.setupStoredChatsHandlers();
   },
 
   updateVoiceLabels: function() {
@@ -2461,6 +2467,305 @@ window.aetherUI = {
       }
     } catch (e) {
       console.error("Failed to delete dictionary term:", e);
+    }
+  },
+
+  // =========================================================================
+  // Stored Chats & Manifest Browser Methods
+  // =========================================================================
+  setupStoredChatsHandlers: function() {
+    const searchInput = document.getElementById("storedChatsSearch");
+    if (searchInput) {
+      let debounceTimer = null;
+      searchInput.addEventListener("input", (e) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          this.loadStoredSessions(e.target.value.trim());
+        }, 250);
+      });
+    }
+
+    const refreshBtn = document.getElementById("refreshStoredChatsBtn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => {
+        const query = document.getElementById("storedChatsSearch")?.value?.trim() || "";
+        this.loadStoredSessions(query);
+      });
+    }
+
+    const clearAllBtn = document.getElementById("clearAllChatsBtn");
+    if (clearAllBtn) {
+      clearAllBtn.addEventListener("click", () => this.clearAllStoredSessions());
+    }
+
+    const deleteCurrentBtn = document.getElementById("deleteCurrentSessionBtn");
+    if (deleteCurrentBtn) {
+      deleteCurrentBtn.addEventListener("click", () => {
+        if (this.selectedStoredSessionId) {
+          this.deleteStoredSession(this.selectedStoredSessionId);
+        }
+      });
+    }
+  },
+
+  loadStoredSessions: async function(query = "") {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_stored_sessions) {
+      return;
+    }
+
+    try {
+      const res = await window.pywebview.api.get_stored_sessions(query);
+      if (res && res.success) {
+        this.storedSessions = res.sessions || [];
+        const countEl = document.getElementById("storedChatsCount");
+        if (countEl) {
+          countEl.innerText = `${this.storedSessions.length} SESSION${this.storedSessions.length === 1 ? '' : 'S'}`;
+        }
+        this.renderStoredSessionsList(this.storedSessions);
+        
+        if (this.selectedStoredSessionId) {
+          const exists = this.storedSessions.some(s => s.session_id === this.selectedStoredSessionId);
+          if (exists) {
+            this.selectStoredSession(this.selectedStoredSessionId);
+          } else {
+            this.resetStoredSessionDetail();
+          }
+        }
+      } else {
+        console.error("Failed to load stored sessions:", res?.error);
+      }
+    } catch (e) {
+      console.error("Error calling get_stored_sessions:", e);
+    }
+  },
+
+  renderStoredSessionsList: function(sessions) {
+    const listEl = document.getElementById("storedSessionsList");
+    if (!listEl) return;
+
+    if (!sessions || sessions.length === 0) {
+      listEl.innerHTML = `<div class="stored-empty-state">No archived chat sessions found.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = sessions.map(s => {
+      const isSelected = s.session_id === this.selectedStoredSessionId;
+      const previewText = this.escapeHtml(s.preview || "No user input in this session.");
+      const dateStr = s.date || "Unknown date";
+      const timeStr = s.time || "";
+      const turnCount = s.turn_count || 0;
+      const durationSec = s.duration_seconds || 0;
+
+      const topics = (s.topics || []).slice(0, 3);
+      const topicChips = topics.map(t => `<span class="session-tag-chip">${this.escapeHtml(t)}</span>`).join("");
+
+      return `
+        <div class="session-card ${isSelected ? 'selected' : ''}" data-session-id="${this.escapeHtml(s.session_id)}">
+          <div class="session-card-header">
+            <span class="session-card-date">${this.escapeHtml(dateStr)} ${this.escapeHtml(timeStr)}</span>
+            <button type="button" class="session-card-del-btn" title="Delete session transcript" data-del-id="${this.escapeHtml(s.session_id)}">✕</button>
+          </div>
+          <div class="session-card-preview">${previewText}</div>
+          <div class="session-card-meta">
+            <span>${turnCount} turn${turnCount === 1 ? '' : 's'}</span> · 
+            <span>${durationSec}s</span>
+          </div>
+          ${topicChips ? `<div class="session-card-tags">${topicChips}</div>` : ''}
+        </div>
+      `;
+    }).join("");
+
+    listEl.querySelectorAll(".session-card").forEach(card => {
+      const sid = card.dataset.sessionId;
+      card.addEventListener("click", () => {
+        this.selectStoredSession(sid);
+      });
+    });
+
+    listEl.querySelectorAll(".session-card-del-btn").forEach(btn => {
+      const sid = btn.dataset.delId;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.deleteStoredSession(sid);
+      });
+    });
+  },
+
+  selectStoredSession: async function(sessionId) {
+    if (!sessionId) return;
+    this.selectedStoredSessionId = sessionId;
+
+    const listEl = document.getElementById("storedSessionsList");
+    if (listEl) {
+      listEl.querySelectorAll(".session-card").forEach(card => {
+        if (card.dataset.sessionId === sessionId) {
+          card.classList.add("selected");
+        } else {
+          card.classList.remove("selected");
+        }
+      });
+    }
+
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_session_transcript) {
+      return;
+    }
+
+    try {
+      const res = await window.pywebview.api.get_session_transcript(sessionId);
+      if (res && res.success && res.session) {
+        this.renderStoredSessionDetail(res.session);
+      } else {
+        console.error("Failed to load session transcript:", res?.error);
+      }
+    } catch (e) {
+      console.error("Error calling get_session_transcript:", e);
+    }
+  },
+
+  renderStoredSessionDetail: function(session) {
+    const placeholder = document.getElementById("storedDetailPlaceholder");
+    const content = document.getElementById("storedDetailContent");
+    if (placeholder) placeholder.style.display = "none";
+    if (content) content.style.display = "flex";
+
+    const sidEl = document.getElementById("detailSessionId");
+    if (sidEl) sidEl.innerText = session.session_id || "";
+
+    const dateEl = document.getElementById("detailSessionDate");
+    if (dateEl) dateEl.innerText = session.date || "";
+
+    const timeEl = document.getElementById("detailSessionTime");
+    if (timeEl) timeEl.innerText = session.time || "";
+
+    const turnsCountEl = document.getElementById("detailSessionTurns");
+    if (turnsCountEl) {
+      const tc = session.turn_count || 0;
+      turnsCountEl.innerText = `${tc} turn${tc === 1 ? '' : 's'}`;
+    }
+
+    const durEl = document.getElementById("detailSessionDuration");
+    if (durEl) durEl.innerText = `${session.duration_seconds || 0}s`;
+
+    const fpathEl = document.getElementById("detailFilePath");
+    if (fpathEl) fpathEl.innerText = `data/chats/${session.session_id}.json`;
+
+    const manifest = session.manifest;
+    const badgeEl = document.getElementById("manifestStatusBadge");
+    if (badgeEl) {
+      if (manifest) {
+        badgeEl.className = "manifest-status-badge indexed";
+        badgeEl.innerText = "INDEXED";
+      } else {
+        badgeEl.className = "manifest-status-badge pending";
+        badgeEl.innerText = "NO CARD";
+      }
+    }
+
+    const renderTagCloud = (containerId, items, pillClass) => {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      if (!items || items.length === 0) {
+        container.innerHTML = `<span class="empty-tag-placeholder">None recorded</span>`;
+      } else {
+        container.innerHTML = items.map(it => 
+          `<span class="manifest-pill ${pillClass}">${this.escapeHtml(String(it))}</span>`
+        ).join("");
+      }
+    };
+
+    renderTagCloud("detailTopicsList", manifest?.topics, "topic");
+    renderTagCloud("detailEntitiesList", manifest?.entities, "entity");
+    renderTagCloud("detailActionsList", manifest?.actions, "action");
+    renderTagCloud("detailUnresolvedList", manifest?.unresolved, "unresolved");
+
+    const turnsContainer = document.getElementById("storedTranscriptTurns");
+    if (turnsContainer) {
+      const turns = session.turns || [];
+      if (turns.length === 0) {
+        turnsContainer.innerHTML = `<div class="stored-empty-state">No recorded dialogue turns for this session.</div>`;
+      } else {
+        turnsContainer.innerHTML = turns.map(t => {
+          const role = (t.role || "user").toLowerCase();
+          const roleLabel = role === "user" ? "USER" : (this.agentName || "AETHER").toUpperCase();
+          const timeStr = t.timestamp ? new Date(t.timestamp * 1000).toLocaleTimeString() : "";
+          const text = this.escapeHtml(t.text || "");
+          const tools = t.tools_used || [];
+          const toolsBadges = tools.map(tool => 
+            `<span class="stored-tool-badge">🔧 ${this.escapeHtml(tool)}</span>`
+          ).join("");
+
+          return `
+            <div class="stored-turn-bubble ${role}">
+              <div class="stored-turn-meta">
+                <span class="stored-turn-role">${this.escapeHtml(roleLabel)}</span>
+                <span class="stored-turn-time">${this.escapeHtml(timeStr)}</span>
+              </div>
+              <div class="stored-turn-text">${text}</div>
+              ${toolsBadges ? `<div class="stored-tools-badges">${toolsBadges}</div>` : ''}
+            </div>
+          `;
+        }).join("");
+      }
+    }
+  },
+
+  resetStoredSessionDetail: function() {
+    this.selectedStoredSessionId = null;
+    const placeholder = document.getElementById("storedDetailPlaceholder");
+    const content = document.getElementById("storedDetailContent");
+    if (placeholder) placeholder.style.display = "flex";
+    if (content) content.style.display = "none";
+  },
+
+  deleteStoredSession: async function(sessionId) {
+    if (!sessionId) return;
+    if (!confirm(`Are you sure you want to permanently delete session "${sessionId}"?\nThis removes both the transcript file and semantic index entry.`)) {
+      return;
+    }
+
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.delete_stored_session) {
+      return;
+    }
+
+    try {
+      const res = await window.pywebview.api.delete_stored_session(sessionId);
+      if (res && res.success) {
+        this.log(`Deleted session "${sessionId}".`);
+        if (this.selectedStoredSessionId === sessionId) {
+          this.resetStoredSessionDetail();
+        }
+        const query = document.getElementById("storedChatsSearch")?.value?.trim() || "";
+        await this.loadStoredSessions(query);
+      } else {
+        alert(`Failed to delete session: ${res?.error || 'Unknown error'}`);
+      }
+    } catch (e) {
+      console.error("Error deleting session:", e);
+      alert(`Error deleting session: ${e}`);
+    }
+  },
+
+  clearAllStoredSessions: async function() {
+    if (!confirm("Are you sure you want to permanently purge ALL archived sessions?\nThis action cannot be undone and deletes all transcript JSON files and SQLite indexes.")) {
+      return;
+    }
+
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.clear_all_stored_sessions) {
+      return;
+    }
+
+    try {
+      const res = await window.pywebview.api.clear_all_stored_sessions();
+      if (res && res.success) {
+        this.log("Purged all stored session transcripts and SQLite index records.");
+        this.resetStoredSessionDetail();
+        await this.loadStoredSessions("");
+      } else {
+        alert(`Failed to purge sessions: ${res?.error || 'Unknown error'}`);
+      }
+    } catch (e) {
+      console.error("Error clearing all sessions:", e);
+      alert(`Error clearing all sessions: ${e}`);
     }
   }
 };

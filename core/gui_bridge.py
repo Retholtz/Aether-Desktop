@@ -1116,6 +1116,72 @@ class GuiBridge:
             logger.error(f"[BRIDGE ERROR] remove_dictionary_term: {e}")
             return {"success": False, "error": str(e)}
 
+    def get_stored_sessions(self, query: Optional[str] = None) -> dict:
+        """
+        Lists stored conversation sessions with manifest card metadata.
+        Optionally filters by query keyword.
+        """
+        try:
+            from core.manifest_indexer import list_stored_sessions
+            sessions = list_stored_sessions()
+            if query and query.strip():
+                q = query.strip().lower()
+                sessions = [
+                    s for s in sessions
+                    if q in s.get("session_id", "").lower()
+                    or q in s.get("preview", "").lower()
+                    or any(q in str(t).lower() for t in s.get("topics", []))
+                    or any(q in str(a).lower() for a in s.get("actions", []))
+                    or any(q in str(e).lower() for e in s.get("entities", []))
+                ]
+            return {"success": True, "sessions": sessions, "total": len(sessions)}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_stored_sessions: {e}")
+            return {"success": False, "error": str(e), "sessions": []}
+
+    def get_session_transcript(self, session_id: str) -> dict:
+        """
+        Retrieves full turn transcript and manifest card for a given session.
+        """
+        try:
+            from core.manifest_indexer import get_session_details
+            res = get_session_details(session_id)
+            if res.get("status") == "success":
+                return {"success": True, "session": res}
+            else:
+                return {"success": False, "error": res.get("message", "Failed to retrieve session")}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_session_transcript: {e}")
+            return {"success": False, "error": str(e)}
+
+    def delete_stored_session(self, session_id: str) -> dict:
+        """
+        Deletes a specific session transcript file and its SQLite index entry.
+        """
+        try:
+            from core.manifest_indexer import delete_session_and_transcript
+            res = delete_session_and_transcript(session_id)
+            if res.get("status") == "success":
+                return {"success": True, "result": res}
+            else:
+                return {"success": False, "error": res.get("message", "Session not found")}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] delete_stored_session: {e}")
+            return {"success": False, "error": str(e)}
+
+    def clear_all_stored_sessions(self) -> dict:
+        """
+        Deletes all stored session transcripts and clears the manifest index.
+        """
+        try:
+            from core.manifest_indexer import delete_all_stored_sessions
+            res = delete_all_stored_sessions()
+            return {"success": True, "result": res}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] clear_all_stored_sessions: {e}")
+            return {"success": False, "error": str(e)}
+
+
 
 
 

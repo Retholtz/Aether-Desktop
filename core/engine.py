@@ -561,6 +561,7 @@ class AetherEngine:
         try:
             self.current_user_speech = ""
             self.current_turn_text = ""
+            self.current_turn_tools = []
 
             while self.is_running:
                 async for response in session.receive():
@@ -579,6 +580,8 @@ class AetherEngine:
                                 fn_args = fc.args or {}
                                 fc_id = fc.id
                                 print(f"[TOOL CALL] Function: {fn_name}, Args: {fn_args}, ID: {fc_id}")
+                                if fn_name not in self.current_turn_tools:
+                                    self.current_turn_tools.append(fn_name)
 
                                 result = await self.dispatcher.dispatch(fn_name, fn_args)
                                 try:
@@ -675,6 +678,7 @@ class AetherEngine:
                         self.kill_audio()
                         self.notify("agent_turn_interrupted", {})
                         self.current_turn_text = ""
+                        self.current_turn_tools = []
                         if self.current_user_speech.strip():
                             self.notify("chat_event", {
                                 "type": "user",
@@ -703,9 +707,10 @@ class AetherEngine:
                                 "agent_name": agent_name,
                                 "content": clean_turn_text
                             })
-                            self.session_lifecycle.record_turn("assistant", clean_turn_text)
+                            self.session_lifecycle.record_turn("assistant", clean_turn_text, tools_used=self.current_turn_tools)
                         self.notify("agent_turn_complete", {"content": clean_turn_text})
                         self.current_turn_text = ""
+                        self.current_turn_tools = []
 
                         # Sync telemetry with main.py
                         try:
@@ -928,7 +933,14 @@ class AetherEngine:
             "  * If the user asks you to forget or delete information, invoke `forget_user_fact`.\n\n"
         )
 
-        system_instruction_text = strict_identity + user_name_directive + alerts_directive + desktop_tools_directive + user_memory_directive + templated_instruction
+        session_manifest_directive = (
+            "HISTORICAL SESSION MEMORY & CONVERSATION RETRIEVAL:\n"
+            "- You have access to historical session manifest cards via `search_past_sessions`.\n"
+            "- If the user asks about prior conversations, past decisions, earlier research, tasks from earlier sessions, "
+            "or asks 'did we work on X before?' or 'what did we discuss yesterday?', invoke `search_past_sessions(query=...)` to retrieve the relevant historical context.\n\n"
+        )
+
+        system_instruction_text = strict_identity + user_name_directive + alerts_directive + desktop_tools_directive + user_memory_directive + session_manifest_directive + templated_instruction
         if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
             accent_directive = (
                 f"SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
@@ -1362,6 +1374,7 @@ class AetherEngine:
                                 })
 
                 # 3. Handle Tool Calls / Dynamic Scripts Execution Loop
+                turn_tools_used = []
                 loop_count = 0
                 max_tool_turns = 25  # Extended from 10 to allow complex multi-stage workflows (e.g. Gmail search + Google Docs export) to finish
                 t_tools_0 = time.perf_counter()
@@ -1374,6 +1387,8 @@ class AetherEngine:
                         for fc in response.function_calls:
                             fn_name = fc.name
                             fn_args = fc.args or {}
+                            if fn_name not in turn_tools_used:
+                                turn_tools_used.append(fn_name)
 
                             self.notify("chat_event", {
                                 "type": "tool",
@@ -1679,7 +1694,7 @@ class AetherEngine:
                 # Record turn in lifecycle telemetry
                 self.session_lifecycle.record_turn("user", user_prompt)
                 if assistant_text:
-                    self.session_lifecycle.record_turn("assistant", assistant_text)
+                    self.session_lifecycle.record_turn("assistant", assistant_text, tools_used=turn_tools_used)
 
                 try:
                     import main
@@ -1690,6 +1705,7 @@ class AetherEngine:
                 # Layer B: Check if modular session needs context compaction
                 if self.session_lifecycle.needs_rotation():
                     logger.info("[LIFECYCLE] Modular rotation threshold reached. Compacting context via background compactor...")
+                    self.session_lifecycle.flush_session_to_disk()
                     summary = await self.session_lifecycle.generate_session_summary(client)
                     updated_instruction = self.session_lifecycle.build_compacted_instruction(
                         self._base_system_instruction,
@@ -2342,7 +2358,8 @@ class AetherEngine:
                 except Exception:
                     pass
 
-            # 8. Reset lifecycle metrics
+            # 8. Flush raw session transcript and reset lifecycle metrics
+            self.session_lifecycle.flush_session_to_disk()
             self.session_lifecycle.reset_metrics()
 
             self.notify("chat_event", {
@@ -2511,6 +2528,13 @@ class AetherEngine:
             self._text_queue.put_nowait("")
         except Exception:
             pass
+
+        # Flush active session transcript to disk and trigger background manifest indexing
+        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+            try:
+                self.session_lifecycle.flush_session_to_disk()
+            except Exception as e:
+                logger.warning(f"[STOP] Session transcript flush error: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 

@@ -85,3 +85,31 @@ def teach_word_pronunciation(
     return mem.add_dictionary_term(term=term, phonetic_guide=phonetic_guide, category=category)
 
 
+def search_past_sessions(query: str, limit: int = 4, db_path: Optional[str] = None) -> str:
+    """
+    Search historical session manifest cards for topics, actions, unresolved tasks, or entities.
+    Use this when the user asks about past conversations, previous decisions, or earlier tasks.
+    """
+    from core.manifest_indexer import search_manifest_index, init_manifest_db
+    init_manifest_db(db_path)
+    results = search_manifest_index(query=query, limit=limit, db_path=db_path)
+    if not results:
+        return f"No previous sessions matched query: '{query}'."
+
+    summaries = []
+    for r in results:
+        topics_str = ", ".join(r["topics"]) if r["topics"] else "None"
+        actions_str = ", ".join(r["actions"]) if r["actions"] else "None"
+        unresolved_str = ", ".join(r["unresolved"]) if r["unresolved"] else "None"
+        entities_str = ", ".join(r["entities"]) if r["entities"] else "None"
+        summaries.append(
+            f"- [{r['date']}] Session {r['session_id']}:\n"
+            f"  Topics: {topics_str}\n"
+            f"  Actions: {actions_str}\n"
+            f"  Unresolved: {unresolved_str}\n"
+            f"  Entities: {entities_str}"
+        )
+    return "\n".join(summaries)
+
+
+

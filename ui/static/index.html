@@ -35,6 +35,9 @@
         <button class="hud-tab" data-tab="telemetry">
           <span class="tab-icon">📊</span> TELEMETRY
         </button>
+        <button class="hud-tab" data-tab="chats">
+          <span class="tab-icon">📁</span> STORED CHATS
+        </button>
         <button class="hud-tab" data-tab="logs">
           <span class="tab-icon">📄</span> LOGS
         </button>
@@ -982,6 +985,120 @@
             <div class="telemetry-label">TTS AUDIO LATENCY</div>
             <div class="telemetry-val" id="telTtsLatency">-- ms</div>
           </div>
+        </div>
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: STORED CHATS & MANIFEST BROWSER                         -->
+      <!-- ============================================================= -->
+      <section id="tab-chats" class="tab-pane" tabindex="0">
+        <div class="stored-chats-layout">
+          <!-- Left Master Pane: Session List & Controls -->
+          <aside class="stored-chats-sidebar">
+            <div class="stored-sidebar-header">
+              <div class="stored-sidebar-title-row">
+                <span class="stored-sidebar-title">ARCHIVED SESSIONS</span>
+                <span id="storedChatsCount" class="stored-count-badge">0 SESSIONS</span>
+              </div>
+              <div class="stored-search-bar">
+                <input 
+                  type="text" 
+                  id="storedChatsSearch" 
+                  class="stored-search-input" 
+                  placeholder="Filter by topic, entity, query..."
+                  autocomplete="off"
+                />
+                <button type="button" class="hud-btn-ghost sm" id="refreshStoredChatsBtn" title="Refresh session list">
+                  🔄
+                </button>
+              </div>
+              <div class="stored-bulk-actions">
+                <button type="button" class="hud-btn-ghost sm danger" id="clearAllChatsBtn" title="Permanently delete all session transcripts and index">
+                  🗑️ PURGE ALL SESSIONS
+                </button>
+              </div>
+            </div>
+            
+            <div id="storedSessionsList" class="stored-sessions-list">
+              <div class="stored-empty-state">Loading stored sessions...</div>
+            </div>
+          </aside>
+
+          <!-- Right Detail Pane: Manifest Card & Transcript View -->
+          <section class="stored-chats-detail">
+            <!-- Empty state when no session is selected -->
+            <div id="storedDetailPlaceholder" class="stored-detail-placeholder">
+              <div class="placeholder-icon">📁</div>
+              <div class="placeholder-title">No Session Selected</div>
+              <div class="placeholder-desc">Select a conversation from the archive on the left to inspect its extracted manifest card, discussed topics, and full dialogue turns.</div>
+            </div>
+
+            <!-- Active session inspector -->
+            <div id="storedDetailContent" class="stored-detail-content" style="display: none;">
+              <!-- Inspector Header -->
+              <div class="stored-detail-header">
+                <div class="stored-detail-meta">
+                  <div class="stored-sid-badge" id="detailSessionId">session_id</div>
+                  <div class="stored-meta-stats">
+                    <span id="detailSessionDate">YYYY-MM-DD</span> · 
+                    <span id="detailSessionTime">00:00:00</span> · 
+                    <span id="detailSessionTurns">0 turns</span> · 
+                    <span id="detailSessionDuration">0s</span>
+                  </div>
+                </div>
+                <div class="stored-detail-actions">
+                  <button type="button" class="hud-btn-secondary danger sm" id="deleteCurrentSessionBtn" title="Permanently delete this session and transcript">
+                    🗑️ DELETE THIS SESSION
+                  </button>
+                </div>
+              </div>
+
+              <!-- Manifest Card Panel -->
+              <div class="stored-manifest-card" id="detailManifestPanel">
+                <div class="manifest-card-title">
+                  <span>🧠 MANIFEST CARD (SEMANTIC SUMMARY)</span>
+                  <span id="manifestStatusBadge" class="manifest-status-badge indexed">INDEXED</span>
+                </div>
+                <div class="manifest-sections-grid">
+                  <div class="manifest-section">
+                    <span class="manifest-section-label">TOPICS DISCUSSED</span>
+                    <div class="manifest-tag-cloud" id="detailTopicsList">
+                      <span class="empty-tag-placeholder">None recorded</span>
+                    </div>
+                  </div>
+                  <div class="manifest-section">
+                    <span class="manifest-section-label">KEY ENTITIES</span>
+                    <div class="manifest-tag-cloud" id="detailEntitiesList">
+                      <span class="empty-tag-placeholder">None recorded</span>
+                    </div>
+                  </div>
+                  <div class="manifest-section">
+                    <span class="manifest-section-label">ACTIONS EXECUTED</span>
+                    <div class="manifest-tag-cloud" id="detailActionsList">
+                      <span class="empty-tag-placeholder">None recorded</span>
+                    </div>
+                  </div>
+                  <div class="manifest-section">
+                    <span class="manifest-section-label">UNRESOLVED QUESTIONS</span>
+                    <div class="manifest-tag-cloud" id="detailUnresolvedList">
+                      <span class="empty-tag-placeholder">None recorded</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Dialogue Transcript Container -->
+              <div class="stored-transcript-container">
+                <div class="transcript-header-bar">
+                  <span>💬 DIALOGUE TURNS</span>
+                  <span class="transcript-file-path" id="detailFilePath">data/chats/...</span>
+                </div>
+                <div id="storedTranscriptTurns" class="stored-turns-scroll">
+                  <!-- Turn bubbles rendered here -->
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
 

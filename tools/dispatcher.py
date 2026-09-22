@@ -587,6 +587,30 @@ TEACH_WORD_PRONUNCIATION_DECLARATION = {
     }
 }
 
+SEARCH_PAST_SESSIONS_DECLARATION = {
+    "name": "search_past_sessions",
+    "description": (
+        "Searches historical session manifest cards for topics discussed, actions executed, "
+        "unresolved questions, or key entities from prior user sessions. "
+        "Call this whenever the user references past conversations, earlier questions, previous decisions, "
+        "or asks what was worked on previously."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "Keywords or search term to look up across historical sessions (e.g., 'mortgage rates', 'refinancing', 'taxes', 'project X')."
+            },
+            "limit": {
+                "type": "INTEGER",
+                "description": "Maximum number of matched session manifest cards to return (default 4)."
+            }
+        },
+        "required": ["query"]
+    }
+}
+
 EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
@@ -726,6 +750,7 @@ def get_all_tool_declarations() -> List[dict]:
         GET_USER_PROFILE_DECLARATION,
         QUERY_USER_MEMORY_DECLARATION,
         TEACH_WORD_PRONUNCIATION_DECLARATION,
+        SEARCH_PAST_SESSIONS_DECLARATION,
         EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
         REGISTER_BACKGROUND_MONITOR_DECLARATION,
         REGISTER_MONITORING_TASK_DECLARATION,
@@ -1295,6 +1320,22 @@ class ToolDispatcher:
                     except Exception as e:
                         logger.warning(f"[DISPATCHER] Failed to update active engine lexicon: {e}")
                 return result
+
+            elif fn_name == "search_past_sessions":
+                query_str = str(args.get("query", "")).strip()
+                limit_val = int(args.get("limit", 4))
+                from tools.memory_tools import search_past_sessions
+                formatted_summary = search_past_sessions(query=query_str, limit=limit_val)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Session Search",
+                    "content": f"🔍 [SESSION SEARCH] Query: '{query_str}'"
+                })
+                return {
+                    "status": "success",
+                    "query": query_str,
+                    "result": formatted_summary
+                }
 
             elif fn_name == "execute_automation_script":
                 script_code = str(args.get("script_code", ""))
