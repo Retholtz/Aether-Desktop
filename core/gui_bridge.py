@@ -1034,17 +1034,55 @@ class GuiBridge:
             return {"success": False, "error": str(e), "name": ""}
 
     def set_user_name(self, name: str) -> dict:
-        """Sets the user's preferred name in memory and configuration."""
+        """Sets the user's preferred name(s) / callsign(s) in memory and configuration."""
         try:
-            clean = str(name).strip()
+            raw = str(name).strip()
+            parts = [p.strip() for p in raw.split(";") if p.strip()]
+            clean = "; ".join(parts) if parts else raw
             self._engine.user_memory.set_user_name(clean)
             self._config.setdefault("user", {})["name"] = clean
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2)
+            if hasattr(self._engine, "update_user_identity_directive"):
+                self._engine.update_user_identity_directive()
             self._on_engine_event("config_updated", self._config)
             return {"success": True, "name": clean}
         except Exception as e:
             logger.error(f"[BRIDGE ERROR] set_user_name: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_callsign_frequency(self) -> dict:
+        """Retrieves the user's preferred callsign frequency ('never', 'seldom', 'often', 'always')."""
+        try:
+            freq = self._engine.user_memory.get_callsign_frequency(default="")
+            if not freq:
+                freq = self._config.get("user", {}).get("callsign_frequency", "often")
+            freq = str(freq).strip().lower()
+            if freq not in ("never", "seldom", "often", "always"):
+                freq = "often"
+            levels = {"never": 0, "seldom": 1, "often": 2, "always": 3}
+            return {"success": True, "frequency": freq, "level": levels.get(freq, 2)}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_callsign_frequency: {e}")
+            return {"success": False, "error": str(e), "frequency": "often", "level": 2}
+
+    def set_callsign_frequency(self, frequency: str) -> dict:
+        """Sets the user's preferred callsign frequency and updates the engine prompt directive."""
+        try:
+            clean = str(frequency).strip().lower()
+            if clean not in ("never", "seldom", "often", "always"):
+                clean = "often"
+            self._engine.user_memory.set_callsign_frequency(clean)
+            self._config.setdefault("user", {})["callsign_frequency"] = clean
+            with open(self._config_path, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, indent=2)
+            if hasattr(self._engine, "update_user_identity_directive"):
+                self._engine.update_user_identity_directive()
+            self._on_engine_event("config_updated", self._config)
+            levels = {"never": 0, "seldom": 1, "often": 2, "always": 3}
+            return {"success": True, "frequency": clean, "level": levels.get(clean, 2)}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] set_callsign_frequency: {e}")
             return {"success": False, "error": str(e)}
 
     def get_dictionary_terms(self) -> dict:

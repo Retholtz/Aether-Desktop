@@ -1984,6 +1984,23 @@ window.aetherUI = {
       nameInput.addEventListener("change", () => this.handleSaveUserName());
     }
 
+    // Callsign Usage Frequency Slider
+    const freqSlider = document.getElementById("callsignFrequencySlider");
+    const freqVal = document.getElementById("callsignFrequencyVal");
+    const freqLabels = ["Never", "Seldom", "Often", "Always"];
+    const freqKeys = ["never", "seldom", "often", "always"];
+    if (freqSlider) {
+      freqSlider.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value, 10);
+        if (freqVal) freqVal.innerText = freqLabels[val] || "Often";
+      });
+      freqSlider.addEventListener("change", (e) => {
+        const val = parseInt(e.target.value, 10);
+        const freqKey = freqKeys[val] || "often";
+        this.handleSaveCallsignFrequency(freqKey);
+      });
+    }
+
     // Refresh Facts Button
     const refreshBtn = document.getElementById("refreshFactsBtn");
     if (refreshBtn) {
@@ -2031,8 +2048,50 @@ window.aetherUI = {
         const input = document.getElementById("userNameInput");
         if (input) input.value = res.name;
       }
+      await this.loadCallsignFrequency();
     } catch (e) {
       console.error("Failed to load user name:", e);
+    }
+  },
+
+  loadCallsignFrequency: async function() {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_callsign_frequency) return;
+    try {
+      const res = await window.pywebview.api.get_callsign_frequency();
+      if (res && res.success) {
+        const slider = document.getElementById("callsignFrequencySlider");
+        const valEl = document.getElementById("callsignFrequencyVal");
+        const freqLabels = ["Never", "Seldom", "Often", "Always"];
+        const level = res.level !== undefined ? res.level : 2;
+        if (slider) slider.value = level;
+        if (valEl) valEl.innerText = freqLabels[level] || "Often";
+      }
+    } catch (e) {
+      console.error("Failed to load callsign frequency:", e);
+    }
+  },
+
+  handleSaveCallsignFrequency: async function(frequency) {
+    const statusEl = document.getElementById("callsignFreqStatus");
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.set_callsign_frequency) return;
+    try {
+      const res = await window.pywebview.api.set_callsign_frequency(frequency);
+      if (res && res.success) {
+        if (statusEl) {
+          const capitalized = frequency.charAt(0).toUpperCase() + frequency.slice(1);
+          statusEl.innerText = `✓ Saved frequency: ${capitalized}`;
+          statusEl.style.color = "#34c759";
+          setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 2500);
+        }
+        this.log(`Callsign usage frequency updated: ${frequency}`);
+      } else {
+        if (statusEl) {
+          statusEl.innerText = `Error: ${res?.error || 'Failed to save frequency'}`;
+          statusEl.style.color = "var(--status-red)";
+        }
+      }
+    } catch (e) {
+      console.error("Failed to save callsign frequency:", e);
     }
   },
 
@@ -2047,11 +2106,13 @@ window.aetherUI = {
       const res = await window.pywebview.api.set_user_name(name);
       if (res && res.success) {
         if (statusEl) {
-          statusEl.innerText = `✓ Saved preferred name: ${name}`;
+          const names = name.split(";").map(n => n.trim()).filter(Boolean);
+          const nameDisplay = names.length > 1 ? names.join(", ") : name;
+          statusEl.innerText = `✓ Saved callsign(s): ${nameDisplay}`;
           statusEl.style.color = "#34c759";
-          setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 2500);
+          setTimeout(() => { if (statusEl) statusEl.innerText = ""; }, 3000);
         }
-        this.log(`Preferred user name updated: ${name}`);
+        this.log(`Preferred user callsigns updated: ${name}`);
       } else {
         if (statusEl) {
           statusEl.innerText = `Error: ${res?.error || 'Failed to save name'}`;

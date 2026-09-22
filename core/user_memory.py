@@ -7,6 +7,7 @@ and alert deduplication history in data/user_profile.db.
 import datetime
 import json
 import os
+import random
 import sqlite3
 import threading
 from typing import Dict, List, Optional, Any
@@ -330,7 +331,7 @@ class UserMemory:
         return "\n".join(lines)
 
     def get_user_name(self, default: str = "") -> str:
-        """Retrieves the user's preferred name if stored in user memory."""
+        """Retrieves the user's preferred name / callsign raw string if stored in user memory."""
         with self._lock:
             conn = self._get_connection()
             row = conn.execute("""
@@ -342,10 +343,120 @@ class UserMemory:
                 return str(row["value"]).strip()
         return default
 
+    def get_user_names(self) -> List[str]:
+        """
+        Retrieves the user's preferred names / callsigns as a parsed list.
+        Supports semicolon-separated names (e.g. 'Michael; Mike; Buddy').
+        """
+        raw = self.get_user_name(default="")
+        if not raw:
+            return []
+        names = [n.strip() for n in raw.split(";") if n.strip()]
+        return names
+
+    def get_random_user_name(self, default: str = "User") -> str:
+        """Returns a single random name/callsign from the user's preferred names list."""
+        names = self.get_user_names()
+        if names:
+            return random.choice(names)
+        return default
+
     def set_user_name(self, name: str) -> dict:
-        """Saves or updates the user's preferred name."""
-        clean = str(name).strip()
+        """Saves or updates the user's preferred name(s) / callsign(s)."""
+        raw = str(name).strip()
+        parts = [p.strip() for p in raw.split(";") if p.strip()]
+        clean = "; ".join(parts) if parts else raw
         return self.remember_fact(category="general", key="user_name", value=clean, data_type="string")
+
+    def get_callsign_frequency(self, default: str = "often") -> str:
+        """Retrieves the user's preferred callsign usage frequency ('never', 'seldom', 'often', 'always')."""
+        with self._lock:
+            conn = self._get_connection()
+            row = conn.execute("""
+                SELECT value FROM user_facts
+                WHERE key = 'callsign_frequency'
+                ORDER BY last_updated DESC LIMIT 1;
+            """).fetchone()
+            if row and row["value"]:
+                val = str(row["value"]).strip().lower()
+                if val in ("never", "seldom", "often", "always"):
+                    return val
+        return default
+
+    def set_callsign_frequency(self, frequency: str) -> dict:
+        """Saves or updates the user's preferred callsign usage frequency."""
+        val = str(frequency).strip().lower()
+        if val not in ("never", "seldom", "often", "always"):
+            val = "often"
+        return self.remember_fact(category="general", key="callsign_frequency", value=val, data_type="string")
+
+    def build_user_identity_directive(self, frequency: Optional[str] = None) -> str:
+        """Constructs a structured directive for addressing the user according to their configured frequency."""
+        names = self.get_user_names()
+        if not names:
+            return ""
+
+        freq = (frequency or self.get_callsign_frequency()).strip().lower()
+        if freq not in ("never", "seldom", "often", "always"):
+            freq = "often"
+
+        if len(names) == 1:
+            name_display = f"'{names[0]}'"
+            sample_name = names[0]
+            variation_instruction = (
+                f"- CALLSIGN USAGE:\n"
+                f"  * When addressing the user, use {name_display}."
+            )
+        else:
+            name_display = ", ".join(f"'{n}'" for n in names)
+            sample_name = names[0]
+            sample_nick = names[1] if len(names) > 1 else names[0]
+            variation_instruction = (
+                f"- CALLSIGN / NAME VARIATION:\n"
+                f"  * The user has multiple preferred callsigns: {name_display}.\n"
+                f"  * When you do address the user, randomly alternate between their preferred callsigns ({name_display}). Never use more than one callsign in a single response."
+            )
+
+        if freq == "never":
+            frequency_guideline = (
+                f"- CONVERSATIONAL ADDRESS DIRECTIVE (NEVER ADDRESS BY NAME):\n"
+                f"  * Do NOT address the user by their name or callsign in spoken or written conversation.\n"
+                f"  * Always answer and converse directly without inserting their name or callsign."
+            )
+            return (
+                f"USER IDENTITY & ADDRESS DIRECTIVE:\n"
+                f"The user's registered name(s) / callsign(s): {name_display}.\n"
+                f"{frequency_guideline}\n"
+            )
+
+        elif freq == "seldom":
+            frequency_guideline = (
+                f"- NATURAL FREQUENCY (SELDOM / ~15-25% OF RESPONSES):\n"
+                f"  * Address the user by their name or callsign only seldomly (roughly 1 in every 4 to 5 responses, about 15% to 25% of turns).\n"
+                f"  * Most responses (about 75-85%) should simply answer or execute instructions directly without using their name.\n"
+                f"  * Only occasionally weave their callsign in when it feels especially fitting or natural."
+            )
+        elif freq == "always":
+            frequency_guideline = (
+                f"- FREQUENCY (ALWAYS / EVERY RESPONSE):\n"
+                f"  * Always address the user by their name or callsign in every response when speaking to them.\n"
+                f"  * Weave their callsign naturally into every answer."
+            )
+        else:  # "often" (default)
+            frequency_guideline = (
+                f"- NATURAL & BALANCED FREQUENCY (OFTEN / ~40-50% OF RESPONSES):\n"
+                f"  * Do NOT use the user's name in every single response back-to-back, as that feels forced and robotic.\n"
+                f"  * You should address the user by their name or callsign roughly every 2 to 3 responses (about 40% to 50% of the time across the conversation).\n"
+                f"  * Weave their callsigns naturally into answers, explanations, remarks, and confirmations (for example: \"That makes sense, {sample_name}\", \"Here is the latest data, {sample_name}\", \"You're spot on, {sample_name}\")."
+            )
+
+        directive = (
+            f"USER IDENTITY & ADDRESS DIRECTIVE:\n"
+            f"The user goes by the following preferred name(s) / callsign(s): {name_display}.\n"
+            f"{frequency_guideline}\n"
+            f"{variation_instruction}\n"
+        )
+        return directive
 
     def add_dictionary_term(self, term: str, phonetic_guide: str, category: str = "name") -> Dict[str, Any]:
         """Inserts or updates a custom lexicon entry for STT/TTS phonetic biasing."""

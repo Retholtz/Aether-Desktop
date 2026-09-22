@@ -6,7 +6,10 @@ import urllib.request
 from typing import Optional, Tuple, List, Dict
 
 import numpy as np
-import sherpa_onnx
+try:
+    import sherpa_onnx
+except ImportError:
+    sherpa_onnx = None
 
 from core.logger import get_logger
 
@@ -39,6 +42,9 @@ class VoiceProfileVerifier:
     def _init_engine(self):
         """Initializes the ONNX embedding extractor and loads any pre-existing voiceprint."""
         try:
+            if sherpa_onnx is None:
+                logger.warning("[VOICE VERIFIER] sherpa_onnx is not installed. Voice biometrics verification disabled.")
+                return
             self._ensure_model_file()
             if not os.path.exists(self.model_path):
                 logger.warning(f"[VOICE VERIFIER] Model file not found at {self.model_path}")

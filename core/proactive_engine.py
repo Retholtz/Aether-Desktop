@@ -6,6 +6,7 @@ at session startup to synthesize personalized proactive spoken briefings.
 
 import datetime
 import os
+import random
 import re
 from typing import Dict, List, Optional, Any
 
@@ -112,15 +113,24 @@ class ProactiveEngine:
         candidates.sort(key=lambda c: c.get("days_away", 999))
         return candidates
 
+    def _resolve_single_user_name(self, raw_name: Optional[str] = None) -> str:
+        """Resolves a possibly multi-name/callsign string or memory into a single randomly chosen name."""
+        name = (raw_name.strip() if raw_name else "") or self.memory.get_random_user_name(default="User")
+        if ";" in name:
+            names = [n.strip() for n in name.split(";") if n.strip()]
+            return random.choice(names) if names else "User"
+        return name
+
     def _generate_fallback_greeting(self, candidates: List[Dict[str, Any]], agent_name: str = "Aether", user_name: str = "Michael") -> str:
         """Generates a polite, natural fallback proactive briefing without LLM dependency."""
+        resolved_name = self._resolve_single_user_name(user_name)
         if not candidates:
-            return f"Hello {user_name}, {agent_name} is online and ready to assist."
+            return f"Hello {resolved_name}, {agent_name} is online and ready to assist."
         primary = candidates[0]
         desc = primary.get("description", "")
         key_human = primary.get("key", "").replace("_", " ")
         timing = primary.get("timing_text", "soon")
-        return f"Good day {user_name}, this is {agent_name}. Just a heads up that your {key_human} {timing}."
+        return f"Good day {resolved_name}, this is {agent_name}. Just a heads up that your {key_human} {timing}."
 
     async def check_proactive_briefing(
         self,
@@ -138,7 +148,7 @@ class ProactiveEngine:
         genai_client = client or genai_client
         cortex_model = model_id or cortex_model
         agent_name = agent_name or "Aether"
-        user_name = (user_name.strip() if user_name else "") or self.memory.get_user_name(default="User")
+        user_name = self._resolve_single_user_name(user_name)
 
         candidates = self.evaluate_candidates()
         if not candidates:

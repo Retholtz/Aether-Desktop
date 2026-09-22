@@ -342,6 +342,38 @@ class AetherEngine:
 
         logger.info("[ENGINE] Updated active lexicon context in base system instruction.")
 
+    def update_user_identity_directive(self):
+        """Updates the active session prompt context with the latest user identity directive."""
+        new_directive = self.user_memory.build_user_identity_directive()
+        start_marker = "<!-- USER IDENTITY DIRECTIVE START -->"
+        end_marker = "<!-- USER IDENTITY DIRECTIVE END -->"
+
+        if start_marker in self._base_system_instruction and end_marker in self._base_system_instruction:
+            prefix = self._base_system_instruction.split(start_marker)[0]
+            suffix = self._base_system_instruction.split(end_marker)[1]
+            if new_directive:
+                self._base_system_instruction = f"{prefix}{start_marker}\n{new_directive}{end_marker}{suffix}"
+            else:
+                self._base_system_instruction = f"{prefix.rstrip()}{suffix.lstrip()}"
+        elif new_directive:
+            identity_marker = "CRITICAL SYSTEM DIRECTIVE ON IDENTITY:\n"
+            if identity_marker in self._base_system_instruction:
+                idx = self._base_system_instruction.find(identity_marker)
+                end_idx = self._base_system_instruction.find("\n\n", idx)
+                if end_idx != -1:
+                    insert_pos = end_idx + 2
+                    self._base_system_instruction = (
+                        self._base_system_instruction[:insert_pos]
+                        + f"{start_marker}\n{new_directive}{end_marker}\n\n"
+                        + self._base_system_instruction[insert_pos:]
+                    )
+                else:
+                    self._base_system_instruction = f"{start_marker}\n{new_directive}{end_marker}\n\n" + self._base_system_instruction
+            else:
+                self._base_system_instruction = f"{start_marker}\n{new_directive}{end_marker}\n\n" + self._base_system_instruction
+
+        logger.info("[ENGINE] Updated active user identity directive in base system instruction.")
+
     def _get_whitelist(self) -> list:
         cfg = self.config_getter()
         return cfg.get("security", {}).get("app_whitelist", [])
@@ -824,8 +856,8 @@ class AetherEngine:
             "MULTI-STEP WORKFLOW AUTONOMY:\n"
             "- When given a multi-step instruction (e.g. 'Find X in Gmail, calculate the total, and export it into a table in Google Docs'), do NOT stop prematurely after the first step to ask if you should proceed. Autonomously continue executing subsequent steps through to the final deliverable unless you encounter an unresolvable error or need user credentials.\n\n"
         )
-        user_name = self.user_memory.get_user_name(default="")
-        user_name_directive = f"USER IDENTITY DIRECTIVE:\nThe user's name is {user_name}. Always address the user by their name ({user_name}) when speaking to them.\n\n" if user_name else ""
+        user_identity_directive = self.user_memory.build_user_identity_directive()
+        user_name_directive = f"<!-- USER IDENTITY DIRECTIVE START -->\n{user_identity_directive}<!-- USER IDENTITY DIRECTIVE END -->\n\n" if user_identity_directive else ""
 
         # Time-sensitive startup alerts flagged by ProactiveEngine (lean, no full database dump)
         try:
@@ -1001,7 +1033,7 @@ class AetherEngine:
             return client.chats.create(
                 model=cortex_model,
                 config=types.GenerateContentConfig(
-                    system_instruction=system_instruction_text,
+                    system_instruction=self._base_system_instruction,
                     tools=[
                         types.Tool(google_search=types.GoogleSearch()),
                         types.Tool(function_declarations=get_all_tool_declarations())
@@ -1017,7 +1049,7 @@ class AetherEngine:
 
         # Proactive Startup Briefing Evaluation
         try:
-            current_user_name = self.user_memory.get_user_name(default="User")
+            current_user_name = self.user_memory.get_random_user_name(default="User")
             briefing_res = await self.proactive_engine.check_proactive_briefing(
                 user_name=current_user_name,
                 client=client,

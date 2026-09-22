@@ -609,11 +609,28 @@
               <div class="form-group full">
                 <label for="userNameInput">Your Preferred Name / Callsign</label>
                 <div class="input-with-action">
-                  <input type="text" id="userNameInput" class="hud-input" placeholder="e.g. Mike, Sarah, Dave">
+                  <input type="text" id="userNameInput" class="hud-input" placeholder="e.g. Michael; Mike; Buddy">
                   <button type="button" class="hud-btn-primary" id="saveUserNameBtn">SAVE NAME</button>
                 </div>
-                <span class="input-hint">The name Aether will call you conversationally and in proactive startup greetings.</span>
+                <span class="input-hint">Enter your name or multiple callsigns separated by semicolons (e.g. <code>Michael; Mike; Buddy</code>).</span>
                 <div id="userNameStatus" class="fact-status-msg"></div>
+
+                <!-- Callsign Usage Frequency Slider -->
+                <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+                  <div class="slider-header">
+                    <label for="callsignFrequencySlider">Callsign Usage Frequency</label>
+                    <span class="slider-val" id="callsignFrequencyVal">Often</span>
+                  </div>
+                  <input type="range" id="callsignFrequencySlider" min="0" max="3" step="1" value="2" class="hud-slider" style="width: 100%; margin: 6px 0 4px 0;">
+                  <div class="slider-ticks">
+                    <span>Never</span>
+                    <span>Seldom</span>
+                    <span>Often</span>
+                    <span>Always</span>
+                  </div>
+                  <span class="input-hint" style="margin-top: 6px;">Controls how often Aether addresses you by your name or callsigns in conversation.</span>
+                  <div id="callsignFreqStatus" class="fact-status-msg"></div>
+                </div>
               </div>
             </div>
           </div>
