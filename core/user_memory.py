@@ -5,11 +5,13 @@ and alert deduplication history in data/user_profile.db.
 """
 
 import datetime
+import hashlib
 import json
 import os
 import random
 import sqlite3
 import threading
+import time
 from typing import Dict, List, Optional, Any
 
 from core.logger import get_logger
@@ -17,6 +19,291 @@ from core.logger import get_logger
 logger = get_logger("UserMemory")
 
 DEFAULT_DB_REL_PATH = os.path.join("data", "user_profile.db")
+MEMORY_DB_PATH = DEFAULT_DB_REL_PATH
+
+
+def configure_sqlite_connection(conn: sqlite3.Connection):
+    """Configures Write-Ahead Logging, synchronous mode, and busy timeout for SQLite concurrency."""
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+    except Exception as e:
+        logger.debug(f"[USER MEMORY] PRAGMA configuration note: {e}")
+
+
+def _resolve_db_path(db_path: Optional[str] = None) -> str:
+    if db_path is not None:
+        return db_path
+    if os.path.isabs(MEMORY_DB_PATH):
+        return MEMORY_DB_PATH
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, MEMORY_DB_PATH)
+
+
+def init_memory_db(db_path: Optional[str] = None):
+    """Initializes SQLite user memory database and ensures user_facts schema supports fact batches."""
+    target_path = _resolve_db_path(db_path)
+    os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+    with sqlite3.connect(target_path, timeout=10.0) as conn:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        except Exception:
+            pass
+        configure_sqlite_connection(conn)
+        with conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT,
+                    fact TEXT UNIQUE,
+                    source TEXT,
+                    confidence REAL,
+                    updated_at REAL,
+                    key TEXT,
+                    value TEXT,
+                    data_type TEXT DEFAULT 'string',
+                    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(category, key)
+                );
+            """)
+
+            # Ensure columns exist if table was created previously with older schema
+            cur = conn.execute("PRAGMA table_info(user_facts);")
+            existing_cols = {row[1] for row in cur.fetchall()}
+            if "fact" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN fact TEXT;")
+            if "source" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN source TEXT;")
+            if "confidence" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN confidence REAL;")
+            if "updated_at" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN updated_at REAL;")
+            if "key" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN key TEXT;")
+            if "value" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN value TEXT;")
+            if "data_type" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN data_type TEXT DEFAULT 'string';")
+            if "last_updated" not in existing_cols:
+                conn.execute("ALTER TABLE user_facts ADD COLUMN last_updated DATETIME DEFAULT CURRENT_TIMESTAMP;")
+
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_facts_fact ON user_facts(fact);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_key ON user_facts(key);")
+
+            # Backfill legacy rows where fact is NULL
+            conn.execute("""
+                UPDATE user_facts
+                SET fact = CASE
+                    WHEN key IS NOT NULL AND value IS NOT NULL AND key != '' THEN key || ': ' || value
+                    WHEN value IS NOT NULL AND value != '' THEN value
+                    ELSE 'fact_' || id
+                END,
+                updated_at = COALESCE(updated_at, strftime('%s', last_updated), unixepoch())
+                WHERE fact IS NULL OR fact = '';
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS notification_preferences (
+                    category TEXT PRIMARY KEY,
+                    enabled INTEGER DEFAULT 1,
+                    lead_time_days INTEGER DEFAULT 7
+                );
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS prompt_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fact_id INTEGER,
+                    prompt_text TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_history_fact ON prompt_history(fact_id);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_history_time ON prompt_history(timestamp);")
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS custom_dictionary (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    term TEXT NOT NULL UNIQUE,
+                    phonetic_guide TEXT NOT NULL,
+                    category TEXT DEFAULT 'name',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_custom_dict_term ON custom_dictionary(term);")
+
+            # Seed default notification categories
+            default_categories = [
+                ('dates', 1, 7),
+                ('interests', 1, 7),
+                ('work', 1, 7),
+                ('general', 1, 7),
+            ]
+            for cat, en, lead in default_categories:
+                conn.execute("""
+                    INSERT OR IGNORE INTO notification_preferences (category, enabled, lead_time_days)
+                    VALUES (?, ?, ?);
+                """, (cat, en, lead))
+
+
+def add_fact_batch(facts: List[Dict[str, str]], source_session: str, db_path: Optional[str] = None):
+    """Batch inserts or updates extracted user facts from a conversation session."""
+    target_path = _resolve_db_path(db_path)
+    init_memory_db(target_path)
+    with sqlite3.connect(target_path, timeout=10.0) as conn:
+        for item in facts:
+            fact_text = item.get("fact", "").strip()
+            if not fact_text:
+                continue
+            cat = item.get("category", "general")
+            now_ts = time.time()
+            key_text = item.get("key") or fact_text[:50]
+            conn.execute("""
+                INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(fact) DO UPDATE SET
+                    category = excluded.category,
+                    source = excluded.source,
+                    confidence = excluded.confidence,
+                    updated_at = excluded.updated_at,
+                    key = COALESCE(user_facts.key, excluded.key),
+                    value = excluded.value
+            """, (
+                cat,
+                fact_text,
+                source_session,
+                0.9,
+                now_ts,
+                key_text,
+                fact_text
+            ))
+        configure_sqlite_connection(conn)
+        with conn:
+            for item in facts:
+                fact_text = item.get("fact", "").strip()
+                if not fact_text:
+                    continue
+                cat = item.get("category", "general")
+                now_ts = time.time()
+                key_text = item.get("key") or f"fact_{hashlib.md5(fact_text.encode('utf-8')).hexdigest()[:12]}"
+                conn.execute("""
+                    INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(fact) DO UPDATE SET
+                        category = excluded.category,
+                        source = excluded.source,
+                        confidence = excluded.confidence,
+                        updated_at = excluded.updated_at,
+                        key = COALESCE(user_facts.key, excluded.key),
+                        value = excluded.value
+                """, (
+                    cat,
+                    fact_text,
+                    source_session,
+                    0.9,
+                    now_ts,
+                    key_text,
+                    fact_text
+                ))
+
+
+def get_all_facts(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieves all stored facts sorted by updated_at descending."""
+    target_path = _resolve_db_path(db_path)
+    init_memory_db(target_path)
+    with sqlite3.connect(target_path, timeout=10.0) as conn:
+        configure_sqlite_connection(conn)
+        conn.row_factory = sqlite3.Row
+        cur = conn.execute("""
+            SELECT id, category, fact, updated_at
+            FROM user_facts
+            WHERE fact IS NOT NULL AND fact != ''
+            ORDER BY updated_at DESC
+        """)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def replace_facts(facts: List[Dict[str, Any]], db_path: Optional[str] = None):
+    """Atomically replaces the active facts table after reconciliation."""
+def replace_facts(
+    facts: List[Dict[str, Any]], 
+    snapshot_ts: Optional[float] = None, 
+    db_path: Optional[str] = None
+):
+    """
+    Safely replaces reconciled facts in user_facts table.
+    If snapshot_ts is provided, only facts with updated_at <= snapshot_ts are pruned,
+    preserving any new facts recorded while reconciliation was running in the background.
+    """
+    target_path = _resolve_db_path(db_path)
+    init_memory_db(target_path)
+    with sqlite3.connect(target_path, timeout=10.0) as conn:
+        conn.execute("DELETE FROM user_facts")
+        now_ts = time.time()
+        for f in facts:
+            fact_str = f.get("fact", "")
+            if isinstance(fact_str, str):
+                fact_str = fact_str.strip()
+        configure_sqlite_connection(conn)
+        with conn:
+            if snapshot_ts is not None:
+                conn.execute("DELETE FROM user_facts WHERE updated_at <= ?;", (snapshot_ts,))
+            else:
+                fact_str = str(fact_str).strip()
+            if not fact_str:
+                continue
+            cat = f.get("category", "general")
+            key_text = f.get("key") or fact_str[:50]
+            conn.execute("""
+                INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                cat,
+                fact_str,
+                "reconciliation",
+                f.get("confidence", 1.0),
+                now_ts,
+                key_text,
+                fact_str
+            ))
+                conn.execute("DELETE FROM user_facts;")
+
+            now_ts = time.time()
+            for f in facts:
+                fact_str = f.get("fact", "")
+                if isinstance(fact_str, str):
+                    fact_str = fact_str.strip()
+                elif isinstance(fact_str, dict):
+                    fact_str = json.dumps(fact_str)
+                else:
+                    fact_str = str(fact_str).strip()
+                if not fact_str:
+                    continue
+                cat = f.get("category", "general")
+                key_text = f.get("key") or f"fact_{hashlib.md5(fact_str.encode('utf-8')).hexdigest()[:12]}"
+                conn.execute("""
+                    INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(fact) DO UPDATE SET
+                        category = excluded.category,
+                        source = excluded.source,
+                        confidence = excluded.confidence,
+                        updated_at = excluded.updated_at,
+                        key = COALESCE(user_facts.key, excluded.key),
+                        value = excluded.value
+                    WHERE user_facts.updated_at <= excluded.updated_at;
+                """, (
+                    cat,
+                    fact_str,
+                    "reconciliation",
+                    f.get("confidence", 1.0),
+                    now_ts,
+                    key_text,
+                    fact_str
+                ))
 
 
 class UserMemory:
@@ -43,68 +330,12 @@ class UserMemory:
                 self._conn.execute("PRAGMA synchronous=NORMAL;")
             except Exception as e:
                 logger.warning(f"[USER MEMORY] Could not set WAL mode: {e}")
+            configure_sqlite_connection(self._conn)
         return self._conn
 
     def _init_db(self):
         with self._lock:
-            conn = self._get_connection()
-            with conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS user_facts (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        category TEXT NOT NULL,
-                        key TEXT NOT NULL,
-                        value TEXT NOT NULL,
-                        data_type TEXT DEFAULT 'string',
-                        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(category, key)
-                    );
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category);")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_key ON user_facts(key);")
-
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS notification_preferences (
-                        category TEXT PRIMARY KEY,
-                        enabled INTEGER DEFAULT 1,
-                        lead_time_days INTEGER DEFAULT 7
-                    );
-                """)
-
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS prompt_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        fact_id INTEGER,
-                        prompt_text TEXT,
-                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_history_fact ON prompt_history(fact_id);")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_history_time ON prompt_history(timestamp);")
-
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS custom_dictionary (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        term TEXT NOT NULL UNIQUE,
-                        phonetic_guide TEXT NOT NULL,
-                        category TEXT DEFAULT 'name',
-                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_custom_dict_term ON custom_dictionary(term);")
-
-                # Seed default notification categories
-                default_categories = [
-                    ('dates', 1, 7),
-                    ('interests', 1, 7),
-                    ('work', 1, 7),
-                    ('general', 1, 7),
-                ]
-                for cat, en, lead in default_categories:
-                    conn.execute("""
-                        INSERT OR IGNORE INTO notification_preferences (category, enabled, lead_time_days)
-                        VALUES (?, ?, ?);
-                    """, (cat, en, lead))
+            init_memory_db(self.db_path)
 
     def remember_fact(self, category: str, key: str, value: str, data_type: str = "string") -> Dict[str, Any]:
         """Inserts or updates a user fact into user_facts."""
@@ -112,18 +343,22 @@ class UserMemory:
         key_clean = key.strip().lower().replace(" ", "_")
         val_clean = str(value).strip()
         type_clean = (data_type or "string").strip().lower()
+        fact_str = f"{key_clean}: {val_clean}"
+        now_ts = time.time()
 
         with self._lock:
             conn = self._get_connection()
             with conn:
                 cursor = conn.execute("""
-                    INSERT INTO user_facts (category, key, value, data_type, last_updated)
-                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO user_facts (category, key, value, data_type, fact, updated_at, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(category, key) DO UPDATE SET
                         value = excluded.value,
                         data_type = excluded.data_type,
+                        fact = excluded.fact,
+                        updated_at = excluded.updated_at,
                         last_updated = CURRENT_TIMESTAMP;
-                """, (cat_clean, key_clean, val_clean, type_clean))
+                """, (cat_clean, key_clean, val_clean, type_clean, fact_str, now_ts))
                 fact_id = cursor.lastrowid
 
             if not fact_id or cursor.rowcount == 0:
@@ -179,19 +414,27 @@ class UserMemory:
             conn = self._get_connection()
             if category and category.strip():
                 rows = conn.execute("""
-                    SELECT id, category, key, value, data_type, last_updated
+                    SELECT id, category, key, value, data_type, last_updated, fact, updated_at
                     FROM user_facts
                     WHERE category = ?
-                    ORDER BY category ASC, key ASC;
+                    ORDER BY category ASC, id ASC;
                 """, (category.strip().lower(),)).fetchall()
             else:
                 rows = conn.execute("""
-                    SELECT id, category, key, value, data_type, last_updated
+                    SELECT id, category, key, value, data_type, last_updated, fact, updated_at
                     FROM user_facts
-                    ORDER BY category ASC, key ASC;
+                    ORDER BY category ASC, id ASC;
                 """).fetchall()
 
-        return [dict(r) for r in rows]
+            res = []
+            for r in rows:
+                d = dict(r)
+                if not d.get("key") and d.get("fact"):
+                    d["key"] = d["fact"][:40]
+                if not d.get("value") and d.get("fact"):
+                    d["value"] = d["fact"]
+                res.append(d)
+            return res
 
     def query_facts(
         self,
@@ -214,29 +457,29 @@ class UserMemory:
             if category and category.strip():
                 cat_clean = category.strip().lower()
                 rows = conn.execute("""
-                    SELECT category, key, value, data_type
+                    SELECT category, key, value, data_type, fact
                     FROM user_facts
-                    WHERE category = ? AND (key LIKE ? OR value LIKE ?)
-                    ORDER BY last_updated DESC
+                    WHERE category = ? AND (key LIKE ? OR value LIKE ? OR fact LIKE ?)
+                    ORDER BY id DESC
                     LIMIT ?;
-                """, (cat_clean, pattern, pattern, max(1, limit))).fetchall()
+                """, (cat_clean, pattern, pattern, pattern, max(1, limit))).fetchall()
             else:
                 rows = conn.execute("""
-                    SELECT category, key, value, data_type
+                    SELECT category, key, value, data_type, fact
                     FROM user_facts
-                    WHERE key LIKE ? OR value LIKE ? OR category LIKE ?
-                    ORDER BY last_updated DESC
+                    WHERE key LIKE ? OR value LIKE ? OR category LIKE ? OR fact LIKE ?
+                    ORDER BY id DESC
                     LIMIT ?;
-                """, (pattern, pattern, pattern, max(1, limit))).fetchall()
+                """, (pattern, pattern, pattern, pattern, max(1, limit))).fetchall()
 
-        return [
-            {
-                "category": r["category"],
-                "key": r["key"],
-                "value": r["value"]
-            }
-            for r in rows
-        ]
+            return [
+                {
+                    "category": r["category"],
+                    "key": r["key"] or (r["fact"][:40] if r["fact"] else ""),
+                    "value": r["value"] or r["fact"] or ""
+                }
+                for r in rows
+            ]
 
     def get_preferences(self) -> List[Dict[str, Any]]:
         """Returns all notification preference rows."""

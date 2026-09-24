@@ -19,9 +19,9 @@ ensure_thread_desktop()
 from core.audio_stream import AudioPipeline, resolve_valid_audio_devices
 from core.logger import get_logger
 from core.voice_verifier import VoiceProfileVerifier
-from core.optimizer import ScriptOptimizer
+from core.optimizer import ReflexionEngine, ScriptOptimizer
 from core.telemetry_db import TelemetryDB
-from core.user_memory import UserMemory
+from core.user_memory import UserMemory, init_memory_db
 from core.proactive_engine import ProactiveEngine
 from core.session_lifecycle import SessionLifecycleManager
 from core.hotkey_manager import HotkeyManager
@@ -162,27 +162,28 @@ class AetherEngine:
         # Target Speaker Verification (CAM++ Offline Biometrics)
         self.voice_verifier = VoiceProfileVerifier()
 
-        # Telemetry & Asynchronous Self-Optimization (Reflexion Engine)
-        self.telemetry_db = TelemetryDB()
-        if hasattr(self.dispatcher, "script_runner") and self.dispatcher.script_runner:
-            self.dispatcher.script_runner.telemetry_db = self.telemetry_db
-        self.last_user_turn_time = time.perf_counter()
-        self.genai_client: Optional[genai.Client] = None
-        self.optimizer = ScriptOptimizer(
-            telemetry_db=self.telemetry_db,
-            client_getter=lambda: self.genai_client,
-            model_id=self.config_getter().get("api", {}).get("model_id", "gemini-3.8-flash"),
-            is_idle_callback=self._is_engine_idle,
-            on_optimized=self._on_script_optimized,
-            skill_library=self.dispatcher.skill_library
-        )
-        self._optimizer_task: Optional[asyncio.Task] = None
-
-        # Dynamic User Memory & Proactive Briefing Engine
+        # Dynamic User Memory & Database Initialization
+        init_memory_db()
         self.user_memory = UserMemory()
         self.dispatcher.user_memory = self.user_memory
         self.dispatcher.engine = self
         self.proactive_engine = ProactiveEngine(self.user_memory)
+
+        # Idle & Interaction State Tracking
+        self.last_user_turn_timestamp = time.time()
+        self.last_user_turn_time = time.perf_counter()
+        self._is_audio_streaming = False
+        self._is_speaking = False
+        self._is_tool_running = False
+
+        # Telemetry & Asynchronous Self-Optimization (Tier 2 Reflexion Engine)
+        self.telemetry_db = TelemetryDB()
+        if hasattr(self.dispatcher, "script_runner") and self.dispatcher.script_runner:
+            self.dispatcher.script_runner.telemetry_db = self.telemetry_db
+        self.genai_client: Optional[genai.Client] = None
+        self.reflexion_engine = ReflexionEngine(engine=self)
+        self.optimizer = self.reflexion_engine
+        self._optimizer_task: Optional[asyncio.Task] = None
 
         # Rolling Session Lifecycle & Compactor (Layer B Context Optimization)
         self.session_lifecycle = SessionLifecycleManager()
@@ -215,9 +216,45 @@ class AetherEngine:
     @property
     def config(self) -> dict:
         cfg = self.config_getter()
+        defaults = {
+            "tier1_fast_model": "gemini-3.8-flash",
+            "tier2_heavy_model": "gemini-3.8-pro",
+            "tier2_heavy_model": "gemini-3.1-pro-preview",
+            "tier2_thinking_budget": 2048,
+            "reflexion_idle_delay_seconds": 15,
+            "reflexion_poll_interval_seconds": 30
+        }
+        for k, v in defaults.items():
+            if k not in cfg:
+                cfg[k] = v
         if "vad_trailing_silence_ms" not in cfg:
             cfg["vad_trailing_silence_ms"] = cfg.get("audio", {}).get("vad_trailing_silence_ms", 1400)
         return cfg
+
+    @property
+    def is_audio_streaming(self) -> bool:
+        return bool(self._is_audio_streaming or (self.audio and getattr(self.audio, "_is_in_speech", False)))
+
+    @is_audio_streaming.setter
+    def is_audio_streaming(self, val: bool):
+        self._is_audio_streaming = bool(val)
+
+    @property
+    def is_speaking(self) -> bool:
+        return bool(self._is_speaking or (self.audio and getattr(self.audio, "is_speaking", False)))
+
+    @is_speaking.setter
+    def is_speaking(self, val: bool):
+        self._is_speaking = bool(val)
+
+    @property
+    def is_tool_running(self) -> bool:
+        return bool(self._is_tool_running or self.is_tool_executing)
+
+    @is_tool_running.setter
+    def is_tool_running(self, val: bool):
+        self._is_tool_running = bool(val)
+        self.is_tool_executing = bool(val)
 
     @property
     def audio_stream(self) -> Optional[AudioPipeline]:
@@ -241,29 +278,29 @@ class AetherEngine:
         """
         if not self.is_running:
             return False
-        if self.audio and self.audio.is_speaking:
+        if self.is_speaking or self.is_audio_streaming:
             return False
-        if self.audio and getattr(self.audio, "_is_in_speech", False):
-            return False
-        if self.is_tool_executing:
+        if self.is_tool_running:
             return False
         return True
 
     def _is_engine_idle(self) -> bool:
         """
         Trigger Conditions: Run only when the audio pipeline is idle
-        (not audio.is_speaking and no active user turns for > 15 seconds, and no active tool execution).
+        (not is_speaking and not is_audio_streaming and no active user turns for > idle_delay seconds,
+        and no active tool execution).
         """
         if not self.is_running:
             return False
-        if self.audio and self.audio.is_speaking:
+        if self.is_speaking or self.is_audio_streaming:
             return False
-        if self.is_tool_executing:
+        if self.is_tool_running:
             return False
         if not self._text_queue.empty():
             return False
-        idle_duration = time.perf_counter() - self.last_user_turn_time
-        return idle_duration >= 15.0
+        idle_delay = self.config.get("reflexion_idle_delay_seconds", 15.0)
+        time_since_turn = time.time() - getattr(self, "last_user_turn_timestamp", 0.0)
+        return time_since_turn >= idle_delay
 
     def _on_script_optimized(self, event_data: dict):
         """Notifies UI of background script self-optimization."""
@@ -457,10 +494,15 @@ class AetherEngine:
         if not self.is_running:
             return
         if state == "speech_detected":
+            self.is_audio_streaming = True
             self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
         elif state == "speech_finalized":
+            self.is_audio_streaming = False
+            self.last_user_turn_timestamp = time.time()
+            self.last_user_turn_time = time.perf_counter()
             self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
         elif state in ("speech_idle", "speech_discarded"):
+            self.is_audio_streaming = False
             agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
@@ -468,6 +510,7 @@ class AetherEngine:
         """Queues a typed message to be sent into the active Gemini Live session."""
         if not text.strip():
             return
+        self.last_user_turn_timestamp = time.time()
         self.last_user_turn_time = time.perf_counter()
         await self._text_queue.put(text.strip())
         self.notify("chat_event", {
@@ -1069,9 +1112,9 @@ class AetherEngine:
         self.genai_client = client
         self.dispatcher.genai_client = client
 
-        # Launch background Reflexion self-optimization worker
-        if self._optimizer_task is None or self._optimizer_task.done():
-            self._optimizer_task = asyncio.create_task(self.optimizer.run_loop())
+        # Launch background Reflexion worker
+        if hasattr(self, "reflexion_engine") and self.reflexion_engine:
+            self.reflexion_engine.start()
 
         accent_info = f", Accent: {voice_accent}" if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", "") else ""
         self.notify("status", {
@@ -1132,20 +1175,24 @@ class AetherEngine:
                     "message": f"{agent_name} is delivering briefing...",
                     "user_prompt": ""
                 })
-                await self._stream_synthesize_speech(
-                    text=briefing_text,
-                    tts_engine=tts_model,
-                    voice_name=voice_name,
-                    client=client,
-                    on_pcm_chunk=_on_briefing_chunk,
-                    stop_event=stop_briefing_event,
-                    voice_accent=voice_accent,
-                    voice_speed=voice_speed
-                )
-                while self.audio and not self.audio.is_output_empty() and self.is_running:
-                    if self._kill_playback_flag:
-                        break
-                    await asyncio.sleep(0.04)
+                self.is_speaking = True
+                try:
+                    await self._stream_synthesize_speech(
+                        text=briefing_text,
+                        tts_engine=tts_model,
+                        voice_name=voice_name,
+                        client=client,
+                        on_pcm_chunk=_on_briefing_chunk,
+                        stop_event=stop_briefing_event,
+                        voice_accent=voice_accent,
+                        voice_speed=voice_speed
+                    )
+                    while self.audio and not self.audio.is_output_empty() and self.is_running:
+                        if self._kill_playback_flag:
+                            break
+                        await asyncio.sleep(0.04)
+                finally:
+                    self.is_speaking = False
 
                 self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
         except Exception as proactive_err:
@@ -1564,6 +1611,7 @@ class AetherEngine:
                             self.audio.write_output_chunk(chunk)
 
                     async def _run_playback():
+                        self.is_speaking = True
                         try:
                             await self._stream_synthesize_speech(
                                 text=assistant_text,
@@ -1584,6 +1632,8 @@ class AetherEngine:
                             pass
                         except Exception as p_err:
                             logger.error(f"[TTS SYNTHESIS ERROR] {p_err}")
+                        finally:
+                            self.is_speaking = False
 
                     playback_task = asyncio.create_task(_run_playback())
 
@@ -2484,6 +2534,11 @@ class AetherEngine:
                 self.startup_runner.start()
             except Exception as e:
                 logger.warning(f"[START] Startup runner start warning: {e}")
+        if hasattr(self, "reflexion_engine") and self.reflexion_engine:
+            try:
+                self.reflexion_engine.start()
+            except Exception as e:
+                logger.warning(f"[START] Reflexion engine start warning: {e}")
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
@@ -2512,13 +2567,19 @@ class AetherEngine:
             except Exception as e:
                 logger.warning(f"[STOP] Audio stop warning: {e}")
 
-        if self._optimizer_task and not self._optimizer_task.done():
-            self._optimizer_task.cancel()
-        if self.optimizer:
+        if hasattr(self, "reflexion_engine") and self.reflexion_engine:
+            try:
+                self.reflexion_engine.stop()
+            except Exception as e:
+                logger.warning(f"[STOP] Reflexion engine stop warning: {e}")
+        elif self.optimizer:
             try:
                 self.optimizer.stop()
             except Exception as e:
                 logger.warning(f"[STOP] Optimizer stop warning: {e}")
+
+        if self._optimizer_task and not self._optimizer_task.done():
+            self._optimizer_task.cancel()
 
         if self._main_task and not self._main_task.done():
             self._main_task.cancel()
@@ -2540,5 +2601,10 @@ class AetherEngine:
 
     def shutdown(self):
         """Standard shutdown lifecycle method; stops engine and background jobs."""
+        if hasattr(self, "reflexion_engine") and self.reflexion_engine:
+            try:
+                self.reflexion_engine.stop()
+            except Exception as e:
+                logger.warning(f"[SHUTDOWN] Reflexion engine stop warning: {e}")
         self.stop()
 

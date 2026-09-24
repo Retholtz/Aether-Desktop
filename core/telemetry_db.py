@@ -39,8 +39,10 @@ class TelemetryDB:
             try:
                 self._conn.execute("PRAGMA journal_mode=WAL;")
                 self._conn.execute("PRAGMA synchronous=NORMAL;")
+                self._conn.execute("PRAGMA busy_timeout=5000;")
             except Exception as e:
                 logger.warning(f"[TELEMETRY DB] Could not set WAL mode: {e}")
+                logger.warning(f"[TELEMETRY DB] Could not set WAL/busy_timeout mode: {e}")
         return self._conn
 
     def _init_db(self):

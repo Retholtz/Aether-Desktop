@@ -1,24 +1,24 @@
 """
-Aether Desktop - Background Optimization Worker (Reflexion Engine)
-Asynchronously monitors data/telemetry.db for queued_for_optimization scripts,
-refines sub-optimal code via Gemini during idle periods, validates safety with
-the AST Gatekeeper, and persists production-grade snippets.
+Aether Desktop - Tier 2 Background Worker (Reflexion Engine)
+Asynchronously processes background cognitive synthesis tasks during engine idle windows:
+1. Script Optimization & Refactoring (Task A)
+2. Asynchronous Fact & Manifest Extraction from Session Transcripts (Task B)
+3. Memory Reconciliation & Conflict Pruning (Task C)
 """
 
-import asyncio
+import os
 import re
+import json
 import time
-from typing import Callable, Dict, Optional, Any
+import threading
+from typing import Dict, Any, List, Optional, Callable
 
 from google import genai
 from google.genai import types
 
 from core.logger import get_logger
-from core.telemetry_db import TelemetryDB
-from security.ast_gatekeeper import validate_python_script
-from tools.skill_library import SkillLibrary
 
-logger = get_logger("Optimizer")
+logger = get_logger("Reflexion")
 
 OPTIMIZATION_PROMPT_TEMPLATE = """You are an expert systems and automation optimizer. 
 A desktop automation script succeeded, but with performance or stability issues:
@@ -48,61 +48,152 @@ def extract_python_code(raw_text: str) -> str:
     return text
 
 
-class ScriptOptimizer:
+class ReflexionEngine:
     """
-    Asynchronous background worker that refines queued scripts during engine idle periods.
+    Tier 2 Asynchronous Engine.
+    Executes deep reasoning models (gemini-3.8-pro with thinking budget) strictly
+    during idle periods when user interaction, audio streaming, and tools are quiet.
     """
 
-    def __init__(
-        self,
-        telemetry_db: Optional[TelemetryDB] = None,
-        client_getter: Optional[Callable[[], Optional[genai.Client]]] = None,
-        model_id: str = "gemini-3.8-flash",
-        is_idle_callback: Optional[Callable[[], bool]] = None,
-        on_optimized: Optional[Callable[[dict], None]] = None,
-        skill_library: Optional[Any] = None,
-        check_interval: float = 5.0
-    ):
-        self.db = telemetry_db or TelemetryDB()
-        self.client_getter = client_getter
-        self.model_id = model_id
-        self.is_idle_callback = is_idle_callback
-        self.on_optimized = on_optimized
-        self.skill_library = skill_library
-        self.check_interval = check_interval
-        self._running = False
-        self._task: Optional[asyncio.Task] = None
+    def __init__(self, engine=None, **kwargs):
+        self.engine = engine
+        self.config = getattr(engine, "config", {}) if engine else {}
+        if not isinstance(self.config, dict):
+            self.config = {}
 
-    def set_client_getter(self, getter: Callable[[], Optional[genai.Client]]):
-        self.client_getter = getter
+        self.heavy_model = self.config.get("tier2_heavy_model", "gemini-3.8-pro")
+        self.heavy_model = self.config.get("tier2_heavy_model", "gemini-3.1-pro-preview")
+        self.thinking_budget = self.config.get("tier2_thinking_budget", 2048)
 
-    def set_idle_callback(self, callback: Callable[[], bool]):
-        self.is_idle_callback = callback
-
-    def is_idle(self) -> bool:
-        if self.is_idle_callback:
+        # Gemini Client Resolution: env var -> engine client -> decrypted config
+        self.client: Optional[genai.Client] = None
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if api_key:
             try:
-                return bool(self.is_idle_callback())
-            except Exception as e:
-                logger.warning(f"[OPTIMIZER] Error evaluating idle callback: {e}")
-                return False
-        return True
+                self.client = genai.Client(api_key=api_key)
+            except Exception:
+                self.client = None
+        elif engine and hasattr(engine, "genai_client") and engine.genai_client:
+            self.client = engine.genai_client
+        else:
+            try:
+                from core.manifest_indexer import resolve_gemini_client
+                self.client = resolve_gemini_client()
+            except Exception:
+                self.client = None
 
-    async def optimize_run(self, run: Dict[str, Any], client: Optional[genai.Client] = None) -> bool:
+        self._running = False
+        self._worker_thread: Optional[threading.Thread] = None
+        self._last_memory_reconciliation = 0.0
+
+        # Optional callbacks for legacy/extensibility
+        self.on_optimized = kwargs.get("on_optimized")
+
+    def _get_genai_client(self) -> Optional[genai.Client]:
+        """Dynamically retrieves or resolves the Google GenAI client if not initialized."""
+        if self.client is not None:
+            return self.client
+        if self.engine and hasattr(self.engine, "genai_client") and self.engine.genai_client is not None:
+            self.client = self.engine.genai_client
+            return self.client
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if api_key:
+            try:
+                self.client = genai.Client(api_key=api_key)
+                return self.client
+            except Exception:
+                pass
+        from core.manifest_indexer import resolve_gemini_client
+        self.client = resolve_gemini_client()
+        return self.client
+
+    def start(self):
+        """Starts the background worker thread for Tier 2 reflexion tasks."""
+        if self._running:
+            return
+        self._running = True
+        self._worker_thread = threading.Thread(
+            target=self._reflexion_loop,
+            daemon=True,
+            name="Aether-ReflexionWorker"
+        )
+        self._worker_thread.start()
+        print(f"[INFO] [REFLEXION] Tier 2 Engine started using {self.heavy_model}.")
+        logger.info(f"[REFLEXION] Tier 2 Engine started using {self.heavy_model}.")
+
+    def stop(self):
+        """Signals the background worker thread to terminate."""
+        self._running = False
+
+    def _is_engine_idle(self) -> bool:
         """
-        Executes a single optimization pass for a queued script run.
-        Returns True if optimization succeeded and was persisted.
+        Ensures Tier 2 never competes for network or CPU during active interaction.
+        Requires:
+        1. Microphone/VAD is idle.
+        2. No active assistant TTS audio is playing.
+        3. No active tool invocation is executing.
+        4. User has been inactive for at least reflexion_idle_delay_seconds.
         """
+        if not self.engine:
+            return True
+
+        if not hasattr(self.engine, "last_user_turn_timestamp"):
+            return True
+
+        idle_delay = self.config.get("reflexion_idle_delay_seconds", 15)
+        time_since_turn = time.time() - getattr(self.engine, "last_user_turn_timestamp", 0.0)
+        is_audio_active = getattr(self.engine, "is_audio_streaming", False) or getattr(self.engine, "is_speaking", False)
+        is_tool_active = getattr(self.engine, "is_tool_running", False)
+
+        return (time_since_turn >= idle_delay) and not is_audio_active and not is_tool_active
+
+    def _reflexion_loop(self):
+        """Continuous background polling loop evaluating tasks during idle periods."""
+        poll_interval = self.config.get("reflexion_poll_interval_seconds", 30)
+        while self._running:
+            try:
+                if self._is_engine_idle():
+                    # Task A: Refactor sub-optimal scripts
+                    self._process_script_optimization_queue()
+
+                    # Task B: Process queued chat transcripts for facts & manifests
+                    self._process_unindexed_sessions()
+
+                    # Task C: Periodic memory reconciliation (runs at most once every 6 hours)
+                    if time.time() - self._last_memory_reconciliation > 21600:
+                        self._reconcile_and_prune_memory()
+                        self._last_memory_reconciliation = time.time()
+
+            except Exception as e:
+                print(f"[ERROR] [REFLEXION] Loop exception: {e}")
+                logger.error(f"[REFLEXION] Loop exception: {e}")
+
+            time.sleep(poll_interval)
+
+    def _process_script_optimization_queue(self):
+        """Task A: Refactor sub-optimal scripts from data/telemetry.db."""
+        db = getattr(self.engine, "telemetry_db", None)
+        if not db:
+            from core.telemetry_db import TelemetryDB
+            db = TelemetryDB()
+
+        queued = db.get_queued_runs(limit=1)
+        if not queued:
+            return
+
+        if not self._is_engine_idle():
+            return
+
+        run = queued[0]
         run_id = run.get("run_id")
         intent = run.get("intent_description") or "Unspecified intent"
         orig_code = run.get("original_code") or ""
         exec_ms = run.get("execution_time_ms", 0.0)
         traceback_info = run.get("traceback") or "None"
 
-        active_client = client or (self.client_getter() if self.client_getter else None)
+        active_client = self._get_genai_client()
         if not active_client:
-            logger.warning("[OPTIMIZER] No Gemini client available for optimization. Skipping run.")
-            return False
+            return
 
         prompt = OPTIMIZATION_PROMPT_TEMPLATE.format(
             intent_description=intent,
@@ -111,57 +202,58 @@ class ScriptOptimizer:
             original_code=orig_code
         )
 
-        logger.info(f"[OPTIMIZER] Refactoring queued script '{run_id}' (Intent: '{intent}', Prior Time: {exec_ms:.1f}ms)...")
-        t0 = time.perf_counter()
-
         try:
-            response = await asyncio.to_thread(
-                active_client.models.generate_content,
-                model=self.model_id,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.2
-                )
+            config = types.GenerateContentConfig(
+                temperature=0.2,
+                thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
             )
-            opt_duration = (time.perf_counter() - t0) * 1000
+            response = active_client.models.generate_content(
+                model=self.heavy_model,
+                contents=prompt,
+                config=config
+            )
+            if not self._is_engine_idle():
+                logger.info(f"[REFLEXION] Engine became active during script optimization for '{run_id}'; yielding without committing.")
+                return
 
             raw_resp = getattr(response, "text", "") or ""
             clean_code = extract_python_code(raw_resp)
 
             if not clean_code:
-                logger.warning(f"[OPTIMIZER] Empty code returned for '{run_id}'")
-                return False
+                return
 
-            # Strict security gatekeeping on optimized code
+            from security.ast_gatekeeper import validate_python_script
             is_safe, error_msg = validate_python_script(clean_code)
             if not is_safe:
-                logger.warning(f"[OPTIMIZER] Generated code for '{run_id}' failed AST safety validation: {error_msg}")
-                return False
+                logger.warning(f"[REFLEXION] Generated code for '{run_id}' failed AST safety validation: {error_msg}")
+                return
 
-            # Auto-Promotion from Optimizer to Permanent Skill Library
             promoted_name = None
-            if self.skill_library:
+            skill_library = getattr(self.engine, "skill_library", None)
+            if not skill_library and hasattr(self.engine, "dispatcher") and self.engine.dispatcher:
+                skill_library = getattr(self.engine.dispatcher, "skill_library", None)
+
+            if skill_library:
                 try:
-                    existing_skill = self.skill_library.find_matching_skill_name(intent)
+                    existing_skill = skill_library.find_matching_skill_name(intent)
                     if existing_skill:
-                        up_res = self.skill_library.update_skill_code(existing_skill, clean_code)
+                        up_res = skill_library.update_skill_code(existing_skill, clean_code)
                         if up_res.get("status") == "success":
                             promoted_name = existing_skill
-                            logger.info(f"[PROMOTION] Updated existing skill '{existing_skill}' with optimized code.")
+                            logger.info(f"[PROMOTION] Updated skill '{existing_skill}' with optimized code.")
                     else:
-                        # Novel, generalizable intent: synthesize a valid identifier name
                         raw_tokens = re.findall(r"[a-zA-Z0-9]+", intent.lower())
                         norm_name = "_".join(raw_tokens[:5]) if raw_tokens else f"auto_skill_{run_id[-6:]}"
-                        save_res = self.skill_library.save_skill(norm_name, intent, clean_code)
+                        save_res = skill_library.save_skill(norm_name, intent, clean_code)
                         if save_res.get("status") == "success":
                             promoted_name = norm_name
-                            logger.info(f"[PROMOTION] Auto-promoted novel skill '{norm_name}' to permanent library.")
+                            logger.info(f"[PROMOTION] Auto-promoted novel skill '{norm_name}'.")
                 except Exception as promo_err:
                     logger.warning(f"[PROMOTION ERROR] Could not auto-promote '{run_id}': {promo_err}")
 
             final_status = "promoted_to_library" if promoted_name else "optimized"
-            self.db.update_optimized_code(run_id, clean_code, status=final_status)
-            logger.info(f"[OPTIMIZER SUCCESS] Script '{run_id}' refined in {opt_duration:.1f}ms and status='{final_status}'.")
+            db.update_optimized_code(run_id, clean_code, status=final_status)
+            logger.info(f"[REFLEXION SUCCESS] Script '{run_id}' refined with status='{final_status}'.")
 
             if self.on_optimized:
                 try:
@@ -169,65 +261,179 @@ class ScriptOptimizer:
                         "run_id": run_id,
                         "intent_description": intent,
                         "optimized_code": clean_code,
-                        "duration_ms": opt_duration,
                         "status": final_status,
                         "promoted_skill": promoted_name
                     })
                 except Exception as cb_err:
-                    logger.warning(f"[OPTIMIZER] Error in on_optimized callback: {cb_err}")
+                    logger.warning(f"[REFLEXION] Error in on_optimized callback: {cb_err}")
 
-            return True
+            if self.engine and hasattr(self.engine, "notify"):
+                self.engine.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Reflexion Self-Optimization",
+                    "content": f"✨ [OPTIMIZATION] Self-refined script for '{intent}'."
+                })
 
         except Exception as e:
-            logger.error(f"[OPTIMIZER ERROR] Optimization failed for '{run_id}': {e}")
-            return False
+            print(f"[ERROR] [REFLEXION] Script optimization failed for '{run_id}': {e}")
+            logger.error(f"[REFLEXION] Script optimization failed for '{run_id}': {e}")
 
-    async def run_loop(self):
-        """Main background loop polling for queued optimization jobs during idle periods."""
-        self._running = True
-        logger.info("[OPTIMIZER] Background Reflexion worker started.")
+    def _process_unindexed_sessions(self):
+        """Scans data/chats for sessions requiring manifest extraction or memory synthesis."""
+        from core.manifest_indexer import get_unprocessed_sessions, index_manifest_card
+        from core.user_memory import add_fact_batch
 
-        while self._running:
+        unprocessed = get_unprocessed_sessions(limit=2)
+        for filepath in unprocessed:
+            if not self._is_engine_idle():
+                break  # Yield immediately if the user speaks
+
             try:
-                await asyncio.sleep(self.check_interval)
+                with open(filepath, "r", encoding="utf-8") as f:
+                    session_data = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] [REFLEXION] Failed reading session {filepath}: {e}")
+                logger.error(f"[REFLEXION] Failed reading session {filepath}: {e}")
+                continue
 
-                if not self._running:
+            turns = session_data.get("turns", [])
+            if len(turns) < 2:
+                # Mark minimal session as indexed so it is not repeatedly re-scanned
+                minimal_card = {
+                    "session_id": session_data.get("session_id", os.path.splitext(os.path.basename(filepath))[0]),
+                    "date": time.strftime("%Y-%m-%d", time.localtime(session_data.get("start_time", time.time()))),
+                    "timestamp": session_data.get("start_time", time.time()),
+                    "topics_discussed": [],
+                    "actions_executed": [],
+                    "unresolved_questions": [],
+                    "key_entities": []
+                }
+                index_manifest_card(minimal_card, filepath)
+                continue
+
+            turns_text = "\n".join([f"{t.get('role', 'USER').upper()}: {t.get('text') or t.get('content', '')}" for t in turns])
+
+            # Tier 2 Reasoning Prompt
+            prompt = f"""
+Analyze the following conversation session. Extract two things:
+1. "manifest": High-level indexing card.
+2. "facts": Concrete new facts learned about the user, their workflows, system preferences, relationships, or ongoing projects. Do not include transient requests (e.g., "what's the weather"), only durable facts.
+
+Strict JSON format:
+{{
+  "manifest": {{
+    "topics_discussed": ["string"],
+    "actions_executed": ["string"],
+    "unresolved_questions": ["string"],
+    "key_entities": ["string"]
+  }},
+  "facts": [
+    {{"category": "preference|project|system|relationship", "fact": "string"}}
+  ]
+}}
+
+Conversation:
+{turns_text[-8000:]}
+"""
+            try:
+                active_client = self._get_genai_client()
+                if not active_client:
+                    continue
+                config = types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
+                )
+                response = active_client.models.generate_content(
+                    model=self.heavy_model,
+                    contents=prompt,
+                    config=config
+                )
+                if not self._is_engine_idle():
+                    logger.info(f"[REFLEXION] Engine became active during processing of {session_data.get('session_id')}; yielding immediately.")
                     break
 
-                # 1. Idle Trigger Condition: Must be completely idle
-                if not self.is_idle():
-                    continue
+                result = json.loads(response.text)
 
-                # 2. Check for queued optimization jobs
-                queued = self.db.get_queued_runs(limit=1)
-                if not queued:
-                    continue
+                # Store Manifest Card
+                manifest_card = result.get("manifest", {})
+                manifest_card["session_id"] = session_data.get("session_id", os.path.splitext(os.path.basename(filepath))[0])
+                manifest_card["date"] = time.strftime("%Y-%m-%d", time.localtime(session_data.get("start_time", time.time())))
+                manifest_card["timestamp"] = session_data.get("start_time", time.time())
+                index_manifest_card(manifest_card, filepath)
 
-                job = queued[0]
-                # Re-verify idle state immediately before calling LLM
-                if not self.is_idle():
-                    continue
+                # Store Extracted Facts
+                new_facts = result.get("facts", [])
+                if new_facts:
+                    memory_db = getattr(getattr(self.engine, "user_memory", None), "db_path", None)
+                    add_fact_batch(new_facts, source_session=manifest_card["session_id"], db_path=memory_db)
+                    print(f"[INFO] [REFLEXION] Synthesized {len(new_facts)} facts from {manifest_card['session_id']}")
+                    logger.info(f"[REFLEXION] Synthesized {len(new_facts)} facts from {manifest_card['session_id']}")
 
-                await self.optimize_run(job)
+            except Exception as err:
+                print(f"[ERROR] [REFLEXION] Failed processing session {filepath}: {err}")
+                logger.error(f"[REFLEXION] Failed processing session {filepath}: {err}")
 
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"[OPTIMIZER LOOP ERROR] {e}")
-                await asyncio.sleep(self.check_interval)
+    def _reconcile_and_prune_memory(self):
+        """Uses the heavy model to deduplicate, resolve contradictions, and clean memory."""
+        from core.user_memory import get_all_facts, replace_facts
 
-        logger.info("[OPTIMIZER] Background Reflexion worker stopped.")
+        snapshot_ts = time.time()
+        memory_db = getattr(getattr(self.engine, "user_memory", None), "db_path", None)
+        existing_facts = get_all_facts(db_path=memory_db)
+        if len(existing_facts) < 5:
+            return
 
-    def start(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> asyncio.Task:
-        if self._task and not self._task.done():
-            return self._task
-        self._running = True
-        active_loop = loop or asyncio.get_event_loop()
-        self._task = active_loop.create_task(self.run_loop())
-        return self._task
+        print("[INFO] [REFLEXION] Running long-term memory reconciliation...")
+        logger.info("[REFLEXION] Running long-term memory reconciliation...")
+        facts_text = "\n".join([f"- [{f['category']}] {f['fact']}" for f in existing_facts])
 
-    def stop(self):
-        self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
+        prompt = f"""
+You are the long-term memory synthesizer for an AI assistant.
+Review the following list of stored facts about the user.
+1. Remove duplicates or redundant restatements.
+2. Resolve contradictions (favor newer or more specific facts).
+3. Discard obsolete or trivial facts.
+4. Keep the list concise, accurate, and categorized.
 
+Strict JSON format:
+{{
+  "reconciled_facts": [
+    {{"category": "preference|project|system|relationship|general", "fact": "concise fact statement"}}
+  ]
+}}
+
+Existing Facts:
+{facts_text}
+"""
+        try:
+            active_client = self._get_genai_client()
+            if not active_client:
+                return
+            config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
+            )
+            response = active_client.models.generate_content(
+                model=self.heavy_model,
+                contents=prompt,
+                config=config
+            )
+            if not self._is_engine_idle():
+                logger.info("[REFLEXION] Engine became active during memory reconciliation; deferring write.")
+                return
+
+            result = json.loads(response.text)
+            cleaned_facts = result.get("reconciled_facts", [])
+
+            if cleaned_facts:
+                replace_facts(cleaned_facts, db_path=memory_db)
+                replace_facts(cleaned_facts, snapshot_ts=snapshot_ts, db_path=memory_db)
+                print(f"[INFO] [REFLEXION] Memory reconciled: {len(existing_facts)} facts pruned down to {len(cleaned_facts)}.")
+                logger.info(f"[REFLEXION] Memory reconciled: {len(existing_facts)} facts pruned down to {len(cleaned_facts)}.")
+        except Exception as e:
+            print(f"[ERROR] [REFLEXION] Reconciliation failed: {e}")
+            logger.error(f"[REFLEXION] Reconciliation failed: {e}")
+
+
+# Backward compatibility alias
+ScriptOptimizer = ReflexionEngine

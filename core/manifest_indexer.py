@@ -24,6 +24,16 @@ def get_default_db_path() -> str:
     return os.path.join(base_dir, DEFAULT_DB_REL_PATH)
 
 
+def configure_manifest_connection(conn: sqlite3.Connection):
+    """Configures Write-Ahead Logging, synchronous mode, and busy timeout for SQLite concurrency."""
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+    except Exception as e:
+        logger.debug(f"[MANIFEST] PRAGMA configuration note: {e}")
+
+
 def init_manifest_db(db_path: Optional[str] = None):
     """Initializes SQLite database and creates session_manifests table with indexes."""
     target_path = db_path or get_default_db_path()
@@ -37,6 +47,7 @@ def init_manifest_db(db_path: Optional[str] = None):
                 conn.execute("PRAGMA synchronous=NORMAL;")
             except Exception:
                 pass
+            configure_manifest_connection(conn)
             with conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS session_manifests (
@@ -72,6 +83,7 @@ def index_manifest_card(card: Dict[str, Any], transcript_path: str, db_path: Opt
     with _db_lock:
         conn = sqlite3.connect(target_path, timeout=10.0)
         try:
+            configure_manifest_connection(conn)
             with conn:
                 conn.execute("""
                     INSERT OR REPLACE INTO session_manifests 
@@ -111,6 +123,7 @@ def search_manifest_index(query: str, limit: int = 5, db_path: Optional[str] = N
     with _db_lock:
         conn = sqlite3.connect(target_path, timeout=10.0)
         try:
+            configure_manifest_connection(conn)
             conn.row_factory = sqlite3.Row
             cur = conn.execute("""
                 SELECT session_id, date, topics, actions, unresolved, entities, transcript_path, created_at
@@ -337,6 +350,45 @@ def get_default_chats_dir() -> str:
     return os.path.join(base_dir, "data", "chats")
 
 
+def get_unprocessed_sessions(
+    limit: int = 2,
+    chats_dir: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> List[str]:
+    """
+    Scans data/chats for session transcripts that have not yet been indexed
+    into session_manifests in chat_index.db.
+    Returns a list of resolved filepaths up to the specified limit.
+    """
+    target_chats = chats_dir or get_default_chats_dir()
+    target_db = db_path or get_default_db_path()
+    init_manifest_db(target_db)
+
+    indexed_ids = set()
+    with _db_lock:
+        conn = sqlite3.connect(target_db, timeout=10.0)
+        try:
+            configure_manifest_connection(conn)
+            cur = conn.execute("SELECT session_id FROM session_manifests;")
+            indexed_ids = {row[0] for row in cur.fetchall()}
+        finally:
+            conn.close()
+
+    unprocessed: List[str] = []
+    if os.path.exists(target_chats):
+        files = [f for f in os.listdir(target_chats) if f.endswith(".json")]
+        # Sort by mtime ascending so oldest unindexed sessions are processed first
+        files.sort(key=lambda fn: os.path.getmtime(os.path.join(target_chats, fn)))
+        for fname in files:
+            sid = os.path.splitext(fname)[0]
+            if sid not in indexed_ids:
+                unprocessed.append(os.path.join(target_chats, fname))
+                if len(unprocessed) >= limit:
+                    break
+
+    return unprocessed
+
+
 def list_stored_sessions(
     chats_dir: Optional[str] = None,
     db_path: Optional[str] = None
@@ -354,6 +406,7 @@ def list_stored_sessions(
     with _db_lock:
         conn = sqlite3.connect(target_db, timeout=10.0)
         try:
+            configure_manifest_connection(conn)
             conn.row_factory = sqlite3.Row
             rows = conn.execute("""
                 SELECT session_id, date, topics, actions, unresolved, entities, transcript_path, created_at
@@ -483,6 +536,7 @@ def get_session_details(
     with _db_lock:
         conn = sqlite3.connect(target_db, timeout=10.0)
         try:
+            configure_manifest_connection(conn)
             conn.row_factory = sqlite3.Row
             row = conn.execute("""
                 SELECT session_id, date, topics, actions, unresolved, entities, created_at
@@ -566,6 +620,7 @@ def delete_session_and_transcript(
     with _db_lock:
         conn = sqlite3.connect(target_db, timeout=10.0)
         try:
+            configure_manifest_connection(conn)
             with conn:
                 cur = conn.execute("DELETE FROM session_manifests WHERE session_id = ?;", (clean_sid,))
                 db_deleted = cur.rowcount > 0
@@ -614,6 +669,7 @@ def delete_all_stored_sessions(
     with _db_lock:
         conn = sqlite3.connect(target_db, timeout=10.0)
         try:
+            configure_manifest_connection(conn)
             with conn:
                 cur = conn.execute("DELETE FROM session_manifests;")
                 deleted_rows = cur.rowcount

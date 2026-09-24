@@ -243,12 +243,8 @@ class SessionLifecycleManager:
             logger.error(f"[SESSION ERROR] Failed to save session transcript to {filepath}: {e}")
             return None
 
-        # Dispatch asynchronous background manifest extraction
-        try:
-            from core.manifest_indexer import queue_manifest_extraction
-            queue_manifest_extraction(filepath)
-        except Exception as q_err:
-            logger.warning(f"[MANIFEST] Could not queue extraction for {filepath}: {q_err}")
+        # Session transcript is persisted; the idle-aware ReflexionEngine processes manifest extraction
+        logger.debug(f"[MANIFEST] Session {filepath} queued for idle Reflexion extraction.")
 
         old_id = self.session_id
         new_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
