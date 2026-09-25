@@ -172,6 +172,7 @@ class StartupJobRunner:
         """Executes a monitor script in an isolated subprocess and handles notifications."""
         raw_path = monitor.get("script_path", "")
         task_id = monitor.get("task_id", "")
+        desc = monitor.get("description") or task_id
         resolved_path = self._resolve_script_path(raw_path)
 
         if not os.path.exists(resolved_path):
@@ -194,14 +195,15 @@ class StartupJobRunner:
 
             if result.returncode == 0:
                 status = "success"
-                # If script produced output to notify the user, route through engine proactive notification
-                if result.stdout and self.engine and hasattr(self.engine, "post_proactive_event"):
+                # Check for proactive notifications in stdout
+                if result.stdout:
                     lines = result.stdout.strip().splitlines()
                     for line in lines:
                         clean_line = line.strip()
                         if clean_line.startswith("[NOTIFY]"):
                             msg = clean_line.replace("[NOTIFY]", "", 1).strip()
-                            self.engine.post_proactive_event(f"[{task_id}] {msg}")
+                            if self.engine and hasattr(self.engine, "post_proactive_event"):
+                                self.engine.post_proactive_event(alert_text=msg, source=desc)
             else:
                 err_snip = (result.stderr or result.stdout or "")[:100].strip()
                 status = f"error: {err_snip}" if err_snip else f"error: returncode {result.returncode}"

@@ -28,6 +28,7 @@ from core.hotkey_manager import HotkeyManager
 from core.startup_runner import StartupJobRunner
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
+from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
 
@@ -200,6 +201,7 @@ class AetherEngine:
         )
 
         # Background Startup Automation & Monitor Scheduler
+        self.notification_dispatcher = NotificationDispatcher(app_name="Aether Desktop")
         self.startup_runner = StartupJobRunner(engine=self)
 
         try:
@@ -443,20 +445,38 @@ class AetherEngine:
             except Exception as e:
                 logger.error(f"[ENGINE EVENT ERROR] {e}")
 
-    def post_proactive_event(self, message: str):
+    def post_proactive_event(self, alert_text: str, source: str = "Background Job"):
         """
-        Thread-safe entry point to post a proactive alert or background task notification.
-        Routes the event to chat events and logs.
+        Public entrypoint for background monitors and Reflexion to alert the user.
+        Gated by active conversation state.
         """
+        # If the user is currently speaking or TTS is actively playing, defer chime to avoid audio overlap
+        suppress_chime = getattr(self, "is_speaking", False) or getattr(self, "is_audio_streaming", False)
+
+        title = f"Aether Alert • {source}"
+        print(f"[PROACTIVE] Dispatching notification from {source}: {alert_text}")
+
+        if hasattr(self, "notification_dispatcher") and self.notification_dispatcher:
+            self.notification_dispatcher.notify(
+                title=title,
+                message=alert_text,
+                play_chime=(not suppress_chime)
+            )
+
         try:
             agent_name = "Aether"
             if self.config_getter:
                 agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether")
-            logger.info(f"[PROACTIVE EVENT] {message}")
+            logger.info(f"[PROACTIVE EVENT] [{source}] {alert_text}")
+            content_text = (
+                f"🔔 [{source}] {alert_text}"
+                if source and source != "Background Job" and not str(alert_text).startswith(f"[{source}]")
+                else f"🔔 {alert_text}"
+            )
             self.notify("chat_event", {
                 "type": "assistant",
                 "agent_name": agent_name,
-                "content": f"🔔 {message}"
+                "content": content_text
             })
         except Exception as e:
             logger.error(f"[PROACTIVE EVENT ERROR] {e}")

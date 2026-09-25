@@ -501,4 +501,27 @@ def list_active_monitors(workspace_root: Optional[str] = None) -> list:
     return list_background_monitors(workspace_root=workspace_root)
 
 
+def send_desktop_notification(title: str, message: str, play_chime: Optional[bool] = None) -> str:
+    """
+    Displays an ambient desktop notification/toast to the user with a chime.
+    Use this when a long-running task completes or an alert needs user attention.
+    """
+    from ui.notifications import NotificationDispatcher
+
+    if play_chime is None:
+        play_chime = True
+        try:
+            import main
+            eng = getattr(main, "active_engine", None)
+            if eng and (getattr(eng, "is_speaking", False) or getattr(eng, "is_audio_streaming", False)):
+                play_chime = False
+        except Exception:
+            pass
+
+    dispatcher = NotificationDispatcher()
+    dispatcher.notify(title=title, message=message, play_chime=bool(play_chime))
+    return f"Desktop notification sent: '{title} - {message}'"
+
+
+
 

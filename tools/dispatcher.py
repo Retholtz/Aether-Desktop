@@ -31,6 +31,7 @@ from tools.os_controls import (
     list_background_monitors,
     register_monitoring_task,
     list_active_monitors,
+    send_desktop_notification,
 )
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
@@ -721,6 +722,29 @@ LIST_ACTIVE_MONITORS_DECLARATION = {
     }
 }
 
+SEND_DESKTOP_NOTIFICATION_DECLARATION = {
+    "name": "send_desktop_notification",
+    "description": (
+        "Displays an ambient desktop notification/toast to the user with a subtle chime. "
+        "Use this when a long-running task completes, when asked to send a notification test, "
+        "or when an alert needs user attention."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "title": {
+                "type": "STRING",
+                "description": "The title header of the desktop notification (e.g. 'Render Complete', 'Aether Alert')."
+            },
+            "message": {
+                "type": "STRING",
+                "description": "The body text message of the desktop notification."
+            }
+        },
+        "required": ["title", "message"]
+    }
+}
+
 
 def get_all_tool_declarations() -> List[dict]:
     """Returns the full list of tool declarations for Gemini Multimodal Live."""
@@ -756,6 +780,7 @@ def get_all_tool_declarations() -> List[dict]:
         REGISTER_MONITORING_TASK_DECLARATION,
         LIST_BACKGROUND_MONITORS_DECLARATION,
         LIST_ACTIVE_MONITORS_DECLARATION,
+        SEND_DESKTOP_NOTIFICATION_DECLARATION,
     ]
 
 
@@ -1389,6 +1414,30 @@ class ToolDispatcher:
                     "status": "success",
                     "count": len(monitors),
                     "monitors": monitors
+                }
+
+            elif fn_name == "send_desktop_notification":
+                title = str(args.get("title", "Aether Alert")).strip() or "Aether Alert"
+                message = str(args.get("message", "")).strip()
+                eng = getattr(self, "engine", None)
+                suppress_chime = bool(
+                    eng and (getattr(eng, "is_speaking", False) or getattr(eng, "is_audio_streaming", False))
+                )
+                res_msg = send_desktop_notification(
+                    title=title,
+                    message=message,
+                    play_chime=(not suppress_chime)
+                )
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Desktop Notification",
+                    "content": f"🔔 [NOTIFY] {res_msg}"
+                })
+                return {
+                    "status": "success",
+                    "title": title,
+                    "message": message,
+                    "result": res_msg
                 }
 
             else:

@@ -115,8 +115,11 @@ class TestStartupJobRunner(unittest.TestCase):
         executed = runner.run_task_now("test_job")
         self.assertTrue(executed)
 
-        # Verify engine.post_proactive_event was called with the notification
-        self.mock_engine.post_proactive_event.assert_called_once_with("[test_job] Found 2 new properties!")
+        # Verify engine.post_proactive_event was called with the notification and source description
+        self.mock_engine.post_proactive_event.assert_called_once_with(
+            alert_text="Found 2 new properties!",
+            source="Test notification job"
+        )
 
         # Verify registry updated with status and timestamp
         reg = runner.load_registry()
@@ -324,17 +327,74 @@ class TestEngineLifecycleIntegration(unittest.TestCase):
         self.assertIsInstance(engine.startup_runner, StartupJobRunner)
         self.assertEqual(engine.startup_runner.engine, engine)
 
-        # 2. post_proactive_event emits chat_event
-        engine.post_proactive_event("[real_estate_zillow_monitor] New listing: 4 bed, $575,000")
+        # 2. post_proactive_event emits chat_event and dispatches notification
+        engine.notification_dispatcher = MagicMock()
+        engine.is_speaking = False
+        engine.is_audio_streaming = False
+        engine.post_proactive_event(
+            alert_text="New listing: 4 bed, $575,000",
+            source="real_estate_zillow_monitor"
+        )
+        engine.notification_dispatcher.notify.assert_called_once_with(
+            title="Aether Alert • real_estate_zillow_monitor",
+            message="New listing: 4 bed, $575,000",
+            play_chime=True
+        )
         chat_events = [d for et, d in events if et == "chat_event"]
         self.assertTrue(len(chat_events) > 0)
         self.assertIn("🔔 [real_estate_zillow_monitor] New listing", chat_events[-1]["content"])
 
-        # 3. Shutdown method exists and cleans up
+        # 3. Voice Overlap Guard: suppress_chime when user is speaking or TTS is playing
+        engine.notification_dispatcher.reset_mock()
+        engine.is_speaking = True
+        engine.post_proactive_event(
+            alert_text="Background render finished",
+            source="Blender Monitor"
+        )
+        engine.notification_dispatcher.notify.assert_called_once_with(
+            title="Aether Alert • Blender Monitor",
+            message="Background render finished",
+            play_chime=False
+        )
+        engine.is_speaking = False
+
+        # 4. Shutdown method exists and cleans up
         self.assertTrue(hasattr(engine, "shutdown"))
         engine.shutdown()
         self.assertFalse(engine.is_running)
 
 
+class TestProactiveNotificationsSubsystem(unittest.TestCase):
+    def test_notification_dispatcher_cooldown_and_dispatch(self):
+        from ui.notifications import NotificationDispatcher
+        dispatcher = NotificationDispatcher(app_name="Aether Test")
+        dispatcher._show_windows_toast = MagicMock()
+
+        # First notification should dispatch
+        dispatched1 = dispatcher.notify("Test Title", "First message", play_chime=False)
+        self.assertTrue(dispatched1)
+
+        # Immediate second notification within 3.0s cooldown should be throttled
+        dispatched2 = dispatcher.notify("Test Title", "Second rapid message", play_chime=False)
+        self.assertFalse(dispatched2)
+
+    def test_send_desktop_notification_tool_and_dispatcher(self):
+        decls = get_all_tool_declarations()
+        tool_names = [d["name"] for d in decls]
+        self.assertIn("send_desktop_notification", tool_names)
+
+        events = []
+        dispatcher = ToolDispatcher(
+            on_event=lambda et, d: events.append((et, d))
+        )
+        res = asyncio.run(dispatcher.dispatch("send_desktop_notification", {
+            "title": "Render Complete",
+            "message": "The render is finished."
+        }))
+        self.assertEqual(res.get("status"), "success")
+        self.assertIn("Render Complete - The render is finished.", res.get("result", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
+
