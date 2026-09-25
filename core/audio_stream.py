@@ -13,11 +13,42 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 import sounddevice as sd
 
+from core.audio_output import InterruptibleAudioPlayer, apply_micro_fade_out
+
 logger = logging.getLogger("Aether.Audio")
 
 _pa_lock = threading.RLock()
 _active_pipelines: "weakref.WeakSet[AudioPipeline]" = weakref.WeakSet()
 _last_win_audio_fingerprint: Optional[tuple] = None
+
+
+class VoiceActivityDetector:
+    def __init__(self, base_energy_threshold: float = 0.015, speaker_ducking_factor: float = 2.4):
+        self.base_energy_threshold = base_energy_threshold
+        self.speaker_ducking_factor = speaker_ducking_factor
+        self.trailing_silence_ms = 1400
+
+    def is_user_speaking(self, audio_frame: np.ndarray, is_assistant_speaking: bool) -> bool:
+        """
+        Calculates RMS energy of incoming microphone frame.
+        Applies ducking factor when assistant is speaking to prevent speaker bleed
+        from tripping barge-in false positives.
+        """
+        if audio_frame is None or len(audio_frame) == 0:
+            return False
+
+        arr = np.asarray(audio_frame, dtype=np.float32)
+        if np.issubdtype(np.asarray(audio_frame).dtype, np.integer) or np.max(np.abs(arr)) > 1.0:
+            arr = arr / 32768.0
+
+        rms = np.sqrt(np.mean(np.square(arr)))
+
+        # Determine dynamic energy cutoff
+        active_threshold = self.base_energy_threshold
+        if is_assistant_speaking:
+            active_threshold *= self.speaker_ducking_factor
+
+        return bool(rms > active_threshold)
 
 
 class VADTurnDetector:
@@ -69,16 +100,21 @@ class AudioPipeline:
         mode: str = "always_on",
         software_gate: bool = False,
         on_speech_state: Optional[Callable[[str], None]] = None,
-        vad_trailing_silence_ms: int = 1400
+        vad_trailing_silence_ms: int = 1400,
+        on_vad_speech_detected: Optional[Callable[[], None]] = None,
     ):
         self.input_device = input_device
         self.output_device = output_device
         self.mode = mode  # "always_on" or "ptt"
         self.software_gate = software_gate  # if True, drops mic while Aether speaks
         self.on_speech_state = on_speech_state
+        self.on_vad_speech_detected = on_vad_speech_detected
         self.ptt_active = False
         self.vad_trailing_silence_ms = vad_trailing_silence_ms
         self.vad_turn_detector = VADTurnDetector(silence_timeout_ms=vad_trailing_silence_ms)
+        self.vad_detector = VoiceActivityDetector(base_energy_threshold=0.015, speaker_ducking_factor=2.4)
+        self.vad_detector.trailing_silence_ms = vad_trailing_silence_ms
+        self.vad = self.vad_detector
 
         self.target_input_rate = 16000
         self.target_output_rate = 24000
@@ -93,6 +129,8 @@ class AudioPipeline:
         self.input_queue = asyncio.Queue()
         self.utterance_queue = asyncio.Queue()  # Emits completed WAV byte utterances for STT
         self.output_buffer = bytearray()
+        self._fade_out_buffer: Optional[np.ndarray] = None
+        self._current_output_rms: float = 0.0
         self.buffer_lock = threading.Lock()
         
         self.loop = None
@@ -130,6 +168,8 @@ class AudioPipeline:
     def set_vad_trailing_silence(self, silence_ms: int):
         """Allows dynamic adjustment from GUI settings without restarting audio thread."""
         self.vad_trailing_silence_ms = silence_ms
+        if hasattr(self, "vad_detector") and self.vad_detector:
+            self.vad_detector.trailing_silence_ms = silence_ms
         if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
             self.vad_turn_detector.update_silence_threshold(silence_ms)
             logger.info(f"[AUDIO] VAD trailing silence threshold updated to {self.vad_turn_detector.silence_timeout_ms}ms")
@@ -242,12 +282,31 @@ class AudioPipeline:
                 self._finalize_utterance()
             return
 
-        # Adaptive noise floor tracking (exponential moving average over non-speech)
-        if not self._is_in_speech:
+        # Adaptive noise floor tracking (exponential moving average over non-speech when assistant is silent)
+        if not self._is_in_speech and not self.is_speaking:
             self._noise_floor = 0.95 * self._noise_floor + 0.05 * min(0.05, rms)
             # Near-field speaker dominance: adapt thresholds well above ambient room noise
             self._vad_onset_threshold = max(0.028, self._noise_floor * 2.2 + 0.008)
             self._vad_hangover_threshold = max(0.016, self._noise_floor * 1.35 + 0.004)
+
+        # Dynamic Self-Echo Gating & Adaptive Energy Ducking when TTS playback is active
+        effective_rms = rms
+        onset_threshold = self._vad_onset_threshold
+        hangover_threshold = self._vad_hangover_threshold
+        if self.is_speaking:
+            ducking_factor = getattr(self.vad_detector, "speaker_ducking_factor", 2.4)
+            onset_threshold = max(
+                onset_threshold * ducking_factor,
+                self.vad_detector.base_energy_threshold * ducking_factor
+            )
+            hangover_threshold = max(
+                hangover_threshold * 1.5,
+                self.vad_detector.base_energy_threshold * 1.5
+            )
+            # Subtract reference local speaker output energy to suppress acoustic bleed
+            effective_rms = max(0.0, rms - 0.35 * getattr(self, "_current_output_rms", 0.0))
+            if not self.vad_detector.is_user_speaking(resampled, is_assistant_speaking=True):
+                effective_rms = 0.0
 
         # Dual-threshold hysteresis VAD & Utterance Segmentation for Modular Pipeline
         # When in silence grace window, require onset threshold to resume speech (prevents ambient flutter from resetting timer)
@@ -257,11 +316,11 @@ class AudioPipeline:
             and self.vad_turn_detector.silence_start_time is not None
         )
         if is_silence_waiting:
-            is_speech_energy = (rms >= self._vad_onset_threshold)
+            is_speech_energy = (effective_rms >= onset_threshold)
         elif self._is_in_speech:
-            is_speech_energy = (rms >= self._vad_hangover_threshold)
+            is_speech_energy = (effective_rms >= hangover_threshold)
         else:
-            is_speech_energy = (rms >= self._vad_onset_threshold)
+            is_speech_energy = (effective_rms >= onset_threshold)
 
         vad_state = self.vad_turn_detector.process_frame(is_speech_energy)
 
@@ -279,6 +338,11 @@ class AudioPipeline:
                 self._is_in_speech = True
                 self._speech_frames = list(self._preroll_frames)
                 self._utterance_peak_rms = rms
+                if self.on_vad_speech_detected:
+                    try:
+                        self.on_vad_speech_detected()
+                    except Exception:
+                        pass
                 if self.on_speech_state:
                     try:
                         self.on_speech_state("speech_detected")
@@ -389,6 +453,7 @@ class AudioPipeline:
             needed_model_samples = frames
 
         needed_bytes = needed_model_samples * 2
+        fade_samples_24k = None
 
         with self.buffer_lock:
             buf_len = len(self.output_buffer)
@@ -398,16 +463,27 @@ class AudioPipeline:
                 del self.output_buffer[:take_bytes]
                 if len(self.output_buffer) == 0:
                     self.is_speaking = False
+            elif self._fade_out_buffer is not None:
+                raw_chunk = None
+                fade_samples_24k = self._fade_out_buffer
+                self._fade_out_buffer = None
+                self.is_speaking = False
             else:
                 raw_chunk = None
                 self.is_speaking = False
+                self._current_output_rms = 0.0
 
-        if raw_chunk:
-            samples_24k = np.frombuffer(raw_chunk, dtype=np.int16).astype(np.float32) / 32767.0
+        if raw_chunk or fade_samples_24k is not None:
+            if raw_chunk:
+                samples_24k = np.frombuffer(raw_chunk, dtype=np.int16).astype(np.float32) / 32767.0
+                self._current_output_rms = float(np.sqrt(np.mean(samples_24k**2)))
 
-            # Duck audio volume to 25% (-12dB) if user is actively speaking in earbud/barge-in mode
-            if self._is_in_speech and not self.software_gate:
-                samples_24k = samples_24k * 0.25
+                # Duck audio volume to 25% (-12dB) if user is actively speaking in earbud/barge-in mode
+                if self._is_in_speech and not self.software_gate:
+                    samples_24k = samples_24k * 0.25
+            else:
+                samples_24k = fade_samples_24k
+                self._current_output_rms = 0.0
 
             if self.hw_out_rate != self.target_output_rate:
                 target_frames = int(round(len(samples_24k) * self.hw_out_rate / self.target_output_rate))
@@ -433,10 +509,38 @@ class AudioPipeline:
         else:
             outdata.fill(0)
 
-    def clear_output_buffer(self):
+    def trigger_barge_in(self):
+        """
+        Flushes output playback buffer immediately with a 5-10ms soft fade-out curve
+        to eliminate acoustic pop/click artifacts without resetting active microphone VAD capture.
+        """
         with self.buffer_lock:
+            if len(self.output_buffer) >= 2:
+                fade_bytes = apply_micro_fade_out(
+                    bytes(self.output_buffer[:960]),
+                    sample_rate=self.target_output_rate,
+                    fade_ms=8.0
+                )
+                if fade_bytes:
+                    self._fade_out_buffer = np.frombuffer(fade_bytes, dtype=np.int16).astype(np.float32) / 32767.0
             self.output_buffer.clear()
             self.is_speaking = False
+            self._current_output_rms = 0.0
+        print("[INFO] [AUDIO_OUT] Barge-in triggered. Playback flushed.")
+
+    def clear_output_buffer(self):
+        with self.buffer_lock:
+            if len(self.output_buffer) >= 2:
+                fade_bytes = apply_micro_fade_out(
+                    bytes(self.output_buffer[:960]),
+                    sample_rate=self.target_output_rate,
+                    fade_ms=8.0
+                )
+                if fade_bytes:
+                    self._fade_out_buffer = np.frombuffer(fade_bytes, dtype=np.int16).astype(np.float32) / 32767.0
+            self.output_buffer.clear()
+            self.is_speaking = False
+            self._current_output_rms = 0.0
 
     def reset_vad(self):
         """Resets VAD tracking state to clean listening."""
@@ -461,6 +565,7 @@ class AudioPipeline:
 
     def write_output_chunk(self, data: bytes):
         with self.buffer_lock:
+            self._fade_out_buffer = None
             self.is_speaking = True
             self.output_buffer.extend(data)
 

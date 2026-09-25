@@ -328,6 +328,8 @@ class GuiBridge:
 
     def set_overlay_window(self, window):
         self._overlay_window = window
+        if self._engine:
+            self._engine.hud_window = window
 
     def set_hud_bridge(self, hud_bridge):
         self._hud_bridge = hud_bridge

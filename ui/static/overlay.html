@@ -1589,6 +1589,11 @@
       // =========================================================================
       // Event listener registered on window for backend GuiBridge calls
       // =========================================================================
+      window.onAssistantInterrupted = function() {
+        interruptNormalTurn();
+        interruptAgentTurn();
+      };
+
       window.aetherOverlay = {
         setMode: function(mode) {
           applyModeClasses(mode);

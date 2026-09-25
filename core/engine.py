@@ -16,7 +16,8 @@ import httpx
 from core.screen_stream import ScreenCapturePipeline, ensure_thread_desktop
 ensure_thread_desktop()
 
-from core.audio_stream import AudioPipeline, resolve_valid_audio_devices
+from core.audio_output import InterruptibleAudioPlayer
+from core.audio_stream import AudioPipeline, VoiceActivityDetector, resolve_valid_audio_devices
 from core.logger import get_logger
 from core.voice_verifier import VoiceProfileVerifier
 from core.optimizer import ReflexionEngine, ScriptOptimizer
@@ -137,8 +138,11 @@ class AetherEngine:
         self.config_path = config_path
         self.is_running = False
         self.audio: Optional[AudioPipeline] = None
+        self.audio_player = InterruptibleAudioPlayer()
+        self.hud_window = None
         self._ptt_active: bool = False
         self.session = None
+        self.live_session = None
         self._main_task = None
         self._text_queue = asyncio.Queue()
         self.current_turn_text = ""
@@ -243,11 +247,20 @@ class AetherEngine:
 
     @property
     def is_speaking(self) -> bool:
-        return bool(self._is_speaking or (self.audio and getattr(self.audio, "is_speaking", False)))
+        return bool(
+            self._is_speaking
+            or (self.audio and getattr(self.audio, "is_speaking", False))
+            or (hasattr(self, "audio_player") and self.audio_player and getattr(self.audio_player, "is_playing", False))
+        )
 
     @is_speaking.setter
     def is_speaking(self, val: bool):
         self._is_speaking = bool(val)
+        if not val:
+            if self.audio:
+                self.audio.is_speaking = False
+            if hasattr(self, "audio_player") and self.audio_player:
+                self.audio_player.is_playing = False
 
     @property
     def is_tool_running(self) -> bool:
@@ -486,13 +499,79 @@ class AetherEngine:
         self._kill_playback_flag = True
         if hasattr(self, "_playback_cancel_event") and self._playback_cancel_event:
             self._playback_cancel_event.set()
+        if hasattr(self, "audio_player") and self.audio_player:
+            self.audio_player.trigger_barge_in()
         if self.audio:
             self.audio.kill_output()
+        self.is_speaking = False
         self.notify("status", {"state": "listening", "message": "Playback killed."})
         self.notify("chat_event", {
             "type": "system",
             "content": "Playback halted by Voice Playback Kill Phrase."
         })
+
+    def on_vad_speech_detected(self):
+        """Fires on the first frame of human speech detected by microphone."""
+        now = time.time()
+        self.last_user_turn_timestamp = now
+        self.last_user_turn_time = time.perf_counter()
+
+        # Check if assistant is currently talking (Barge-In scenario)
+        if self.is_speaking:
+            print("[INFO] [ENGINE] Barge-in detected during assistant turn. Halting TTS and upstream session.")
+
+            # 1. Stop local audio player immediately
+            if hasattr(self, "audio_player") and self.audio_player:
+                self.audio_player.trigger_barge_in()
+            if hasattr(self, "audio") and self.audio:
+                self.audio.trigger_barge_in()
+
+            self._kill_playback_flag = True
+            if hasattr(self, "_playback_cancel_event") and self._playback_cancel_event:
+                self._playback_cancel_event.set()
+
+            # 2. Reset engine speaker flags
+            self.is_speaking = False
+
+            # 3. Inform upstream Gemini Live websocket to cancel generation
+            self._cancel_active_live_stream_turn()
+
+            # 4. Notify UI of state transition
+            if hasattr(self, "hud_window") and self.hud_window:
+                try:
+                    self.hud_window.evaluate_js("window.onAssistantInterrupted && window.onAssistantInterrupted()")
+                except Exception as e:
+                    logger.debug(f"[ENGINE] HUD evaluate_js warning: {e}")
+            self.notify("agent_turn_interrupted", {})
+
+    def _cancel_active_live_stream_turn(self):
+        """
+        Sends cancellation frame / client content interruption signal to the Gemini session
+        so the server stops streaming pending audio buffers.
+        """
+        try:
+            session = getattr(self, "live_session", None) or getattr(self, "session", None)
+            if session:
+                # In google-genai Live API, sending a user turn or client_content event
+                # informs the server that the user took the floor.
+                is_google_session = type(session).__module__.startswith("google")
+                coros = []
+                if hasattr(session, "send_client_content"):
+                    coros.append(session.send_client_content(turns=[], turn_complete=True))
+                if not is_google_session and hasattr(session, "send"):
+                    coros.append(session.send(input="", end_of_turn=True))
+                for coro in coros:
+                    if asyncio.iscoroutine(coro):
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(coro)
+                        except RuntimeError:
+                            if self.audio and getattr(self.audio, "loop", None) and self.audio.loop.is_running():
+                                asyncio.run_coroutine_threadsafe(coro, self.audio.loop)
+                            else:
+                                coro.close()
+        except Exception as e:
+            print(f"[WARN] [ENGINE] Failed to send upstream cancellation: {e}")
 
     def set_ptt(self, active: bool):
         self._ptt_active = active
@@ -514,6 +593,7 @@ class AetherEngine:
         if not self.is_running:
             return
         if state == "speech_detected":
+            self.on_vad_speech_detected()
             self.is_audio_streaming = True
             self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
         elif state == "speech_finalized":
@@ -756,6 +836,9 @@ class AetherEngine:
                     if model_turn is not None:
                         # Finalize user speech turn when model starts responding
                         if self.current_user_speech.strip():
+                            self._kill_playback_flag = False
+                            if hasattr(self, "audio_player") and self.audio_player:
+                                self.audio_player.reset_interrupt()
                             self.notify("chat_event", {
                                 "type": "user",
                                 "content": self.current_user_speech.strip(),
@@ -764,14 +847,17 @@ class AetherEngine:
                             self.current_user_speech = ""
 
                         for part in model_turn.parts or []:
-                            # Feed raw audio chunks directly to playback buffer
+                            # Feed raw audio chunks directly to playback buffer unless interrupted
                             inline_data = getattr(part, "inline_data", None)
                             if inline_data is not None and inline_data.data:
-                                self.audio.write_output_chunk(inline_data.data)
-                                self.notify("status", {"state": "speaking", "message": f"{agent_name} is speaking..."})
+                                if not self._kill_playback_flag:
+                                    if hasattr(self, "audio_player") and self.audio_player:
+                                        self.audio_player.enqueue_chunk(inline_data.data)
+                                    self.audio.write_output_chunk(inline_data.data)
+                                    self.notify("status", {"state": "speaking", "message": f"{agent_name} is speaking..."})
 
                             text_part = getattr(part, "text", None)
-                            if text_part:
+                            if text_part and not self._kill_playback_flag:
                                 self.current_turn_text += text_part
                                 self.notify("agent_speech_chunk", {"chunk": text_part})
 
@@ -1687,6 +1773,10 @@ class AetherEngine:
 
                     # 5. Synthesize & Stream Speech with Concurrent Interruption Monitoring
                     self._kill_playback_flag = False
+                    if hasattr(self, "_playback_cancel_event") and self._playback_cancel_event:
+                        self._playback_cancel_event.clear()
+                    if hasattr(self, "audio_player") and self.audio_player:
+                        self.audio_player.reset_interrupt()
                     stop_playback_event = asyncio.Event()
 
                     self.notify("status", {
@@ -1705,6 +1795,8 @@ class AetherEngine:
                         if chunk and self.audio and self.is_running:
                             if first_audio_ms is None:
                                 first_audio_ms = (time.perf_counter() - t_tts_0) * 1000
+                            if hasattr(self, "audio_player") and self.audio_player:
+                                self.audio_player.enqueue_chunk(chunk)
                             self.audio.write_output_chunk(chunk)
 
                     async def _run_playback():
@@ -1808,7 +1900,7 @@ class AetherEngine:
                                     except Exception as int_err:
                                         logger.warning(f"[INTERRUPTION STT ERROR] {int_err}")
 
-                        # C. Check if UI kill button set flag
+                        # C. Check if UI kill button or VAD speech onset barge-in set flag
                         if self._kill_playback_flag:
                             stop_playback_event.set()
                             playback_task.cancel()
@@ -1893,10 +1985,12 @@ class AetherEngine:
 
                 if self.audio:
                     self.audio.clear_output_buffer()
-                    self.audio.reset_vad()
+                    if not getattr(self.audio, "_is_in_speech", False):
+                        self.audio.reset_vad()
                 if self.is_running:
                     self.last_user_turn_time = time.perf_counter()
-                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                    if not (self.audio and getattr(self.audio, "_is_in_speech", False)):
+                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
             except asyncio.CancelledError:
                 break
@@ -2472,6 +2566,7 @@ class AetherEngine:
             old_recv_task = self._active_recv_task
 
             self.session = new_session
+            self.live_session = new_session
             self._active_cm = new_cm
 
             # Sync with main.py
@@ -2550,6 +2645,7 @@ class AetherEngine:
                 self._active_cm = client.aio.live.connect(model=model_id, config=live_config)
                 session = await self._active_cm.__aenter__()
                 self.session = session
+                self.live_session = session
 
                 try:
                     import main

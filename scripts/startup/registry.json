@@ -6,7 +6,7 @@
       "script_path": "scripts\\startup\\real_estate_perrysburg_bg_ranch.py",
       "interval_minutes": 1440,
       "enabled": true,
-      "last_run_timestamp": 1790279642.336548,
+      "last_run_timestamp": 1790368559.4791796,
       "last_status": "success"
     }
   ]
