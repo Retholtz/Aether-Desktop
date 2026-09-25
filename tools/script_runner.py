@@ -20,7 +20,7 @@ from typing import Dict, Optional, Any, List, Tuple
 import psutil
 
 from core.logger import get_logger
-from core.telemetry_db import TelemetryDB
+from core.telemetry_db import TelemetryDB, record_script_execution
 from security.ast_gatekeeper import validate_python_script
 
 logger = get_logger("ScriptRunner")
@@ -394,6 +394,24 @@ class ScriptRunner:
                 memory_peak_mb=peak_mb
             )
 
+            # 7. Frequency-based auto-promotion evaluation for cached Python scripts
+            if st_lower == "python" and ("scripts\\cache" in script_file or "scripts/cache" in script_file):
+                clean_exec = bool(success and status == "success")
+                stats = self.telemetry_db.record_script_execution(
+                    script_path=script_file,
+                    intent_label=description or intent_key,
+                    success=clean_exec,
+                    returncode=exit_code if clean_exec else 1,
+                    duration_ms=elapsed_ms
+                )
+                if stats.get("should_promote"):
+                    from tools.skill_library import promote_cached_script
+                    promote_cached_script(
+                        source_script_path=script_file,
+                        intent_label=description or intent_key,
+                        script_hash=stats.get("script_hash")
+                    )
+
             if success:
                 logger.info(
                     f"[SCRIPT SUCCESS] Duration: {elapsed_ms:.1f}ms | PeakMem: {peak_mb:.1f}MB | "
@@ -606,3 +624,66 @@ class ScriptRunner:
                 "traceback": str(e),
                 "message": f"Skill failed to run: {e}"
             }
+
+
+def execute_cached_script(script_path: str, intent_label: str = "adhoc_task", timeout_seconds: int = 30) -> tuple:
+    """
+    Executes a script in scripts/cache/ with subprocess isolation, 
+    AST safety validation, and execution frequency tracking.
+    """
+    if not os.path.exists(script_path):
+        return 1, "", f"Script file not found: {script_path}"
+
+    if script_path.endswith(".py"):
+        try:
+            with open(script_path, "r", encoding="utf-8") as f:
+                code = f.read()
+            is_safe, error_msg = validate_python_script(code)
+            if not is_safe:
+                return 1, "", f"AST Gatekeeper Rejected: {error_msg}"
+        except Exception as e:
+            return 1, "", f"Failed reading script: {e}"
+
+    runner = ScriptRunner()
+    t0 = time.perf_counter()
+    try:
+        returncode, stdout, stderr, execution_time_ms, _ = runner._run_subprocess_monitored(
+            cmd=[runner.python_exe, script_path],
+            timeout=timeout_seconds,
+            env=runner._get_execution_env()
+        )
+    except subprocess.TimeoutExpired:
+        returncode = 1
+        stdout = ""
+        stderr = f"Execution timed out after {timeout_seconds} seconds."
+        execution_time_ms = (time.perf_counter() - t0) * 1000
+    except Exception as e:
+        returncode = 1
+        stdout = ""
+        stderr = str(e)
+        execution_time_ms = (time.perf_counter() - t0) * 1000
+    finally:
+        runner.telemetry_db.close()
+
+    success = (returncode == 0)
+
+    # Record telemetry and evaluate auto-promotion
+    if "scripts\\cache" in script_path or "scripts/cache" in script_path:
+        stats = record_script_execution(
+            script_path=script_path,
+            intent_label=intent_label,
+            success=success,
+            returncode=returncode,
+            duration_ms=execution_time_ms
+        )
+
+        if stats.get("should_promote"):
+            from tools.skill_library import promote_cached_script
+            promote_cached_script(
+                source_script_path=script_path,
+                intent_label=intent_label,
+                script_hash=stats.get("script_hash")
+            )
+
+    return returncode, stdout, stderr
+

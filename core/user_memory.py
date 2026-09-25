@@ -154,32 +154,6 @@ def add_fact_batch(facts: List[Dict[str, str]], source_session: str, db_path: Op
     target_path = _resolve_db_path(db_path)
     init_memory_db(target_path)
     with sqlite3.connect(target_path, timeout=10.0) as conn:
-        for item in facts:
-            fact_text = item.get("fact", "").strip()
-            if not fact_text:
-                continue
-            cat = item.get("category", "general")
-            now_ts = time.time()
-            key_text = item.get("key") or fact_text[:50]
-            conn.execute("""
-                INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(fact) DO UPDATE SET
-                    category = excluded.category,
-                    source = excluded.source,
-                    confidence = excluded.confidence,
-                    updated_at = excluded.updated_at,
-                    key = COALESCE(user_facts.key, excluded.key),
-                    value = excluded.value
-            """, (
-                cat,
-                fact_text,
-                source_session,
-                0.9,
-                now_ts,
-                key_text,
-                fact_text
-            ))
         configure_sqlite_connection(conn)
         with conn:
             for item in facts:
@@ -226,8 +200,6 @@ def get_all_facts(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
         return [dict(row) for row in cur.fetchall()]
 
 
-def replace_facts(facts: List[Dict[str, Any]], db_path: Optional[str] = None):
-    """Atomically replaces the active facts table after reconciliation."""
 def replace_facts(
     facts: List[Dict[str, Any]], 
     snapshot_ts: Optional[float] = None, 
@@ -241,34 +213,11 @@ def replace_facts(
     target_path = _resolve_db_path(db_path)
     init_memory_db(target_path)
     with sqlite3.connect(target_path, timeout=10.0) as conn:
-        conn.execute("DELETE FROM user_facts")
-        now_ts = time.time()
-        for f in facts:
-            fact_str = f.get("fact", "")
-            if isinstance(fact_str, str):
-                fact_str = fact_str.strip()
         configure_sqlite_connection(conn)
         with conn:
             if snapshot_ts is not None:
                 conn.execute("DELETE FROM user_facts WHERE updated_at <= ?;", (snapshot_ts,))
             else:
-                fact_str = str(fact_str).strip()
-            if not fact_str:
-                continue
-            cat = f.get("category", "general")
-            key_text = f.get("key") or fact_str[:50]
-            conn.execute("""
-                INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                cat,
-                fact_str,
-                "reconciliation",
-                f.get("confidence", 1.0),
-                now_ts,
-                key_text,
-                fact_str
-            ))
                 conn.execute("DELETE FROM user_facts;")
 
             now_ts = time.time()

@@ -98,3 +98,8 @@ def validate_python_script(script_code: str) -> Tuple[bool, Optional[str]]:
 
     return True, None
 
+
+# Alias for specification compatibility
+validate_python_code = validate_python_script
+
+

@@ -10,10 +10,113 @@ import difflib
 import json
 import os
 import re
+import shutil
 from typing import Dict, List, Optional
 
-from security.ast_gatekeeper import validate_python_script
+from security.ast_gatekeeper import validate_python_script, validate_python_code
 from tools.script_runner import ScriptRunner
+
+CATALOG_PATH = os.path.join("scripts", "skills_catalog.json")
+LIBRARY_DIR = os.path.join("scripts", "library")
+
+
+def promote_cached_script(source_script_path: str, intent_label: str, script_hash: str) -> bool:
+    """
+    Validates AST safety, copies the cached script into scripts/library/, 
+    normalizes filename, and updates skills_catalog.json.
+    """
+    if not os.path.exists(source_script_path):
+        print(f"[WARN] [SKILL_LIBRARY] Cannot promote missing file: {source_script_path}")
+        return False
+
+    with open(source_script_path, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    # 1. AST Validation & Security Check
+    is_safe, error_msg = validate_python_code(code)
+    if not is_safe:
+        print(f"[ERROR] [SKILL_LIBRARY] Promotion aborted. AST security check failed: {error_msg}")
+        return False
+
+    os.makedirs(LIBRARY_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(CATALOG_PATH)), exist_ok=True)
+
+    # 2. Generate clean slug filename
+    slug = re.sub(r'[^a-zA-Z0-9_]+', '_', intent_label.strip().lower())
+    slug = slug.strip('_')[:32]
+    if not slug:
+        slug = f"skill_{script_hash}"
+
+    target_filename = f"{slug}.py"
+    target_path = os.path.join(LIBRARY_DIR, target_filename)
+
+    # If file exists with same name, differentiate with hash
+    if os.path.exists(target_path):
+        target_filename = f"{slug}_{script_hash[:6]}.py"
+        target_path = os.path.join(LIBRARY_DIR, target_filename)
+
+    # 3. Copy file to permanent library
+    shutil.copy2(source_script_path, target_path)
+
+    # 4. Update skills_catalog.json (CATALOG_PATH)
+    catalog = {}
+    if os.path.exists(CATALOG_PATH):
+        try:
+            with open(CATALOG_PATH, "r", encoding="utf-8") as f:
+                catalog = json.load(f)
+        except Exception:
+            catalog = {"skills": []}
+
+    skills_list = catalog.get("skills", [])
+
+    # Check if already present
+    existing_entry = next((s for s in skills_list if s.get("filename") == target_filename), None)
+    if not existing_entry:
+        skills_list.append({
+            "name": slug,
+            "filename": target_filename,
+            "path": target_path,
+            "intent": intent_label,
+            "hash": script_hash,
+            "promoted_by": "frequency_tracker"
+        })
+        catalog["skills"] = skills_list
+
+        with open(CATALOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(catalog, f, indent=2)
+
+    # Also sync to scripts/library/skills_catalog.json for SkillLibrary runtime lookup
+    lib_catalog_path = os.path.join(LIBRARY_DIR, "skills_catalog.json")
+    try:
+        lib_catalog = {}
+        if os.path.exists(lib_catalog_path):
+            with open(lib_catalog_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    lib_catalog = loaded
+        now_iso = datetime.datetime.now().isoformat()
+        skill_key = os.path.splitext(target_filename)[0]
+        lib_catalog[skill_key] = {
+            "description": intent_label.strip() or f"Auto-promoted skill: {slug}",
+            "parameters": {},
+            "file": target_filename,
+            "intent": intent_label,
+            "hash": script_hash,
+            "promoted_by": "frequency_tracker",
+            "created_at": lib_catalog.get(skill_key, {}).get("created_at", now_iso),
+            "updated_at": now_iso
+        }
+        with open(lib_catalog_path, "w", encoding="utf-8") as f:
+            json.dump(lib_catalog, f, indent=2)
+    except Exception:
+        pass
+
+    print(f"[INFO] [SKILL_LIBRARY] Auto-promoted cached script '{target_filename}' to permanent library.")
+
+    # Update telemetry record
+    from core.telemetry_db import mark_script_as_promoted
+    mark_script_as_promoted(script_hash)
+    return True
 
 
 class SkillLibrary:
@@ -54,17 +157,21 @@ class SkillLibrary:
         """Returns structured list of available skills with metadata."""
         catalog = self._load_catalog()
         manifest = []
+        seen_names = set()
         for name, meta in catalog.items():
+            if not isinstance(meta, dict):
+                continue
             script_path = os.path.join(self.library_dir, meta.get("file", f"{name}.py"))
             if os.path.exists(script_path):
                 manifest.append({
                     "name": name,
-                    "description": meta.get("description", ""),
+                    "description": meta.get("description", meta.get("intent", "")),
                     "parameters": meta.get("parameters", {}),
                     "file": meta.get("file", f"{name}.py"),
                     "created_at": meta.get("created_at"),
                     "updated_at": meta.get("updated_at")
                 })
+                seen_names.add(name)
         return manifest
 
     def find_relevant_skills(self, query: str, top_k: int = 5) -> List[dict]:
