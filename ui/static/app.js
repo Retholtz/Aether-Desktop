@@ -75,6 +75,7 @@ window.aetherUI = {
           targetPane.classList.add("active");
           if (tab.dataset.tab === "settings") {
             targetPane.focus();
+            this.loadAudioDevices(true);
           } else if (tab.dataset.tab === "preferences") {
             targetPane.focus();
             this.loadUserName();
@@ -174,9 +175,18 @@ window.aetherUI = {
 
     // Refresh Audio Hardware
     document.getElementById("refreshDevicesBtn").addEventListener("click", async () => {
-      await this.loadAudioDevices();
-      this.log("Audio devices re-enumerated.");
+      await this.loadAudioDevices(true);
+      this.log("Audio devices re-enumerated (matched with System\\Sound).");
     });
+
+    const inDevSel = document.getElementById("inputDeviceSelect");
+    if (inDevSel) {
+      inDevSel.addEventListener("change", () => this.updateTelemetryDeviceLabels());
+    }
+    const outDevSel = document.getElementById("outputDeviceSelect");
+    if (outDevSel) {
+      outDevSel.addEventListener("change", () => this.updateTelemetryDeviceLabels());
+    }
 
     // Start / Stop Assistant button
     document.getElementById("toggleAssistantBtn").addEventListener("click", () => this.toggleAssistant());
@@ -902,18 +912,82 @@ window.aetherUI = {
     }
   },
 
-  loadAudioDevices: async function() {
-    if (!window.pywebview || !window.pywebview.api) return;
+  selectAudioDeviceOption: function(selectEl, targetIdx, targetName, followNewDefault = false) {
+    if (!selectEl || selectEl.options.length === 0) return;
+
+    const cleanName = (str) => {
+      if (!str) return "";
+      let s = str.trim();
+      if (s.endsWith("kHz)") && s.lastIndexOf(" (") !== -1) {
+        s = s.slice(0, s.lastIndexOf(" (")).trim();
+      }
+      return s.replace(/\[Default\]/gi, "").replace(/^\[\d+\]\s*/, "").trim().toLowerCase();
+    };
+
+    const targetIsDefault = followNewDefault || !targetName || /\[default\]/i.test(targetName);
+    if (targetIsDefault) {
+      const defOpt = Array.from(selectEl.options).find(o => o.dataset.isDefault === "true");
+      if (defOpt) {
+        selectEl.value = defOpt.value;
+        return;
+      }
+    }
+
+    const wantedName = cleanName(targetName);
+    if (wantedName) {
+      // Exact device name match first (handles PortAudio index shifts cleanly)
+      for (const opt of selectEl.options) {
+        const optBase = (opt.dataset.deviceName || cleanName(opt.innerText)).toLowerCase();
+        if (optBase === wantedName) {
+          selectEl.value = opt.value;
+          return;
+        }
+      }
+      // Substring match fallback
+      for (const opt of selectEl.options) {
+        const optBase = (opt.dataset.deviceName || cleanName(opt.innerText)).toLowerCase();
+        if (optBase && (optBase.includes(wantedName) || wantedName.includes(optBase))) {
+          selectEl.value = opt.value;
+          return;
+        }
+      }
+    }
+
+    if (targetIdx !== undefined && targetIdx !== null) {
+      for (const opt of selectEl.options) {
+        if (parseInt(opt.value, 10) === parseInt(targetIdx, 10)) {
+          selectEl.value = opt.value;
+          return;
+        }
+      }
+    }
+
+    const defOpt = Array.from(selectEl.options).find(o => o.dataset.isDefault === "true");
+    if (defOpt) {
+      selectEl.value = defOpt.value;
+    } else if (selectEl.options.length > 0) {
+      selectEl.selectedIndex = 0;
+    }
+  },
+
+  loadAudioDevices: async function(forceRefresh = false, preloadedData = null) {
+    if (!preloadedData && (!window.pywebview || !window.pywebview.api)) return;
     try {
       const inSelect = document.getElementById("inputDeviceSelect");
       const outSelect = document.getElementById("outputDeviceSelect");
       if (!inSelect || !outSelect) return;
 
-      const prevInVal = inSelect.value;
-      const prevOutVal = outSelect.value;
+      const prevInOpt = inSelect.selectedOptions[0];
+      const prevOutOpt = outSelect.selectedOptions[0];
+      const prevInIdx = inSelect.value;
+      const prevOutIdx = outSelect.value;
+      const prevInText = prevInOpt ? prevInOpt.innerText : (this.currentConfig?.audio?.input_device_name || "");
+      const prevOutText = prevOutOpt ? prevOutOpt.innerText : (this.currentConfig?.audio?.output_device_name || "");
+      const prevInDefaultName = Array.from(inSelect.options).find(o => o.dataset.isDefault === "true")?.dataset.deviceName;
+      const prevOutDefaultName = Array.from(outSelect.options).find(o => o.dataset.isDefault === "true")?.dataset.deviceName;
 
-      const data = await window.pywebview.api.get_audio_devices();
-      
+      const data = preloadedData || await window.pywebview.api.get_audio_devices(!!forceRefresh);
+
       inSelect.innerHTML = "";
       outSelect.innerHTML = "";
 
@@ -922,6 +996,8 @@ window.aetherUI = {
           const opt = document.createElement("option");
           opt.value = dev.index;
           opt.innerText = dev.label || dev.name;
+          opt.dataset.deviceName = dev.name || "";
+          opt.dataset.isDefault = dev.is_default ? "true" : "false";
           inSelect.appendChild(opt);
         });
       } else {
@@ -936,6 +1012,8 @@ window.aetherUI = {
           const opt = document.createElement("option");
           opt.value = dev.index;
           opt.innerText = dev.label || dev.name;
+          opt.dataset.deviceName = dev.name || "";
+          opt.dataset.isDefault = dev.is_default ? "true" : "false";
           outSelect.appendChild(opt);
         });
       } else {
@@ -945,13 +1023,19 @@ window.aetherUI = {
         outSelect.appendChild(opt);
       }
 
-      // Preserve previously selected option if still present in available list
-      if (prevInVal && inSelect.querySelector(`option[value="${prevInVal}"]`)) {
-        inSelect.value = prevInVal;
-      }
-      if (prevOutVal && outSelect.querySelector(`option[value="${prevOutVal}"]`)) {
-        outSelect.value = prevOutVal;
-      }
+      const newInDefaultName = data.inputs?.find(d => d.is_default)?.name;
+      const newOutDefaultName = data.outputs?.find(d => d.is_default)?.name;
+      const inDefaultChanged = !!(prevInDefaultName && newInDefaultName && prevInDefaultName !== newInDefaultName);
+      const outDefaultChanged = !!(prevOutDefaultName && newOutDefaultName && prevOutDefaultName !== newOutDefaultName);
+
+      const targetInIdx = data.selected_input_index !== undefined ? data.selected_input_index : prevInIdx;
+      const targetInName = data.selected_input_name || prevInText;
+      const targetOutIdx = data.selected_output_index !== undefined ? data.selected_output_index : prevOutIdx;
+      const targetOutName = data.selected_output_name || prevOutText;
+
+      this.selectAudioDeviceOption(inSelect, targetInIdx, targetInName, inDefaultChanged);
+      this.selectAudioDeviceOption(outSelect, targetOutIdx, targetOutName, outDefaultChanged);
+      this.updateTelemetryDeviceLabels();
     } catch (e) {
       console.error("Failed to load audio devices:", e);
     }
@@ -1100,56 +1184,13 @@ window.aetherUI = {
         }
       }
       // Audio Devices
-      if (audio.input_device_index !== undefined) {
-        const inSel = document.getElementById("inputDeviceSelect");
-        let matched = false;
-        for (let opt of inSel.options) {
-          if (parseInt(opt.value, 10) === audio.input_device_index) {
-            inSel.value = opt.value;
-            matched = true;
-            break;
-          }
-        }
-        // Fallback: match by device name if device index shifted
-        if (!matched && audio.input_device_name) {
-          const rawName = audio.input_device_name.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
-          if (rawName) {
-            for (let opt of inSel.options) {
-              const optName = opt.innerText.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
-              if (optName.includes(rawName) || rawName.includes(optName)) {
-                inSel.value = opt.value;
-                matched = true;
-                break;
-              }
-            }
-          }
-        }
+      const inSel = document.getElementById("inputDeviceSelect");
+      if (inSel) {
+        this.selectAudioDeviceOption(inSel, audio.input_device_index, audio.input_device_name);
       }
-
-      if (audio.output_device_index !== undefined) {
-        const outSel = document.getElementById("outputDeviceSelect");
-        let matched = false;
-        for (let opt of outSel.options) {
-          if (parseInt(opt.value, 10) === audio.output_device_index) {
-            outSel.value = opt.value;
-            matched = true;
-            break;
-          }
-        }
-        // Fallback: match by device name if device index shifted
-        if (!matched && audio.output_device_name) {
-          const rawName = audio.output_device_name.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
-          if (rawName) {
-            for (let opt of outSel.options) {
-              const optName = opt.innerText.replace(/^\[\d+\]\s*/, "").split("(")[0].trim().toLowerCase();
-              if (optName.includes(rawName) || rawName.includes(optName)) {
-                outSel.value = opt.value;
-                matched = true;
-                break;
-              }
-            }
-          }
-        }
+      const outSel = document.getElementById("outputDeviceSelect");
+      if (outSel) {
+        this.selectAudioDeviceOption(outSel, audio.output_device_index, audio.output_device_name);
       }
 
 
@@ -1456,6 +1497,25 @@ window.aetherUI = {
           this.currentConfig.security.app_whitelist = data.security.app_whitelist;
         }
       }
+    } else if (type === "audio_devices_updated") {
+      if (this.currentConfig && this.currentConfig.audio) {
+        if (data.selected_input_index !== undefined) {
+          this.currentConfig.audio.input_device_index = data.selected_input_index;
+        }
+        if (data.selected_input_name) {
+          this.currentConfig.audio.input_device_name = data.selected_input_name;
+        }
+        if (data.selected_output_index !== undefined) {
+          this.currentConfig.audio.output_device_index = data.selected_output_index;
+        }
+        if (data.selected_output_name) {
+          this.currentConfig.audio.output_device_name = data.selected_output_name;
+        }
+      }
+      this.loadAudioDevices(false, data);
+      this.log(
+        `Audio hardware updated -> Mic: ${data.selected_input_name || "Default"} | Speaker: ${data.selected_output_name || "Default"}`
+      );
     } else if (type === "log_event") {
       this.appendLogEntry(data);
     } else if (type === "telemetry_update") {

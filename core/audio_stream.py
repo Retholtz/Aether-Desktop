@@ -6,11 +6,18 @@ import sys
 import threading
 import time
 import wave
-from typing import Callable, Optional
+import weakref
+from ctypes import POINTER, Structure, byref, c_ubyte, c_uint, c_ulong, c_ushort, c_void_p, cast
+from ctypes.wintypes import DWORD, LPWSTR
+from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 import sounddevice as sd
 
 logger = logging.getLogger("Aether.Audio")
+
+_pa_lock = threading.RLock()
+_active_pipelines: "weakref.WeakSet[AudioPipeline]" = weakref.WeakSet()
+_last_win_audio_fingerprint: Optional[tuple] = None
 
 
 class VADTurnDetector:
@@ -78,6 +85,8 @@ class AudioPipeline:
         
         in_info = sd.query_devices(self.input_device)
         out_info = sd.query_devices(self.output_device)
+        self.input_device_name = str(in_info.get("name", "")).strip()
+        self.output_device_name = str(out_info.get("name", "")).strip()
         self.hw_in_rate = int(in_info['default_samplerate'])
         self.hw_out_rate = int(out_info['default_samplerate'])
         
@@ -94,6 +103,7 @@ class AudioPipeline:
         self.is_speaking = False
         self.is_calibrating = False
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
+        _active_pipelines.add(self)
 
         # Voice Activity Detection (VAD) state for utterance segmentation
         # Adaptive noise floor tracking prevents getting trapped by PC/room noise
@@ -458,33 +468,68 @@ class AudioPipeline:
         with self.buffer_lock:
             return len(self.output_buffer) == 0
 
-    async def start(self):
-        self.loop = asyncio.get_running_loop()
-        self._running = True
+    def _close_streams_only(self):
+        in_s = self.in_stream
+        self.in_stream = None
+        if in_s is not None:
+            try:
+                in_s.abort(ignore_errors=True)
+                in_s.close(ignore_errors=True)
+            except Exception:
+                pass
 
+        out_s = self.out_stream
+        self.out_stream = None
+        if out_s is not None:
+            try:
+                out_s.abort(ignore_errors=True)
+                out_s.close(ignore_errors=True)
+            except Exception:
+                pass
+
+    def _open_and_start_streams_sync(self, input_device: Optional[int] = None, output_device: Optional[int] = None):
         if sys.platform == "win32":
             try:
-                import ctypes
                 ctypes.windll.ole32.CoInitializeEx(None, 0)
             except Exception:
                 pass
-        
+
+        if input_device is not None:
+            self.input_device = input_device
+        if output_device is not None:
+            self.output_device = output_device
+
+        in_info = sd.query_devices(self.input_device)
+        out_info = sd.query_devices(self.output_device)
+        self.input_device_name = str(in_info.get("name", "")).strip()
+        self.output_device_name = str(out_info.get("name", "")).strip()
+        self.hw_in_rate = int(in_info["default_samplerate"])
+        self.hw_out_rate = int(out_info["default_samplerate"])
+
+        in_channels = 1
+        try:
+            sd.check_input_settings(device=self.input_device, channels=1, samplerate=self.hw_in_rate)
+        except Exception:
+            in_channels = min(max(1, int(in_info.get("max_input_channels", 1))), 2)
+
+        out_channels = min(max(1, int(out_info.get("max_output_channels", 2))), 2)
+
         in_blocksize = 2400 if self.hw_in_rate == 48000 else 2048
         self.in_stream = sd.InputStream(
             device=self.input_device,
             samplerate=self.hw_in_rate,
-            channels=1,
-            dtype='float32',
+            channels=in_channels,
+            dtype="float32",
             blocksize=in_blocksize,
-            callback=self._input_callback
+            callback=self._input_callback,
         )
         self.out_stream = sd.OutputStream(
             device=self.output_device,
             samplerate=self.hw_out_rate,
-            channels=2,
-            dtype='float32',
+            channels=out_channels,
+            dtype="float32",
             blocksize=2048,
-            callback=self._output_callback
+            callback=self._output_callback,
         )
 
         for attempt in range(3):
@@ -495,7 +540,7 @@ class AudioPipeline:
                 if attempt == 2:
                     raise
                 logger.warning(f"[AUDIO] Retrying input stream start (attempt {attempt+1}): {e}")
-                await asyncio.sleep(0.05)
+                time.sleep(0.05)
 
         for attempt in range(3):
             try:
@@ -505,7 +550,33 @@ class AudioPipeline:
                 if attempt == 2:
                     raise
                 logger.warning(f"[AUDIO] Retrying output stream start (attempt {attempt+1}): {e}")
-                await asyncio.sleep(0.05)
+                time.sleep(0.05)
+
+    def switch_devices(self, input_device: int, output_device: int) -> bool:
+        """Hot-swaps active input/output devices on a running AudioPipeline without stopping the session."""
+        with _pa_lock:
+            with self._stop_lock:
+                if not self._running:
+                    self.input_device = input_device
+                    self.output_device = output_device
+                    return True
+                try:
+                    self._close_streams_only()
+                    self._open_and_start_streams_sync(input_device=input_device, output_device=output_device)
+                    logger.info(
+                        f"[AUDIO] Switched active streams to Input #{self.input_device} ({self.input_device_name}), "
+                        f"Output #{self.output_device} ({self.output_device_name})"
+                    )
+                    return True
+                except Exception as e:
+                    logger.error(f"[AUDIO] Failed to hot-swap audio devices ({input_device}, {output_device}): {e}")
+                    return False
+
+    async def start(self):
+        self.loop = asyncio.get_running_loop()
+        self._running = True
+        with _pa_lock:
+            self._open_and_start_streams_sync()
 
     def stop(self):
         with self._stop_lock:
@@ -513,81 +584,422 @@ class AudioPipeline:
                 return
             self._running = False
             self.clear_output_buffer()
+            self._close_streams_only()
 
-            in_s = self.in_stream
-            self.in_stream = None
-            if in_s is not None:
+
+# =============================================================================
+# Windows Core Audio (IMMDeviceEnumerator) + PortAudio Synchronization
+# =============================================================================
+
+class _GUID(Structure):
+    _fields_ = [
+        ("Data1", c_ulong),
+        ("Data2", c_ushort),
+        ("Data3", c_ushort),
+        ("Data4", c_ubyte * 8),
+    ]
+
+
+class _PROPERTYKEY(Structure):
+    _fields_ = [
+        ("fmtid", _GUID),
+        ("pid", DWORD),
+    ]
+
+
+class _PROPVARIANT(Structure):
+    _fields_ = [
+        ("vt", c_ushort),
+        ("wReserved1", c_ushort),
+        ("wReserved2", c_ushort),
+        ("wReserved3", c_ushort),
+        ("pwszVal", LPWSTR),
+        ("padding", c_ubyte * 8),
+    ]
+
+
+def _parse_guid(guid_str: str) -> _GUID:
+    clean = guid_str.strip("{}").replace("-", "")
+    return _GUID(
+        int(clean[0:8], 16),
+        int(clean[8:12], 16),
+        int(clean[12:16], 16),
+        (c_ubyte * 8)(*(int(clean[i : i + 2], 16) for i in range(16, 32, 2))),
+    )
+
+
+_CLSID_MMDeviceEnumerator = _parse_guid("BCDE0395-E52F-467C-8E3D-C4579291692E")
+_IID_IMMDeviceEnumerator = _parse_guid("A95664D2-9614-4F35-A746-DE8DB63617E6")
+_PKEY_Device_FriendlyName = _PROPERTYKEY(_parse_guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 14)
+
+
+def _com_call(interface_ptr: c_void_p, index: int, restype: Any, argtypes: list, *args) -> Any:
+    vtable = cast(interface_ptr, POINTER(POINTER(c_void_p))).contents
+    func = ctypes.WINFUNCTYPE(restype, c_void_p, *argtypes)(vtable[index])
+    return func(interface_ptr, *args)
+
+
+def _com_release(interface_ptr: Optional[c_void_p]) -> None:
+    if interface_ptr:
+        _com_call(interface_ptr, 2, c_ulong, [])
+
+
+def _read_mmdevice_props(ole32, p_device: c_void_p) -> Dict[str, str]:
+    dev_id = ""
+    name = "Unknown"
+    p_id = LPWSTR()
+    if _com_call(p_device, 5, ctypes.HRESULT, [POINTER(LPWSTR)], byref(p_id)) == 0:
+        try:
+            dev_id = p_id.value or ""
+        finally:
+            ole32.CoTaskMemFree(p_id)
+
+    p_props = c_void_p()
+    if _com_call(p_device, 4, ctypes.HRESULT, [DWORD, POINTER(c_void_p)], 0, byref(p_props)) == 0:
+        try:
+            pv = _PROPVARIANT()
+            if (
+                _com_call(
+                    p_props,
+                    5,
+                    ctypes.HRESULT,
+                    [POINTER(_PROPERTYKEY), POINTER(_PROPVARIANT)],
+                    byref(_PKEY_Device_FriendlyName),
+                    byref(pv),
+                )
+                == 0
+            ):
                 try:
-                    in_s.abort(ignore_errors=True)
-                    in_s.close(ignore_errors=True)
-                except Exception:
-                    pass
-
-            out_s = self.out_stream
-            self.out_stream = None
-            if out_s is not None:
-                try:
-                    out_s.abort(ignore_errors=True)
-                    out_s.close(ignore_errors=True)
-                except Exception:
-                    pass
+                    if pv.vt == 31 and pv.pwszVal:
+                        name = pv.pwszVal.strip()
+                finally:
+                    ole32.PropVariantClear(byref(pv))
+        finally:
+            _com_release(p_props)
+    return {"name": name, "device_id": dev_id}
 
 
-def get_available_audio_devices() -> dict:
+def _query_windows_system_sound_devices() -> Optional[Dict[str, Any]]:
     """
-    Enumerates truly available, active audio input and output devices.
-    Prioritizes modern Windows WASAPI endpoints, filters out broken WDM-KS pins
-    and virtual sound mappers, validates each device with a test stream open,
-    and sorts the system default devices to the top.
+    Queries Windows Core Audio (IMMDeviceEnumerator) for active Render (Output)
+    and Capture (Input) endpoints matching Windows Settings -> System -> Sound.
+    Executes in ~7ms without disturbing active PortAudio streams.
     """
+    if sys.platform != "win32":
+        return None
+
     try:
-        devices = sd.query_devices()
-        hostapis = sd.query_hostapis()
+        ole32 = ctypes.oledll.ole32
+        ole32.CoCreateInstance.argtypes = [
+            POINTER(_GUID),
+            c_void_p,
+            DWORD,
+            POINTER(_GUID),
+            POINTER(c_void_p),
+        ]
+        ole32.CoCreateInstance.restype = ctypes.HRESULT
 
-        # Check if WASAPI is available (native Windows Core Audio Session API)
-        wasapi_api_idx = None
-        for idx, api in enumerate(hostapis):
-            if "wasapi" in api.get("name", "").lower():
-                wasapi_api_idx = idx
-                break
+        hr = ole32.CoInitializeEx(None, 0)
+        co_initialized = hr in (0, 1)
 
-        def _collect(preferred_hostapi=None):
-            ins = []
-            outs = []
+        def _enum_flow(p_enum: c_void_p, data_flow: int) -> List[Dict[str, Any]]:
+            # data_flow: 0 = eRender (Output), 1 = eCapture (Input)
+            default_id = None
+            p_default = c_void_p()
+            if (
+                _com_call(
+                    p_enum,
+                    4,
+                    ctypes.HRESULT,
+                    [ctypes.c_int, ctypes.c_int, POINTER(c_void_p)],
+                    data_flow,
+                    0,  # eConsole
+                    byref(p_default),
+                )
+                == 0
+            ):
+                try:
+                    default_id = _read_mmdevice_props(ole32, p_default).get("device_id")
+                finally:
+                    _com_release(p_default)
 
-            if preferred_hostapi is not None:
-                def_in = hostapis[preferred_hostapi].get("default_input_device", -1)
-                def_out = hostapis[preferred_hostapi].get("default_output_device", -1)
-            else:
-                sd_def = sd.default.device
-                def_in = sd_def[0] if isinstance(sd_def, (list, tuple)) else -1
-                def_out = sd_def[1] if isinstance(sd_def, (list, tuple)) else -1
+            items: List[Dict[str, Any]] = []
+            p_collection = c_void_p()
+            if (
+                _com_call(
+                    p_enum,
+                    3,
+                    ctypes.HRESULT,
+                    [ctypes.c_int, DWORD, POINTER(c_void_p)],
+                    data_flow,
+                    0x00000001,  # DEVICE_STATE_ACTIVE
+                    byref(p_collection),
+                )
+                == 0
+            ):
+                try:
+                    count = c_uint()
+                    if _com_call(p_collection, 3, ctypes.HRESULT, [POINTER(c_uint)], byref(count)) == 0:
+                        for i in range(count.value):
+                            p_dev = c_void_p()
+                            if (
+                                _com_call(
+                                    p_collection,
+                                    4,
+                                    ctypes.HRESULT,
+                                    [c_uint, POINTER(c_void_p)],
+                                    i,
+                                    byref(p_dev),
+                                )
+                                == 0
+                            ):
+                                try:
+                                    info = _read_mmdevice_props(ole32, p_dev)
+                                    info["is_default"] = (info["device_id"] == default_id)
+                                    items.append(info)
+                                finally:
+                                    _com_release(p_dev)
+                finally:
+                    _com_release(p_collection)
+            return items
 
-            for idx, dev in enumerate(devices):
-                api_name = hostapis[dev["hostapi"]]["name"]
-                dev_name = dev["name"].strip()
+        try:
+            p_enumerator = c_void_p()
+            if (
+                ole32.CoCreateInstance(
+                    byref(_CLSID_MMDeviceEnumerator),
+                    None,
+                    0x1,
+                    byref(_IID_IMMDeviceEnumerator),
+                    byref(p_enumerator),
+                )
+                != 0
+            ):
+                return None
+            try:
+                win_outputs = _enum_flow(p_enumerator, 0)  # Render
+                win_inputs = _enum_flow(p_enumerator, 1)   # Capture
+            finally:
+                _com_release(p_enumerator)
+        finally:
+            if co_initialized:
+                ole32.CoUninitialize()
 
-                # Filter out raw WDM-KS driver pins (fail blocking stream open)
-                if "wdm-ks" in api_name.lower():
-                    continue
+        fp = (
+            tuple(sorted((d["device_id"], d["name"], d["is_default"]) for d in win_inputs)),
+            tuple(sorted((d["device_id"], d["name"], d["is_default"]) for d in win_outputs)),
+        )
+        return {"inputs": win_inputs, "outputs": win_outputs, "fingerprint": fp}
+    except Exception as e:
+        logger.debug(f"IMMDeviceEnumerator query failed: {e}")
+        return None
 
-                # Filter by preferred hostapi if specified
-                if preferred_hostapi is not None and dev["hostapi"] != preferred_hostapi:
-                    continue
 
-                # Filter generic virtual aliases and unconfigured pins
-                if any(p in dev_name for p in ["Sound Mapper", "Primary Sound Driver", "Primary Sound Capture"]):
-                    continue
-                if dev_name in ["Input ()", "Headphones ()"]:
-                    continue
+def get_windows_audio_fingerprint() -> Optional[tuple]:
+    """Returns a fast tuple fingerprint of active Windows System\\Sound devices and defaults."""
+    res = _query_windows_system_sound_devices()
+    return res["fingerprint"] if res else None
 
-                sr = int(dev["default_samplerate"])
-                rate_str = f"{sr // 1000}kHz" if sr % 1000 == 0 else f"{sr / 1000:.1f}kHz"
 
-                # Check and validate input
-                if dev["max_input_channels"] > 0:
-                    try:
-                        sd.check_input_settings(device=idx, channels=1, samplerate=sr)
+def _reinitialize_portaudio():
+    """
+    Safely re-initializes PortAudio (sounddevice) so newly plugged/unplugged audio hardware
+    is discovered. Suspends and resumes any active AudioPipeline streams seamlessly.
+    """
+    with _pa_lock:
+        running_pipelines = [p for p in list(_active_pipelines) if getattr(p, "_running", False)]
+        for p in running_pipelines:
+            try:
+                p._close_streams_only()
+            except Exception:
+                pass
+
+        try:
+            sd._terminate()
+        except Exception:
+            pass
+        try:
+            sd._initialize()
+        except Exception as e:
+            logger.error(f"Failed to re-initialize PortAudio: {e}")
+
+        if running_pipelines:
+            devs = sd.query_devices()
+            hostapis = sd.query_hostapis()
+            wasapi_idx = next(
+                (i for i, a in enumerate(hostapis) if "wasapi" in a.get("name", "").lower()),
+                None,
+            )
+            for p in running_pipelines:
+                try:
+                    # Resolve updated index for the pipeline's input/output device name
+                    new_in = _find_pa_index_by_name(p.input_device_name, True, devs, hostapis, wasapi_idx)
+                    new_out = _find_pa_index_by_name(p.output_device_name, False, devs, hostapis, wasapi_idx)
+                    if new_in is None:
+                        new_in = hostapis[wasapi_idx]["default_input_device"] if wasapi_idx is not None else sd.default.device[0]
+                    if new_out is None:
+                        new_out = hostapis[wasapi_idx]["default_output_device"] if wasapi_idx is not None else sd.default.device[1]
+                    p._open_and_start_streams_sync(input_device=new_in, output_device=new_out)
+                except Exception as e:
+                    logger.error(f"Failed to resume AudioPipeline after PortAudio reinit: {e}")
+
+
+def _find_pa_index_by_name(
+    target_name: str,
+    is_input: bool,
+    devices: Any,
+    hostapis: Any,
+    wasapi_api_idx: Optional[int],
+) -> Optional[int]:
+    """Matches a Windows System\\Sound friendly name to the best PortAudio device index (preferring WASAPI)."""
+    if not target_name:
+        return None
+    target_lower = target_name.strip().lower()
+    ch_key = "max_input_channels" if is_input else "max_output_channels"
+
+    # Priority 1: Windows WASAPI exact match, then prefix/substring match
+    if wasapi_api_idx is not None:
+        for idx, dev in enumerate(devices):
+            if dev["hostapi"] == wasapi_api_idx and dev[ch_key] > 0:
+                if dev["name"].strip().lower() == target_lower:
+                    return idx
+        for idx, dev in enumerate(devices):
+            if dev["hostapi"] == wasapi_api_idx and dev[ch_key] > 0:
+                dn = dev["name"].strip().lower()
+                if target_lower.startswith(dn) or dn.startswith(target_lower):
+                    return idx
+
+    # Priority 2: Windows DirectSound
+    for idx, dev in enumerate(devices):
+        api_name = hostapis[dev["hostapi"]]["name"].lower()
+        if "directsound" in api_name and dev[ch_key] > 0:
+            dn = dev["name"].strip().lower()
+            if dn == target_lower or target_lower.startswith(dn) or dn.startswith(target_lower):
+                return idx
+
+    # Priority 3: MME (handles 31-character truncation)
+    for idx, dev in enumerate(devices):
+        api_name = hostapis[dev["hostapi"]]["name"].lower()
+        if "wdm-ks" not in api_name and dev[ch_key] > 0:
+            dn = dev["name"].strip().lower()
+            if dn and (dn == target_lower or target_lower.startswith(dn)):
+                return idx
+
+    return None
+
+
+def get_available_audio_devices(force_refresh: bool = False) -> dict:
+    """
+    Enumerates truly available, active audio input and output devices matching Windows System\\Sound.
+    Automatically detects newly plugged-in or unplugged earbuds/headsets/speakers via Windows
+    IMMDeviceEnumerator and refreshes PortAudio when endpoints or system defaults change.
+    """
+    global _last_win_audio_fingerprint
+    try:
+        with _pa_lock:
+            win_data = _query_windows_system_sound_devices()
+            if win_data is not None:
+                if force_refresh or _last_win_audio_fingerprint is None or win_data["fingerprint"] != _last_win_audio_fingerprint:
+                    _reinitialize_portaudio()
+                    _last_win_audio_fingerprint = win_data["fingerprint"]
+            elif force_refresh:
+                _reinitialize_portaudio()
+
+            devices = sd.query_devices()
+            hostapis = sd.query_hostapis()
+
+            wasapi_api_idx = None
+            for idx, api in enumerate(hostapis):
+                if "wasapi" in api.get("name", "").lower():
+                    wasapi_api_idx = idx
+                    break
+
+            # If Windows IMMDeviceEnumerator succeeded, build device list matching System\Sound 1-to-1
+            if win_data is not None and (win_data["inputs"] or win_data["outputs"]):
+                ins = []
+                outs = []
+
+                for w_in in win_data["inputs"]:
+                    pa_idx = _find_pa_index_by_name(w_in["name"], True, devices, hostapis, wasapi_api_idx)
+                    if pa_idx is None:
+                        continue
+                    dev = devices[pa_idx]
+                    api_name = hostapis[dev["hostapi"]]["name"]
+                    sr = int(dev["default_samplerate"])
+                    rate_str = f"{sr // 1000}kHz" if sr % 1000 == 0 else f"{sr / 1000:.1f}kHz"
+                    is_def = bool(w_in["is_default"])
+                    dev_name = w_in["name"]
+                    display = f"{dev_name} [Default]" if is_def else dev_name
+                    ins.append({
+                        "index": pa_idx,
+                        "name": dev_name,
+                        "device_id": w_in.get("device_id", ""),
+                        "display_name": display,
+                        "label": f"{display} ({rate_str})",
+                        "is_default": is_def,
+                        "channels": dev["max_input_channels"],
+                        "samplerate": sr,
+                        "api": api_name,
+                    })
+
+                for w_out in win_data["outputs"]:
+                    pa_idx = _find_pa_index_by_name(w_out["name"], False, devices, hostapis, wasapi_api_idx)
+                    if pa_idx is None:
+                        continue
+                    dev = devices[pa_idx]
+                    api_name = hostapis[dev["hostapi"]]["name"]
+                    sr = int(dev["default_samplerate"])
+                    rate_str = f"{sr // 1000}kHz" if sr % 1000 == 0 else f"{sr / 1000:.1f}kHz"
+                    is_def = bool(w_out["is_default"])
+                    dev_name = w_out["name"]
+                    display = f"{dev_name} [Default]" if is_def else dev_name
+                    outs.append({
+                        "index": pa_idx,
+                        "name": dev_name,
+                        "device_id": w_out.get("device_id", ""),
+                        "display_name": display,
+                        "label": f"{display} ({rate_str})",
+                        "is_default": is_def,
+                        "channels": dev["max_output_channels"],
+                        "samplerate": sr,
+                        "api": api_name,
+                    })
+
+                ins.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
+                outs.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
+                if ins or outs:
+                    return {"inputs": ins, "outputs": outs}
+
+            # Fallback enumeration via PortAudio directly
+            def _collect(preferred_hostapi=None):
+                ins = []
+                outs = []
+
+                if preferred_hostapi is not None:
+                    def_in = hostapis[preferred_hostapi].get("default_input_device", -1)
+                    def_out = hostapis[preferred_hostapi].get("default_output_device", -1)
+                else:
+                    sd_def = sd.default.device
+                    def_in = sd_def[0] if isinstance(sd_def, (list, tuple)) else -1
+                    def_out = sd_def[1] if isinstance(sd_def, (list, tuple)) else -1
+
+                for idx, dev in enumerate(devices):
+                    api_name = hostapis[dev["hostapi"]]["name"]
+                    dev_name = dev["name"].strip()
+
+                    if "wdm-ks" in api_name.lower():
+                        continue
+                    if preferred_hostapi is not None and dev["hostapi"] != preferred_hostapi:
+                        continue
+                    if any(p in dev_name for p in ["Sound Mapper", "Primary Sound Driver", "Primary Sound Capture"]):
+                        continue
+                    if dev_name in ["Input ()", "Headphones ()"]:
+                        continue
+
+                    sr = int(dev["default_samplerate"])
+                    rate_str = f"{sr // 1000}kHz" if sr % 1000 == 0 else f"{sr / 1000:.1f}kHz"
+
+                    if dev["max_input_channels"] > 0:
                         is_def = (idx == def_in)
                         display = f"{dev_name} [Default]" if is_def else dev_name
                         ins.append({
@@ -598,16 +1010,10 @@ def get_available_audio_devices() -> dict:
                             "is_default": is_def,
                             "channels": dev["max_input_channels"],
                             "samplerate": sr,
-                            "api": api_name
+                            "api": api_name,
                         })
-                    except Exception:
-                        pass
 
-                # Check and validate output
-                if dev["max_output_channels"] > 0:
-                    try:
-                        ch = min(int(dev["max_output_channels"]), 2)
-                        sd.check_output_settings(device=idx, channels=ch, samplerate=sr)
+                    if dev["max_output_channels"] > 0:
                         is_def = (idx == def_out)
                         display = f"{dev_name} [Default]" if is_def else dev_name
                         outs.append({
@@ -618,68 +1024,85 @@ def get_available_audio_devices() -> dict:
                             "is_default": is_def,
                             "channels": dev["max_output_channels"],
                             "samplerate": sr,
-                            "api": api_name
+                            "api": api_name,
                         })
-                    except Exception:
-                        pass
 
-            # Sort so system default device is first, then alphabetical by name
-            ins.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
-            outs.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
-            return ins, outs
+                ins.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
+                outs.sort(key=lambda x: (not x["is_default"], x["name"].lower()))
+                return ins, outs
 
-        # First attempt with WASAPI if available
-        inputs, outputs = _collect(preferred_hostapi=wasapi_api_idx)
+            inputs, outputs = _collect(preferred_hostapi=wasapi_api_idx)
+            if not inputs or not outputs:
+                fb_ins, fb_outs = _collect(preferred_hostapi=None)
+                if not inputs:
+                    inputs = fb_ins
+                if not outputs:
+                    outputs = fb_outs
 
-        # Fallback to non-WDM-KS devices if WASAPI found nothing
-        if not inputs or not outputs:
-            fb_ins, fb_outs = _collect(preferred_hostapi=None)
-            if not inputs:
-                inputs = fb_ins
-            if not outputs:
-                outputs = fb_outs
-
-        return {"inputs": inputs, "outputs": outputs}
+            return {"inputs": inputs, "outputs": outputs}
     except Exception as e:
         logger.error(f"Error enumerating audio devices: {e}")
         return {"inputs": [], "outputs": [], "error": str(e)}
 
 
-def resolve_valid_audio_devices(configured_in: int, configured_out: int) -> tuple[int, int]:
-    """
-    Validates configured audio device indices and resolves to available defaults if needed.
-    Prevents engine crashes if a configured audio device is unplugged or invalid.
-    """
-    # Fast path: check if configured devices are directly available and valid
-    try:
-        devs = sd.query_devices()
-        in_ok = (0 <= configured_in < len(devs) and devs[configured_in]["max_input_channels"] > 0)
-        out_ok = (0 <= configured_out < len(devs) and devs[configured_out]["max_output_channels"] > 0)
-        if in_ok and out_ok:
-            return configured_in, configured_out
-    except Exception:
-        pass
+def _clean_device_label_to_name(label: str) -> str:
+    """Extracts the base device friendly name from a UI label like 'Speakers (Realtek(R) Audio) [Default] (48kHz)'."""
+    if not label:
+        return ""
+    s = label.strip()
+    # Strip trailing sample rate like ' (48kHz)' or ' (44.1kHz)'
+    if s.endswith("kHz)") and " (" in s:
+        s = s[: s.rfind(" (")].strip()
+    # Strip ' [Default]'
+    s = s.replace("[Default]", "").strip()
+    return s
 
+
+def resolve_valid_audio_devices(
+    configured_in: int,
+    configured_out: int,
+    configured_in_name: str = "",
+    configured_out_name: str = "",
+) -> tuple[int, int]:
+    """
+    Validates configured audio device indices/names against live System\\Sound endpoints
+    and resolves to the active system default if a device was unplugged or if defaults changed.
+    """
     avail = get_available_audio_devices()
     inputs = avail.get("inputs", [])
     outputs = avail.get("outputs", [])
 
-    valid_in = configured_in
-    if not any(d["index"] == configured_in for d in inputs):
-        if inputs:
-            valid_in = inputs[0]["index"]
-            logger.warning(
-                f"Configured input device #{configured_in} is unavailable. "
-                f"Defaulting to available device #{valid_in} ({inputs[0]['name']})."
-            )
+    def _resolve_one(configured_idx: int, configured_label: str, candidates: list, kind: str) -> int:
+        if not candidates:
+            return configured_idx
 
-    valid_out = configured_out
-    if not any(d["index"] == configured_out for d in outputs):
-        if outputs:
-            valid_out = outputs[0]["index"]
-            logger.warning(
-                f"Configured output device #{configured_out} is unavailable. "
-                f"Defaulting to available device #{valid_out} ({outputs[0]['name']})."
-            )
+        # If the user previously selected the [Default] device (or no device name saved yet),
+        # follow the current Windows System\Sound [Default] device (candidates[0]).
+        if not configured_label or "[default]" in configured_label.lower():
+            default_dev = next((d for d in candidates if d.get("is_default")), candidates[0])
+            return default_dev["index"]
 
+        clean_target = _clean_device_label_to_name(configured_label).lower()
+        if clean_target:
+            for d in candidates:
+                if d["name"].strip().lower() == clean_target:
+                    return d["index"]
+            for d in candidates:
+                dn = d["name"].strip().lower()
+                if clean_target in dn or dn in clean_target:
+                    return d["index"]
+
+        for d in candidates:
+            if d["index"] == configured_idx:
+                return d["index"]
+
+        fallback = candidates[0]
+        logger.warning(
+            f"Configured {kind} device #{configured_idx} ('{configured_label}') is unavailable. "
+            f"Defaulting to #{fallback['index']} ({fallback['name']})."
+        )
+        return fallback["index"]
+
+    valid_in = _resolve_one(configured_in, configured_in_name, inputs, "input")
+    valid_out = _resolve_one(configured_out, configured_out_name, outputs, "output")
     return valid_in, valid_out

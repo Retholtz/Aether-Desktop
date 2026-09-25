@@ -3,10 +3,15 @@ import json
 import os
 import sys
 import threading
+import time
 import sounddevice as sd
 from typing import Optional
 
-from core.audio_stream import get_available_audio_devices
+from core.audio_stream import (
+    get_available_audio_devices,
+    get_windows_audio_fingerprint,
+    resolve_valid_audio_devices,
+)
 from core.engine import AetherEngine, GEMINI_VOICES
 from core.logger import (
     get_logger,
@@ -229,6 +234,90 @@ class GuiBridge:
         )
         self.engine = self._engine
         register_ui_log_callback(self._on_log_record)
+        self._last_audio_fp = get_windows_audio_fingerprint()
+        self._start_audio_device_watcher()
+
+    def _start_audio_device_watcher(self):
+        """Monitors Windows System\\Sound endpoints for hotplugged earbuds/headsets and updates live streams & UI."""
+        def _watch_loop():
+            while True:
+                try:
+                    time.sleep(1.5)
+                    fp = get_windows_audio_fingerprint()
+                    if fp is None or fp == self._last_audio_fp:
+                        continue
+
+                    prev_fp = self._last_audio_fp
+                    self._last_audio_fp = fp
+
+                    avail = get_available_audio_devices(force_refresh=True)
+                    inputs = avail.get("inputs", [])
+                    outputs = avail.get("outputs", [])
+
+                    # Check if the system default input or output changed compared to previous fingerprint
+                    prev_def_in_id = next((d[0] for d in (prev_fp[0] if prev_fp else ()) if d[2]), None)
+                    prev_def_out_id = next((d[0] for d in (prev_fp[1] if prev_fp else ()) if d[2]), None)
+                    curr_def_in = next((d for d in inputs if d.get("is_default")), inputs[0] if inputs else None)
+                    curr_def_out = next((d for d in outputs if d.get("is_default")), outputs[0] if outputs else None)
+
+                    aud_cfg = self._config.setdefault("audio", {})
+                    cfg_in_idx = aud_cfg.get("input_device_index", 0)
+                    cfg_out_idx = aud_cfg.get("output_device_index", 0)
+                    cfg_in_name = aud_cfg.get("input_device_name", "")
+                    cfg_out_name = aud_cfg.get("output_device_name", "")
+
+                    # If Windows default input device changed (e.g. earbud plugged in/unplugged), switch to new default
+                    if curr_def_in and (prev_def_in_id != curr_def_in.get("device_id") or "[default]" in cfg_in_name.lower()):
+                        selected_in = curr_def_in
+                    else:
+                        resolved_in_idx, _ = resolve_valid_audio_devices(cfg_in_idx, cfg_out_idx, cfg_in_name, cfg_out_name)
+                        selected_in = next((d for d in inputs if d["index"] == resolved_in_idx), curr_def_in)
+
+                    # If Windows default output device changed (e.g. earbud plugged in/unplugged), switch to new default
+                    if curr_def_out and (prev_def_out_id != curr_def_out.get("device_id") or "[default]" in cfg_out_name.lower()):
+                        selected_out = curr_def_out
+                    else:
+                        _, resolved_out_idx = resolve_valid_audio_devices(cfg_in_idx, cfg_out_idx, cfg_in_name, cfg_out_name)
+                        selected_out = next((d for d in outputs if d["index"] == resolved_out_idx), curr_def_out)
+
+                    if selected_in:
+                        aud_cfg["input_device_index"] = selected_in["index"]
+                        aud_cfg["input_device_name"] = selected_in["label"]
+                    if selected_out:
+                        aud_cfg["output_device_index"] = selected_out["index"]
+                        aud_cfg["output_device_name"] = selected_out["label"]
+
+                    try:
+                        with open(self._config_path, "w", encoding="utf-8") as f:
+                            json.dump(self._config, f, indent=2)
+                    except Exception:
+                        pass
+
+                    # Hot-swap active AudioPipeline streams if the assistant is currently running
+                    if self._engine and self._engine.audio and selected_in and selected_out:
+                        self._engine.audio.switch_devices(selected_in["index"], selected_out["index"])
+
+                    logger.info(
+                        f"[AUDIO HOTPLUG] Active hardware updated -> Mic: {aud_cfg.get('input_device_name')} | "
+                        f"Speaker: {aud_cfg.get('output_device_name')}"
+                    )
+
+                    self._on_engine_event(
+                        "audio_devices_updated",
+                        {
+                            "inputs": inputs,
+                            "outputs": outputs,
+                            "selected_input_index": aud_cfg.get("input_device_index"),
+                            "selected_input_name": aud_cfg.get("input_device_name"),
+                            "selected_output_index": aud_cfg.get("output_device_index"),
+                            "selected_output_name": aud_cfg.get("output_device_name"),
+                        },
+                    )
+                except Exception as e:
+                    logger.debug(f"Audio hardware watcher error: {e}")
+
+        t = threading.Thread(target=_watch_loop, name="AudioHardwareWatcher", daemon=True)
+        t.start()
 
     @property
     def config(self) -> dict:
@@ -425,6 +514,14 @@ class GuiBridge:
                     if self._engine.audio:
                         self._engine.audio.set_mode(self._config["audio"].get("mode", "always_on"))
                         self._engine.audio.set_software_gate(self._config["audio"].get("software_gate", False))
+                        new_in = self._config["audio"].get("input_device_index")
+                        new_out = self._config["audio"].get("output_device_index")
+                        if (
+                            new_in is not None
+                            and new_out is not None
+                            and (new_in != self._engine.audio.input_device or new_out != self._engine.audio.output_device)
+                        ):
+                            self._engine.audio.switch_devices(int(new_in), int(new_out))
                     if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
                         self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
 
@@ -448,9 +545,9 @@ class GuiBridge:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def get_audio_devices(self) -> dict:
-        """Enumerates truly active, available microphones and speakers on the system."""
-        return get_available_audio_devices()
+    def get_audio_devices(self, force_refresh: bool = False) -> dict:
+        """Enumerates truly active, available microphones and speakers on the system matching Windows System\\Sound."""
+        return get_available_audio_devices(force_refresh=force_refresh)
 
     def get_edge_voice_catalog(self) -> dict:
         """Returns structured Edge TTS catalog with priority sorted regions and clean voice names."""

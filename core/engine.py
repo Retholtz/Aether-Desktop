@@ -1013,9 +1013,11 @@ class AetherEngine:
         software_gate = audio_cfg.get("software_gate", False)
         in_idx = audio_cfg.get("input_device_index", 0)
         out_idx = audio_cfg.get("output_device_index", 0)
+        in_name = audio_cfg.get("input_device_name", "")
+        out_name = audio_cfg.get("output_device_name", "")
 
         # Validate and resolve to available devices in case configured device was unplugged or invalid
-        in_idx, out_idx = resolve_valid_audio_devices(in_idx, out_idx)
+        in_idx, out_idx = resolve_valid_audio_devices(in_idx, out_idx, in_name, out_name)
 
         self.notify("status", {"state": "connecting", "message": f"Opening audio devices ({in_idx}, {out_idx})..."})
 
