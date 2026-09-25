@@ -38,6 +38,26 @@ from tools.script_runner import ScriptRunner
 from tools.skill_library import SkillLibrary
 from core.user_memory import UserMemory
 from tools.payload_sanitizer import sanitize_tool_result
+from tools.screen_vision import capture_screen_image
+
+
+def inspect_screen_context(target: str = "active_window") -> dict:
+    """
+    Captures and inspects visual content currently displayed on the user's screen.
+    Use this whenever the user asks you to look at, review, debug, read, or summarize 
+    something visible on their display, desktop, browser, code editor, or active application.
+    
+    Args:
+        target: 'active_window' (default, captures only focused app) or 'full_screen' (captures entire primary monitor)
+    """
+    image_bytes, desc = capture_screen_image(target=target)
+    
+    return {
+        "status": "success",
+        "captured_target": desc,
+        "image_bytes": image_bytes,
+        "mime_type": "image/jpeg"
+    }
 
 
 
@@ -362,6 +382,21 @@ CAPTURE_SCREEN_SNAPSHOT_DECLARATION = {
             }
         },
         "required": []
+    }
+}
+
+INSPECT_SCREEN_CONTEXT_DECLARATION = {
+    "name": "inspect_screen_context",
+    "description": "Captures and inspects visual content from the user's screen or active window. Call this when the user says 'look at my screen', 'what error is this', 'read this code', or refers to anything currently visible.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "target": {
+                "type": "STRING",
+                "enum": ["active_window", "full_screen"],
+                "description": "Whether to capture only the focused application window (default) or the entire primary monitor."
+            }
+        }
     }
 }
 
@@ -764,6 +799,7 @@ def get_all_tool_declarations() -> List[dict]:
         PRESS_KEY_DECLARATION,
         SCROLL_PAGE_DECLARATION,
         CAPTURE_SCREEN_SNAPSHOT_DECLARATION,
+        INSPECT_SCREEN_CONTEXT_DECLARATION,
         RUN_SAVED_SCRIPT_DECLARATION,
         SAVE_SCRIPT_TO_LIBRARY_DECLARATION,
         LIST_SAVED_SKILLS_DECLARATION,
@@ -1204,6 +1240,19 @@ class ToolDispatcher:
                     "details": meta,
                     "_jpeg_bytes": jpeg_bytes
                 }
+
+            elif fn_name == "inspect_screen_context":
+                target = str(args.get("target", "active_window") or "active_window").strip()
+                if target not in ("active_window", "full_screen"):
+                    target = "active_window"
+                result = await asyncio.to_thread(inspect_screen_context, target=target)
+                desc = result.get("captured_target", target)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Vision Hook",
+                    "content": f"👁️ [VISION] Inspected {desc}"
+                })
+                return result
 
             # -------------------------------------------------------------
             # Tier 3: Sandboxed Script Runner & Skill Library

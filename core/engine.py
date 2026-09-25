@@ -539,6 +539,48 @@ class AetherEngine:
             "source": "text"
         })
 
+    def _send_multimodal_turn(self, tool_response: dict):
+        """
+        Records and dispatches a multimodal tool response containing both
+        the function_response confirmation text and the inline_data image part.
+        """
+        self._last_multimodal_turn = tool_response
+        logger.info(f"[VISION] Prepared multimodal turn for Cortex ({len(tool_response.get('parts', []))} parts)")
+
+    def handle_tool_call_result(self, tool_name: str, result: Any):
+        """
+        Packages tool outputs containing image_bytes (such as inspect_screen_context)
+        into a multimodal tool response turn with both function_response and inline_data parts.
+        """
+        if tool_name == "inspect_screen_context" and isinstance(result, dict) and "image_bytes" in result:
+            image_bytes = result["image_bytes"]
+            mime_type = result.get("mime_type", "image/jpeg")
+            desc = result.get("captured_target", "screen")
+
+            # Send tool response message containing both confirmation text and the inline image part
+            tool_response = {
+                "role": "tool",
+                "parts": [
+                    {
+                        "function_response": {
+                            "name": tool_name,
+                            "response": {"output": f"Successfully captured visual context of {desc}."}
+                        }
+                    },
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": image_bytes
+                        }
+                    }
+                ]
+            }
+
+            # Push to the active Gemini Live websocket or multi-turn chat stream
+            self._send_multimodal_turn(tool_response)
+            return tool_response
+        return result
+
     async def _send_loop(self, session=None):
         """Streams microphone PCM audio, real-time desktop vision frames, and typed messages to the Live session."""
         last_vision_time = 0.0
@@ -648,13 +690,29 @@ class AetherEngine:
 
                                 result = await self.dispatcher.dispatch(fn_name, fn_args)
                                 try:
-                                    res_chars = len(json.dumps(result, default=str))
+                                    res_clean = (
+                                        {k: v for k, v in result.items() if k not in ("image_bytes", "_jpeg_bytes")}
+                                        if isinstance(result, dict) else result
+                                    )
+                                    res_chars = len(json.dumps(res_clean, default=str))
                                     self.session_lifecycle.record_tool_chars(res_chars)
                                 except Exception:
                                     pass
 
-                                # If a snapshot was requested, stream the JPEG frame back to the live session
-                                if fn_name == "capture_screen_snapshot" and "_jpeg_bytes" in result:
+                                # If inspect_screen_context or capture_screen_snapshot was requested, stream the JPEG frame back to the live session
+                                if fn_name == "inspect_screen_context" and isinstance(result, dict) and "image_bytes" in result:
+                                    self.handle_tool_call_result(fn_name, result)
+                                    raw_jpeg = result.pop("image_bytes")
+                                    mime_type = result.get("mime_type", "image/jpeg")
+                                    desc = result.get("captured_target", "screen")
+                                    result = {"output": f"Successfully captured visual context of {desc}."}
+                                    try:
+                                        await session.send_realtime_input(
+                                            video=types.Blob(data=raw_jpeg, mime_type=mime_type)
+                                        )
+                                    except Exception as e:
+                                        print(f"[VISION CONTEXT SEND ERROR] {e}")
+                                elif fn_name == "capture_screen_snapshot" and isinstance(result, dict) and "_jpeg_bytes" in result:
                                     raw_jpeg = result.pop("_jpeg_bytes")
                                     try:
                                         await session.send_realtime_input(
@@ -900,6 +958,7 @@ class AetherEngine:
             "  * `type_text(text, app_name, press_enter)`: Foreground window typing with formatting.\n"
             "  * `press_key(key_combo)`: Keyboard hotkeys and shortcuts.\n"
             "  * `mouse_click(x, y, app_name)`: 0-1000 normalized desktop coordinate clicks.\n"
+            "  * `inspect_screen_context(target='active_window')`: On-demand visual grounding of the focused active window or full primary display. Call this whenever the user says 'look at my screen', 'what error is this', 'read this code', 'summarize the document open in my browser', or refers to anything currently visible.\n"
             "  * `capture_screen_snapshot(monitor)`: High-detail screen capture.\n"
             "  * `read_saved_skill(skill_name)`: Inspects and returns full source code of any saved skill from library.\n\n"
             "PERMANENT SKILL LIBRARY (REUSABLE AUTOMATIONS):\n"
@@ -1473,25 +1532,41 @@ class AetherEngine:
 
                             result = await self.dispatcher.dispatch(fn_name, fn_args)
                             try:
-                                res_chars = len(json.dumps(result, default=str))
+                                res_clean = (
+                                    {k: v for k, v in result.items() if k not in ("image_bytes", "_jpeg_bytes")}
+                                    if isinstance(result, dict) else result
+                                )
+                                res_chars = len(json.dumps(res_clean, default=str))
                                 self.session_lifecycle.record_tool_chars(res_chars)
                             except Exception:
                                 pass
                             if isinstance(result, dict) and result.get("status") == "blocked":
                                 blocked_by_whitelist = True
 
-                            # Handle screen snapshot JPEG if returned
-                            raw_jpeg = None
-                            if fn_name == "capture_screen_snapshot" and isinstance(result, dict) and "_jpeg_bytes" in result:
-                                raw_jpeg = result.pop("_jpeg_bytes")
+                            # Handle inspect_screen_context multimodal injection or screen snapshot JPEG if returned
+                            if fn_name == "inspect_screen_context" and isinstance(result, dict) and "image_bytes" in result:
+                                self.handle_tool_call_result(fn_name, result)
+                                image_bytes = result.pop("image_bytes")
+                                mime_type = result.get("mime_type", "image/jpeg")
+                                desc = result.get("captured_target", "screen")
+                                func_resp = types.Part.from_function_response(
+                                    name=fn_name,
+                                    response={"output": f"Successfully captured visual context of {desc}."}
+                                )
+                                tool_parts.append(func_resp)
+                                tool_parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+                            else:
+                                raw_jpeg = None
+                                if fn_name == "capture_screen_snapshot" and isinstance(result, dict) and "_jpeg_bytes" in result:
+                                    raw_jpeg = result.pop("_jpeg_bytes")
 
-                            func_resp = types.Part.from_function_response(
-                                name=fn_name,
-                                response={"result": result} if not isinstance(result, dict) else result
-                            )
-                            tool_parts.append(func_resp)
-                            if raw_jpeg:
-                                tool_parts.append(types.Part.from_bytes(data=raw_jpeg, mime_type="image/jpeg"))
+                                func_resp = types.Part.from_function_response(
+                                    name=fn_name,
+                                    response={"result": result} if not isinstance(result, dict) else result
+                                )
+                                tool_parts.append(func_resp)
+                                if raw_jpeg:
+                                    tool_parts.append(types.Part.from_bytes(data=raw_jpeg, mime_type="image/jpeg"))
 
                         self.notify("status", {
                             "state": "thinking",

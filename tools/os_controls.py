@@ -523,5 +523,20 @@ def send_desktop_notification(title: str, message: str, play_chime: Optional[boo
     return f"Desktop notification sent: '{title} - {message}'"
 
 
-
-
+def inspect_screen_context(target: str = "active_window") -> dict:
+    """
+    Captures and inspects visual content currently displayed on the user's screen.
+    Use this whenever the user asks you to look at, review, debug, read, or summarize 
+    something visible on their display, desktop, browser, code editor, or active application.
+    
+    Args:
+        target: 'active_window' (default, captures only focused app) or 'full_screen' (captures entire primary monitor)
+    """
+    from tools.screen_vision import capture_screen_image
+    image_bytes, desc = capture_screen_image(target=target)
+    return {
+        "status": "success",
+        "captured_target": desc,
+        "image_bytes": image_bytes,
+        "mime_type": "image/jpeg"
+    }

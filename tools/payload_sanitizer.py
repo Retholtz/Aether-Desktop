@@ -128,8 +128,11 @@ def _extract_primary_text_payload(result: Dict[str, Any]) -> tuple[str, bool]:
                 return dumped, True
 
     # 3. Overall serialized dict if large
-    # Exclude binary data (_jpeg_bytes) when calculating size
-    clean_dict = {k: v for k, v in result.items() if not k.startswith("_")}
+    # Exclude binary data (_jpeg_bytes, image_bytes) when calculating size
+    clean_dict = {
+        k: v for k, v in result.items()
+        if not k.startswith("_") and k != "image_bytes" and not isinstance(v, (bytes, bytearray))
+    }
     serialized = json.dumps(clean_dict, indent=2, default=str)
     if len(serialized) > MAX_PAYLOAD_CHAR_LIMIT:
         return serialized, True
@@ -148,7 +151,7 @@ def sanitize_tool_result(
       and returns an executive summary dictionary.
     - If an exception or traceback is present, cleans internal runner frames
       and preserves only the failing line, module name, and final exception lines.
-    - Preserves private metadata keys (e.g. _jpeg_bytes).
+    - Preserves private metadata keys (e.g. _jpeg_bytes) and binary vision payloads (image_bytes).
     """
     if not isinstance(result, dict):
         result_dict = {"status": "success", "result": result}
@@ -194,9 +197,9 @@ def sanitize_tool_result(
             "total_characters": len(raw_text)
         }
 
-        # Preserve private pass-through keys (such as _jpeg_bytes for screen snapshots)
+        # Preserve private pass-through keys (such as _jpeg_bytes for screen snapshots) and multimodal image_bytes
         for k, v in result_dict.items():
-            if k.startswith("_"):
+            if k.startswith("_") or k in ("image_bytes", "mime_type", "captured_target") or isinstance(v, (bytes, bytearray)):
                 sanitized[k] = v
 
         return sanitized
