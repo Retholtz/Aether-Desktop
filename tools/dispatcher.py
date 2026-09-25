@@ -979,7 +979,7 @@ class ToolDispatcher:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             st = result.get("status", "success") if isinstance(result, dict) else "success"
             logger.info(f"[TOOL RESULT] {fn_name} | Duration: {elapsed_ms:.1f}ms | Status: {st}")
-            return sanitize_tool_result(result)
+            return sanitize_tool_result(fn_name, result)
         except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             err_msg = f"Tool execution failed for '{fn_name}': {str(e)}"
@@ -988,7 +988,7 @@ class ToolDispatcher:
                 "type": "error",
                 "content": err_msg
             })
-            return sanitize_tool_result({
+            return sanitize_tool_result(fn_name, {
                 "status": "error",
                 "error": str(e),
                 "message": err_msg
@@ -1370,11 +1370,22 @@ class ToolDispatcher:
                     "name": "User Memory",
                     "content": f"🧠 [MEMORY QUERY] '{search_term}' -> {len(results)} matches"
                 })
+                if not results:
+                    return {
+                        "status": "not_found_in_user_profile",
+                        "search_term": search_term,
+                        "category": str(category).strip() if category else "all",
+                        "count": 0,
+                        "facts": [],
+                        "results": [],
+                        "directive": f"No stored personal facts match '{search_term}'. If the user is asking about an acquaintance, public figure, or external topic, immediately execute google_search."
+                    }
                 return {
                     "status": "success",
                     "search_term": search_term,
                     "category": str(category).strip() if category else "all",
                     "count": len(results),
+                    "facts": results,
                     "results": results
                 }
 
@@ -1388,7 +1399,7 @@ class ToolDispatcher:
                     "name": "Custom Lexicon",
                     "content": f"📖 [LEXICON] Learned: '{term}' -> '{phonetic}' ({cat})"
                 })
-                if hasattr(self, "engine") and self.engine and hasattr(self.engine, "update_lexicon_context"):
+                if hasattr(self, "engine") and self.engine and hasattr(self, "engine") and hasattr(self.engine, "update_lexicon_context"):
                     try:
                         self.engine.update_lexicon_context()
                     except Exception as e:
@@ -1405,6 +1416,15 @@ class ToolDispatcher:
                     "name": "Session Search",
                     "content": f"🔍 [SESSION SEARCH] Query: '{query_str}'"
                 })
+                if isinstance(formatted_summary, str) and formatted_summary.startswith("No previous sessions matched query:"):
+                    return {
+                        "status": "not_found_in_local_history",
+                        "query": query_str,
+                        "count": 0,
+                        "results": [],
+                        "result": formatted_summary,
+                        "directive": f"No past sessions match '{query_str}'. If this inquiry concerns an external person, entity, or general topic, immediately execute google_search."
+                    }
                 return {
                     "status": "success",
                     "query": query_str,

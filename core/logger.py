@@ -75,6 +75,10 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
         root_logger.setLevel(level)
         root_logger.propagate = False
 
+        # Suppress noisy third-party SDK AFC / non-text-part advisory loggers
+        logging.getLogger("google_genai.models").setLevel(logging.ERROR)
+        logging.getLogger("google_genai.types").setLevel(logging.ERROR)
+
         # Formatter with millisecond timestamp, level, module and message
         formatter = logging.Formatter(
             fmt="[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(name)s] %(message)s",

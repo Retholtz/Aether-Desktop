@@ -192,7 +192,7 @@ def get_all_facts(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
         configure_sqlite_connection(conn)
         conn.row_factory = sqlite3.Row
         cur = conn.execute("""
-            SELECT id, category, fact, updated_at
+            SELECT id, category, key, value, data_type, fact, source, updated_at
             FROM user_facts
             WHERE fact IS NOT NULL AND fact != ''
             ORDER BY updated_at DESC
@@ -209,18 +209,44 @@ def replace_facts(
     Safely replaces reconciled facts in user_facts table.
     If snapshot_ts is provided, only facts with updated_at <= snapshot_ts are pruned,
     preserving any new facts recorded while reconciliation was running in the background.
+    Always preserves entries in 'family' and 'dates' categories and explicit profile keys.
     """
     target_path = _resolve_db_path(db_path)
     init_memory_db(target_path)
     with sqlite3.connect(target_path, timeout=10.0) as conn:
         configure_sqlite_connection(conn)
+        conn.row_factory = sqlite3.Row
         with conn:
+            # Snapshot existing rows to preserve explicit keys and protected categories ('family', 'dates')
+            existing_rows = conn.execute("""
+                SELECT category, key, value, data_type, fact, source, confidence, updated_at
+                FROM user_facts
+                WHERE fact IS NOT NULL AND fact != ''
+            """).fetchall()
+
+            by_fact: Dict[str, sqlite3.Row] = {}
+            by_key: Dict[str, sqlite3.Row] = {}
+            protected_rows: List[sqlite3.Row] = []
+            for r in existing_rows:
+                f_val = (r["fact"] or "").strip()
+                k_val = (r["key"] or "").strip()
+                c_val = (r["category"] or "").strip().lower()
+                if f_val:
+                    by_fact[f_val] = r
+                if k_val and not k_val.startswith("fact_"):
+                    by_key[k_val] = r
+                if c_val in ("family", "dates") or (k_val and not k_val.startswith("fact_")):
+                    protected_rows.append(r)
+
             if snapshot_ts is not None:
                 conn.execute("DELETE FROM user_facts WHERE updated_at <= ?;", (snapshot_ts,))
             else:
                 conn.execute("DELETE FROM user_facts;")
 
             now_ts = time.time()
+            inserted_keys = set()
+            inserted_facts = set()
+
             for f in facts:
                 fact_str = f.get("fact", "")
                 if isinstance(fact_str, str):
@@ -231,8 +257,29 @@ def replace_facts(
                     fact_str = str(fact_str).strip()
                 if not fact_str:
                     continue
-                cat = f.get("category", "general")
-                key_text = f.get("key") or f"fact_{hashlib.md5(fact_str.encode('utf-8')).hexdigest()[:12]}"
+                cat = str(f.get("category", "general")).strip()
+                explicit_key = (f.get("key") or "").strip()
+                explicit_val = f.get("value")
+
+                # Match back to existing explicit key if omitted in LLM reconciliation response
+                matched_row = by_fact.get(fact_str)
+                if not explicit_key and matched_row:
+                    rk = (matched_row["key"] or "").strip()
+                    if rk and not rk.startswith("fact_"):
+                        explicit_key = rk
+                        if explicit_val is None:
+                            explicit_val = matched_row["value"]
+                if not explicit_key and ":" in fact_str:
+                    prefix, rest = fact_str.split(":", 1)
+                    prefix_clean = prefix.strip()
+                    if prefix_clean in by_key:
+                        explicit_key = prefix_clean
+                        if explicit_val is None:
+                            explicit_val = rest.strip()
+
+                key_text = explicit_key or f"fact_{hashlib.md5(fact_str.encode('utf-8')).hexdigest()[:12]}"
+                val_text = str(explicit_val).strip() if explicit_val is not None else fact_str
+
                 conn.execute("""
                     INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -251,8 +298,34 @@ def replace_facts(
                     f.get("confidence", 1.0),
                     now_ts,
                     key_text,
-                    fact_str
+                    val_text
                 ))
+                inserted_keys.add(key_text)
+                inserted_facts.add(fact_str)
+
+            # Guarantee preservation of all 'family' & 'dates' entries and explicit profile keys
+            for pr in protected_rows:
+                p_key = (pr["key"] or "").strip()
+                p_fact = (pr["fact"] or "").strip()
+                if (p_key and p_key in inserted_keys) or (p_fact and p_fact in inserted_facts):
+                    continue
+                conn.execute("""
+                    INSERT OR IGNORE INTO user_facts (category, key, value, data_type, fact, source, confidence, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    pr["category"],
+                    p_key or f"fact_{hashlib.md5(p_fact.encode('utf-8')).hexdigest()[:12]}",
+                    pr["value"] or p_fact,
+                    pr["data_type"] or "string",
+                    p_fact,
+                    pr["source"] or "preserved",
+                    pr["confidence"] if pr["confidence"] is not None else 1.0,
+                    pr["updated_at"] or now_ts
+                ))
+                if p_key:
+                    inserted_keys.add(p_key)
+                if p_fact:
+                    inserted_facts.add(p_fact)
 
 
 class UserMemory:
@@ -429,6 +502,10 @@ class UserMemory:
                 }
                 for r in rows
             ]
+
+    def search_facts(self, search_term: str, category: Optional[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
+        """Alias for query_facts supporting search_facts(search_term) lookups."""
+        return self.query_facts(search_term=search_term, category=category, limit=limit)
 
     def get_preferences(self) -> List[Dict[str, Any]]:
         """Returns all notification preference rows."""

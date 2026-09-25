@@ -125,7 +125,20 @@ def main():
                 bridge._engine.telemetry_db.close()
             except Exception:
                 pass
-        loop.call_soon_threadsafe(loop.stop)
+        async def _cancel_pending():
+            tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
+            for t in tasks:
+                t.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        if loop.is_running():
+            try:
+                fut = asyncio.run_coroutine_threadsafe(_cancel_pending(), loop)
+                fut.result(timeout=2.0)
+            except Exception:
+                pass
+            loop.call_soon_threadsafe(loop.stop)
         print("[SHUTDOWN] Clean exit.")
 
 

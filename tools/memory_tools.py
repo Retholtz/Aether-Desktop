@@ -61,13 +61,24 @@ def query_user_memory(
 ) -> Dict[str, Any]:
     """Queries user memory dynamically for keywords, family facts, dates, preferences, or setups."""
     mem = memory or get_user_memory()
-    results = mem.query_facts(search_term=search_term, category=category, limit=5)
+    facts = mem.query_facts(search_term=search_term, category=category, limit=5)
+    if not facts:
+        return {
+            "status": "not_found_in_user_profile",
+            "search_term": search_term,
+            "category_filter": category or "all",
+            "count": 0,
+            "facts": [],
+            "results": [],
+            "directive": f"No stored personal facts match '{search_term}'. If the user is asking about an acquaintance, public figure, or external topic, immediately execute google_search."
+        }
     return {
         "status": "success",
         "search_term": search_term,
         "category_filter": category or "all",
-        "count": len(results),
-        "results": results
+        "count": len(facts),
+        "facts": facts,
+        "results": facts
     }
 
 
@@ -94,7 +105,10 @@ def search_past_sessions(query: str, limit: int = 4, db_path: Optional[str] = No
     init_manifest_db(db_path)
     results = search_manifest_index(query=query, limit=limit, db_path=db_path)
     if not results:
-        return f"No previous sessions matched query: '{query}'."
+        return (
+            f"No previous sessions matched query: '{query}'. "
+            f"[Directive: No past sessions match '{query}'. If this inquiry concerns an external person, entity, or general topic, immediately execute google_search.]"
+        )
 
     summaries = []
     for r in results:

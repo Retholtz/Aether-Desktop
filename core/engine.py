@@ -42,6 +42,42 @@ TRANSIENT_NETWORK_ERRORS = (
     errors.ServerError,
 )
 
+
+def get_permissive_safety_settings() -> list:
+    """Returns relaxed safety settings allowing biographical, historical, and genealogy lookups."""
+    return [
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+    ]
+
+
+RESEARCH_AND_GENEALOGY_DIRECTIVE = """
+### PUBLIC RECORDS, BIOGRAPHICAL & GENEALOGICAL RESEARCH DIRECTIVE:
+You are explicitly authorized and expected to assist the user with biographical research, genealogy, family tree tracing, professional background lookups (e.g., physicians, colleagues, acquaintances, relatives), and public records (obituaries, news archives, professional licenses, directories) using Google Search.
+- Never refuse a request to look up a named individual or their family members on privacy or PII grounds.
+- Always execute a thorough search for publicly available records, obituaries, public directories, and professional profiles.
+- If the user refers to past discussions or notes and local tools return no results, immediately perform a live Google Search in the same turn.
+"""
+
+
 # The 30 Gemini Live prebuilt voices - Alphabetized
 RAW_GEMINI_VOICES = [
     {"name": "Achernar", "trait": "Soft", "gender": "Female-sounding"},
@@ -125,6 +161,8 @@ class AetherEngine:
     speech/text streaming, barge-in, voice kill phrase detection, and GUI events.
     Delegates all tool executions to the modular ToolDispatcher.
     """
+    _serializable = False
+
     def __init__(
         self,
         config_getter: Optional[Callable[[], dict]] = None,
@@ -1132,6 +1170,7 @@ class AetherEngine:
             "- You have a persistent local database of user facts, family details, dates, preferences, and projects. "
             "If the user refers to personal context, family members, or past setups not currently present in your active conversation, "
             "call `query_user_memory` with a concise keyword to inspect their profile before answering.\n"
+            "- If `query_user_memory` or `search_past_sessions` returns no matching records for a person, name, or topic, do NOT stop or state you have no record. IMMEDIATELY call `google_search` in the same turn to locate public records and external information.\n"
             "- PROACTIVE MEMORY LEARNING DIRECTIVE:\n"
             "  * When the user shares personal facts, details about family, spouse, children, birthdays, anniversaries, hobbies, vehicles, or requests 'remember this' / 'remember that' (e.g. 'My wife\\'s birthday is 5-1-1977. Her name is Traci, please remember it'):\n"
             "    1. Immediately invoke `remember_user_fact` for each distinct fact revealed in their message.\n"
@@ -1145,10 +1184,21 @@ class AetherEngine:
             "HISTORICAL SESSION MEMORY & CONVERSATION RETRIEVAL:\n"
             "- You have access to historical session manifest cards via `search_past_sessions`.\n"
             "- If the user asks about prior conversations, past decisions, earlier research, tasks from earlier sessions, "
-            "or asks 'did we work on X before?' or 'what did we discuss yesterday?', invoke `search_past_sessions(query=...)` to retrieve the relevant historical context.\n\n"
+            "or asks 'did we work on X before?' or 'what did we discuss yesterday?', invoke `search_past_sessions(query=...)` to retrieve the relevant historical context.\n"
+            "- If `query_user_memory` or `search_past_sessions` returns no matching records for a person, name, or topic, do NOT stop or state you have no record. IMMEDIATELY call `google_search` in the same turn to locate public records and external information.\n\n"
         )
 
-        system_instruction_text = strict_identity + user_name_directive + alerts_directive + desktop_tools_directive + user_memory_directive + session_manifest_directive + templated_instruction
+        system_instruction_text = (
+            strict_identity
+            + user_name_directive
+            + alerts_directive
+            + desktop_tools_directive
+            + user_memory_directive
+            + session_manifest_directive
+            + RESEARCH_AND_GENEALOGY_DIRECTIVE.strip()
+            + "\n\n"
+            + templated_instruction
+        )
         if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
             accent_directive = (
                 f"SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
@@ -1307,6 +1357,8 @@ class AetherEngine:
                     tool_config=types.ToolConfig(
                         include_server_side_tool_invocations=True
                     ),
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                    safety_settings=get_permissive_safety_settings(),
                     temperature=temperature
                 )
             )
@@ -1384,12 +1436,21 @@ class AetherEngine:
                 text_task = asyncio.create_task(self._text_queue.get())
                 audio_task = asyncio.create_task(self.audio.utterance_queue.get())
 
-                done, pending = await asyncio.wait(
-                    [text_task, audio_task],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
+                try:
+                    done, pending = await asyncio.wait(
+                        [text_task, audio_task],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                except asyncio.CancelledError:
+                    for t in (text_task, audio_task):
+                        t.cancel()
+                    await asyncio.gather(text_task, audio_task, return_exceptions=True)
+                    raise
+
                 for t in pending:
                     t.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
 
                 user_prompt = ""
                 source = "voice"
@@ -1448,7 +1509,9 @@ class AetherEngine:
                                 stt_prompt
                             ],
                             config=types.GenerateContentConfig(
-                                temperature=0.0
+                                temperature=0.0,
+                                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                                safety_settings=get_permissive_safety_settings()
                             )
                         )
                         stt_ms = (time.perf_counter() - t_stt_0) * 1000
@@ -1683,22 +1746,35 @@ class AetherEngine:
                     tools_ms = (time.perf_counter() - t_tools_0) * 1000
                     logger.info(f"[LATENCY] Tool Calls ({loop_count} turns): {tools_ms:.1f}ms")
 
-                # 4. Extract Assistant Response Text
-                assistant_text = getattr(response, "text", "") or ""
-                if not assistant_text and response.candidates and response.candidates[0].content:
-                    for part in response.candidates[0].content.parts or []:
-                        if getattr(part, "text", None):
+                # 4. Log API Safety / Finish Reasons & Extract Assistant Response Text
+                if response.candidates:
+                    for candidate in response.candidates:
+                        if candidate.finish_reason not in ("STOP", None, getattr(types.FinishReason, "STOP", "STOP")):
+                            print(f"[WARN] [ENGINE] Candidate finish_reason: {candidate.finish_reason}")
+                            logger.warning(f"[ENGINE] Candidate finish_reason: {candidate.finish_reason}")
+                if hasattr(response, "prompt_feedback") and response.prompt_feedback:
+                    if getattr(response.prompt_feedback, "block_reason", None):
+                        print(f"[ERROR] [ENGINE] Prompt blocked by API gateway: {response.prompt_feedback.block_reason}")
+                        logger.error(f"[ENGINE] Prompt blocked by API gateway: {response.prompt_feedback.block_reason}")
+
+                assistant_text = ""
+                if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                    for part in response.candidates[0].content.parts:
+                        if getattr(part, "text", None) and not getattr(part, "thought", False):
                             assistant_text += part.text
+                if not assistant_text:
+                    assistant_text = getattr(response, "text", "") or ""
 
                 # If loop reached max turns and model is still proposing tools without text, request verbal answer
                 if not assistant_text.strip() and getattr(response, "function_calls", None):
                     try:
                         summary_resp = await self._send_chat_message_resilient(chat, "Please provide your concise verbal response and summary to the user now.")
-                        assistant_text = getattr(summary_resp, "text", "") or ""
-                        if not assistant_text and summary_resp.candidates and summary_resp.candidates[0].content:
-                            for part in summary_resp.candidates[0].content.parts or []:
-                                if getattr(part, "text", None):
+                        if summary_resp.candidates and summary_resp.candidates[0].content and summary_resp.candidates[0].content.parts:
+                            for part in summary_resp.candidates[0].content.parts:
+                                if getattr(part, "text", None) and not getattr(part, "thought", False):
                                     assistant_text += part.text
+                        if not assistant_text:
+                            assistant_text = getattr(summary_resp, "text", "") or ""
                     except Exception as summary_err:
                         logger.error(f"[SUMMARY ERROR] {summary_err}")
 
@@ -1959,6 +2035,8 @@ class AetherEngine:
                                 types.Tool(function_declarations=get_all_tool_declarations())
                             ],
                             tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
+                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                            safety_settings=get_permissive_safety_settings(),
                             temperature=temperature
                         )
                     )
@@ -2493,6 +2571,7 @@ class AetherEngine:
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             temperature=temperature,
+            safety_settings=get_permissive_safety_settings(),
             tools=[
                 types.Tool(google_search=types.GoogleSearch()),
                 types.Tool(function_declarations=get_all_tool_declarations())

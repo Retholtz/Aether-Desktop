@@ -38,6 +38,53 @@ Refactor this script into an optimal, production-grade snippet:
 - Preserve all safety constraints (no forbidden imports).
 Return only the clean Python code."""
 
+RECONCILIATION_PROMPT = """
+Analyze the existing facts below. Reconcile duplicates, update outdated details, and produce a consolidated list of permanent user facts.
+
+Allowed Categories: "family" | "dates" | "relationship" | "preference" | "project" | "system" | "general"
+
+CRITICAL PRESERVATION RULES:
+1. Always retain all entries in the "family" and "dates" categories.
+2. Explicit profile keys (e.g., last_name, brother_name, wife_name, children, parents) must be preserved and never discarded or merged into generic hashes.
+3. Consolidate only redundant or superseded facts within the same category.
+
+Strict JSON format:
+{{
+  "reconciled_facts": [
+    {{"category": "family|dates|relationship|preference|project|system|general", "key": "optional_explicit_key", "fact": "concise fact statement"}}
+  ]
+}}
+
+Existing Facts:
+{facts_text}
+"""
+
+
+def get_permissive_safety_settings() -> list:
+    """Returns relaxed safety settings allowing biographical, historical, and genealogy lookups."""
+    return [
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+        types.SafetySetting(
+            category=types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+            threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH
+        ),
+    ]
+
 
 def extract_python_code(raw_text: str) -> str:
     """Extracts raw python code from an LLM response, stripping markdown fences."""
@@ -205,6 +252,7 @@ class ReflexionEngine:
         try:
             config = types.GenerateContentConfig(
                 temperature=0.2,
+                safety_settings=get_permissive_safety_settings(),
                 thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
             )
             response = active_client.models.generate_content(
@@ -317,7 +365,7 @@ class ReflexionEngine:
             prompt = f"""
 Analyze the following conversation session. Extract two things:
 1. "manifest": High-level indexing card.
-2. "facts": Concrete new facts learned about the user, their workflows, system preferences, relationships, or ongoing projects. Do not include transient requests (e.g., "what's the weather"), only durable facts.
+2. "facts": Concrete new facts learned about the user, their workflows, system preferences, relationships, family, dates, or ongoing projects. Do not include transient requests (e.g., "what's the weather"), only durable facts.
 
 Strict JSON format:
 {{
@@ -328,7 +376,7 @@ Strict JSON format:
     "key_entities": ["string"]
   }},
   "facts": [
-    {{"category": "preference|project|system|relationship", "fact": "string"}}
+    {{"category": "family|dates|relationship|preference|project|system|general", "fact": "string"}}
   ]
 }}
 
@@ -341,6 +389,7 @@ Conversation:
                     continue
                 config = types.GenerateContentConfig(
                     response_mime_type="application/json",
+                    safety_settings=get_permissive_safety_settings(),
                     thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
                 )
                 response = active_client.models.generate_content(
@@ -385,32 +434,21 @@ Conversation:
 
         print("[INFO] [REFLEXION] Running long-term memory reconciliation...")
         logger.info("[REFLEXION] Running long-term memory reconciliation...")
-        facts_text = "\n".join([f"- [{f['category']}] {f['fact']}" for f in existing_facts])
+        facts_lines = []
+        for f in existing_facts:
+            k = f.get("key")
+            key_prefix = f" (key={k})" if k and not str(k).startswith("fact_") else ""
+            facts_lines.append(f"- [{f['category']}]{key_prefix} {f['fact']}")
+        facts_text = "\n".join(facts_lines)
 
-        prompt = f"""
-You are the long-term memory synthesizer for an AI assistant.
-Review the following list of stored facts about the user.
-1. Remove duplicates or redundant restatements.
-2. Resolve contradictions (favor newer or more specific facts).
-3. Discard obsolete or trivial facts.
-4. Keep the list concise, accurate, and categorized.
-
-Strict JSON format:
-{{
-  "reconciled_facts": [
-    {{"category": "preference|project|system|relationship|general", "fact": "concise fact statement"}}
-  ]
-}}
-
-Existing Facts:
-{facts_text}
-"""
+        prompt = RECONCILIATION_PROMPT.format(facts_text=facts_text)
         try:
             active_client = self._get_genai_client()
             if not active_client:
                 return
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
+                safety_settings=get_permissive_safety_settings(),
                 thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
             )
             response = active_client.models.generate_content(
@@ -426,7 +464,6 @@ Existing Facts:
             cleaned_facts = result.get("reconciled_facts", [])
 
             if cleaned_facts:
-                replace_facts(cleaned_facts, db_path=memory_db)
                 replace_facts(cleaned_facts, snapshot_ts=snapshot_ts, db_path=memory_db)
                 print(f"[INFO] [REFLEXION] Memory reconciled: {len(existing_facts)} facts pruned down to {len(cleaned_facts)}.")
                 logger.info(f"[REFLEXION] Memory reconciled: {len(existing_facts)} facts pruned down to {len(cleaned_facts)}.")

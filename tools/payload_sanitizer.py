@@ -140,23 +140,42 @@ def _extract_primary_text_payload(result: Dict[str, Any]) -> tuple[str, bool]:
     return "", False
 
 
+EXEMPT_TOOLS = {"get_user_profile", "query_user_memory", "inspect_screen_context"}
+
+
 def sanitize_tool_result(
-    result: Any,
+    tool_name_or_result: Any,
+    result: Any = None,
     cache_path: Optional[str] = None,
-    base_dir: Optional[str] = None
+    base_dir: Optional[str] = None,
+    tool_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Sanitizes and caps tool execution outputs before sending them to Gemini.
+    - Supports both sanitize_tool_result(tool_name, result) and legacy sanitize_tool_result(result).
+    - Exempts tools in EXEMPT_TOOLS from the 800-character truncation limit.
     - If output string exceeds 800 characters, writes raw payload to local cache
       and returns an executive summary dictionary.
     - If an exception or traceback is present, cleans internal runner frames
       and preserves only the failing line, module name, and final exception lines.
     - Preserves private metadata keys (e.g. _jpeg_bytes) and binary vision payloads (image_bytes).
     """
-    if not isinstance(result, dict):
-        result_dict = {"status": "success", "result": result}
+    if isinstance(tool_name_or_result, str) and result is not None:
+        resolved_tool_name = tool_name or tool_name_or_result
+        actual_result = result
     else:
-        result_dict = dict(result)
+        resolved_tool_name = tool_name or ""
+        actual_result = tool_name_or_result
+
+    if resolved_tool_name in EXEMPT_TOOLS:
+        if not isinstance(actual_result, dict):
+            return {"status": "success", "result": actual_result}
+        return dict(actual_result)
+
+    if not isinstance(actual_result, dict):
+        result_dict = {"status": "success", "result": actual_result}
+    else:
+        result_dict = dict(actual_result)
 
     # 1. Clean tracebacks / stderr if present
     for tb_key in ("traceback", "stderr", "error"):
