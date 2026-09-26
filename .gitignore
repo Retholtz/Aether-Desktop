@@ -52,8 +52,10 @@ logs/
 scratch/
 scripts/cache/
 
-# Local configuration / secrets
+# Configuration and local credentials
 config.json
+data/chats/*.json
+data/dossiers/*.md
 .env
 
 # Environments & Python cache

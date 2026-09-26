@@ -321,6 +321,8 @@ class ScriptRunner:
             }
 
         # 4. Execute with runtime metrics instrumentation
+        t0 = time.perf_counter()
+        peak_mb = [0.0]
         try:
             exit_code, stdout_raw, stderr_raw, elapsed_ms, peak_mb = self._run_subprocess_monitored(
                 cmd=cmd,
@@ -523,6 +525,7 @@ class ScriptRunner:
         """
         Executes an existing script file from the Skill Library with arguments and telemetry tracking.
         """
+        t0 = time.perf_counter()  # Ensure t0 is scoped to entire method execution
         if not os.path.exists(script_file):
             logger.error(f"[SKILL ERROR] Script file not found: {script_file}")
             return {
@@ -602,22 +605,26 @@ class ScriptRunner:
             }
 
         except subprocess.TimeoutExpired:
-            elapsed_ms = (time.perf_counter() - t0) * 1000 if 't0' in locals() else timeout * 1000
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
             logger.error(f"[SKILL TIMEOUT] {file_name} | Duration: {elapsed_ms:.1f}ms (Limit: {timeout}s)")
             return {
                 "status": "timeout",
+                "success": False,
                 "duration_ms": round(elapsed_ms, 1),
+                "execution_time_ms": round(elapsed_ms, 1),
                 "description": description,
                 "file": script_file,
                 "error": f"Execution timed out after {timeout} seconds.",
                 "message": f"Skill timed out after {timeout} seconds."
             }
         except Exception as e:
-            elapsed_ms = (time.perf_counter() - t0) * 1000 if 't0' in locals() else 0.0
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
             logger.error(f"[SKILL ERROR] {file_name} | Duration: {elapsed_ms:.1f}ms | Error: {e}")
             return {
                 "status": "error",
+                "success": False,
                 "duration_ms": round(elapsed_ms, 1),
+                "execution_time_ms": round(elapsed_ms, 1),
                 "description": description,
                 "file": script_file,
                 "error": str(e),

@@ -1,0 +1,14 @@
+{
+  "agent_name": "Aether",
+  "wake_phrase": "Hey Aether",
+  "kill_phrase": "Aether stop",
+  "tts_endpoint": "gemini_live",
+  "tts_voice": "Achernar",
+  "tts_speed": 1.0,
+  "voice_accent": "Default (Native / Standard)",
+  "api_key_encrypted": "",
+  "primary_model_endpoint": "gemini-3.8-flash",
+  "creativity_temperature": 0.7,
+  "wake_word_enabled": true,
+  "idle_timeout_seconds": 8.0
+}

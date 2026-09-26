@@ -435,7 +435,6 @@ class AetherEngine:
         cfg = self.config_getter()
         defaults = {
             "tier1_fast_model": "gemini-3.8-flash",
-            "tier2_heavy_model": "gemini-3.8-pro",
             "tier2_heavy_model": "gemini-3.1-pro-preview",
             "tier2_thinking_budget": 2048,
             "reflexion_idle_delay_seconds": 15,

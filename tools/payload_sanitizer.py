@@ -197,14 +197,14 @@ def sanitize_tool_result(
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
         target_cache_path = cache_path or os.path.join(base_dir, DEFAULT_CACHE_REL_PATH)
-        os.makedirs(os.path.dirname(os.path.abspath(target_cache_path)), exist_ok=True)
 
         try:
+            os.makedirs(os.path.dirname(os.path.abspath(target_cache_path)), exist_ok=True)
             with open(target_cache_path, "w", encoding="utf-8") as f:
                 f.write(raw_text)
-        except Exception as write_err:
-            # Fallback if writing fails
-            pass
+        except Exception as e:
+            print(f"[WARN] [PAYLOAD_SANITIZER] Failed to write cache file to disk: {e}. Returning un-truncated output.")
+            return result_dict
 
         # Use relative path for presentation to Gemini
         rel_cache_path = os.path.relpath(target_cache_path, base_dir).replace("\\", "/")
