@@ -40,6 +40,7 @@ from tools.skill_router import BM25CatalogRouter
 from core.user_memory import UserMemory
 from tools.payload_sanitizer import sanitize_tool_result
 from tools.screen_vision import capture_screen_image
+from tools.dossier_exporter import export_research_dossier
 
 CATALOG_PATH = os.path.join("scripts", "skills_catalog.json")
 
@@ -784,6 +785,38 @@ SEND_DESKTOP_NOTIFICATION_DECLARATION = {
     }
 }
 
+EXPORT_DOSSIER_DECLARATION = {
+    "name": "export_research_dossier",
+    "description": (
+        "Exports detailed research findings, family lineage trees, directories, or complex multi-part summaries "
+        "to a structured Markdown file on disk. Use this when the findings are dense, saving the user from listening "
+        "to a long audio list. Always summarize the findings concisely via voice after saving."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "title": {
+                "type": "STRING",
+                "description": "Short, clear title for the dossier file (e.g. 'Stanley_Orlop_Genealogy_Report')."
+            },
+            "content_markdown": {
+                "type": "STRING",
+                "description": "The complete, detailed research content formatted in Markdown."
+            },
+            "category": {
+                "type": "STRING",
+                "enum": ["genealogy", "technical", "system_audit", "general"],
+                "description": "The domain category of this report."
+            },
+            "open_immediately": {
+                "type": "BOOLEAN",
+                "description": "True if the user asked to see or open the report immediately on their screen."
+            }
+        },
+        "required": ["title", "content_markdown"]
+    }
+}
+
 
 def get_all_tool_declarations() -> List[dict]:
     """Returns the full list of tool declarations for Gemini Multimodal Live."""
@@ -821,6 +854,7 @@ def get_all_tool_declarations() -> List[dict]:
         LIST_BACKGROUND_MONITORS_DECLARATION,
         LIST_ACTIVE_MONITORS_DECLARATION,
         SEND_DESKTOP_NOTIFICATION_DECLARATION,
+        EXPORT_DOSSIER_DECLARATION,
     ]
 
 
@@ -917,6 +951,7 @@ class ToolDispatcher:
             SEARCH_PAST_SESSIONS_DECLARATION,
             EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
             SEND_DESKTOP_NOTIFICATION_DECLARATION,
+            EXPORT_DOSSIER_DECLARATION,
             REMEMBER_USER_FACT_DECLARATION,
             FORGET_USER_FACT_DECLARATION,
             TEACH_WORD_PRONUNCIATION_DECLARATION,
@@ -1662,6 +1697,20 @@ class ToolDispatcher:
                     "message": message,
                     "result": res_msg
                 }
+
+            elif fn_name == "export_research_dossier":
+                result = export_research_dossier(
+                    title=args.get("title", "Research_Dossier"),
+                    content_markdown=args.get("content_markdown", ""),
+                    category=args.get("category", "general"),
+                    open_immediately=bool(args.get("open_immediately", False))
+                )
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Research Dossier",
+                    "content": f"📁 [DOSSIER] Saved '{result.get('filename', args.get('title', 'Research_Dossier'))}' ({result.get('char_count', 0)} chars)"
+                })
+                return result
 
             else:
                 # Check if fn_name is a dynamically routed catalog skill

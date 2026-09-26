@@ -80,6 +80,13 @@ You are explicitly authorized and expected to assist the user with biographical 
 - If the user refers to past discussions or notes and local tools return no results, immediately perform a live Google Search in the same turn.
 """
 
+DOSSIER_GENERATION_DIRECTIVE = """
+### CONCISE VOICE WITH STRUCTURED DOSSIER EXPORT:
+- When a user inquiry yields a dense collection of facts (such as a full family tree, multi-person directory listing, comprehensive biography, or technical log output), do NOT read the entire list or table over Text-to-Speech.
+- Call the `export_research_dossier` tool to write the full Markdown document to disk.
+- In your verbal turn, speak only a crisp 2-to-3 sentence conversational executive summary of the key findings, and confirm that the full details have been compiled and saved to their dossier files.
+"""
+
 
 # The 30 Gemini Live prebuilt voices - Alphabetized
 RAW_GEMINI_VOICES = [
@@ -1439,6 +1446,8 @@ class AetherEngine:
             + session_manifest_directive
             + RESEARCH_AND_GENEALOGY_DIRECTIVE.strip()
             + "\n\n"
+            + DOSSIER_GENERATION_DIRECTIVE.strip()
+            + "\n\n"
             + templated_instruction
         )
         if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
@@ -2330,9 +2339,14 @@ class AetherEngine:
     def _build_system_instruction(self) -> str:
         """Returns the active system instruction for Cortex turn generation."""
         if getattr(self, "_base_system_instruction", ""):
-            return self._base_system_instruction
-        api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-        return api_cfg.get("system_instruction", "You are Aether.")
+            base_inst = self._base_system_instruction
+        else:
+            api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+            base_inst = api_cfg.get("system_instruction", "You are Aether.")
+
+        if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
+            base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"
+        return base_inst
 
     def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
         """
