@@ -242,8 +242,12 @@ class GuiBridge:
         self._last_audio_fp = get_windows_audio_fingerprint()
         self.start_audio_watcher()
 
-    def start_audio_watcher(self):
+    def start_audio_watcher(self, force: bool = False):
         """Starts background audio hotplug watcher thread."""
+        # Skip background hardware threads during test discovery/runs
+        if not force and (os.environ.get("AETHER_TESTING") == "1" or "unittest" in sys.modules):
+            return
+
         self._stop_audio_watcher.clear()
         self._audio_watcher_thread = threading.Thread(
             target=self._audio_hotplug_watcher_loop,

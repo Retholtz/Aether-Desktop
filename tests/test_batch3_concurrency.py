@@ -93,6 +93,8 @@ class TestBatch3Concurrency(unittest.TestCase):
     def test_gui_bridge_audio_watcher_stop(self):
         from core.gui_bridge import GUIBridge
         bridge = GUIBridge()
+        bridge.start_audio_watcher(force=True)
+        self.assertIsNotNone(bridge._audio_watcher_thread)
         self.assertTrue(bridge._audio_watcher_thread.is_alive())
 
         bridge.stop_audio_watcher()
