@@ -92,5 +92,6 @@ def capture_screen_image(
         img.save(buffer, format="JPEG", quality=60, optimize=True)
         image_bytes = buffer.getvalue()
 
-    print(f"[INFO] [VISION] Captured {context_desc} ({img.size[0]}x{img.size[1]}, {len(image_bytes) // 1024} KB)")
+    safe_desc = context_desc.encode("ascii", "replace").decode("ascii")
+    print(f"[INFO] [VISION] Captured {safe_desc} ({img.size[0]}x{img.size[1]}, {len(image_bytes) // 1024} KB)")
     return image_bytes, context_desc

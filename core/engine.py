@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import numpy as np
+import threading
 import time
 import traceback
 from typing import Any, Callable, Optional
@@ -18,6 +19,7 @@ ensure_thread_desktop()
 
 from core.audio_output import InterruptibleAudioPlayer
 from core.audio_stream import AudioPipeline, VoiceActivityDetector, resolve_valid_audio_devices
+from core.connection_manager import LiveConnectionManager, ConnectionState
 from core.logger import get_logger
 from core.voice_verifier import VoiceProfileVerifier
 from core.optimizer import ReflexionEngine, ScriptOptimizer
@@ -247,6 +249,14 @@ class AetherEngine:
         self.notification_dispatcher = NotificationDispatcher(app_name="Aether Desktop")
         self.startup_runner = StartupJobRunner(engine=self)
 
+        # Resilient Network & Disconnect Auto-Reconnection Manager (Feature C)
+        self.conn_mgr = LiveConnectionManager()
+        self._watchdog_thread: Optional[threading.Thread] = None
+        self._stop_watchdog = threading.Event()
+        self._reconnect_lock = threading.Lock()
+        self._stop_requested = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
         try:
             import main
             main.active_engine = self
@@ -257,6 +267,159 @@ class AetherEngine:
             )
         except Exception:
             pass
+
+    def start_connection_watchdog(self):
+        """Spawns an idle watchdog thread to monitor connection health."""
+        self._stop_watchdog.clear()
+        if self._watchdog_thread and self._watchdog_thread.is_alive():
+            return
+        self._watchdog_thread = threading.Thread(
+            target=self._connection_watchdog_loop,
+            daemon=True,
+            name="AetherConnectionWatchdog"
+        )
+        self._watchdog_thread.start()
+
+    def stop_connection_watchdog(self):
+        """Signals the connection watchdog thread to exit cleanly."""
+        self._stop_watchdog.set()
+
+    def _connection_watchdog_loop(self):
+        """Continuously checks if the session has dropped or exceeded idle limits."""
+        while not self._stop_watchdog.is_set():
+            time.sleep(5.0)
+            if self._stop_watchdog.is_set():
+                break
+
+            # Check for silent timeouts or disconnects
+            now = time.time()
+            if self.conn_mgr.state == ConnectionState.CONNECTED:
+                # If idle for > 9 minutes without traffic, ping or transparently re-open before user turn
+                if now - self.conn_mgr.last_heartbeat_ts > 540:  # 9 minutes
+                    print("[INFO] [ENGINE] Preemptive idle refresh triggered on stale Live WebSocket.")
+                    self.reconnect_live_session(reason="Idle Timeout Prevention")
+            elif self.conn_mgr.state in (ConnectionState.DISCONNECTED, ConnectionState.RECONNECTING):
+                if self.conn_mgr.should_attempt_reconnect():
+                    delay = self.conn_mgr.compute_next_backoff()
+                    time.sleep(delay)
+                    if not self._stop_watchdog.is_set():
+                        self.reconnect_live_session(reason="Auto Recovery")
+
+    def _establish_raw_live_stream(self, live_config: Optional[types.LiveConnectConfig] = None):
+        """Establishes a raw Gemini Live stream using the active client and configuration."""
+        client = getattr(self, "client", None) or getattr(self, "genai_client", None)
+        if client is None:
+            config = self.config_getter()
+            api_cfg = config.get("api", {})
+            encrypted_key = api_cfg.get("api_key_encrypted", "")
+            api_key = unprotect_secret(encrypted_key) if encrypted_key else os.environ.get("GEMINI_API_KEY", "")
+            if not api_key:
+                raise RuntimeError("Gemini API Key is not configured.")
+            client = genai.Client(api_key=api_key)
+            self.genai_client = client
+
+        config = self.config_getter()
+        api_cfg = config.get("api", {})
+        raw_model = api_cfg.get("live_model_id") or api_cfg.get("model_id", "")
+        if "live" in raw_model.lower() or "native-audio" in raw_model.lower():
+            model_id = raw_model
+        else:
+            model_id = "gemini-2.5-flash-native-audio-latest"
+        if live_config is None:
+            live_config = self._build_live_config()
+
+        cm = client.aio.live.connect(model=model_id, config=live_config)
+        self._active_cm = cm
+        loop = getattr(self, "_loop", None)
+        if loop and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(cm.__aenter__(), loop)
+            return future.result(timeout=15.0)
+        return cm
+
+    def reconnect_live_session(self, reason: str = "Unspecified"):
+        """
+        Thread-safe reconnection routine:
+        1. Closes dead sockets/threads cleanly.
+        2. Re-establishes the Gemini Live connection.
+        3. Rehydrates current session state and sanitized turns.
+        """
+        with self._reconnect_lock:
+            print(f"[INFO] [ENGINE] Initiating live session reconnect: {reason}")
+            
+            # 1. Cleanly terminate existing broken socket
+            try:
+                if hasattr(self, "live_session") and self.live_session:
+                    # Soft close without raising
+                    self.live_session = None
+                if hasattr(self, "session") and self.session:
+                    self.session = None
+            except Exception as e:
+                print(f"[DEBUG] [ENGINE] Error tearing down stale socket: {e}")
+
+            # 2. Re-establish connection with Gemini Live API
+            try:
+                # Prepare config with permissive safety settings and current tool definitions
+                live_config = self._build_live_config()
+                
+                # Connect via google.genai client
+                new_session = self._establish_raw_live_stream(live_config)
+                self.live_session = new_session
+                self.session = new_session
+                
+                # 3. Mark healthy in ConnectionManager
+                self.conn_mgr.set_connected()
+
+                # 4. Context Rehydration: Send brief system handshake to preserve continuity
+                self._rehydrate_session_context()
+
+            except Exception as err:
+                print(f"[ERROR] [ENGINE] Reconnect failed: {err}")
+                self.conn_mgr.set_disconnected(reason=str(err))
+
+    def _rehydrate_session_context(self):
+        """
+        Pushes sanitized context tokens to the freshly connected session
+        so Cortex knows the user's name and recent active topic.
+        """
+        try:
+            from core.context_sanitizer import sanitize_turn_history
+            active_turns = getattr(self, "turn_history", [])
+            sanitized = sanitize_turn_history(active_turns[-4:]) if active_turns else []
+            
+            if sanitized and hasattr(self, "live_session") and self.live_session:
+                # Injects condensed recent context turn
+                if hasattr(self.live_session, "send_client_content"):
+                    coro = self.live_session.send_client_content(turns=sanitized, turn_complete=False)
+                    if asyncio.iscoroutine(coro):
+                        loop = getattr(self, "_loop", None)
+                        if loop and loop.is_running():
+                            asyncio.run_coroutine_threadsafe(coro, loop)
+                        else:
+                            coro.close()
+                print(f"[INFO] [ENGINE] Rehydrated {len(sanitized)} turns into reconnected live session.")
+        except Exception as e:
+            print(f"[WARN] [ENGINE] Context rehydration skipped: {e}")
+
+    def _read_next_live_message(self):
+        """Reads the next message frame from the active live session if available."""
+        if not self.live_session:
+            return None
+        if hasattr(self.live_session, "recv"):
+            res = self.live_session.recv()
+            if asyncio.iscoroutine(res):
+                loop = getattr(self, "_loop", None)
+                if loop and loop.is_running():
+                    return asyncio.run_coroutine_threadsafe(res, loop).result(timeout=5.0)
+                res.close()
+                return None
+            return res
+        return None
+
+    def _process_live_message(self, message: Any):
+        """Processes a single live message received from the WebSocket stream."""
+        if not message:
+            return
+        self.conn_mgr.record_activity()
 
     @property
     def config(self) -> dict:
@@ -789,7 +952,56 @@ class AetherEngine:
         except Exception as e:
             print(f"[SEND LOOP ERROR] {e}")
 
-    async def _receive_loop(
+    def _receive_loop(
+        self,
+        session=None,
+        kill_phrase: str = "",
+        agent_name: str = "Aether",
+        client: Optional[genai.Client] = None,
+        model_id: Optional[str] = None,
+        voice_name: Optional[str] = None,
+        temperature: Optional[float] = None,
+        voice_accent: Optional[str] = "default"
+    ):
+        """Background listener reading frames from the live stream."""
+        if session is not None:
+            return self._async_receive_loop(
+                session,
+                kill_phrase,
+                agent_name,
+                client,
+                model_id,
+                voice_name,
+                temperature,
+                voice_accent
+            )
+
+        while not self._stop_requested:
+            try:
+                if not self.live_session or self.conn_mgr.state != ConnectionState.CONNECTED:
+                    time.sleep(0.1)
+                    continue
+
+                # Record activity on every valid receive
+                message = self._read_next_live_message()
+                if message:
+                    self.conn_mgr.record_activity()
+                    self._process_live_message(message)
+
+            except (ConnectionResetError, BrokenPipeError, TimeoutError) as net_err:
+                print(f"[WARN] [RECEIVE_LOOP] Network socket dropped: {net_err}")
+                self.conn_mgr.set_disconnected(reason=f"Socket error: {net_err}")
+            except Exception as e:
+                # Check for Google API WebSocket termination exceptions
+                err_str = str(e).lower()
+                if "1000" in err_str or "1006" in err_str or "closed" in err_str:
+                    print(f"[INFO] [RECEIVE_LOOP] Live WebSocket closed by gateway: {e}")
+                    self.conn_mgr.set_disconnected(reason="Gateway closure")
+                else:
+                    print(f"[ERROR] [RECEIVE_LOOP] Unexpected stream error: {e}")
+                    self.conn_mgr.set_disconnected(reason=f"Exception: {e}")
+
+    async def _async_receive_loop(
         self,
         session,
         kill_phrase: str,
@@ -810,6 +1022,8 @@ class AetherEngine:
                 async for response in session.receive():
                     if not self.is_running:
                         break
+
+                    self.conn_mgr.record_activity()
 
                     # 0. Handle Tool Calls from Model via Modular Dispatcher
                     tool_call = getattr(response, "tool_call", None)
@@ -1022,12 +1236,20 @@ class AetherEngine:
 
         except asyncio.CancelledError:
             pass
+        except (ConnectionResetError, BrokenPipeError, TimeoutError) as net_err:
+            print(f"[WARN] [RECEIVE_LOOP] Network socket dropped: {net_err}")
+            self.conn_mgr.set_disconnected(reason=f"Socket error: {net_err}")
         except Exception as e:
             err_str = str(e)
-            if not self.is_running or "1000" in err_str or "normal" in err_str.lower():
+            err_lower = err_str.lower()
+            if "1000" in err_lower or "1006" in err_lower or "closed" in err_lower or "normal" in err_lower:
+                print(f"[INFO] [RECEIVE_LOOP] Live WebSocket closed by gateway: {e}")
+                self.conn_mgr.set_disconnected(reason="Gateway closure")
+            elif not self.is_running:
                 pass
             else:
-                print(f"\n[RECEIVE LOOP ERROR] {e}")
+                print(f"[ERROR] [RECEIVE_LOOP] Unexpected stream error: {e}")
+                self.conn_mgr.set_disconnected(reason=f"Exception: {e}")
                 if self.audio:
                     self.audio.kill_output()
                 self.notify("status", {"state": "error", "message": f"Receive error: {e}"})
@@ -1384,6 +1606,7 @@ class AetherEngine:
             )
 
         chat = create_fresh_chat()
+        self.conn_mgr.set_connected()
 
         # Proactive Startup Briefing Evaluation
         try:
@@ -1491,7 +1714,8 @@ class AetherEngine:
                     # Target Speaker Verification Gate (CAM++ Offline Biometrics)
                     live_audio_cfg = self.config_getter().get("audio", {})
                     live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
-                    if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
+                    is_ptt_mode = live_audio_cfg.get("mode", "always_on") == "ptt"
+                    if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled() and not is_ptt_mode:
                         thresh = float(live_bio_cfg.get("threshold", 0.40))
                         is_user, score = self.voice_verifier.verify(wav_bytes, threshold=thresh)
                         if not is_user:
@@ -2589,11 +2813,19 @@ class AetherEngine:
 
     def _build_live_config(
         self,
-        system_instruction_text: str,
-        voice_name: str,
-        temperature: float
+        system_instruction_text: Optional[str] = None,
+        voice_name: Optional[str] = None,
+        temperature: Optional[float] = None
     ) -> types.LiveConnectConfig:
         """Constructs types.LiveConnectConfig with Google Search, tool declarations, and voice."""
+        api_cfg = self.config_getter().get("api", {})
+        if system_instruction_text is None:
+            system_instruction_text = self._base_system_instruction or api_cfg.get("system_instruction", "You are Aether.")
+        if voice_name is None:
+            voice_name = api_cfg.get("voice_name", "Aoede")
+        if temperature is None:
+            temperature = float(api_cfg.get("temperature", 1.0))
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             temperature=temperature,
@@ -2673,6 +2905,7 @@ class AetherEngine:
             self.session = new_session
             self.live_session = new_session
             self._active_cm = new_cm
+            self.conn_mgr.set_connected()
 
             # Sync with main.py
             try:
@@ -2734,11 +2967,13 @@ class AetherEngine:
         """Executes Gemini Multimodal Live WebSocket session with Silent Reconnect Lifecycle."""
         model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
         self._base_system_instruction = system_instruction_text
-        reconnect_delay = 1.0
+        self._loop = asyncio.get_running_loop()
+        self.start_connection_watchdog()
 
         accent_info = f", Accent: {voice_accent}" if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", "") else ""
 
         while self.is_running:
+            self.conn_mgr.state = ConnectionState.CONNECTING
             self.notify("status", {"state": "connecting", "message": f"Connecting to Gemini Live ({model_id}, Voice: {voice_name}{accent_info})..."})
 
             try:
@@ -2751,6 +2986,8 @@ class AetherEngine:
                 session = await self._active_cm.__aenter__()
                 self.session = session
                 self.live_session = session
+                self.conn_mgr.set_connected()
+                self._rehydrate_session_context()
 
                 try:
                     import main
@@ -2762,7 +2999,6 @@ class AetherEngine:
                 except Exception:
                     pass
 
-                reconnect_delay = 1.0
                 self.notify("status", {"state": "connected", "message": f"Connected to Gemini Live. {agent_name} is listening."})
                 self.notify("chat_event", {
                     "type": "system",
@@ -2810,8 +3046,12 @@ class AetherEngine:
                 break
             except Exception as e:
                 err_str = str(e)
+                self.conn_mgr.set_disconnected(reason=err_str)
                 if not self.is_running or "1000" in err_str or "normal" in err_str.lower():
                     break
+                if not self.conn_mgr.should_attempt_reconnect():
+                    break
+                reconnect_delay = self.conn_mgr.compute_next_backoff()
                 print(f"\n[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
                 self.notify("status", {"state": "reconnecting", "message": f"Connection lost ({e}). Reconnecting in {reconnect_delay:.1f}s..."})
                 self.notify("chat_event", {
@@ -2819,13 +3059,14 @@ class AetherEngine:
                     "content": f"⚠️ Connection interrupted ({e}). Reconnecting in {reconnect_delay:.1f}s..."
                 })
                 await asyncio.sleep(reconnect_delay)
-                reconnect_delay = min(reconnect_delay * 1.5, 8.0)
 
     def start(self, loop: asyncio.AbstractEventLoop):
         """Starts the assistant engine on the provided event loop."""
         if self.is_running:
             return
         self.is_running = True
+        self._stop_requested = False
+        self._loop = loop
         self.hotkey_manager.start()
         if hasattr(self, "startup_runner") and self.startup_runner:
             try:
@@ -2844,6 +3085,8 @@ class AetherEngine:
         if not self.is_running:
             return
         self.is_running = False
+        self._stop_requested = True
+        self.stop_connection_watchdog()
         self.kill_audio()
 
         if hasattr(self, "startup_runner") and self.startup_runner:
