@@ -25,6 +25,7 @@ from core.telemetry_db import TelemetryDB
 from core.user_memory import UserMemory, init_memory_db
 from core.proactive_engine import ProactiveEngine
 from core.session_lifecycle import SessionLifecycleManager
+from core.context_sanitizer import sanitize_turn_history, sanitize_chat_session
 from core.hotkey_manager import HotkeyManager
 from core.startup_runner import StartupJobRunner
 from security.crypto import unprotect_secret
@@ -312,6 +313,25 @@ class AetherEngine:
     @property
     def audio_stream(self) -> Optional[AudioPipeline]:
         return self.audio
+
+    @property
+    def turn_history(self) -> list:
+        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+            return self.session_lifecycle.turn_history
+        return getattr(self, "_turn_history", [])
+
+    @turn_history.setter
+    def turn_history(self, val: list):
+        self._turn_history = val
+        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+            self.session_lifecycle.turn_history = val
+
+    def _prepare_model_turns_payload(self) -> list:
+        """Sanitizes context turns to prevent refusal self-consistency anchors."""
+        from core.context_sanitizer import sanitize_turn_history
+        sanitized = sanitize_turn_history(self.turn_history)
+        self.turn_history = sanitized
+        return sanitized
 
     def save_config(self) -> bool:
         """Persists current configuration to disk."""
@@ -2010,6 +2030,9 @@ class AetherEngine:
                 self.session_lifecycle.record_turn("user", user_prompt)
                 if assistant_text:
                     self.session_lifecycle.record_turn("assistant", assistant_text, tools_used=turn_tools_used)
+                # Surgically scrub any assistant refusal from history buffers before Turn N+1
+                self._prepare_model_turns_payload()
+                sanitize_chat_session(chat)
 
                 try:
                     import main
@@ -2090,7 +2113,10 @@ class AetherEngine:
         """
         Sends a message to the Cortex Gemini chat session with automatic retry on transient
         network/socket drops (e.g. WinError 10054, httpx.ReadError, idle keep-alive disconnects).
+        Runs the surgical refusal cleansing pass on context history before dispatch.
         """
+        self._prepare_model_turns_payload()
+        sanitize_chat_session(chat)
         delay = initial_delay
         last_err = None
         for attempt in range(1, max_retries + 1):

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from google import genai
 from google.genai import types
 from core.logger import get_logger
+from core.context_sanitizer import sanitize_turn_history
 
 logger = get_logger("SessionLifecycle")
 
@@ -92,6 +93,18 @@ class SessionLifecycleManager:
             self.turn_count += 1
             logger.debug(f"[LIFECYCLE] Turn #{self.turn_count} ({role}): {clean_content[:80]}...")
 
+    def get_raw_turns(self) -> List[Dict[str, Any]]:
+        """Returns the raw in-memory turn history for the current session."""
+        return list(self.turn_history)
+
+    def get_active_context_turns(self) -> List[Dict[str, Any]]:
+        """
+        Retrieves the in-memory turns for the current session,
+        running the surgical refusal cleansing pass before handoff to the LLM.
+        """
+        raw_turns = self.get_raw_turns()
+        return sanitize_turn_history(raw_turns)
+
     def record_tool_chars(self, char_count: int):
         """Accumulates tool payload character count to gauge token consumption."""
         self.tool_execution_chars += max(0, char_count)
@@ -134,12 +147,13 @@ class SessionLifecycleManager:
         Asynchronously compacts the active conversation history into 4-6 operational bullet points
         using a fast, non-blocking call to gemini-3.8-flash.
         """
-        if not self.turn_history:
+        active_turns = self.get_active_context_turns()
+        if not active_turns:
             return "- Session newly initialized; no prior actions."
 
         # Format transcript lines for the compactor
         transcript_lines = []
-        for t in self.turn_history[-30:]:
+        for t in active_turns[-30:]:
             role_label = "User" if t["role"] == "user" else "Assistant"
             transcript_lines.append(f"{role_label}: {t['content']}")
         transcript_text = "\n".join(transcript_lines)
@@ -152,7 +166,7 @@ class SessionLifecycleManager:
             f"{COMPACTOR_PROMPT}"
         )
 
-        logger.info(f"[LIFECYCLE COMPACTOR] Generating state summary via {model} ({len(self.turn_history)} turns)...")
+        logger.info(f"[LIFECYCLE COMPACTOR] Generating state summary via {model} ({len(active_turns)} turns)...")
 
         summary_text = ""
         if client:
@@ -187,7 +201,7 @@ class SessionLifecycleManager:
 
         # If LLM generation failed or client was None, construct deterministic operational summary
         if not summary_text:
-            recent_turns = self.turn_history[-6:]
+            recent_turns = active_turns[-6:]
             bullets = []
             for t in recent_turns:
                 r = "User asked" if t["role"] == "user" else "Assistant performed"
@@ -264,8 +278,8 @@ class SessionLifecycleManager:
         self.turn_count = 0
         self.session_start_time = time.time()
         self.tool_execution_chars = 0
-        # Retain last 2 turns to bridge the prompt continuity
-        self.turn_history = self.turn_history[-2:]
+        # Retain last 2 turns to bridge the prompt continuity (sanitized of any refusals)
+        self.turn_history = sanitize_turn_history(self.turn_history[-2:])
         self.total_rotations += 1
         self.rotation_in_progress = False
         logger.info(f"[LIFECYCLE] Metrics reset. Total lifetime rotations: {self.total_rotations}")

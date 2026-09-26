@@ -104,6 +104,7 @@ class ReflexionEngine:
 
     def __init__(self, engine=None, **kwargs):
         self.engine = engine
+        self.memory_db = kwargs.get("memory_db")
         self.config = getattr(engine, "config", {}) if engine else {}
         if not isinstance(self.config, dict):
             self.config = {}
@@ -427,7 +428,7 @@ Conversation:
         from core.user_memory import get_all_facts, replace_facts
 
         snapshot_ts = time.time()
-        memory_db = getattr(getattr(self.engine, "user_memory", None), "db_path", None)
+        memory_db = getattr(self, "memory_db", None) or getattr(getattr(self.engine, "user_memory", None), "db_path", None)
         existing_facts = get_all_facts(db_path=memory_db)
         if len(existing_facts) < 5:
             return
@@ -461,7 +462,7 @@ Conversation:
                 return
 
             result = json.loads(response.text)
-            cleaned_facts = result.get("reconciled_facts", [])
+            cleaned_facts = result.get("reconciled_facts", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
 
             if cleaned_facts:
                 replace_facts(cleaned_facts, snapshot_ts=snapshot_ts, db_path=memory_db)

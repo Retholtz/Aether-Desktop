@@ -262,13 +262,11 @@ def replace_facts(
                 explicit_val = f.get("value")
 
                 # Match back to existing explicit key if omitted in LLM reconciliation response
-                matched_row = by_fact.get(fact_str)
+                matched_row = by_fact.get(fact_str) or (by_key.get(explicit_key) if explicit_key else None)
                 if not explicit_key and matched_row:
                     rk = (matched_row["key"] or "").strip()
                     if rk and not rk.startswith("fact_"):
                         explicit_key = rk
-                        if explicit_val is None:
-                            explicit_val = matched_row["value"]
                 if not explicit_key and ":" in fact_str:
                     prefix, rest = fact_str.split(":", 1)
                     prefix_clean = prefix.strip()
@@ -276,6 +274,10 @@ def replace_facts(
                         explicit_key = prefix_clean
                         if explicit_val is None:
                             explicit_val = rest.strip()
+                if explicit_val is None and explicit_key and fact_str.lower().startswith(f"{explicit_key.lower()}:"):
+                    explicit_val = fact_str.split(":", 1)[1].strip()
+                if explicit_val is None and matched_row and matched_row["value"]:
+                    explicit_val = matched_row["value"]
 
                 key_text = explicit_key or f"fact_{hashlib.md5(fact_str.encode('utf-8')).hexdigest()[:12]}"
                 val_text = str(explicit_val).strip() if explicit_val is not None else fact_str
