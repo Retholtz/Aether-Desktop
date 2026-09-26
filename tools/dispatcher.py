@@ -36,9 +36,13 @@ from tools.os_controls import (
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
 from tools.skill_library import SkillLibrary
+from tools.skill_router import BM25CatalogRouter
 from core.user_memory import UserMemory
 from tools.payload_sanitizer import sanitize_tool_result
 from tools.screen_vision import capture_screen_image
+
+CATALOG_PATH = os.path.join("scripts", "skills_catalog.json")
+
 
 
 def inspect_screen_context(target: str = "active_window") -> dict:
@@ -847,6 +851,155 @@ class ToolDispatcher:
         self.genai_client = genai_client
         self.last_blocked_app = ""
         self.last_target_app = ""
+        self.skill_router = BM25CatalogRouter()
+        self._catalog_mtime = 0.0
+        self._refresh_skill_index()
+
+    def _refresh_skill_index(self):
+        """Loads and indexes promoted skills from skills_catalog.json."""
+        skills: List[dict] = []
+        seen_names = set()
+
+        if os.path.exists(CATALOG_PATH):
+            try:
+                self._catalog_mtime = os.path.getmtime(CATALOG_PATH)
+                with open(CATALOG_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and "skills" in data:
+                        raw_skills = data.get("skills", [])
+                    elif isinstance(data, list):
+                        raw_skills = data
+                    elif isinstance(data, dict):
+                        raw_skills = [{"name": k, **v} for k, v in data.items() if isinstance(v, dict)]
+                    else:
+                        raw_skills = []
+                    for s in raw_skills:
+                        if isinstance(s, dict) and s.get("name"):
+                            skills.append(s)
+                            seen_names.add(s["name"])
+            except Exception as e:
+                print(f"[WARN] [TOOL_DISPATCHER] Failed to index skills catalog: {e}")
+                logger.warning(f"[WARN] [TOOL_DISPATCHER] Failed to index skills catalog: {e}")
+
+        # Also merge skills from scripts/library/skills_catalog.json if present
+        lib_catalog_path = os.path.join("scripts", "library", "skills_catalog.json")
+        if os.path.exists(lib_catalog_path):
+            try:
+                with open(lib_catalog_path, "r", encoding="utf-8") as f:
+                    lib_data = json.load(f)
+                    if isinstance(lib_data, dict):
+                        for s_name, s_meta in lib_data.items():
+                            if isinstance(s_meta, dict) and s_name not in seen_names:
+                                skills.append({
+                                    "name": s_name,
+                                    "intent": s_meta.get("intent", s_meta.get("description", "")),
+                                    "description": s_meta.get("description", ""),
+                                    "parameters": s_meta.get("parameters", {}),
+                                    "file": s_meta.get("file", f"{s_name}.py")
+                                })
+                                seen_names.add(s_name)
+            except Exception as e:
+                logger.debug(f"[TOOL_DISPATCHER] Library catalog sync warning: {e}")
+
+        self.skill_router.build_index(skills)
+        msg = f"[INFO] [TOOL_DISPATCHER] Indexed {len(skills)} dynamic skills for semantic routing."
+        print(msg)
+        logger.info(msg)
+
+    def get_core_declarations(self) -> List[dict]:
+        """Returns baseline tools that must always be available to Cortex."""
+        # Returns inspect_screen_context, google_search, query_user_memory,
+        # search_past_sessions, execute_automation_script, send_desktop_notification
+        # alongside essential desktop/memory primitives.
+        return [
+            INSPECT_SCREEN_CONTEXT_DECLARATION,
+            QUERY_USER_MEMORY_DECLARATION,
+            SEARCH_PAST_SESSIONS_DECLARATION,
+            EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
+            SEND_DESKTOP_NOTIFICATION_DECLARATION,
+            REMEMBER_USER_FACT_DECLARATION,
+            FORGET_USER_FACT_DECLARATION,
+            TEACH_WORD_PRONUNCIATION_DECLARATION,
+            LAUNCH_APPLICATION_DECLARATION,
+            CLOSE_APPLICATION_DECLARATION,
+            ADD_TO_WHITELIST_DECLARATION,
+            MAXIMIZE_WINDOW_DECLARATION,
+            MINIMIZE_WINDOW_DECLARATION,
+            RESTORE_WINDOW_DECLARATION,
+            FOCUS_WINDOW_DECLARATION,
+            NAVIGATE_BROWSER_DECLARATION,
+            FIND_AND_CLICK_ELEMENT_DECLARATION,
+            MOUSE_CLICK_DECLARATION,
+            TYPE_TEXT_DECLARATION,
+            PRESS_KEY_DECLARATION,
+            SCROLL_PAGE_DECLARATION,
+            RUN_SAVED_SCRIPT_DECLARATION,
+            SAVE_SCRIPT_TO_LIBRARY_DECLARATION,
+            REGISTER_BACKGROUND_MONITOR_DECLARATION,
+            LIST_BACKGROUND_MONITORS_DECLARATION,
+        ]
+
+    def get_routed_tool_declarations(self, user_prompt: str, max_dynamic_skills: int = 3) -> List[dict]:
+        """
+        Dynamically merges core invariant tools with only the top-K relevant
+        promoted skills matching the active user prompt.
+        """
+        declarations = list(self.get_core_declarations())
+
+        # If user prompt is empty or very short, avoid routing dynamic skills
+        if not user_prompt or len(user_prompt.strip()) < 4:
+            return declarations
+
+        # Hot-reload catalog if modified on disk since initialization
+        if os.path.exists(CATALOG_PATH):
+            try:
+                current_mtime = os.path.getmtime(CATALOG_PATH)
+                if current_mtime != self._catalog_mtime:
+                    self._refresh_skill_index()
+            except Exception:
+                pass
+
+        matched_skills = self.skill_router.query(
+            prompt=user_prompt,
+            top_k=max_dynamic_skills,
+            min_score_threshold=1.0
+        )
+
+        existing_names = {d.get("name") for d in declarations}
+        for skill in matched_skills:
+            skill_name = skill.get("name")
+            if not skill_name or skill_name in existing_names:
+                continue
+
+            raw_params = skill.get("parameters") or {}
+            normalized_props = {}
+            if isinstance(raw_params, dict):
+                for p_key, p_val in raw_params.items():
+                    if isinstance(p_val, dict):
+                        normalized_props[p_key] = p_val
+                    else:
+                        normalized_props[p_key] = {
+                            "type": "STRING",
+                            "description": str(p_val)
+                        }
+
+            # Generate declarative schema for matched dynamic skill
+            skill_decl = {
+                "name": skill_name,
+                "description": f"Automated Skill: {skill.get('intent', '')}. {skill.get('description', '')}".strip(),
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": normalized_props
+                }
+            }
+            declarations.append(skill_decl)
+            existing_names.add(skill_name)
+            msg = f"[INFO] [TOOL_DISPATCHER] Dynamically injected skill declaration: {skill_name}"
+            print(msg)
+            logger.info(msg)
+
+        return declarations
+
 
 
     def notify(self, event_type: str, data: dict):
@@ -1289,6 +1442,7 @@ class ToolDispatcher:
                     "name": "Skill Library",
                     "content": f"💾 [SAVED SKILL] {result.get('message', skill_name)}"
                 })
+                self._refresh_skill_index()
                 return result
 
             elif fn_name in ("list_saved_skills", "list_available_skills"):
@@ -1510,6 +1664,31 @@ class ToolDispatcher:
                 }
 
             else:
+                # Check if fn_name is a dynamically routed catalog skill
+                dynamic_match = next(
+                    (s for s in self.skill_router.catalog_skills if s.get("name") == fn_name),
+                    None
+                )
+                if dynamic_match is not None:
+                    result = await asyncio.to_thread(
+                        self.skill_library.run_skill,
+                        skill_name=fn_name,
+                        args=args
+                    )
+                    if result.get("status") == "not_found" and dynamic_match.get("path") and os.path.exists(dynamic_match["path"]):
+                        result = await asyncio.to_thread(
+                            self.script_runner.execute_script_file,
+                            dynamic_match["path"],
+                            args=args,
+                            description=dynamic_match.get("intent") or dynamic_match.get("description") or f"Run {fn_name}"
+                        )
+                    self.notify("chat_event", {
+                        "type": "tool",
+                        "name": "Dynamic Skill",
+                        "content": f"⚡ [SKILL: {fn_name}] {result.get('message', 'Executed.')}"
+                    })
+                    return result
+
                 return {
                     "status": "error",
                     "message": f"Unknown tool function '{fn_name}'."

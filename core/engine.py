@@ -1591,10 +1591,10 @@ class AetherEngine:
             return client.chats.create(
                 model=cortex_model,
                 config=types.GenerateContentConfig(
-                    system_instruction=self._base_system_instruction,
+                    system_instruction=self._build_system_instruction(),
                     tools=[
                         types.Tool(google_search=types.GoogleSearch()),
-                        types.Tool(function_declarations=get_all_tool_declarations())
+                        types.Tool(function_declarations=self.dispatcher.get_core_declarations())
                     ],
                     tool_config=types.ToolConfig(
                         include_server_side_tool_invocations=True
@@ -1864,11 +1864,12 @@ class AetherEngine:
 
                 self.notify("status", {"state": "thinking", "message": f"{agent_name} is thinking...", "user_prompt": user_prompt})
 
-                # 2. Send prompt to Cortex (gemini-3.8-flash)
+                # 2. Send prompt to Cortex (gemini-3.8-flash) with dynamically routed tool declarations
                 self.is_tool_executing = True
                 t_llm_0 = time.perf_counter()
+                turn_config = self._execute_turn_modular(user_prompt, temperature=temperature)
                 try:
-                    response = await self._send_chat_message_resilient(chat, user_prompt)
+                    response = await self._send_chat_message_resilient(chat, user_prompt, config=turn_config)
                     llm_ms = (time.perf_counter() - t_llm_0) * 1000
                     logger.info(f"[LATENCY] Cortex LLM ({cortex_model}): {llm_ms:.1f}ms")
                 finally:
@@ -1966,7 +1967,7 @@ class AetherEngine:
                             "message": f"{agent_name} is reasoning with tool output...",
                             "user_prompt": user_prompt
                         })
-                        response = await self._send_chat_message_resilient(chat, tool_parts)
+                        response = await self._send_chat_message_resilient(chat, tool_parts, config=turn_config)
 
                         # Latency optimization: prune older image parts from chat._curated_history so subsequent turns don't re-upload stale multi-megabyte screenshots
                         if hasattr(chat, "_curated_history") and chat._curated_history:
@@ -2279,7 +2280,7 @@ class AetherEngine:
                             system_instruction=updated_instruction,
                             tools=[
                                 types.Tool(google_search=types.GoogleSearch()),
-                                types.Tool(function_declarations=get_all_tool_declarations())
+                                types.Tool(function_declarations=self.dispatcher.get_core_declarations())
                             ],
                             tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
                             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
@@ -2326,13 +2327,56 @@ class AetherEngine:
                     self.notify("status", {"state": "error", "message": f"Error: {turn_err}"})
                     await asyncio.sleep(1.0)
 
+    def _build_system_instruction(self) -> str:
+        """Returns the active system instruction for Cortex turn generation."""
+        if getattr(self, "_base_system_instruction", ""):
+            return self._base_system_instruction
+        api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+        return api_cfg.get("system_instruction", "You are Aether.")
+
+    def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
+        """
+        Builds per-turn GenerateContentConfig using dynamically filtered tool declarations
+        matched via BM25 semantic skill routing.
+        """
+        # 1. Fetch dynamically filtered tool declarations
+        active_tools = self.dispatcher.get_routed_tool_declarations(
+            user_prompt=user_prompt,
+            max_dynamic_skills=3
+        )
+
+        if temperature is None:
+            try:
+                api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+                temperature = float(api_cfg.get("temperature", 1.0))
+            except Exception:
+                temperature = 1.0
+
+        # 2. Build GenerationConfig with filtered tool set
+        config = types.GenerateContentConfig(
+            tools=[
+                types.Tool(google_search=types.GoogleSearch()),
+                types.Tool(function_declarations=active_tools)
+            ],
+            tool_config=types.ToolConfig(
+                include_server_side_tool_invocations=True
+            ),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            safety_settings=get_permissive_safety_settings(),
+            system_instruction=self._build_system_instruction(),
+            temperature=temperature
+        )
+
+        return config
+
     async def _send_chat_message_resilient(
         self,
         chat,
         message: Any,
         max_retries: int = 3,
         initial_delay: float = 0.4,
-        backoff_factor: float = 1.5
+        backoff_factor: float = 1.5,
+        config: Optional[Any] = None
     ):
         """
         Sends a message to the Cortex Gemini chat session with automatic retry on transient
@@ -2341,10 +2385,14 @@ class AetherEngine:
         """
         self._prepare_model_turns_payload()
         sanitize_chat_session(chat)
+        if config is not None and hasattr(chat, "_config"):
+            chat._config = config
         delay = initial_delay
         last_err = None
         for attempt in range(1, max_retries + 1):
             try:
+                if config is not None:
+                    return await asyncio.to_thread(chat.send_message, message, config=config)
                 return await asyncio.to_thread(chat.send_message, message)
             except TRANSIENT_NETWORK_ERRORS as exc:
                 last_err = exc
