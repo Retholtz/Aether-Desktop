@@ -329,13 +329,30 @@ class GuiPrimitivesController:
         use_paste = is_multiline or len(text) > 25
 
         if use_paste and win32clipboard and win32con:
+            had_clip = False
+            original_data = None
             try:
                 win32clipboard.OpenClipboard()
+                if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                    original_data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+                    had_clip = True
+                win32clipboard.CloseClipboard()
+            except Exception:
                 try:
-                    win32clipboard.EmptyClipboard()
-                    win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
-                finally:
                     win32clipboard.CloseClipboard()
+                except Exception:
+                    pass
+
+            try:
+                for _ in range(5):
+                    try:
+                        win32clipboard.OpenClipboard()
+                        win32clipboard.EmptyClipboard()
+                        win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
+                        win32clipboard.CloseClipboard()
+                        break
+                    except Exception:
+                        time.sleep(0.02)
 
                 # Send Ctrl+V
                 self.press_key("ctrl+v")
@@ -357,6 +374,24 @@ class GuiPrimitivesController:
                 }
             except Exception as e:
                 print(f"[GUI_PRIMITIVES] Clipboard paste failed, falling back to SendInput: {e}")
+            finally:
+                if had_clip and original_data is not None:
+                    for _ in range(5):
+                        try:
+                            win32clipboard.OpenClipboard()
+                            win32clipboard.EmptyClipboard()
+                            win32clipboard.SetClipboardText(original_data, win32con.CF_UNICODETEXT)
+                            win32clipboard.CloseClipboard()
+                            break
+                        except Exception:
+                            time.sleep(0.02)
+                else:
+                    try:
+                        win32clipboard.OpenClipboard()
+                        win32clipboard.EmptyClipboard()
+                        win32clipboard.CloseClipboard()
+                    except Exception:
+                        pass
 
         # SendInput path for short, single-line text
         inputs = []

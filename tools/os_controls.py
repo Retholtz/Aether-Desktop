@@ -9,7 +9,7 @@ import re
 import sys
 import time
 import urllib.parse
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple, Any
 
 from core.screen_stream import ensure_thread_desktop
 from security.whitelist import WhitelistValidator
@@ -21,10 +21,12 @@ if sys.platform == "win32":
     import win32gui
     import win32con
     import win32process
+    import win32clipboard
 else:
     win32gui = None
     win32con = None
     win32process = None
+    win32clipboard = None
 
 try:
     import psutil
@@ -556,3 +558,116 @@ def inspect_screen_context(target: str = "active_window") -> dict:
         "image_bytes": image_bytes,
         "mime_type": "image/jpeg"
     }
+
+
+class OSControls:
+    """Provides high-level and native OS controls for window management and input."""
+
+    def __init__(self):
+        pass
+
+    def maximize_window(self, app_name: str) -> dict:
+        return maximize_window(app_name)
+
+    def minimize_window(self, app_name: str) -> dict:
+        return minimize_window(app_name)
+
+    def restore_window(self, app_name: str) -> dict:
+        return restore_window(app_name)
+
+    def focus_window(self, app_name: str, auto_launch: bool = False) -> dict:
+        return focus_window(app_name, auto_launch=auto_launch)
+
+    def close_window(self, app_name: str) -> dict:
+        return close_window(app_name)
+
+    def navigate_browser(self, url: str) -> dict:
+        return navigate_browser(url)
+
+    def send_hotkey(self, *keys) -> dict:
+        """Sends key combination, e.g. send_hotkey('ctrl', 'v') or send_hotkey('ctrl+v')."""
+        from tools.gui_primitives import GuiPrimitivesController
+        if not keys:
+            return {"status": "error", "message": "No keys provided"}
+        combo = "+".join(keys)
+        controller = GuiPrimitivesController()
+        return controller.press_key(combo)
+
+    def _type_keystrokes_direct(self, text: str) -> dict:
+        """Types short text directly using standard keystroke simulation."""
+        from tools.gui_primitives import GuiPrimitivesController
+        controller = GuiPrimitivesController()
+        return controller.type_text(text)
+
+    def _get_clipboard_safe(self) -> Tuple[bool, Any, int]:
+        """Attempts to read text from Windows clipboard. Returns (success, data, format)."""
+        if not win32clipboard or not win32con:
+            return False, None, 0
+        try:
+            win32clipboard.OpenClipboard()
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+                win32clipboard.CloseClipboard()
+                return True, data, win32con.CF_UNICODETEXT
+            win32clipboard.CloseClipboard()
+            return False, None, 0
+        except Exception:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+            return False, None, 0
+
+    def _set_clipboard_safe(self, text: str):
+        """Safely sets unicode text onto Windows clipboard."""
+        if not win32clipboard or not win32con:
+            return False
+        for _ in range(5):
+            try:
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
+                win32clipboard.CloseClipboard()
+                return True
+            except Exception:
+                time.sleep(0.02)
+        return False
+
+    def type_text(self, text: str, fast_paste_threshold: int = 25) -> dict:
+        """Types text with non-destructive clipboard preservation on large strings."""
+        if not text:
+            return {"status": "success", "length": 0}
+
+        # For short strings, standard keystroke simulation is preferred
+        if len(text) < fast_paste_threshold:
+            self._type_keystrokes_direct(text)
+            return {"status": "success", "method": "keystrokes", "length": len(text)}
+
+        # Stash current clipboard
+        had_clip, original_data, clip_format = self._get_clipboard_safe()
+
+        try:
+            # Set target text and execute paste
+            self._set_clipboard_safe(text)
+            time.sleep(0.05)
+            self.send_hotkey("ctrl", "v")
+            time.sleep(0.05)  # Allow target application to consume paste buffer
+        finally:
+            # Restore user's previous clipboard buffer
+            if had_clip and original_data is not None:
+                self._set_clipboard_safe(original_data)
+            else:
+                try:
+                    win32clipboard.OpenClipboard()
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.CloseClipboard()
+                except Exception:
+                    pass
+
+        return {"status": "success", "method": "clipboard_preserved", "length": len(text)}
+
+
+def type_text(text: str, fast_paste_threshold: int = 25) -> dict:
+    """Module-level type_text with non-destructive clipboard preservation."""
+    return OSControls().type_text(text, fast_paste_threshold=fast_paste_threshold)
+

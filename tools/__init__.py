@@ -14,6 +14,8 @@ from tools.os_controls import (
     restore_window,
     focus_window,
     close_window,
+    OSControls,
+    type_text,
 )
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
@@ -27,6 +29,8 @@ __all__ = [
     "restore_window",
     "focus_window",
     "close_window",
+    "OSControls",
+    "type_text",
     "GuiPrimitivesController",
     "ScriptRunner",
 ]

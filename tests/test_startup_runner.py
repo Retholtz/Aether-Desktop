@@ -274,7 +274,7 @@ class TestDispatcherToolIntegration(unittest.TestCase):
     def test_tool_declarations_present(self):
         decls = get_all_tool_declarations()
         tool_names = [d["name"] for d in decls]
-        self.assertIn("register_background_monitor", tool_names)
+        self.assertNotIn("register_background_monitor", tool_names)
         self.assertIn("register_monitoring_task", tool_names)
         self.assertIn("list_background_monitors", tool_names)
         self.assertIn("list_active_monitors", tool_names)
