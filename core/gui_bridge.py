@@ -21,7 +21,7 @@ from core.logger import (
     open_logs_folder,
 )
 from core.security import protect_secret, unprotect_secret
-from core.config_manager import sync_config_schema
+from core.config_manager import sync_config_schema, save_config_atomic
 
 logger = get_logger("Bridge")
 
@@ -212,6 +212,7 @@ class GuiBridge:
     All internal non-RPC fields are prefixed with '_' to prevent pywebview reflection loops.
     """
     def __init__(self, config_path: str = "config.json", loop: Optional[asyncio.AbstractEventLoop] = None):
+
         self._config_path = config_path
         if loop:
             self._loop = loop
@@ -226,6 +227,9 @@ class GuiBridge:
         self._hud_bridge = None
         self._current_hud_mode = "normal"
         self._js_lock = threading.Lock()
+        self._config_lock = threading.RLock()
+        self._stop_audio_watcher = threading.Event()
+        self._audio_watcher_thread = None
         self._config = self._load_config()
         self._current_hud_mode = self._config.get("ui", {}).get("hud_mode", "normal")
         self._engine = AetherEngine(
@@ -236,93 +240,123 @@ class GuiBridge:
         self.engine = self._engine
         register_ui_log_callback(self._on_log_record)
         self._last_audio_fp = get_windows_audio_fingerprint()
-        self._start_audio_device_watcher()
+        self.start_audio_watcher()
 
-    def _start_audio_device_watcher(self):
-        """Monitors Windows System\\Sound endpoints for hotplugged earbuds/headsets and updates live streams & UI."""
-        def _watch_loop():
-            while True:
-                try:
-                    time.sleep(1.5)
-                    fp = get_windows_audio_fingerprint()
-                    if fp is None or fp == self._last_audio_fp:
-                        continue
+    def start_audio_watcher(self):
+        """Starts background audio hotplug watcher thread."""
+        self._stop_audio_watcher.clear()
+        self._audio_watcher_thread = threading.Thread(
+            target=self._audio_hotplug_watcher_loop,
+            daemon=True,
+            name="AudioHotplugWatcher"
+        )
+        self._audio_watcher_thread.start()
 
-                    prev_fp = self._last_audio_fp
-                    self._last_audio_fp = fp
+    def stop_audio_watcher(self):
+        """Signals background thread to terminate before shutdown."""
+        self._stop_audio_watcher.set()
+        if self._audio_watcher_thread and self._audio_watcher_thread.is_alive():
+            self._audio_watcher_thread.join(timeout=2.0)
 
-                    avail = get_available_audio_devices(force_refresh=True)
-                    inputs = avail.get("inputs", [])
-                    outputs = avail.get("outputs", [])
+    # Backwards compatibility aliases
+    _start_audio_device_watcher = start_audio_watcher
+    _stop_audio_device_watcher = stop_audio_watcher
 
-                    # Check if the system default input or output changed compared to previous fingerprint
-                    prev_def_in_id = next((d[0] for d in (prev_fp[0] if prev_fp else ()) if d[2]), None)
-                    prev_def_out_id = next((d[0] for d in (prev_fp[1] if prev_fp else ()) if d[2]), None)
-                    curr_def_in = next((d for d in inputs if d.get("is_default")), inputs[0] if inputs else None)
-                    curr_def_out = next((d for d in outputs if d.get("is_default")), outputs[0] if outputs else None)
+    def _audio_hotplug_watcher_loop(self):
+        while not self._stop_audio_watcher.is_set():
+            # Check devices without blocking exit
+            if self._stop_audio_watcher.wait(timeout=2.0):
+                break
 
-                    aud_cfg = self._config.setdefault("audio", {})
-                    cfg_in_idx = aud_cfg.get("input_device_index", 0)
-                    cfg_out_idx = aud_cfg.get("output_device_index", 0)
-                    cfg_in_name = aud_cfg.get("input_device_name", "")
-                    cfg_out_name = aud_cfg.get("output_device_name", "")
+            # Synchronize configuration updates
+            with self._config_lock:
+                # Safely inspect and mutate device preferences
+                self._sync_active_audio_devices()
 
-                    # If Windows default input device changed (e.g. earbud plugged in/unplugged), switch to new default
-                    if curr_def_in and (prev_def_in_id != curr_def_in.get("device_id") or "[default]" in cfg_in_name.lower()):
-                        selected_in = curr_def_in
-                    else:
-                        resolved_in_idx, _ = resolve_valid_audio_devices(cfg_in_idx, cfg_out_idx, cfg_in_name, cfg_out_name)
-                        selected_in = next((d for d in inputs if d["index"] == resolved_in_idx), curr_def_in)
+    def _sync_active_audio_devices(self):
+        try:
+            fp = get_windows_audio_fingerprint()
+            if fp is None or fp == self._last_audio_fp:
+                return
 
-                    # If Windows default output device changed (e.g. earbud plugged in/unplugged), switch to new default
-                    if curr_def_out and (prev_def_out_id != curr_def_out.get("device_id") or "[default]" in cfg_out_name.lower()):
-                        selected_out = curr_def_out
-                    else:
-                        _, resolved_out_idx = resolve_valid_audio_devices(cfg_in_idx, cfg_out_idx, cfg_in_name, cfg_out_name)
-                        selected_out = next((d for d in outputs if d["index"] == resolved_out_idx), curr_def_out)
+            prev_fp = self._last_audio_fp
+            self._last_audio_fp = fp
 
-                    if selected_in:
-                        aud_cfg["input_device_index"] = selected_in["index"]
-                        aud_cfg["input_device_name"] = selected_in["label"]
-                    if selected_out:
-                        aud_cfg["output_device_index"] = selected_out["index"]
-                        aud_cfg["output_device_name"] = selected_out["label"]
+            avail = get_available_audio_devices(force_refresh=True)
+            inputs = avail.get("inputs", [])
+            outputs = avail.get("outputs", [])
 
-                    try:
-                        with open(self._config_path, "w", encoding="utf-8") as f:
-                            json.dump(self._config, f, indent=2)
-                    except Exception:
-                        pass
+            # Check if the system default input or output changed compared to previous fingerprint
+            prev_def_in_id = next((d[0] for d in (prev_fp[0] if prev_fp else ()) if d[2]), None)
+            prev_def_out_id = next((d[0] for d in (prev_fp[1] if prev_fp else ()) if d[2]), None)
+            curr_def_in = next((d for d in inputs if d.get("is_default")), inputs[0] if inputs else None)
+            curr_def_out = next((d for d in outputs if d.get("is_default")), outputs[0] if outputs else None)
 
-                    # Hot-swap active AudioPipeline streams if the assistant is currently running
-                    if self._engine and self._engine.audio and selected_in and selected_out:
-                        self._engine.audio.switch_devices(selected_in["index"], selected_out["index"])
+            aud_cfg = self._config.setdefault("audio", {})
+            cfg_in_idx = aud_cfg.get("input_device_index", 0)
+            cfg_out_idx = aud_cfg.get("output_device_index", 0)
+            cfg_in_name = aud_cfg.get("input_device_name", "")
+            cfg_out_name = aud_cfg.get("output_device_name", "")
 
-                    logger.info(
-                        f"[AUDIO HOTPLUG] Active hardware updated -> Mic: {aud_cfg.get('input_device_name')} | "
-                        f"Speaker: {aud_cfg.get('output_device_name')}"
-                    )
+            # If Windows default input device changed (e.g. earbud plugged in/unplugged), switch to new default
+            if curr_def_in and (prev_def_in_id != curr_def_in.get("device_id") or "[default]" in cfg_in_name.lower()):
+                selected_in = curr_def_in
+            else:
+                resolved_in_idx, _ = resolve_valid_audio_devices(cfg_in_idx, cfg_out_idx, cfg_in_name, cfg_out_name)
+                selected_in = next((d for d in inputs if d["index"] == resolved_in_idx), curr_def_in)
 
-                    self._on_engine_event(
-                        "audio_devices_updated",
-                        {
-                            "inputs": inputs,
-                            "outputs": outputs,
-                            "selected_input_index": aud_cfg.get("input_device_index"),
-                            "selected_input_name": aud_cfg.get("input_device_name"),
-                            "selected_output_index": aud_cfg.get("output_device_index"),
-                            "selected_output_name": aud_cfg.get("output_device_name"),
-                        },
-                    )
-                except Exception as e:
-                    logger.debug(f"Audio hardware watcher error: {e}")
+            # If Windows default output device changed (e.g. earbud plugged in/unplugged), switch to new default
+            if curr_def_out and (prev_def_out_id != curr_def_out.get("device_id") or "[default]" in cfg_out_name.lower()):
+                selected_out = curr_def_out
+            else:
+                _, resolved_out_idx = resolve_valid_audio_devices(cfg_in_idx, cfg_out_idx, cfg_in_name, cfg_out_name)
+                selected_out = next((d for d in outputs if d["index"] == resolved_out_idx), curr_def_out)
 
-        t = threading.Thread(target=_watch_loop, name="AudioHardwareWatcher", daemon=True)
-        t.start()
+            if selected_in:
+                aud_cfg["input_device_index"] = selected_in["index"]
+                aud_cfg["input_device_name"] = selected_in["label"]
+            if selected_out:
+                aud_cfg["output_device_index"] = selected_out["index"]
+                aud_cfg["output_device_name"] = selected_out["label"]
+
+            try:
+                save_config_atomic(self._config, self._config_path)
+            except Exception:
+                pass
+
+            # Hot-swap active AudioPipeline streams if the assistant is currently running
+            if self._engine and self._engine.audio and selected_in and selected_out:
+                self._engine.audio.switch_devices(selected_in["index"], selected_out["index"])
+
+            logger.info(
+                f"[AUDIO HOTPLUG] Active hardware updated -> Mic: {aud_cfg.get('input_device_name')} | "
+                f"Speaker: {aud_cfg.get('output_device_name')}"
+            )
+
+            self._on_engine_event(
+                "audio_devices_updated",
+                {
+                    "inputs": inputs,
+                    "outputs": outputs,
+                    "selected_input_index": aud_cfg.get("input_device_index"),
+                    "selected_input_name": aud_cfg.get("input_device_name"),
+                    "selected_output_index": aud_cfg.get("output_device_index"),
+                    "selected_output_name": aud_cfg.get("output_device_name"),
+                },
+            )
+        except Exception as e:
+            logger.debug(f"Audio hardware watcher error: {e}")
+
+    def update_config_value(self, key: str, value: any):
+        with self._config_lock:
+            self._config[key] = value
+            save_config_atomic(self._config, self._config_path)
+
 
     @property
     def config(self) -> dict:
-        return self._config
+        with self._config_lock:
+            return self._config
 
     def set_window(self, window):
         self._window = window
@@ -337,15 +371,16 @@ class GuiBridge:
 
     def update_whitelist(self, new_whitelist: list) -> dict:
         """Updates security app_whitelist in config, persists to disk, and pushes config_updated event."""
-        try:
-            self._config.setdefault("security", {})["app_whitelist"] = new_whitelist
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
-            self._on_engine_event("config_updated", self._config)
-            return {"success": True}
-        except Exception as e:
-            print(f"[WHITELIST UPDATE ERROR] {e}")
-            return {"success": False, "error": str(e)}
+        with self._config_lock:
+            try:
+                self._config.setdefault("security", {})["app_whitelist"] = new_whitelist
+                save_config_atomic(self._config, self._config_path)
+                self._on_engine_event("config_updated", self._config)
+                return {"success": True}
+            except Exception as e:
+                print(f"[WHITELIST UPDATE ERROR] {e}")
+                return {"success": False, "error": str(e)}
+
 
     def _load_config(self) -> dict:
         cfg = {}
@@ -358,7 +393,8 @@ class GuiBridge:
         return sync_config_schema(cfg)
 
     def get_raw_config(self) -> dict:
-        return self._config
+        with self._config_lock:
+            return self._config
 
     def _on_engine_event(self, event_type: str, data: dict):
         """Pushes events to both the Main Window and Floating Overlay JavaScript runtimes."""
@@ -394,59 +430,66 @@ class GuiBridge:
 
     def get_config(self) -> dict:
         """Returns application configuration for the UI (masking encrypted API key)."""
-        cfg = json.loads(json.dumps(self._config))
-        cfg["vad_trailing_silence_ms"] = self._config.get("vad_trailing_silence_ms", 1400)
-        api_cfg = cfg.get("api", {})
-        enc_key = api_cfg.get("api_key_encrypted", "")
-        decrypted = unprotect_secret(enc_key) if enc_key else os.environ.get("GEMINI_API_KEY", "")
-        
-        if decrypted:
-            if len(decrypted) > 8:
-                masked = decrypted[:4] + "************" + decrypted[-4:]
+        with self._config_lock:
+            cfg = json.loads(json.dumps(self._config))
+            cfg["vad_trailing_silence_ms"] = self._config.get("vad_trailing_silence_ms", 1400)
+            api_cfg = cfg.get("api", {})
+            enc_key = api_cfg.get("api_key_encrypted", "")
+            decrypted = unprotect_secret(enc_key) if enc_key else os.environ.get("GEMINI_API_KEY", "")
+            
+            if decrypted:
+                if len(decrypted) > 8:
+                    masked = decrypted[:4] + "************" + decrypted[-4:]
+                else:
+                    masked = "********"
+                api_cfg["api_key_display"] = masked
+                api_cfg["has_key"] = True
             else:
-                masked = "********"
-            api_cfg["api_key_display"] = masked
-            api_cfg["has_key"] = True
-        else:
-            api_cfg["api_key_display"] = ""
-            api_cfg["has_key"] = False
+                api_cfg["api_key_display"] = ""
+                api_cfg["has_key"] = False
 
-        cfg["api"] = api_cfg
-        return cfg
+            cfg["api"] = api_cfg
+            return cfg
 
     def update_vad_silence(self, silence_ms: int) -> bool:
         """Saves setting to disk and applies immediately to the audio pipeline."""
-        try:
-            silence_ms = int(silence_ms)
-            self._config["vad_trailing_silence_ms"] = silence_ms
-            if "audio" in self._config and isinstance(self._config["audio"], dict):
-                self._config["audio"]["vad_trailing_silence_ms"] = silence_ms
+        with self._config_lock:
+            try:
+                silence_ms = int(silence_ms)
+                self._config["vad_trailing_silence_ms"] = silence_ms
+                if "audio" in self._config and isinstance(self._config["audio"], dict):
+                    self._config["audio"]["vad_trailing_silence_ms"] = silence_ms
 
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+                save_config_atomic(self._config, self._config_path)
 
-            # Hot-update audio stream detector
-            if hasattr(self, "engine") and hasattr(self.engine, "audio_stream") and self.engine.audio_stream:
-                self.engine.audio_stream.set_vad_trailing_silence(silence_ms)
-            elif hasattr(self._engine, "audio") and self._engine.audio:
-                self._engine.audio.set_vad_trailing_silence(silence_ms)
+                # Hot-update audio stream detector
+                if hasattr(self, "engine") and hasattr(self.engine, "audio_stream") and self.engine.audio_stream:
+                    self.engine.audio_stream.set_vad_trailing_silence(silence_ms)
+                elif hasattr(self._engine, "audio") and self._engine.audio:
+                    self._engine.audio.set_vad_trailing_silence(silence_ms)
 
-            self._on_engine_event("config_updated", self.get_config())
-            print(f"[INFO] [GUI_BRIDGE] VAD trailing silence updated to {silence_ms}ms")
-            return True
-        except Exception as e:
-            print(f"[ERROR] [GUI_BRIDGE] Failed to update VAD silence: {e}")
-            return False
+                self._on_engine_event("config_updated", self.get_config())
+                print(f"[INFO] [GUI_BRIDGE] VAD trailing silence updated to {silence_ms}ms")
+                return True
+            except Exception as e:
+                print(f"[ERROR] [GUI_BRIDGE] Failed to update VAD silence: {e}")
+                return False
+
 
     def save_config(self, new_config: Optional[dict] = None) -> dict:
         """Encrypts new API key if provided and saves updated configuration."""
+        with self._config_lock:
+            return self._save_config_locked(new_config)
+
+    def _save_config_locked(self, new_config: Optional[dict] = None) -> dict:
         try:
             if new_config is None:
                 sync_config_schema(self._config)
-                with open(self._config_path, "w", encoding="utf-8") as f:
-                    json.dump(self._config, f, indent=2)
+                save_config_atomic(self._config, self._config_path)
                 self._on_engine_event("config_updated", self.get_config())
                 return {"success": True, "message": "Settings saved successfully."}
+
+
 
             if "vad_trailing_silence_ms" in new_config:
                 silence_ms = int(new_config["vad_trailing_silence_ms"])
@@ -599,12 +642,12 @@ class GuiBridge:
                     self.set_mode(new_config["ui"]["hud_mode"])
 
             sync_config_schema(self._config)
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+            save_config_atomic(self._config, self._config_path)
 
             self._on_engine_event("config_updated", self.get_config())
 
             return {"success": True, "message": "Settings saved successfully."}
+
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -878,10 +921,10 @@ class GuiBridge:
         try:
             res = self._engine.voice_verifier.finalize_calibration()
             if res.get("success"):
-                self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = enabled
-                self._config["audio"]["voice_biometrics"]["threshold"] = float(threshold)
-                with open(self._config_path, "w", encoding="utf-8") as f:
-                    json.dump(self._config, f, indent=2)
+                with self._config_lock:
+                    self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = enabled
+                    self._config["audio"]["voice_biometrics"]["threshold"] = float(threshold)
+                    save_config_atomic(self._config, self._config_path)
                 self._on_engine_event("voice_profile_updated", {"enrolled": True, "enabled": enabled, "threshold": threshold})
             return res
         except Exception as e:
@@ -891,10 +934,10 @@ class GuiBridge:
     def save_voice_biometrics_settings(self, enabled: bool, threshold: float) -> dict:
         """Updates biometric enabled toggle and sensitivity threshold."""
         try:
-            self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = bool(enabled)
-            self._config["audio"]["voice_biometrics"]["threshold"] = float(threshold)
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+            with self._config_lock:
+                self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = bool(enabled)
+                self._config["audio"]["voice_biometrics"]["threshold"] = float(threshold)
+                save_config_atomic(self._config, self._config_path)
             self._on_engine_event("voice_profile_updated", {"enrolled": self._engine.voice_verifier.is_enrolled(), "enabled": enabled, "threshold": threshold})
             return {"success": True, "enabled": enabled, "threshold": threshold}
         except Exception as e:
@@ -904,12 +947,13 @@ class GuiBridge:
         """Removes enrolled voiceprint profile."""
         try:
             res = self._engine.voice_verifier.delete_profile()
-            self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = False
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+            with self._config_lock:
+                self._config.setdefault("audio", {}).setdefault("voice_biometrics", {})["enabled"] = False
+                save_config_atomic(self._config, self._config_path)
             self._on_engine_event("voice_profile_updated", {"enrolled": False, "enabled": False})
             return res
         except Exception as e:
+
             return {"success": False, "error": str(e)}
 
     # =========================================================================
@@ -1013,14 +1057,15 @@ class GuiBridge:
             cur_mode = getattr(self, "_current_hud_mode", "normal")
             w, h = (180, 52) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
             cx, cy = clamp_window_position(x, y, width=w, height=h)
-            ui_cfg = self._config.setdefault("ui", {})
-            if ui_cfg.get("overlay_x") == cx and ui_cfg.get("overlay_y") == cy:
-                return {"success": True, "x": cx, "y": cy}
-            ui_cfg["overlay_x"] = cx
-            ui_cfg["overlay_y"] = cy
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+            with self._config_lock:
+                ui_cfg = self._config.setdefault("ui", {})
+                if ui_cfg.get("overlay_x") == cx and ui_cfg.get("overlay_y") == cy:
+                    return {"success": True, "x": cx, "y": cy}
+                ui_cfg["overlay_x"] = cx
+                ui_cfg["overlay_y"] = cy
+                save_config_atomic(self._config, self._config_path)
             return {"success": True, "x": cx, "y": cy}
+
         except Exception as e:
             logger.warning(f"[OVERLAY POSITION SAVE ERROR] {e}")
             return {"success": False, "error": str(e)}
@@ -1200,9 +1245,9 @@ class GuiBridge:
             parts = [p.strip() for p in raw.split(";") if p.strip()]
             clean = "; ".join(parts) if parts else raw
             self._engine.user_memory.set_user_name(clean)
-            self._config.setdefault("user", {})["name"] = clean
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+            with self._config_lock:
+                self._config.setdefault("user", {})["name"] = clean
+                save_config_atomic(self._config, self._config_path)
             if hasattr(self._engine, "update_user_identity_directive"):
                 self._engine.update_user_identity_directive()
             self._on_engine_event("config_updated", self._config)
@@ -1216,7 +1261,8 @@ class GuiBridge:
         try:
             freq = self._engine.user_memory.get_callsign_frequency(default="")
             if not freq:
-                freq = self._config.get("user", {}).get("callsign_frequency", "often")
+                with self._config_lock:
+                    freq = self._config.get("user", {}).get("callsign_frequency", "often")
             freq = str(freq).strip().lower()
             if freq not in ("never", "seldom", "often", "always"):
                 freq = "often"
@@ -1233,14 +1279,15 @@ class GuiBridge:
             if clean not in ("never", "seldom", "often", "always"):
                 clean = "often"
             self._engine.user_memory.set_callsign_frequency(clean)
-            self._config.setdefault("user", {})["callsign_frequency"] = clean
-            with open(self._config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2)
+            with self._config_lock:
+                self._config.setdefault("user", {})["callsign_frequency"] = clean
+                save_config_atomic(self._config, self._config_path)
             if hasattr(self._engine, "update_user_identity_directive"):
                 self._engine.update_user_identity_directive()
             self._on_engine_event("config_updated", self._config)
             levels = {"never": 0, "seldom": 1, "often": 2, "always": 3}
             return {"success": True, "frequency": clean, "level": levels.get(clean, 2)}
+
         except Exception as e:
             logger.error(f"[BRIDGE ERROR] set_callsign_frequency: {e}")
             return {"success": False, "error": str(e)}
@@ -1340,6 +1387,9 @@ class GuiBridge:
         except Exception as e:
             logger.error(f"[BRIDGE ERROR] clear_all_stored_sessions: {e}")
             return {"success": False, "error": str(e)}
+
+
+GUIBridge = GuiBridge
 
 
 

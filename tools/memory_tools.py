@@ -3,18 +3,13 @@ Aether Desktop - User Memory Tools
 Exposes functions for Gemini to query, set, or remove personalized user facts.
 """
 
+import threading
 from typing import Dict, List, Optional, Any
-from core.user_memory import UserMemory
+from core.user_memory import UserMemory, get_user_memory, _MEMORY_SINGLETON, _MEMORY_INIT_LOCK
 
 # Default user memory singleton reference
-_default_memory: Optional[UserMemory] = None
+_default_memory = _MEMORY_SINGLETON
 
-
-def get_user_memory() -> UserMemory:
-    global _default_memory
-    if _default_memory is None:
-        _default_memory = UserMemory()
-    return _default_memory
 
 
 def remember_user_fact(

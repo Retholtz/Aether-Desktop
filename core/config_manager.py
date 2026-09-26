@@ -6,6 +6,7 @@ for config.json, including wake_phrase, kill_phrase, and voice settings.
 
 import json
 import os
+import tempfile
 from typing import Any, Dict, Optional
 
 from core.security import protect_secret, unprotect_secret
@@ -237,11 +238,27 @@ class ConfigManager:
 
         sync_config_schema(self.config)
         try:
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(self.config, f, indent=2)
+            save_config_atomic(self.config, self.config_path)
         except Exception as e:
             print(f"[CONFIG_MANAGER SAVE ERROR] {e}")
         return self.config
+
+
+def save_config_atomic(config_data: dict, config_path: str = "config.json"):
+    """
+    Writes configuration to a temporary file before atomically renaming it.
+    Prevents corrupting config.json if the process is killed mid-write.
+    """
+    abs_config_path = os.path.abspath(config_path)
+    base_dir = os.path.dirname(abs_config_path)
+    os.makedirs(base_dir, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile("w", dir=base_dir, delete=False, suffix=".tmp", encoding="utf-8") as tf:
+        temp_name = tf.name
+        json.dump(config_data, tf, indent=2)
+
+    # os.replace is an atomic operation on Windows (NTFS) and POSIX
+    os.replace(temp_name, abs_config_path)
 
 
 def load_config(config_path: str = "config.json") -> Dict[str, Any]:
@@ -251,3 +268,4 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
 def save_config(updates: Dict[str, Any], config_path: str = "config.json") -> Dict[str, Any]:
     mgr = ConfigManager(config_path=config_path)
     return mgr.save(updates)
+

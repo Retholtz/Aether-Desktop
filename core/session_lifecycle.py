@@ -60,8 +60,26 @@ class SessionLifecycleManager:
         self.tool_execution_chars: int = 0
         self.turn_history: List[Dict[str, str]] = []
         self.last_summary: str = ""
-        self.rotation_in_progress: bool = False
+        self._rotation_in_progress: bool = False
+        self.rotation_started_at: float = 0.0
         self.total_rotations: int = 0
+
+    @property
+    def rotation_in_progress(self) -> bool:
+        if self._rotation_in_progress:
+            if time.time() - self.rotation_started_at > 120.0:
+                print("[WARN] [SESSION] Stale rotation lock expired (>120s). Resetting lock.")
+                logger.warning("[SESSION] Stale rotation lock expired (>120s). Resetting lock.")
+                self._rotation_in_progress = False
+        return self._rotation_in_progress
+
+    @rotation_in_progress.setter
+    def rotation_in_progress(self, value: bool):
+        self._rotation_in_progress = bool(value)
+        if value:
+            self.rotation_started_at = time.time()
+        else:
+            self.rotation_started_at = 0.0
 
     def record_turn(self, role: str, content: str, tools_used: Optional[List[str]] = None):
         """Records a user utterance or model response in turn history and raw transcript."""
@@ -120,8 +138,14 @@ class SessionLifecycleManager:
           - duration >= 30 minutes (1800s)
           - tool execution chars >= 50,000
         """
+        # Reset stuck rotation locks older than 120 seconds
         if self.rotation_in_progress:
-            return False
+            if time.time() - self.rotation_started_at > 120.0:
+                print("[WARN] [SESSION] Stale rotation lock expired (>120s). Resetting lock.")
+                logger.warning("[SESSION] Stale rotation lock expired (>120s). Resetting lock.")
+                self.rotation_in_progress = False
+            else:
+                return False
 
         if self.turn_count >= self.rotation_threshold_turns:
             logger.info(f"[LIFECYCLE] NEEDS_ROTATION: turn_count ({self.turn_count}) >= threshold ({self.rotation_threshold_turns})")
@@ -137,6 +161,20 @@ class SessionLifecycleManager:
             return True
 
         return False
+
+    def rotate_session(self):
+        """Executes session rotation with concurrency flag protection."""
+        self.rotation_in_progress = True
+        self.rotation_started_at = time.time()
+        try:
+            self._execute_session_rotation()
+        finally:
+            self.rotation_in_progress = False
+
+    def _execute_session_rotation(self):
+        self.flush_session_to_disk()
+        self.reset_metrics()
+
 
     async def generate_session_summary(
         self,

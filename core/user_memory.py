@@ -819,15 +819,22 @@ class UserMemory:
                 self._conn = None
 
 
-# Default user memory singleton reference
-_default_memory: Optional[UserMemory] = None
+# Default user memory singleton reference with double-checked locking
+_MEMORY_SINGLETON: Optional[UserMemory] = None
+_MEMORY_INIT_LOCK = threading.Lock()
+_default_memory = _MEMORY_SINGLETON
 
 
 def get_user_memory() -> UserMemory:
-    global _default_memory
-    if _default_memory is None:
-        _default_memory = UserMemory()
-    return _default_memory
+    """Double-checked locking singleton for UserMemory."""
+    global _MEMORY_SINGLETON, _default_memory
+    if _MEMORY_SINGLETON is None:
+        with _MEMORY_INIT_LOCK:
+            if _MEMORY_SINGLETON is None:
+                _MEMORY_SINGLETON = UserMemory()
+                _default_memory = _MEMORY_SINGLETON
+    return _MEMORY_SINGLETON
+
 
 
 def add_dictionary_term(term: str, phonetic_guide: str, category: str = "name") -> Dict[str, Any]:

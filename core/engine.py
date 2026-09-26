@@ -345,45 +345,55 @@ class AetherEngine:
             return future.result(timeout=15.0)
         return cm
 
+    def _teardown_session(self, old_session):
+        """Cleanly tears down a stale socket without raising."""
+        if hasattr(old_session, "close"):
+            try:
+                import inspect
+                res = old_session.close()
+                if inspect.isawaitable(res) and hasattr(self, "_loop") and self._loop and self._loop.is_running():
+                    try:
+                        asyncio.run_coroutine_threadsafe(res, self._loop)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[DEBUG] [ENGINE] Error tearing down stale socket: {e}")
+
     def reconnect_live_session(self, reason: str = "Unspecified"):
         """
         Thread-safe reconnection routine:
-        1. Closes dead sockets/threads cleanly.
-        2. Re-establishes the Gemini Live connection.
+        1. Establishes the replacement connection before discarding the previous pointer.
+        2. Safely swaps pointers and tears down the old socket.
         3. Rehydrates current session state and sanitized turns.
         """
         with self._reconnect_lock:
             print(f"[INFO] [ENGINE] Initiating live session reconnect: {reason}")
-            
-            # 1. Cleanly terminate existing broken socket
-            try:
-                if hasattr(self, "live_session") and self.live_session:
-                    # Soft close without raising
-                    self.live_session = None
-                if hasattr(self, "session") and self.session:
-                    self.session = None
-            except Exception as e:
-                print(f"[DEBUG] [ENGINE] Error tearing down stale socket: {e}")
 
-            # 2. Re-establish connection with Gemini Live API
+            
             try:
-                # Prepare config with permissive safety settings and current tool definitions
+                # 1. Establish new connection before discarding the previous pointer
                 live_config = self._build_live_config()
-                
-                # Connect via google.genai client
                 new_session = self._establish_raw_live_stream(live_config)
+
+                # 2. Safely swap pointers and tear down old socket
+                old_session = getattr(self, "live_session", None)
                 self.live_session = new_session
                 self.session = new_session
-                
-                # 3. Mark healthy in ConnectionManager
-                self.conn_mgr.set_connected()
 
-                # 4. Context Rehydration: Send brief system handshake to preserve continuity
+                if old_session:
+                    try:
+                        self._teardown_session(old_session)
+                    except Exception as tear_err:
+                        print(f"[DEBUG] [ENGINE] Old socket teardown warning: {tear_err}")
+
+                # 3. Transition connection state and rehydrate context
+                self.conn_mgr.set_connected()
                 self._rehydrate_session_context()
 
             except Exception as err:
                 print(f"[ERROR] [ENGINE] Reconnect failed: {err}")
                 self.conn_mgr.set_disconnected(reason=str(err))
+
 
     def _rehydrate_session_context(self):
         """
