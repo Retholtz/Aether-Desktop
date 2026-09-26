@@ -1498,19 +1498,30 @@ class ToolDispatcher:
 
             elif fn_name == "read_saved_skill":
                 skill_name = str(args.get("skill_name", "")).strip()
-                code = self.skill_library.get_skill_code(skill_name)
-                if code is not None:
+                try:
+                    code = self.skill_library.get_skill_code(skill_name)
                     return {
                         "status": "success",
                         "skill_name": skill_name,
                         "code": code,
                         "message": f"Successfully retrieved source code for skill '{skill_name}'."
                     }
-                else:
+                except FileNotFoundError:
                     return {
                         "status": "error",
                         "message": f"Skill '{skill_name}' not found in permanent library."
                     }
+                except PermissionError as e:
+                    return {
+                        "status": "error",
+                        "message": str(e)
+                    }
+                except Exception as e:
+                    return {
+                        "status": "error",
+                        "message": f"Failed to retrieve skill '{skill_name}': {e}"
+                    }
+
 
             elif fn_name == "remember_user_fact":
                 cat = str(args.get("category", "general")).strip()
