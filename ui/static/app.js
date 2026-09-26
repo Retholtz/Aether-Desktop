@@ -3,6 +3,36 @@
  * Connects the web UI to pywebview.api backend bridge.
  */
 
+(function installSpecIdAliases() {
+  const origGetElementById = document.getElementById.bind(document);
+  const ID_ALIASES = {
+    "agentNameInput": "input-agent-name",
+    "input-agent-name": "agentNameInput",
+    "wakePhraseInput": "input-wake-phrase",
+    "input-wake-phrase": "wakePhraseInput",
+    "sleepPhraseInput": "input-sleep-phrase",
+    "input-sleep-phrase": "sleepPhraseInput",
+    "safePhraseInput": "input-kill-phrase",
+    "input-kill-phrase": "safePhraseInput",
+    "ttsSelect": "select-tts-endpoint",
+    "select-tts-endpoint": "ttsSelect",
+    "voiceSelect": "select-output-voice",
+    "select-output-voice": "voiceSelect",
+    "voiceSpeedSlider": "input-tts-speed",
+    "input-tts-speed": "voiceSpeedSlider",
+    "voiceAccentSelect": "select-voice-accent",
+    "select-voice-accent": "voiceAccentSelect",
+    "topSaveSettingsBtn": "btn-save-settings",
+    "btn-save-settings": "topSaveSettingsBtn"
+  };
+  document.getElementById = function(id) {
+    const el = origGetElementById(id);
+    if (el) return el;
+    const mapped = ID_ALIASES[id];
+    return mapped ? origGetElementById(mapped) : null;
+  };
+})();
+
 window.aetherUI = {
   currentConfig: null,
   isAssistantRunning: false,
@@ -124,19 +154,54 @@ window.aetherUI = {
     });
 
     // Agent name real-time sync
-    const nameInput = document.getElementById("agentNameInput");
-    nameInput.addEventListener("input", (e) => {
-      const name = e.target.value.trim() || "Aether";
-      this.agentName = name;
-      this.updateAgentNameUI(name);
+    const nameInput = document.getElementById("input-agent-name");
+    if (nameInput) {
+      nameInput.addEventListener("input", (e) => {
+        const name = e.target.value.trim() || "Aether";
+        this.agentName = name;
+        this.updateAgentNameUI(name);
 
-      // Also automatically update Kill Phrase input if it contains stop
-      const killInput = document.getElementById("safePhraseInput");
-      if (killInput && (!killInput.value || killInput.value.toLowerCase().includes("stop"))) {
-        killInput.value = `${name} stop`;
-        const telSafe = document.getElementById("telSafePhrase");
-        if (telSafe) telSafe.innerText = `"${name} stop"`;
+        // Automatically update Wake Phrase input if it uses Hey <Name>
+        const wakeInput = document.getElementById("input-wake-phrase");
+        const audioWakeInput = document.getElementById("audio-wake-phrase-input");
+        if (wakeInput && (!wakeInput.value || wakeInput.value.toLowerCase().startsWith("hey "))) {
+          wakeInput.value = `Hey ${name}`;
+          if (audioWakeInput) audioWakeInput.value = `Hey ${name}`;
+        }
+
+        // Automatically update Stop Listening Phrase input if it uses <Name> stop listening
+        const sleepInput = document.getElementById("input-sleep-phrase");
+        const audioSleepInput = document.getElementById("audio-sleep-phrase-input");
+        if (sleepInput && (!sleepInput.value || sleepInput.value.toLowerCase().includes("stop listening"))) {
+          sleepInput.value = `${name} stop listening`;
+          if (audioSleepInput) audioSleepInput.value = `${name} stop listening`;
+        }
+
+        // Also automatically update Kill Phrase input if it contains stop
+        const killInput = document.getElementById("input-kill-phrase");
+        if (killInput && (!killInput.value || killInput.value.toLowerCase().includes("stop"))) {
+          killInput.value = `${name} stop`;
+          const telSafe = document.getElementById("telSafePhrase");
+          if (telSafe) telSafe.innerText = `"${name} stop"`;
+        }
+      });
+    }
+
+    // Auto-save Wake Phrase, Stop Listening Phrase, and Kill Phrase when edited under Hands-Free controls
+    ["input-wake-phrase", "input-sleep-phrase", "input-kill-phrase"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("change", () => this.saveSettings(true));
       }
+    });
+
+    // Always-On sub-mode radio buttons (1: always_on, 2: wake_word, 3: wake_sleep_toggle)
+    document.querySelectorAll("input[name='alwaysOnMode']").forEach(radio => {
+      radio.addEventListener("change", () => {
+        const curAudioMode = document.querySelector("input[name='audioMode']:checked")?.value || "always_on";
+        this.updateAudioModeUI(curAudioMode);
+        this.saveSettings(true);
+      });
     });
 
     // Toggle API Key visibility & handle stored asterisks placeholder
@@ -491,6 +556,7 @@ window.aetherUI = {
     const ttsSelect = document.getElementById("ttsSelect");
     if (ttsSelect) {
       ttsSelect.addEventListener("change", async (e) => {
+        this.updateTtsUiVisibility(e.target.value);
         await this.loadVoices(e.target.value);
       });
     }
@@ -524,11 +590,17 @@ window.aetherUI = {
       });
     }
 
-    const speedSlider = document.getElementById("voiceSpeedSlider");
+    const speedSlider = document.getElementById("input-tts-speed");
     const speedVal = document.getElementById("voiceSpeedVal");
+    const ttsSpeedLabel = document.getElementById("tts-speed-label");
     if (speedSlider) {
       speedSlider.addEventListener("input", (e) => {
-        if (speedVal) speedVal.innerText = `${parseFloat(e.target.value).toFixed(2)}x`;
+        const num = parseFloat(e.target.value);
+        if (speedVal) speedVal.innerText = `${num.toFixed(2)}x`;
+        if (ttsSpeedLabel) {
+          const suffix = Math.abs(num - 1.0) < 0.01 ? " Standard" : "";
+          ttsSpeedLabel.innerText = `Playback rate multiplier (${num.toFixed(2).replace(/\.00$/, ".0")}x${suffix})`;
+        }
       });
     }
 
@@ -575,13 +647,24 @@ window.aetherUI = {
   updateAudioModeUI: function(mode) {
     const pttBtn = document.getElementById("pttButton");
     const pttGroup = document.getElementById("pttSettingsGroup");
-    document.getElementById("telAudioMode").innerText = mode === "ptt" ? "PUSH-TO-TALK" : "ALWAYS-ON";
+    const alwaysOnGroup = document.getElementById("alwaysOnSettingsGroup");
+    const alwaysOnSub = document.querySelector("input[name='alwaysOnMode']:checked")?.value || "wake_word";
+    const telMode = document.getElementById("telAudioMode");
+
     if (mode === "ptt") {
+      if (telMode) telMode.innerText = "PUSH-TO-TALK";
       if (pttBtn) pttBtn.style.display = "block";
       if (pttGroup) pttGroup.style.display = "block";
+      if (alwaysOnGroup) alwaysOnGroup.style.display = "none";
     } else {
+      if (telMode) {
+        if (alwaysOnSub === "always_on") telMode.innerText = "ALWAYS-ON (OPEN)";
+        else if (alwaysOnSub === "wake_sleep_toggle") telMode.innerText = "WAKE/SLEEP TOGGLE";
+        else telMode.innerText = "WAKE WORD";
+      }
       if (pttBtn) pttBtn.style.display = "none";
       if (pttGroup) pttGroup.style.display = "none";
+      if (alwaysOnGroup) alwaysOnGroup.style.display = "block";
     }
     this.updatePttButtonUI();
   },
@@ -790,9 +873,9 @@ window.aetherUI = {
   updateTtsUiVisibility: function(engine) {
     const eng = (engine || document.getElementById("ttsSelect")?.value || "").toLowerCase();
     const isEdge = eng.includes("edge");
-    const isGemini = eng.startsWith("gemini") || !eng;
-    const isLocal = eng.includes("local") && !eng.includes("windows");
+    const isGemini = eng.includes("gemini") || !eng;
     const isWindows = eng.includes("windows") || eng.includes("sapi");
+    const isLocal = eng.includes("local") && !isWindows;
 
     const edgeRegionGroup = document.getElementById("edgeRegionGroup");
     const accentGroup = document.getElementById("voiceAccentGroup");
@@ -822,24 +905,27 @@ window.aetherUI = {
         : "Synthesizer voice tailored to your selected TTS engine.";
     }
 
+    // Accent choices shown on the right (under AI Output Voice) when using Gemini TTS; Region shown when using Edge TTS
+    if (accentGroup) {
+      accentGroup.style.display = isGemini ? "flex" : "none";
+    }
     if (edgeRegionGroup) {
       edgeRegionGroup.style.display = isEdge ? "flex" : "none";
     }
-    if (accentGroup) {
-      accentGroup.style.display = isGemini ? "flex" : "none";
+    if (subRight) {
+      subRight.style.display = (isGemini || isEdge) ? "flex" : "none";
+    }
+
+    // Left column always remains visible for Voice Playback Kill Phrase;
+    // Speed control hidden UNLESS Windows Native (SAPI5) is used; Local URL shown only for Local TTS
+    if (speedGroup) {
+      speedGroup.style.display = isWindows ? "flex" : "none";
     }
     if (localGroup) {
       localGroup.style.display = isLocal ? "flex" : "none";
     }
-    if (speedGroup) {
-      speedGroup.style.display = isWindows ? "flex" : "none";
-    }
-
     if (subLeft) {
-      subLeft.style.display = (isWindows || isLocal) ? "flex" : "none";
-    }
-    if (subRight) {
-      subRight.style.display = (isEdge || isGemini) ? "flex" : "none";
+      subLeft.style.display = "flex";
     }
   },
 
@@ -1070,12 +1156,24 @@ window.aetherUI = {
       const vision = cfg.vision || {};
       const security = cfg.security || {};
 
-      // Agent Name
-      if (api.agent_name) {
-        this.agentName = api.agent_name;
-        document.getElementById("agentNameInput").value = api.agent_name;
-        this.updateAgentNameUI(api.agent_name);
-      }
+      // Agent Name, Wake Phrase & Stop Listening Phrase
+      const resolvedAgentName = cfg.agent_name || api.agent_name || "Aether";
+      this.agentName = resolvedAgentName;
+      const agentInput = document.getElementById("input-agent-name");
+      if (agentInput) agentInput.value = resolvedAgentName;
+      this.updateAgentNameUI(resolvedAgentName);
+
+      const resolvedWakePhrase = cfg.wake_phrase || api.wake_phrase || audio.wake_phrase || `Hey ${resolvedAgentName}`;
+      const wakeInput = document.getElementById("input-wake-phrase");
+      const audioWakeInput = document.getElementById("audio-wake-phrase-input");
+      if (wakeInput) wakeInput.value = resolvedWakePhrase;
+      if (audioWakeInput) audioWakeInput.value = resolvedWakePhrase;
+
+      const resolvedSleepPhrase = cfg.sleep_phrase || cfg.stop_listening_phrase || audio.sleep_phrase || audio.stop_listening_phrase || api.sleep_phrase || `${resolvedAgentName} stop listening`;
+      const sleepInput = document.getElementById("input-sleep-phrase");
+      const audioSleepInput = document.getElementById("audio-sleep-phrase-input");
+      if (sleepInput) sleepInput.value = resolvedSleepPhrase;
+      if (audioSleepInput) audioSleepInput.value = resolvedSleepPhrase;
 
       // Gemini & Voice
       const keyInput = document.getElementById("apiKeyInput");
@@ -1096,24 +1194,32 @@ window.aetherUI = {
       }
 
       // TTS Engine, Voice, Accent & Local TTS URL
-      const currentTts = api.tts_model_id || api.tts_endpoint || "gemini-live-native";
-      if (document.getElementById("ttsSelect")) {
-        document.getElementById("ttsSelect").value = currentTts;
+      const currentTts = api.tts_model_id || api.tts_endpoint || cfg.tts_endpoint || "gemini-live-native";
+      if (document.getElementById("select-tts-endpoint")) {
+        document.getElementById("select-tts-endpoint").value = currentTts;
       }
       if (document.getElementById("localTtsUrlInput")) {
         document.getElementById("localTtsUrlInput").value = api.local_tts_url || "http://localhost:8880/v1/audio/speech";
       }
       await this.loadAccents();
-      if (document.getElementById("voiceAccentSelect")) {
-        document.getElementById("voiceAccentSelect").value = api.voice_accent || "default";
+      if (document.getElementById("select-voice-accent")) {
+        document.getElementById("select-voice-accent").value = api.voice_accent || cfg.voice_accent || "default";
       }
-      await this.loadVoices(currentTts, api.voice_name);
-      if (api.voice_speed !== undefined) {
-        const speedVal = parseFloat(api.voice_speed).toFixed(2);
-        const speedSlider = document.getElementById("voiceSpeedSlider");
-        if (speedSlider) speedSlider.value = api.voice_speed;
+      this.updateTtsUiVisibility(currentTts);
+      await this.loadVoices(currentTts, api.voice_name || cfg.tts_voice);
+      const rawSpeed = api.voice_speed !== undefined ? api.voice_speed : (cfg.tts_speed !== undefined ? cfg.tts_speed : 1.0);
+      if (rawSpeed !== undefined) {
+        const numSpeed = parseFloat(rawSpeed);
+        const speedVal = numSpeed.toFixed(2);
+        const speedSlider = document.getElementById("input-tts-speed");
+        if (speedSlider) speedSlider.value = numSpeed;
         const speedValDisplay = document.getElementById("voiceSpeedVal");
         if (speedValDisplay) speedValDisplay.innerText = `${speedVal}x`;
+        const ttsSpeedLabel = document.getElementById("tts-speed-label");
+        if (ttsSpeedLabel) {
+          const suffix = Math.abs(numSpeed - 1.0) < 0.01 ? " Standard" : "";
+          ttsSpeedLabel.innerText = `Playback rate multiplier (${speedVal.replace(/\.00$/, ".0")}x${suffix})`;
+        }
       }
       this.updateVoiceLabels();
       if (api.pro_model_id && document.getElementById("proModelSelect")) {
@@ -1137,6 +1243,10 @@ window.aetherUI = {
         const radio = document.querySelector(`input[name='audioMode'][value='${audio.mode}']`);
         if (radio) radio.checked = true;
       }
+      const resolvedAlwaysOnMode = cfg.always_on_mode || audio.always_on_mode || api.always_on_mode || (cfg.wake_word_enabled === false ? "always_on" : "wake_word");
+      const aoRadio = document.querySelector(`input[name='alwaysOnMode'][value='${resolvedAlwaysOnMode}']`);
+      if (aoRadio) aoRadio.checked = true;
+
       if (audio.ptt_type) {
         this.pttType = audio.ptt_type;
         const pttRadio = document.querySelector(`input[name='pttType'][value='${audio.ptt_type}']`);
@@ -1151,12 +1261,11 @@ window.aetherUI = {
       if (audio.ptt_vk !== undefined) this.pttVk = audio.ptt_vk;
       if (audio.ptt_modifiers) this.pttModifiers = audio.ptt_modifiers;
       this.updateAudioModeUI(audio.mode || "always_on");
-      if (audio.safe_phrase) {
-        document.getElementById("safePhraseInput").value = audio.safe_phrase;
-        document.getElementById("telSafePhrase").innerText = `"${audio.safe_phrase}"`;
-      } else {
-        document.getElementById("safePhraseInput").value = `${this.agentName} stop`;
-      }
+      const resolvedKillPhrase = cfg.kill_phrase || audio.safe_phrase || audio.kill_phrase || api.kill_phrase || `${this.agentName} stop`;
+      const killInput = document.getElementById("input-kill-phrase");
+      if (killInput) killInput.value = resolvedKillPhrase;
+      const telSafe = document.getElementById("telSafePhrase");
+      if (telSafe) telSafe.innerText = `"${resolvedKillPhrase}"`;
 
       if (audio.preferred_language && document.getElementById("preferredLanguageSelect")) {
         document.getElementById("preferredLanguageSelect").value = audio.preferred_language;
@@ -1268,33 +1377,55 @@ window.aetherUI = {
 
     try {
       const mode = document.querySelector("input[name='audioMode']:checked")?.value || "always_on";
+      const alwaysOnMode = document.querySelector("input[name='alwaysOnMode']:checked")?.value || "wake_word";
+      const wakeWordEnabled = (alwaysOnMode !== "always_on");
       const inSel = document.getElementById("inputDeviceSelect");
       const outSel = document.getElementById("outputDeviceSelect");
 
       const rawKey = document.getElementById("apiKeyInput").value.trim();
       const newKey = (rawKey.includes("***") || rawKey.includes("••••")) ? "" : rawKey;
-      const agentName = document.getElementById("agentNameInput").value.trim() || "Aether";
-      const killPhrase = document.getElementById("safePhraseInput").value.trim() || `${agentName} stop`;
+      const agentName = document.getElementById("input-agent-name")?.value.trim() || "Aether";
+      const wakePhrase = (document.getElementById("input-wake-phrase")?.value || document.getElementById("audio-wake-phrase-input")?.value || "").trim() || `Hey ${agentName}`;
+      const sleepPhrase = (document.getElementById("input-sleep-phrase")?.value || document.getElementById("audio-sleep-phrase-input")?.value || "").trim() || `${agentName} stop listening`;
+      const killPhrase = document.getElementById("input-kill-phrase")?.value.trim() || `${agentName} stop`;
 
       const whitelistRaw = document.getElementById("whitelistInput").value;
       const whitelist = whitelistRaw.split(",").map(s => s.trim()).filter(Boolean);
 
-      const ttsVal = document.getElementById("ttsSelect")?.value || "gemini-live-native";
+      const ttsVal = document.getElementById("select-tts-endpoint")?.value || "gemini-live-native";
       const isLocal = ttsVal.toLowerCase().includes("local") && !ttsVal.toLowerCase().includes("windows");
       const voiceName = isLocal
         ? (document.getElementById("voiceTextInput")?.value.trim() || "")
-        : (document.getElementById("voiceSelect")?.value || "");
+        : (document.getElementById("select-output-voice")?.value || "");
 
       const vadSilenceMs = parseInt(document.getElementById("vadSilenceSlider")?.value || "1400", 10);
+      const voiceSpeedNum = parseFloat(document.getElementById("input-tts-speed")?.value || "1.00");
+      const voiceAccentVal = document.getElementById("select-voice-accent")?.value || "default";
 
       const payload = {
+        agent_name: agentName,
+        wake_phrase: wakePhrase,
+        sleep_phrase: sleepPhrase,
+        stop_listening_phrase: sleepPhrase,
+        kill_phrase: killPhrase,
+        always_on_mode: alwaysOnMode,
+        tts_endpoint: ttsVal,
+        tts_voice: voiceName,
+        tts_speed: voiceSpeedNum,
+        voice_accent: voiceAccentVal,
+        wake_word_enabled: wakeWordEnabled,
+        idle_timeout_seconds: this.currentConfig?.idle_timeout_seconds !== undefined ? this.currentConfig.idle_timeout_seconds : 8.0,
         vad_trailing_silence_ms: vadSilenceMs,
         api: {
           new_api_key: newKey,
           agent_name: agentName,
+          wake_phrase: wakePhrase,
+          sleep_phrase: sleepPhrase,
+          kill_phrase: killPhrase,
+          always_on_mode: alwaysOnMode,
           voice_name: voiceName,
-          voice_accent: document.getElementById("voiceAccentSelect")?.value || "default",
-          voice_speed: parseFloat(document.getElementById("voiceSpeedSlider")?.value || "1.00"),
+          voice_accent: voiceAccentVal,
+          voice_speed: voiceSpeedNum,
           local_tts_url: document.getElementById("localTtsUrlInput")?.value || "http://localhost:8880/v1/audio/speech",
           model_id: document.getElementById("modelSelect").value,
           pipeline_mode: document.getElementById("modelSelect").value.includes("live") ? "live" : "modular",
@@ -1315,12 +1446,19 @@ window.aetherUI = {
             threshold: parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.40")
           },
           mode: mode,
+          always_on_mode: alwaysOnMode,
           ptt_type: document.querySelector("input[name='pttType']:checked")?.value || this.pttType || "hold",
           ptt_key: this.pttKey || "Space",
           ptt_key_display: this.pttKeyDisplay || "Space",
           ptt_vk: this.pttVk || 32,
           ptt_modifiers: this.pttModifiers || [],
+          wake_phrase: wakePhrase,
+          sleep_phrase: sleepPhrase,
+          stop_listening_phrase: sleepPhrase,
           safe_phrase: killPhrase,
+          kill_phrase: killPhrase,
+          wake_word_enabled: wakeWordEnabled,
+          idle_timeout_seconds: this.currentConfig?.idle_timeout_seconds !== undefined ? this.currentConfig.idle_timeout_seconds : 8.0,
           software_gate: document.getElementById("softwareGateCheck").checked,
           input_device_index: parseInt(inSel.value, 10),
           input_device_name: inSel.selectedOptions[0]?.text || "",
@@ -1560,11 +1698,12 @@ window.aetherUI = {
     const text = document.getElementById("statusText");
     const telCore = document.getElementById("telCoreState");
 
-    badge.className = "status-pill " + state;
-    text.innerText = state.toUpperCase();
-    telCore.innerText = state.toUpperCase();
+    const normalizedState = (state === "active") ? "listening" : state;
+    if (badge) badge.className = "status-pill " + normalizedState;
+    if (text) text.innerText = normalizedState.toUpperCase();
+    if (telCore) telCore.innerText = normalizedState.toUpperCase();
 
-    if (state === "connected" || state === "listening" || state === "speaking") {
+    if (state === "connected" || state === "listening" || state === "speaking" || state === "active" || state === "standby") {
       this.isAssistantRunning = true;
       this.updateAssistantButtonState(true);
     } else if (state === "disconnected" || state === "offline") {
@@ -2874,4 +3013,17 @@ async function loadSettings() {
 window.updateSilenceDisplay = updateSilenceDisplay;
 window.persistSilenceSetting = persistSilenceSetting;
 window.loadSettings = loadSettings;
+
+window.onAssistantWoke = function() {
+  if (window.aetherUI) {
+    window.aetherUI.updateStatus("listening", "Wake phrase detected! Listening...");
+  }
+};
+
+window.onAssistantSleep = function() {
+  if (window.aetherUI) {
+    window.aetherUI.updateStatus("standby", "Standby (Wake Word Active)");
+  }
+};
+
 

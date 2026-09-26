@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import ctypes
 import io
 import logging
@@ -13,7 +14,9 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 import sounddevice as sd
 
+import queue
 from core.audio_output import InterruptibleAudioPlayer, apply_micro_fade_out
+from core.wake_word import WakeWordDetector, AudioGateState, play_chime_async
 
 logger = logging.getLogger("Aether.Audio")
 
@@ -95,13 +98,23 @@ class VADTurnDetector:
 class AudioPipeline:
     def __init__(
         self,
-        input_device: int,
-        output_device: int,
+        input_device: int = 0,
+        output_device: int = 0,
         mode: str = "always_on",
         software_gate: bool = False,
         on_speech_state: Optional[Callable[[str], None]] = None,
         vad_trailing_silence_ms: int = 1400,
         on_vad_speech_detected: Optional[Callable[[], None]] = None,
+        wake_phrase: str = "Hey Aether",
+        sleep_phrase: str = "Aether stop listening",
+        kill_phrase: str = "Aether stop",
+        always_on_mode: str = "wake_word",
+        wake_word_enabled: bool = False,
+        idle_timeout_seconds: float = 8.0,
+        config: Optional[Dict[str, Any]] = None,
+        engine: Any = None,
+        on_wake_callback: Optional[Callable[[], None]] = None,
+        on_sleep_callback: Optional[Callable[[], None]] = None,
     ):
         self.input_device = input_device
         self.output_device = output_device
@@ -115,22 +128,32 @@ class AudioPipeline:
         self.vad_detector = VoiceActivityDetector(base_energy_threshold=0.015, speaker_ducking_factor=2.4)
         self.vad_detector.trailing_silence_ms = vad_trailing_silence_ms
         self.vad = self.vad_detector
+        self.kill_phrase = kill_phrase
 
         self.target_input_rate = 16000
         self.target_output_rate = 24000
         
-        in_info = sd.query_devices(self.input_device)
-        out_info = sd.query_devices(self.output_device)
-        self.input_device_name = str(in_info.get("name", "")).strip()
-        self.output_device_name = str(out_info.get("name", "")).strip()
-        self.hw_in_rate = int(in_info['default_samplerate'])
-        self.hw_out_rate = int(out_info['default_samplerate'])
+        try:
+            in_info = sd.query_devices(self.input_device)
+            out_info = sd.query_devices(self.output_device)
+            self.input_device_name = str(in_info.get("name", "")).strip()
+            self.output_device_name = str(out_info.get("name", "")).strip()
+            self.hw_in_rate = int(in_info.get('default_samplerate', 16000))
+            self.hw_out_rate = int(out_info.get('default_samplerate', 24000))
+        except Exception:
+            self.input_device_name = "Default Input"
+            self.output_device_name = "Default Output"
+            self.hw_in_rate = 16000
+            self.hw_out_rate = 24000
         
         self.input_queue = asyncio.Queue()
         self.utterance_queue = asyncio.Queue()  # Emits completed WAV byte utterances for STT
+        self.vad_queue = queue.Queue()
         self.output_buffer = bytearray()
         self._fade_out_buffer: Optional[np.ndarray] = None
         self._current_output_rms: float = 0.0
+        self._output_rms_history = collections.deque(maxlen=16)
+        self._last_output_active_time: float = 0.0
         self.buffer_lock = threading.Lock()
         
         self.loop = None
@@ -143,6 +166,34 @@ class AudioPipeline:
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
         _active_pipelines.add(self)
 
+        # Wake Word Gating & State Machine
+        self.engine = engine
+        self.config: Dict[str, Any] = config if config is not None else {
+            "wake_word_enabled": wake_word_enabled,
+            "always_on_mode": always_on_mode if wake_word_enabled else "always_on",
+            "wake_phrase": wake_phrase,
+            "sleep_phrase": sleep_phrase,
+            "idle_timeout_seconds": idle_timeout_seconds,
+        }
+        self.wake_word_enabled = bool(self.config.get("wake_word_enabled", wake_word_enabled))
+        resolved_listening_mode = str(
+            self.config.get("always_on_mode", always_on_mode if self.wake_word_enabled else "always_on")
+        )
+        if not self.wake_word_enabled:
+            resolved_listening_mode = "always_on"
+        self._user_on_wake = on_wake_callback
+        self._user_on_sleep = on_sleep_callback
+        self.wake_detector = WakeWordDetector(
+            wake_phrase=str(self.config.get("wake_phrase", wake_phrase) or "Hey Aether"),
+            sleep_phrase=str(self.config.get("sleep_phrase", sleep_phrase) or "Aether stop listening"),
+            listening_mode=resolved_listening_mode,
+            sample_rate=self.target_input_rate,
+            pre_roll_duration_ms=600,
+            idle_timeout_sec=float(self.config.get("idle_timeout_seconds", idle_timeout_seconds) or 8.0),
+            on_wake_callback=self._handle_wake_transition,
+            on_sleep_callback=self._handle_sleep_transition,
+        )
+
         # Voice Activity Detection (VAD) state for utterance segmentation
         # Adaptive noise floor tracking prevents getting trapped by PC/room noise
         self._speech_frames = []
@@ -150,8 +201,8 @@ class AudioPipeline:
         self._silence_count = 0
         self._is_in_speech = False
         self._noise_floor = 0.010            # Dynamically tracked ambient background RMS
-        self._vad_onset_threshold = 0.028    # RMS threshold to trigger speech onset (adaptive near-field)
-        self._vad_hangover_threshold = 0.016 # Lower RMS threshold to maintain speech (adaptive)
+        self._vad_onset_threshold = 0.018    # Relaxed RMS threshold to trigger speech onset cleanly
+        self._vad_hangover_threshold = 0.012 # Lower RMS threshold to maintain speech (adaptive)
         self._silence_limit = 18             # ~900ms of sub-hangover silence before finalizing (18 blocks at ~50ms/block)
         self._preroll_limit = 8              # ~400ms pre-speech audio retained
         self._postroll_padding = 5           # ~250ms post-speech audio retained
@@ -164,6 +215,86 @@ class AudioPipeline:
 
         # Near-field speaker dominance tracking (ensures loud speaker is separated from room noise)
         self._utterance_peak_rms = 0.0
+
+    def _handle_wake_transition(self):
+        """
+        Invoked when WakeWordDetector transitions from IDLE_LISTENING to ACTIVE_CONVERSATION.
+        - Plays subtle wake sound (ui/sounds/wake.wav).
+        - Sends WebSocket/HUD event: window.onAssistantWoke && window.onAssistantWoke().
+        - Prepends wake_detector.get_pre_roll_bytes() into the first active VAD buffer.
+        """
+        play_chime_async("wake")
+        pre_roll = self.wake_detector.get_pre_roll_bytes()
+        if pre_roll:
+            self._preroll_frames.insert(0, pre_roll)
+            if self._is_in_speech:
+                self._speech_frames.insert(0, pre_roll)
+            try:
+                self.vad_queue.put_nowait(pre_roll)
+            except Exception:
+                pass
+            if self.loop and self.loop.is_running():
+                try:
+                    self.loop.call_soon_threadsafe(self.input_queue.put_nowait, pre_roll)
+                except Exception:
+                    pass
+
+        if self.engine and getattr(self.engine, "hud_window", None):
+            try:
+                self.engine.hud_window.evaluate_js("window.onAssistantWoke && window.onAssistantWoke()")
+            except Exception:
+                pass
+
+        if self._user_on_wake:
+            try:
+                self._user_on_wake()
+            except Exception:
+                pass
+
+    def _handle_sleep_transition(self):
+        """
+        Invoked when WakeWordDetector transitions from ACTIVE_CONVERSATION back to IDLE_LISTENING.
+        - Plays subtle sleep sound (ui/sounds/sleep.wav).
+        - Sends WebSocket/HUD event: window.onAssistantSleep && window.onAssistantSleep().
+        """
+        play_chime_async("sleep")
+        if self.engine and getattr(self.engine, "hud_window", None):
+            try:
+                self.engine.hud_window.evaluate_js("window.onAssistantSleep && window.onAssistantSleep()")
+            except Exception:
+                pass
+
+        if self._user_on_sleep:
+            try:
+                self._user_on_sleep()
+            except Exception:
+                pass
+
+    def _quick_check_kill_phrase(self, in_data: bytes) -> bool:
+        """Fast check for kill phrase / barge-in during assistant playback."""
+        return False
+
+    def audio_callback(self, in_data, frame_count, time_info, status):
+        """
+        Audio input callback hook connecting WakeWordDetector ahead of VAD frame processor.
+        """
+        pa_continue = 0
+        # 1. Kill phrase check (interrupt immediately if heard during assistant playback)
+        if self.engine and getattr(self.engine, "is_speaking", False) and self._quick_check_kill_phrase(in_data):
+            if hasattr(self.engine, "audio_player") and self.engine.audio_player:
+                self.engine.audio_player.trigger_barge_in()
+            return (None, pa_continue)
+
+        # 2. Wake Word Gating
+        if self.config.get("wake_word_enabled", True):
+            should_route = self.wake_detector.process_frame(in_data)
+            if not should_route:
+                # Suppressed: Assistant is idling in standby mode
+                return (None, pa_continue)
+
+        # 3. Standard VAD & Streaming Pipeline
+        self.vad_queue.put(in_data)
+        return (None, pa_continue)
 
     def set_vad_trailing_silence(self, silence_ms: int):
         """Allows dynamic adjustment from GUI settings without restarting audio thread."""
@@ -201,12 +332,30 @@ class AudioPipeline:
     def set_software_gate(self, enabled: bool):
         self.software_gate = enabled
 
+    def is_speaker_acoustically_active(self) -> bool:
+        """
+        Returns True if the assistant is currently outputting audio or within the 380ms
+        hardware buffer + room acoustic reflection window after speaker playback.
+        """
+        if self.is_speaking:
+            return True
+        last_active = getattr(self, "_last_output_active_time", 0.0)
+        return (time.monotonic() - last_active) < 0.38
+
+    def get_recent_output_rms(self) -> float:
+        """
+        Returns peak speaker output RMS across the recent ~380ms window so microphone
+        echo cancellation accounts for OS audio buffer and acoustic travel delay.
+        """
+        if not self.is_speaker_acoustically_active():
+            return 0.0
+        history = getattr(self, "_output_rms_history", None)
+        if history and len(history) > 0:
+            return float(max(history))
+        return float(getattr(self, "_current_output_rms", 0.0))
+
     def _input_callback(self, indata, frames, time_info, status):
         if not self._running:
-            return
-
-        # Check software echo-cancellation gate (if enabled)
-        if self.software_gate and self.is_speaking:
             return
 
         # Mute agent speech ingestion while user is actively recording voice calibration samples
@@ -252,9 +401,28 @@ class AudioPipeline:
         rms = float(np.sqrt(np.mean(resampled**2)))
         self.current_mic_level = min(1.0, rms * 8.0)
 
+        speaker_active = self.is_speaker_acoustically_active()
+        recent_out_rms = self.get_recent_output_rms()
+
+        # Check software echo-cancellation gate ("Mute microphone while speaking")
+        # Mutes normal speaker feedback while still permitting a clear near-field Kill Phrase ("Aether stop")
+        if self.software_gate and speaker_active:
+            near_field_kill_threshold = max(0.042, recent_out_rms * 1.65, self._noise_floor * 3.2)
+            if not self._is_in_speech and rms < near_field_kill_threshold:
+                return
+
         pcm16 = (np.clip(resampled, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-        
-        if self.loop and self.loop.is_running():
+
+        # Refresh active conversation timer while assistant is speaking so >8.0s timeout starts after speech finishes
+        if speaker_active and hasattr(self, "wake_detector") and self.wake_detector:
+            self.wake_detector.record_active_turn()
+
+        is_wake_enabled = bool(self.config.get("wake_word_enabled", self.wake_word_enabled))
+        should_route_live = True
+        if is_wake_enabled and self.mode != "ptt" and not speaker_active and hasattr(self, "wake_detector") and self.wake_detector:
+            should_route_live = self.wake_detector.process_frame(pcm16)
+
+        if should_route_live and self.loop and self.loop.is_running() and not (self.software_gate and speaker_active):
             self.loop.call_soon_threadsafe(self.input_queue.put_nowait, pcm16)
 
         # Check PTT condition & direct speech ingestion
@@ -283,28 +451,30 @@ class AudioPipeline:
             return
 
         # Adaptive noise floor tracking (exponential moving average over non-speech when assistant is silent)
-        if not self._is_in_speech and not self.is_speaking:
+        if not self._is_in_speech and not speaker_active:
             self._noise_floor = 0.95 * self._noise_floor + 0.05 * min(0.05, rms)
-            # Near-field speaker dominance: adapt thresholds well above ambient room noise
-            self._vad_onset_threshold = max(0.028, self._noise_floor * 2.2 + 0.008)
-            self._vad_hangover_threshold = max(0.016, self._noise_floor * 1.35 + 0.004)
+            # Near-field speaker dominance: adapt thresholds above ambient room noise while capturing relaxed speech
+            self._vad_onset_threshold = max(0.018, self._noise_floor * 1.9 + 0.006)
+            self._vad_hangover_threshold = max(0.012, self._noise_floor * 1.25 + 0.003)
 
         # Dynamic Self-Echo Gating & Adaptive Energy Ducking when TTS playback is active
         effective_rms = rms
         onset_threshold = self._vad_onset_threshold
         hangover_threshold = self._vad_hangover_threshold
-        if self.is_speaking:
+        if speaker_active:
             ducking_factor = getattr(self.vad_detector, "speaker_ducking_factor", 2.4)
             onset_threshold = max(
                 onset_threshold * ducking_factor,
-                self.vad_detector.base_energy_threshold * ducking_factor
+                self.vad_detector.base_energy_threshold * ducking_factor,
+                recent_out_rms * 1.15
             )
             hangover_threshold = max(
                 hangover_threshold * 1.5,
-                self.vad_detector.base_energy_threshold * 1.5
+                self.vad_detector.base_energy_threshold * 1.5,
+                recent_out_rms * 0.75
             )
-            # Subtract reference local speaker output energy to suppress acoustic bleed
-            effective_rms = max(0.0, rms - 0.35 * getattr(self, "_current_output_rms", 0.0))
+            # Subtract rolling local speaker output energy to suppress acoustic bleed
+            effective_rms = max(0.0, rms - 0.55 * recent_out_rms)
             if not self.vad_detector.is_user_speaking(resampled, is_assistant_speaking=True):
                 effective_rms = 0.0
 
@@ -325,7 +495,7 @@ class AudioPipeline:
         vad_state = self.vad_turn_detector.process_frame(is_speech_energy)
 
         # Snappy barge-in / kill phrase: finalize faster (~400ms) when assistant is actively speaking
-        if vad_state == "SILENCE_WAITING" and self.is_speaking and not self.software_gate:
+        if vad_state == "SILENCE_WAITING" and speaker_active:
             if self.vad_turn_detector.silence_start_time:
                 now_ms = time.monotonic() * 1000.0
                 if (now_ms - self.vad_turn_detector.silence_start_time) >= 400.0:
@@ -334,20 +504,27 @@ class AudioPipeline:
                     self.vad_turn_detector.silence_start_time = None
 
         if vad_state == "SPEECH_CONTINUING":
+            if hasattr(self, "wake_detector") and self.wake_detector and self.wake_detector.state == AudioGateState.ACTIVE_CONVERSATION:
+                self.wake_detector.record_active_turn()
             if not self._is_in_speech:
                 self._is_in_speech = True
-                self._speech_frames = list(self._preroll_frames)
+                if is_wake_enabled and hasattr(self, "wake_detector") and self.wake_detector and self.wake_detector.state == AudioGateState.IDLE_LISTENING:
+                    pre_roll = self.wake_detector.get_pre_roll_bytes()
+                    self._speech_frames = [pre_roll] if pre_roll else list(self._preroll_frames)
+                else:
+                    self._speech_frames = list(self._preroll_frames)
                 self._utterance_peak_rms = rms
-                if self.on_vad_speech_detected:
-                    try:
-                        self.on_vad_speech_detected()
-                    except Exception:
-                        pass
-                if self.on_speech_state:
-                    try:
-                        self.on_speech_state("speech_detected")
-                    except Exception:
-                        pass
+                if should_route_live or self.is_speaking:
+                    if self.on_vad_speech_detected:
+                        try:
+                            self.on_vad_speech_detected()
+                        except Exception:
+                            pass
+                    if self.on_speech_state:
+                        try:
+                            self.on_speech_state("speech_detected")
+                        except Exception:
+                            pass
             self._speech_frames.append(pcm16)
             self._silence_count = 0
             if rms > self._utterance_peak_rms:
@@ -369,6 +546,13 @@ class AudioPipeline:
                 self._preroll_frames.pop(0)
 
     def _finalize_utterance(self):
+        is_wake_idle = (
+            bool(self.config.get("wake_word_enabled", self.wake_word_enabled))
+            and self.mode != "ptt"
+            and hasattr(self, "wake_detector")
+            and self.wake_detector
+            and self.wake_detector.state == AudioGateState.IDLE_LISTENING
+        )
         if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
             self.vad_turn_detector.is_speech_active = False
             self.vad_turn_detector.silence_start_time = None
@@ -376,7 +560,7 @@ class AudioPipeline:
             self._is_in_speech = False
             self._silence_count = 0
             self._utterance_peak_rms = 0.0
-            if self.on_speech_state:
+            if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
                 except Exception:
@@ -385,7 +569,7 @@ class AudioPipeline:
 
         # Speaker Dominance Check: require near-field speech loudness or clear SNR above ambient floor
         snr = self._utterance_peak_rms / max(0.005, self._noise_floor)
-        if self._utterance_peak_rms < 0.030 and snr < 2.0:
+        if self._utterance_peak_rms < 0.016 and snr < 1.6:
             logger.debug(
                 f"[VAD GATE] Discarded ambient noise utterance "
                 f"(Peak: {self._utterance_peak_rms:.4f}, Noise: {self._noise_floor:.4f}, SNR: {snr:.1f}x)"
@@ -394,7 +578,7 @@ class AudioPipeline:
             self._is_in_speech = False
             self._silence_count = 0
             self._utterance_peak_rms = 0.0
-            if self.on_speech_state:
+            if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
                 except Exception:
@@ -418,14 +602,14 @@ class AudioPipeline:
         # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono)
         if len(total_pcm) < 11200:
             logger.debug(f"[VAD GATE] Utterance too short ({len(total_pcm)} bytes < 11200), discarding.")
-            if self.on_speech_state:
+            if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
                 except Exception:
                     pass
             return
 
-        if self.on_speech_state:
+        if self.on_speech_state and not is_wake_idle:
             try:
                 self.on_speech_state("speech_finalized")
             except Exception:
@@ -477,6 +661,10 @@ class AudioPipeline:
             if raw_chunk:
                 samples_24k = np.frombuffer(raw_chunk, dtype=np.int16).astype(np.float32) / 32767.0
                 self._current_output_rms = float(np.sqrt(np.mean(samples_24k**2)))
+                if self._current_output_rms > 0.002:
+                    self._last_output_active_time = time.monotonic()
+                if hasattr(self, "_output_rms_history"):
+                    self._output_rms_history.append(self._current_output_rms)
 
                 # Duck audio volume to 25% (-12dB) if user is actively speaking in earbud/barge-in mode
                 if self._is_in_speech and not self.software_gate:

@@ -1663,6 +1663,14 @@
         }
       };
 
+      window.onAssistantWoke = function() {
+        setStatus("listening", `${agentName} is active...`, null, "Wake phrase triggered");
+      };
+
+      window.onAssistantSleep = function() {
+        setStatus("standby", `${agentName} is in standby...`, null, null);
+      };
+
       // Button Handlers
       restoreBtn.addEventListener("click", function(e) {
         e.stopPropagation();

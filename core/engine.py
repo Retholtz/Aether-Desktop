@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import difflib
 import json
 import os
 import re
@@ -19,6 +20,7 @@ ensure_thread_desktop()
 
 from core.audio_output import InterruptibleAudioPlayer
 from core.audio_stream import AudioPipeline, VoiceActivityDetector, resolve_valid_audio_devices
+from core.wake_word import WakeWordDetector, AudioGateState
 from core.connection_manager import LiveConnectionManager, ConnectionState
 from core.logger import get_logger
 from core.voice_verifier import VoiceProfileVerifier
@@ -595,12 +597,98 @@ class AetherEngine:
         if stripped in core_stops:
             return True
 
-        # Check with agent name removed or prefixed/suffixed
+        # Check with agent name removed or prefixed/suffixed (including phonetic STT variants like "aker"/"ether")
         if agent_name:
             name_clean = "".join(c for c in agent_name.lower() if c.isalnum()).strip()
             if name_clean:
-                without_name = " ".join([w for w in stripped_words if w != name_clean])
+                phonetic_aliases = {name_clean}
+                if name_clean == "aether":
+                    phonetic_aliases.update({
+                        "aker", "acre", "ether", "eather", "aither", "ather",
+                        "arthur", "asher", "heather", "easter", "either", "other"
+                    })
+                without_name = " ".join([
+                    w for w in stripped_words
+                    if w not in phonetic_aliases and difflib.SequenceMatcher(None, w, name_clean).ratio() < 0.72
+                ])
                 if without_name in core_stops:
+                    return True
+
+        return False
+
+    def _is_self_echo(
+        self,
+        heard_text: str,
+        assistant_text: str = "",
+        kill_phrase: str = "",
+        agent_name: str = ""
+    ) -> bool:
+        """
+        Determines whether a microphone transcription (`heard_text`) is acoustic speaker
+        feedback (echo) of the assistant's own currently-playing or just-finished speech.
+        Never suppresses explicit Kill Phrases ("Aether stop") or Sleep Phrases ("Aether stop listening").
+        """
+        if not heard_text:
+            return False
+
+        # 1. Never classify an intentional Kill Command or Sleep Phrase as self-echo
+        if self._is_kill_command(heard_text, kill_phrase, agent_name):
+            return False
+        if self.audio and getattr(self.audio, "wake_detector", None):
+            if self.audio.wake_detector.matches_sleep_phrase(heard_text):
+                return False
+
+        # 2. Gather active and recent assistant spoken text references
+        ref_parts = []
+        if assistant_text:
+            ref_parts.append(assistant_text)
+        curr_speech = getattr(self, "_current_assistant_speech_text", "")
+        if curr_speech and curr_speech not in ref_parts:
+            ref_parts.append(curr_speech)
+        last_speech = getattr(self, "_last_spoken_response_text", "")
+        last_end = getattr(self, "_last_spoken_end_time", 0.0)
+        if last_speech and (time.monotonic() - last_end) < 3.5 and last_speech not in ref_parts:
+            ref_parts.append(last_speech)
+
+        ref_combined = " ".join(ref_parts).strip()
+        if not ref_combined:
+            return False
+
+        norm_heard = "".join(c for c in heard_text.lower() if c.isalnum() or c.isspace()).strip()
+        norm_ref = "".join(c for c in ref_combined.lower() if c.isalnum() or c.isspace()).strip()
+        if not norm_heard or not norm_ref:
+            return False
+
+        heard_words = norm_heard.split()
+        ref_words = norm_ref.split()
+        if not heard_words or not ref_words:
+            return False
+
+        # 3. Direct phrase/substring containment in assistant output
+        if norm_heard in norm_ref and (len(heard_words) >= 2 or len(norm_heard) >= 5):
+            return True
+
+        # 4. Word-level lexical + phonetic overlap against assistant output
+        ref_word_set = set(ref_words)
+        matched_words = 0
+        for hw in heard_words:
+            if hw in ref_word_set:
+                matched_words += 1
+            elif len(hw) >= 4 and any(difflib.SequenceMatcher(None, hw, rw).ratio() >= 0.80 for rw in ref_word_set if len(rw) >= 4):
+                matched_words += 1
+
+        overlap_ratio = matched_words / float(len(heard_words))
+        if len(heard_words) >= 2 and overlap_ratio >= 0.65:
+            return True
+        if len(heard_words) == 1 and matched_words == 1:
+            return True
+
+        # 5. Contiguous window fuzzy sequence similarity
+        win_len = len(heard_words)
+        if win_len <= len(ref_words):
+            for i in range(len(ref_words) - win_len + 1):
+                window_str = " ".join(ref_words[i:i + win_len])
+                if difflib.SequenceMatcher(None, norm_heard, window_str).ratio() >= 0.68:
                     return True
 
         return False
@@ -817,22 +905,63 @@ class AetherEngine:
         self.set_ptt(new_state)
         return new_state
 
+    def _on_assistant_woke(self):
+        """Triggered when WakeWordDetector transitions to ACTIVE_CONVERSATION."""
+        agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+        if hasattr(self, "hud_window") and self.hud_window:
+            try:
+                self.hud_window.evaluate_js("window.onAssistantWoke && window.onAssistantWoke()")
+            except Exception:
+                pass
+        self.notify("assistant_woke", {"state": "ACTIVE_CONVERSATION"})
+        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+
+    def _on_assistant_sleep(self):
+        """Triggered when WakeWordDetector times out after >8.0s silence or receives Stop Listening phrase and returns to IDLE_LISTENING."""
+        cfg = self.config_getter()
+        agent_name = cfg.get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+        wake_phrase = (
+            cfg.get("wake_phrase")
+            or cfg.get("audio", {}).get("wake_phrase")
+            or f"Hey {agent_name}"
+        )
+        if hasattr(self, "hud_window") and self.hud_window:
+            try:
+                self.hud_window.evaluate_js("window.onAssistantSleep && window.onAssistantSleep()")
+            except Exception:
+                pass
+        self.notify("assistant_sleep", {"state": "IDLE_LISTENING"})
+        self.notify("status", {"state": "standby", "message": f"Standby — Say '{wake_phrase}' to wake {agent_name}."})
+
     def _on_speech_state(self, state: str):
         if not self.is_running:
             return
         if state == "speech_detected":
-            self.on_vad_speech_detected()
-            self.is_audio_streaming = True
-            self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
+            if not self.is_speaking:
+                self.on_vad_speech_detected()
+                self.is_audio_streaming = True
+                self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
+            else:
+                logger.debug("[VAD] Acoustic energy detected during assistant playback; awaiting STT echo/kill check.")
         elif state == "speech_finalized":
             self.is_audio_streaming = False
             self.last_user_turn_timestamp = time.time()
             self.last_user_turn_time = time.perf_counter()
-            self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
+            if not self.is_speaking:
+                self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
         elif state in ("speech_idle", "speech_discarded"):
             self.is_audio_streaming = False
+            if self.is_speaking:
+                return
             agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
-            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+            if self.audio and hasattr(self.audio, "wake_detector") and self.audio.wake_detector and self.audio.wake_word_enabled:
+                if self.audio.wake_detector.state == AudioGateState.IDLE_LISTENING:
+                    wake_phrase = self.audio.wake_detector.wake_phrase
+                    self.notify("status", {"state": "standby", "message": f"Standby — Say '{wake_phrase}' to wake {agent_name}."})
+                else:
+                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+            else:
+                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
     async def send_text(self, text: str):
         """Queues a typed message to be sent into the active Gemini Live session."""
@@ -1105,8 +1234,15 @@ class AetherEngine:
                             "text": clean_user_speech
                         })
 
+                        # Check Stop Listening Phrase ("Aether stop listening")
+                        if self.audio and getattr(self.audio, "wake_detector", None) and self.audio.wake_detector.matches_sleep_phrase(clean_user_speech):
+                            logger.info(f"[SLEEP PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio & entering Standby!")
+                            self.kill_audio()
+                            self.audio.wake_word_enabled = True
+                            self.audio.config["wake_word_enabled"] = True
+                            self.audio.wake_detector.check_sleep_transcript(clean_user_speech)
                         # Check Voice Playback Kill Phrase
-                        if self._is_kill_command(clean_user_speech, kill_phrase, agent_name):
+                        elif self._is_kill_command(clean_user_speech, kill_phrase, agent_name):
                             logger.info(f"[KILL PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio!")
                             self.kill_audio()
 
@@ -1489,13 +1625,52 @@ class AetherEngine:
 
         try:
             vad_silence_ms = config.get("vad_trailing_silence_ms", audio_cfg.get("vad_trailing_silence_ms", 1400))
+            wake_phrase_cfg = (
+                config.get("wake_phrase")
+                or audio_cfg.get("wake_phrase")
+                or api_cfg.get("wake_phrase")
+                or f"Hey {agent_name}"
+            )
+            sleep_phrase_cfg = (
+                config.get("sleep_phrase")
+                or config.get("stop_listening_phrase")
+                or audio_cfg.get("sleep_phrase")
+                or audio_cfg.get("stop_listening_phrase")
+                or f"{agent_name} stop listening"
+            )
+            always_on_mode_cfg = (
+                config.get("always_on_mode")
+                or audio_cfg.get("always_on_mode")
+                or api_cfg.get("always_on_mode")
+                or ("wake_word" if config.get("wake_word_enabled", audio_cfg.get("wake_word_enabled", True)) else "always_on")
+            )
+            wake_enabled_cfg = (always_on_mode_cfg != "always_on")
+            idle_timeout_cfg = float(
+                config.get("idle_timeout_seconds", audio_cfg.get("idle_timeout_seconds", 8.0))
+            )
             self.audio = AudioPipeline(
                 input_device=in_idx,
                 output_device=out_idx,
                 mode=audio_mode,
                 software_gate=software_gate,
                 on_speech_state=self._on_speech_state,
-                vad_trailing_silence_ms=vad_silence_ms
+                vad_trailing_silence_ms=vad_silence_ms,
+                wake_phrase=wake_phrase_cfg,
+                sleep_phrase=sleep_phrase_cfg,
+                kill_phrase=kill_phrase,
+                always_on_mode=always_on_mode_cfg,
+                wake_word_enabled=wake_enabled_cfg,
+                idle_timeout_seconds=idle_timeout_cfg,
+                config={
+                    "wake_word_enabled": wake_enabled_cfg,
+                    "always_on_mode": always_on_mode_cfg,
+                    "wake_phrase": wake_phrase_cfg,
+                    "sleep_phrase": sleep_phrase_cfg,
+                    "idle_timeout_seconds": idle_timeout_cfg,
+                },
+                engine=self,
+                on_wake_callback=self._on_assistant_woke,
+                on_sleep_callback=self._on_assistant_sleep,
             )
             self.audio.set_ptt(self._ptt_active)
             await self.audio.start()
@@ -1585,13 +1760,25 @@ class AetherEngine:
             self.reflexion_engine.start()
 
         accent_info = f", Accent: {voice_accent}" if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", "") else ""
-        self.notify("status", {
-            "state": "connected",
-            "message": f"Modular Pipeline active ({cortex_model}). {agent_name} is listening."
-        })
+        wake_enabled = bool(self.config_getter().get("wake_word_enabled", audio_cfg.get("wake_word_enabled", True)))
+        wake_phrase_str = (
+            self.config_getter().get("wake_phrase")
+            or audio_cfg.get("wake_phrase")
+            or f"Hey {agent_name}"
+        )
+        if wake_enabled and audio_cfg.get("mode", "always_on") != "ptt":
+            self.notify("status", {
+                "state": "standby",
+                "message": f"Standby — Say '{wake_phrase_str}' to wake {agent_name}."
+            })
+        else:
+            self.notify("status", {
+                "state": "connected",
+                "message": f"Modular Pipeline active ({cortex_model}). {agent_name} is listening."
+            })
         self.notify("chat_event", {
             "type": "system",
-            "content": f"Ready in Modular Pipeline mode.\n- Cortex: {cortex_model}\n- STT: {stt_model} (Language: {preferred_language})\n- TTS: {tts_model} (Voice: {voice_name}{accent_info})\n{agent_name} is listening..."
+            "content": f"Ready in Modular Pipeline mode.\n- Cortex: {cortex_model}\n- STT: {stt_model} (Language: {preferred_language})\n- TTS: {tts_model} (Voice: {voice_name}{accent_info})\n- Wake Phrase: \"{wake_phrase_str}\" ({'IDLE_LISTENING Standby' if wake_enabled else 'Always Active'})"
         })
 
         # Multi-turn Cortex chat session factory with Google Search & Function Calling
@@ -1715,9 +1902,18 @@ class AetherEngine:
                         self.audio.reset_vad()
                 elif audio_task in done:
                     wav_bytes = audio_task.result()
+                    is_wake_idle = (
+                        self.audio is not None
+                        and hasattr(self.audio, "wake_detector")
+                        and self.audio.wake_detector is not None
+                        and bool(self.audio.config.get("wake_word_enabled", self.audio.wake_word_enabled))
+                        and self.audio.mode != "ptt"
+                        and self.audio.wake_detector.state == AudioGateState.IDLE_LISTENING
+                    )
                     if not wav_bytes or len(wav_bytes) < 1000:
                         agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
-                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        if not is_wake_idle:
+                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                         continue
 
                     # Target Speaker Verification Gate (CAM++ Offline Biometrics)
@@ -1729,25 +1925,40 @@ class AetherEngine:
                         is_user, score = self.voice_verifier.verify(wav_bytes, threshold=thresh)
                         if not is_user:
                             logger.info(f"[VOICE GATE] Utterance discarded: non-user voice (score: {score:.3f} < {thresh:.2f})")
-                            self.notify("status", {
-                                "state": "voice_gated",
-                                "message": f"Ignored background voice (score: {score:.2f})"
-                            })
-                            await asyncio.sleep(1.2)
-                            agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
-                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                            if not is_wake_idle:
+                                self.notify("status", {
+                                    "state": "voice_gated",
+                                    "message": f"Ignored background voice (score: {score:.2f})"
+                                })
+                                await asyncio.sleep(1.2)
+                                agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+                                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                             continue
                         else:
                             logger.info(f"[VOICE GATE] Authorized user verified (score: {score:.3f} >= {thresh:.2f})")
 
                     t_turn_start = time.perf_counter()
-                    self.notify("status", {"state": "transcribing", "message": f"Transcribing speech ({preferred_language})..."})
+                    if not is_wake_idle:
+                        self.notify("status", {"state": "transcribing", "message": f"Transcribing speech ({preferred_language})..."})
                     t_stt_0 = time.perf_counter()
                     try:
+                        active_wake_phrase = (
+                            self.audio.wake_detector.wake_phrase
+                            if (self.audio and getattr(self.audio, "wake_detector", None))
+                            else f"Hey {agent_name}"
+                        )
+                        active_sleep_phrase = (
+                            self.audio.wake_detector.sleep_phrase
+                            if (self.audio and getattr(self.audio, "wake_detector", None))
+                            else f"{agent_name} stop listening"
+                        )
                         stt_prompt = (
                             f"You are a verbatim speech-to-text transcriber for {preferred_language}. "
                             f"Transcribe only clear, audible speech spoken in {preferred_language}. "
                             f"Output only the verbatim spoken words without commentary. "
+                            f"The user's AI assistant is named '{agent_name}'. "
+                            f"Expected assistant phrases include: '{active_wake_phrase}', '{active_sleep_phrase}', and '{kill_phrase}'. "
+                            f"If the user says a greeting followed by a word sounding like '{agent_name}' (such as 'Hey Aker', 'Hey Ether', 'Hey Arthur', 'Hey Asher'), transcribe it as '{active_wake_phrase}'. "
                             f"If the audio contains background chatter, noise, sighs, breathing, non-speech vocalizations, "
                             f"or speech in another language, output NOTHING (empty string). Do not guess or translate."
                         )
@@ -1785,7 +1996,8 @@ class AetherEngine:
                                 if re.search(r'[\u0600-\u06FF\u0900-\u097F\u0A00-\u0A7F\u4E00-\u9FFF\u3040-\u30FF]', user_prompt):
                                     logger.warning(f"[STT FILTER] Discarded non-English transcription hallucination: '{user_prompt}'")
                                     user_prompt = ""
-                                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                                    if not is_wake_idle:
+                                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                                     continue
                             # Reject pure filler/noise vocalizations like "hmm", "...", "uhm"
                             filler_words = {"hmm", "hmmm", "uh", "um", "ah", "uhm", "huh", "mhm"}
@@ -1793,17 +2005,100 @@ class AetherEngine:
                             if cleaned_lower in filler_words or len(cleaned_lower) <= 1:
                                 logger.info(f"[STT FILTER] Discarded vocal filler or ambient sound: '{user_prompt}'")
                                 user_prompt = ""
-                                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                                if not is_wake_idle:
+                                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                                 continue
+
+                            # 1. If currently in Standby (IDLE_LISTENING), check Wake Phrase FIRST to toggle from Standby -> Listening!
+                            if is_wake_idle and self.audio and self.audio.wake_detector:
+                                matched, remainder = self.audio.wake_detector.matches_wake_phrase(user_prompt)
+                                if not matched:
+                                    logger.info(
+                                        f"[WAKE_WORD] Suppressed ambient speech in IDLE_LISTENING "
+                                        f"(wake phrase '{self.audio.wake_detector.wake_phrase}' not detected): '{user_prompt}'"
+                                    )
+                                    user_prompt = ""
+                                    continue
+                                # Wake phrase detected! Open gate, play wake chime, and transition from Standby -> Listening
+                                self.audio.wake_detector.transition_to_active()
+                                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                                if remainder and len(remainder.strip()) >= 2:
+                                    user_prompt = remainder.strip()
+                                else:
+                                    # User spoke the wake phrase ("Hey Aether" or "Aether, start listening") -> stay in LISTENING mode
+                                    self.notify("chat_event", {
+                                        "type": "system",
+                                        "content": f"🎙️ Microphone toggled to Listening (\"{self.audio.wake_detector.wake_phrase}\"). Listening for your commands..."
+                                    })
+                                    user_prompt = ""
+                                    continue
+
+                            # 2. When actively Listening, check Stop Listening / Sleep Phrase ("Aether stop listening") to toggle to Standby
+                            if self.audio and getattr(self.audio, "wake_detector", None):
+                                if self.audio.wake_detector.matches_sleep_phrase(user_prompt):
+                                    logger.info(
+                                        f"[SLEEP PHRASE] Stop listening phrase detected: '{user_prompt}' -> "
+                                        f"Toggling microphone to IDLE_LISTENING (Standby)!"
+                                    )
+                                    if self.is_speaking:
+                                        self.kill_audio()
+                                    self.audio.wake_word_enabled = True
+                                    self.audio.config["wake_word_enabled"] = True
+                                    self.audio.wake_detector.check_sleep_transcript(user_prompt)
+                                    self.notify("status", {
+                                        "state": "standby",
+                                        "message": f"Standby — Say '{self.audio.wake_detector.wake_phrase}' to wake {agent_name}."
+                                    })
+                                    self.notify("chat_event", {
+                                        "type": "system",
+                                        "content": f"🔇 Microphone toggled to Standby (\"{self.audio.wake_detector.sleep_phrase}\"). Say \"{self.audio.wake_detector.wake_phrase}\" to resume listening."
+                                    })
+                                    user_prompt = ""
+                                    continue
+
+                            # 3. Check Voice Playback Kill Phrase or Trailing Speaker Self-Echo
+                            if self._is_kill_command(user_prompt, kill_phrase, agent_name):
+                                logger.info(f"[KILL PHRASE] Kill command received in main turn loop: '{user_prompt}'")
+                                if self.is_speaking:
+                                    self.kill_audio()
+                                user_prompt = ""
+                                continue
+
+                            if (time.monotonic() - getattr(self, "_last_spoken_end_time", 0.0)) < 3.5:
+                                if self._is_self_echo(user_prompt, getattr(self, "_last_spoken_response_text", ""), kill_phrase, agent_name):
+                                    logger.info(f"[ECHO CANCELLATION] Discarded trailing speaker self-echo after playback: '{user_prompt}'")
+                                    user_prompt = ""
+                                    if not is_wake_idle:
+                                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                                    continue
+
+                            # 4. Also strip leading wake phrase if user repeated "Hey Aether <command>" while already Listening
+                            if not is_wake_idle and self.audio and getattr(self.audio, "wake_detector", None):
+                                matched_active, remainder_active = self.audio.wake_detector.matches_wake_phrase(user_prompt)
+                                if matched_active and remainder_active and len(remainder_active.strip()) >= 2:
+                                    user_prompt = remainder_active.strip()
+                                elif matched_active and not remainder_active.strip():
+                                    self.audio.wake_detector.record_active_turn()
+                                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                                    user_prompt = ""
+                                    continue
+                                self.audio.wake_detector.record_active_turn()
                     except Exception as stt_err:
                         stt_ms = (time.perf_counter() - t_stt_0) * 1000
                         logger.error(f"[STT TRANSCRIPTION ERROR] ({stt_ms:.1f}ms) {stt_err}")
-                        self.notify("chat_event", {"type": "error", "content": f"STT error: {stt_err}"})
-                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        if not is_wake_idle:
+                            self.notify("chat_event", {"type": "error", "content": f"STT error: {stt_err}"})
+                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                         continue
 
                 if not user_prompt:
-                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                    if not (
+                        self.audio
+                        and getattr(self.audio, "wake_detector", None)
+                        and self.audio.wake_word_enabled
+                        and self.audio.wake_detector.state == AudioGateState.IDLE_LISTENING
+                    ):
+                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                     continue
 
                 # Voice-driven Context Reset Triggers
@@ -2131,6 +2426,7 @@ class AetherEngine:
 
                     async def _run_playback():
                         self.is_speaking = True
+                        self._current_assistant_speech_text = assistant_text
                         try:
                             await self._stream_synthesize_speech(
                                 text=assistant_text,
@@ -2153,6 +2449,9 @@ class AetherEngine:
                             logger.error(f"[TTS SYNTHESIS ERROR] {p_err}")
                         finally:
                             self.is_speaking = False
+                            self._last_spoken_response_text = assistant_text
+                            self._last_spoken_end_time = time.monotonic()
+                            self._current_assistant_speech_text = ""
 
                     playback_task = asyncio.create_task(_run_playback())
 
@@ -2171,51 +2470,75 @@ class AetherEngine:
                                 logger.info(f"[TEXT BARGE-IN] Interrupted with new prompt: '{typed_text}'")
                             break
 
-                        # B. Check voice utterance queue (voice kill phrase or voice barge-in)
+                        # B. Check voice utterance queue (voice kill phrase, sleep phrase, self-echo filter, or voice barge-in)
                         if self.audio and not self.audio.utterance_queue.empty():
                             raw_wav = self.audio.utterance_queue.get_nowait()
                             if raw_wav and len(raw_wav) >= 1000:
-                                live_audio_cfg = self.config_getter().get("audio", {})
-                                live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
-                                is_authorized = True
-                                if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
-                                    thresh = float(live_bio_cfg.get("threshold", 0.40))
-                                    is_user, score = self.voice_verifier.verify(raw_wav, threshold=thresh)
-                                    if not is_user:
-                                        logger.info(f"[VOICE GATE] Interruption discarded: non-user voice ({score:.3f} < {thresh:.2f})")
-                                        is_authorized = False
+                                try:
+                                    t_int_0 = time.perf_counter()
+                                    stt_resp = await self._generate_content_resilient(
+                                        client=client,
+                                        model=stt_model,
+                                        contents=[
+                                            types.Part.from_bytes(data=raw_wav, mime_type="audio/wav"),
+                                            stt_prompt
+                                        ],
+                                        config=types.GenerateContentConfig(temperature=0.0)
+                                    )
+                                    int_text = ""
+                                    if stt_resp.candidates and stt_resp.candidates[0].content and stt_resp.candidates[0].content.parts:
+                                        for p in stt_resp.candidates[0].content.parts:
+                                            if getattr(p, "audio_transcription", None) and getattr(p.audio_transcription, "text", None):
+                                                int_text += p.audio_transcription.text
+                                            elif getattr(p, "text", None):
+                                                int_text += p.text
+                                    int_text = int_text.strip()
+                                    int_ms = (time.perf_counter() - t_int_0) * 1000
+                                    logger.info(f"[INTERRUPTION STT] ({int_ms:.0f}ms): '{int_text}'")
 
-                                if is_authorized:
-                                    try:
-                                        t_int_0 = time.perf_counter()
-                                        stt_resp = await self._generate_content_resilient(
-                                            client=client,
-                                            model=stt_model,
-                                            contents=[
-                                                types.Part.from_bytes(data=raw_wav, mime_type="audio/wav"),
-                                                stt_prompt
-                                            ],
-                                            config=types.GenerateContentConfig(temperature=0.0)
-                                        )
-                                        int_text = ""
-                                        if stt_resp.candidates and stt_resp.candidates[0].content and stt_resp.candidates[0].content.parts:
-                                            for p in stt_resp.candidates[0].content.parts:
-                                                if getattr(p, "audio_transcription", None) and getattr(p.audio_transcription, "text", None):
-                                                    int_text += p.audio_transcription.text
-                                                elif getattr(p, "text", None):
-                                                    int_text += p.text
-                                        int_text = int_text.strip()
-                                        int_ms = (time.perf_counter() - t_int_0) * 1000
-                                        logger.info(f"[INTERRUPTION STT] ({int_ms:.0f}ms): '{int_text}'")
+                                    if int_text:
+                                        # 1. Priority Stop Listening Phrase ("Aether stop listening") - always honored even over speaker bleed
+                                        if self.audio and getattr(self.audio, "wake_detector", None) and self.audio.wake_detector.matches_sleep_phrase(int_text):
+                                            logger.info(f"[SLEEP PHRASE] Stop listening phrase detected during playback: '{int_text}' -> Halting audio & entering Standby!")
+                                            stop_playback_event.set()
+                                            self.on_vad_speech_detected()
+                                            self.kill_audio()
+                                            self.audio.wake_word_enabled = True
+                                            self.audio.config["wake_word_enabled"] = True
+                                            self.audio.wake_detector.check_sleep_transcript(int_text)
+                                            playback_task.cancel()
+                                            break
 
-                                        if int_text:
-                                            if self._is_kill_command(int_text, kill_phrase, agent_name):
-                                                logger.info(f"[KILL PHRASE] Voice kill phrase detected during playback: '{int_text}' -> Halting audio!")
-                                                stop_playback_event.set()
-                                                self.kill_audio()
-                                                playback_task.cancel()
-                                                break
-                                            else:
+                                        # 2. Priority Voice Playback Kill Phrase ("Aether stop") - always honored even over speaker bleed
+                                        elif self._is_kill_command(int_text, kill_phrase, agent_name):
+                                            logger.info(f"[KILL PHRASE] Voice kill phrase detected during playback: '{int_text}' -> Halting audio!")
+                                            stop_playback_event.set()
+                                            self.on_vad_speech_detected()
+                                            self.kill_audio()
+                                            playback_task.cancel()
+                                            break
+
+                                        # 3. Speaker Self-Echo Cancellation - ignore microphone feedback of Aether's own voice
+                                        elif self._is_self_echo(int_text, assistant_text, kill_phrase, agent_name):
+                                            logger.info(f"[ECHO CANCELLATION] Ignored assistant self-speech feedback during playback: '{int_text}'")
+
+                                        # 4. Software Gate ("Mute microphone while speaking") - ignore non-kill speech while muted
+                                        elif self.audio and getattr(self.audio, "software_gate", False):
+                                            logger.info(f"[SOFTWARE GATE] Ignored non-kill speech while mic muted during playback: '{int_text}'")
+
+                                        # 5. Open-Mic User Barge-In - verify user biometrics and require >=2 words
+                                        else:
+                                            live_audio_cfg = self.config_getter().get("audio", {})
+                                            live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
+                                            is_authorized = True
+                                            if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
+                                                thresh = float(live_bio_cfg.get("threshold", 0.40))
+                                                is_user, score = self.voice_verifier.verify(raw_wav, threshold=thresh)
+                                                if not is_user:
+                                                    logger.info(f"[VOICE GATE] Barge-in discarded: non-user or speaker-mixed voice ({score:.3f} < {thresh:.2f})")
+                                                    is_authorized = False
+
+                                            if is_authorized and len(int_text.split()) >= 2:
                                                 logger.info(f"[VOICE BARGE-IN] Spoken command detected during playback: '{int_text}'")
                                                 self.notify("chat_event", {
                                                     "type": "user",
@@ -2223,12 +2546,13 @@ class AetherEngine:
                                                     "source": "voice"
                                                 })
                                                 stop_playback_event.set()
+                                                self.on_vad_speech_detected()
                                                 self.kill_audio()
                                                 playback_task.cancel()
                                                 barge_in_prompt = int_text
                                                 break
-                                    except Exception as int_err:
-                                        logger.warning(f"[INTERRUPTION STT ERROR] {int_err}")
+                                except Exception as int_err:
+                                    logger.warning(f"[INTERRUPTION STT ERROR] {int_err}")
 
                         # C. Check if UI kill button or VAD speech onset barge-in set flag
                         if self._kill_playback_flag:
@@ -2320,12 +2644,17 @@ class AetherEngine:
 
                 if self.audio:
                     self.audio.clear_output_buffer()
+                    if hasattr(self.audio, "wake_detector") and self.audio.wake_detector:
+                        self.audio.wake_detector.record_active_turn()
                     if not getattr(self.audio, "_is_in_speech", False):
                         self.audio.reset_vad()
                 if self.is_running:
                     self.last_user_turn_time = time.perf_counter()
                     if not (self.audio and getattr(self.audio, "_is_in_speech", False)):
-                        self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        if self.audio and getattr(self.audio, "wake_detector", None) and self.audio.wake_word_enabled and self.audio.wake_detector.state == AudioGateState.IDLE_LISTENING:
+                            self.notify("status", {"state": "standby", "message": f"Standby — Say '{self.audio.wake_detector.wake_phrase}' to wake {agent_name}."})
+                        else:
+                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
             except asyncio.CancelledError:
                 break

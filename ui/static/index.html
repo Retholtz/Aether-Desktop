@@ -96,99 +96,111 @@
       <!-- ============================================================= -->
       <section id="tab-settings" class="tab-pane" tabindex="0">
           
-          <!-- Card: Agent & Voice Settings -->
-          <div class="hud-card">
-            <div class="card-header">
-              <span class="card-title">ASSISTANT IDENTITY & AI VOICE</span>
-              <div class="card-header-actions">
-                <button type="button" class="hud-btn-primary sm" id="topSaveSettingsBtn" title="Save all settings and agent name">SAVE SETTINGS</button>
-                <span class="card-tag dpapi">🔒 WINDOWS DPAPI SECURE</span>
+          <!-- ASSISTANT IDENTITY & AI VOICE PANEL -->
+          <div class="settings-card hud-card">
+            <div class="settings-card-header card-header">
+              <h3 class="card-title">ASSISTANT IDENTITY & AI VOICE</h3>
+              <div class="header-actions card-header-actions">
+                <button type="button" id="btn-save-settings" class="btn-primary hud-btn-primary sm" title="Save all settings and agent name">SAVE SETTINGS</button>
+                <span class="badge-secure card-tag dpapi"><i class="icon-lock"></i> 🔒 WINDOWS DPAPI SECURE</span>
               </div>
             </div>
             <div class="card-body">
-              <div class="form-grid">
+              <div class="settings-grid form-grid">
                 
-                <!-- Agent Name (Top Line Left) -->
-                <div class="form-group">
-                  <label for="agentNameInput">Agent Name</label>
-                  <input type="text" id="agentNameInput" class="hud-input" value="Aether" placeholder="e.g. Aether">
-                  <span class="input-hint">Name of your assistant. Use [Agent Name] in the instructions below.</span>
-                </div>
-
-                <!-- Voice Playback Kill Phrase (Top Line Right) -->
-                <div class="form-group">
-                  <label for="safePhraseInput">Voice Playback Kill Phrase</label>
-                  <input type="text" id="safePhraseInput" class="hud-input" value="Aether stop" placeholder="e.g. Aether stop">
-                  <span class="input-hint">Saying this phrase or clicking Stop Playback immediately silences audio.</span>
-                </div>
-
-                <!-- Text to Speech (TTS) Endpoint (Second Line Left) -->
-                <div class="form-group">
-                  <label for="ttsSelect">Text to Speech (TTS) Endpoint</label>
-                  <select id="ttsSelect" class="hud-select">
-                    <option value="gemini-live-native" selected>Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)</option>
-                    <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 Flash TTS (Streaming Cloud Speech Preview)</option>
-                    <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash TTS (Legacy Cloud Speech Preview)</option>
-                    <option value="edge-tts">Edge Neural TTS (300+ Regional & Accent Voices)</option>
-                    <option value="windows-local">Windows Native SAPI5 / Local Voices (Instantaneous Offline)</option>
-                    <option value="local-tts">Local TTS Server (Kokoro / OpenAI / FastTTS)</option>
-                  </select>
-                  <span class="input-hint">Voice synthesis engine for assistant speech playback.</span>
-                </div>
-
-                <!-- AI Output Voice (Second Line Right) -->
-                <div class="form-group" id="voiceSelectGroup">
-                  <label for="voiceSelect" id="voiceSelectLabel">AI Output Voice</label>
-                  <select id="voiceSelect" class="hud-select">
-                    <!-- Populated dynamically via JS in alphabetical order -->
-                  </select>
-                  <input type="text" id="voiceTextInput" class="hud-input" style="display: none;" placeholder="e.g. af_heart, kokoro, or custom model">
-                  <span class="input-hint" id="voiceSelectHint">Synthesizer voice tailored to your selected TTS engine.</span>
-                </div>
-
-                <!-- Sub-settings under TTS Endpoint (Left Column) -->
-                <div class="tts-sub-col left" id="ttsSubSettingsLeft">
-                  <!-- Speech Speed Slider (Windows Native SAPI5 only) -->
-                  <div class="form-group" id="voiceSpeedGroup" style="display: none;">
-                    <div class="slider-header">
-                      <label for="voiceSpeedSlider">Speech Speed</label>
-                      <span class="slider-val" id="voiceSpeedVal">1.00x</span>
-                    </div>
-                    <input type="range" id="voiceSpeedSlider" min="0.50" max="1.50" step="0.05" value="1.00" class="hud-slider">
-                    <div class="slider-ticks">
-                      <span>0.50x (Slower)</span>
-                      <span>1.00x (Normal)</span>
-                      <span>1.50x (Faster)</span>
-                    </div>
-                    <span class="input-hint">Speech rate adjustment for Windows Native SAPI5 voices.</span>
-                  </div>
-
-                  <!-- Local TTS Server Endpoint URL -->
-                  <div class="form-group" id="localTtsGroup" style="display: none;">
-                    <label for="localTtsUrlInput">Local TTS Server Endpoint URL</label>
-                    <input type="text" id="localTtsUrlInput" class="hud-input" value="http://localhost:8880/v1/audio/speech" placeholder="http://localhost:8880/v1/audio/speech">
-                    <span class="input-hint">OpenAI-compatible speech endpoint (e.g. Kokoro-FastAPI, LocalAI).</span>
+                <!-- ROW 1: Agent Name -->
+                <div class="grid-row row-single">
+                  <div class="form-group full-width full">
+                    <label for="input-agent-name">Agent Name</label>
+                    <input type="text" id="input-agent-name" class="hud-input" value="Aether" placeholder="Aether" />
+                    <span class="field-hint input-hint">Name of your assistant. Use [Agent Name] in system instructions.</span>
                   </div>
                 </div>
 
-                <!-- Regional/Accent Sub-settings under AI Output Voice (Right Column) -->
-                <div class="tts-sub-col right" id="ttsSubSettingsRight">
-                  <!-- Voice Region / Country (Edge TTS) -->
-                  <div class="form-group" id="edgeRegionGroup" style="display: none;">
-                    <label for="edgeRegionSelect">Voice Region / Country</label>
-                    <select id="edgeRegionSelect" class="hud-select">
-                      <!-- Populated dynamically via JS -->
+                <!-- ROW 2: TTS Endpoint & AI Output Voice -->
+                <div class="grid-row row-double">
+                  <div class="form-group">
+                    <label for="select-tts-endpoint">Text to Speech (TTS) Endpoint</label>
+                    <select id="select-tts-endpoint" class="hud-select">
+                      <option value="gemini-live-native" selected>Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)</option>
+                      <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 Flash TTS (Streaming Cloud Speech Preview)</option>
+                      <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash TTS (Legacy Cloud Speech Preview)</option>
+                      <option value="edge-tts">Edge Neural TTS (300+ Regional & Accent Voices)</option>
+                      <option value="windows-local">Windows Native SAPI5 / Local Voices (Instantaneous Offline)</option>
+                      <option value="local-tts">Local TTS Server (Kokoro / OpenAI / FastTTS)</option>
                     </select>
-                    <span class="input-hint">Select region or dialect to filter available neural voices.</span>
+                    <span class="field-hint input-hint">Voice synthesis engine for assistant speech playback.</span>
+                  </div>
+                  <div class="form-group" id="voiceSelectGroup">
+                    <label for="select-output-voice" id="voiceSelectLabel">AI Output Voice</label>
+                    <select id="select-output-voice" class="hud-select">
+                      <!-- Dynamically populated voice profiles -->
+                    </select>
+                    <input type="text" id="voiceTextInput" class="hud-input" style="display: none;" placeholder="e.g. af_heart, kokoro, or custom model">
+                    <span class="field-hint input-hint" id="voiceSelectHint">Synthesizer voice tailored to your selected TTS engine.</span>
+                  </div>
+                </div>
+
+                <!-- ROW 3: Left = Voice Playback Kill Phrase (+ Windows Native Speed / Local URL), Right = Voice Accent / Dialect (Gemini) under AI Output Voice -->
+                <div class="grid-row row-double" id="ttsSubSettingsRow">
+                  <!-- Left Column (under Text to Speech Endpoint): Voice Playback Kill Phrase & Conditional Engine Controls -->
+                  <div class="form-group" id="ttsSubSettingsLeft">
+                    <div class="form-group" id="killPhraseGroup">
+                      <label for="input-kill-phrase">Voice Playback Kill Phrase</label>
+                      <input type="text" id="input-kill-phrase" class="hud-input" value="Aether stop" placeholder="Aether stop" />
+                      <span class="field-hint input-hint">Saying this phrase or clicking Stop Playback immediately silences audio in both Hands-Free and PTT modes.</span>
+                    </div>
+
+                    <!-- Voice Speed / Rate (Shown ONLY when Windows Native SAPI5 is selected) -->
+                    <div class="form-group" id="voiceSpeedGroup" style="display: none;">
+                      <div class="slider-header">
+                        <label for="input-tts-speed">Voice Speed / Rate (Windows Native)</label>
+                        <span class="slider-val" id="voiceSpeedVal">1.00x</span>
+                      </div>
+                      <input type="range" id="input-tts-speed" min="0.75" max="1.5" step="0.05" value="1.0" class="hud-slider" />
+                      <span class="field-hint input-hint" id="tts-speed-label">Playback rate multiplier (1.0x Standard)</span>
+                    </div>
+
+                    <!-- Local TTS Server Endpoint URL (when Local TTS engine selected) -->
+                    <div class="form-group" id="localTtsGroup" style="display: none;">
+                      <label for="localTtsUrlInput">Local TTS Server Endpoint URL</label>
+                      <input type="text" id="localTtsUrlInput" class="hud-input" value="http://localhost:8880/v1/audio/speech" placeholder="http://localhost:8880/v1/audio/speech">
+                      <span class="field-hint input-hint">OpenAI-compatible speech endpoint (e.g. Kokoro-FastAPI, LocalAI).</span>
+                    </div>
                   </div>
 
-                  <!-- Voice Accent / Dialect (Gemini Speech) -->
-                  <div class="form-group" id="voiceAccentGroup">
-                    <label for="voiceAccentSelect">Voice Accent / Dialect (Gemini)</label>
-                    <select id="voiceAccentSelect" class="hud-select">
-                      <!-- Populated dynamically via JS -->
-                    </select>
-                    <span class="input-hint">Natural language vocal accent steering (e.g. Puck + British).</span>
+                  <!-- Right Column (under AI Output Voice): Voice Accent / Dialect (Gemini) & Voice Region (Edge) -->
+                  <div class="form-group" id="ttsSubSettingsRight">
+                    <!-- Voice Accent / Dialect (Gemini) -->
+                    <div class="form-group" id="voiceAccentGroup">
+                      <label for="select-voice-accent">Voice Accent / Dialect (Gemini)</label>
+                      <select id="select-voice-accent" class="hud-select">
+                        <option value="default" selected>Default (Native / Standard)</option>
+                        <option value="British">British (Received Pronunciation / BBC English)</option>
+                        <option value="Cockney">British (Cockney / East London)</option>
+                        <option value="Scottish">Scottish</option>
+                        <option value="Irish">Irish</option>
+                        <option value="Australian">Australian</option>
+                        <option value="American Southern">American (Southern / Texan)</option>
+                        <option value="American New York">American (New York)</option>
+                        <option value="French">French Accent</option>
+                        <option value="German">German Accent</option>
+                        <option value="Italian">Italian Accent</option>
+                        <option value="Spanish">Spanish Accent</option>
+                        <option value="Indian">Indian Accent</option>
+                        <option value="Japanese">Japanese Accent</option>
+                      </select>
+                      <span class="field-hint input-hint">Natural language vocal accent steering (e.g. Puck + British).</span>
+                    </div>
+
+                    <!-- Voice Region / Country (Edge TTS) -->
+                    <div class="form-group" id="edgeRegionGroup" style="display: none;">
+                      <label for="edgeRegionSelect">Voice Region / Country</label>
+                      <select id="edgeRegionSelect" class="hud-select">
+                        <!-- Populated dynamically via JS -->
+                      </select>
+                      <span class="field-hint input-hint">Select region or dialect to filter available neural voices.</span>
+                    </div>
                   </div>
                 </div>
 
@@ -275,7 +287,7 @@
               <div class="form-grid">
                 
                 <!-- Audio Mode: Hands-Free vs PTT -->
-                <div class="form-group">
+                <div class="form-group full">
                   <label>Audio Input Mode</label>
                   <div class="radio-row">
                     <label class="hud-radio">
@@ -287,11 +299,43 @@
                       <span>Push-To-Talk (PTT)</span>
                     </label>
                   </div>
-                  <span class="input-hint">Always-On enables natural conversational flow.</span>
+                  <span class="input-hint">Select Always-On (Hands-Free) for voice-activated listening or Push-To-Talk for manual keybind activation.</span>
+                </div>
+
+                <!-- Always-On (Hands-Free) Sub-Settings: 1) Always On, 2) Listen only with Wake Phrase, 3) Toggle listening with Wake/Sleep phrases -->
+                <div class="form-group ptt-sub-settings full" id="alwaysOnSettingsGroup">
+                  <label>Always-On (Hands-Free) Listening Mode</label>
+                  <div class="radio-row" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 6px;">
+                    <label class="hud-radio">
+                      <input type="radio" name="alwaysOnMode" value="always_on" id="alwaysOnModeOpen">
+                      <span>1) Always On (Continuous Open Mic — Listen all the time without Wake Phrase)</span>
+                    </label>
+                    <label class="hud-radio">
+                      <input type="radio" name="alwaysOnMode" value="wake_word" id="alwaysOnModeWakeWord" checked>
+                      <span>2) Listen only with Wake Phrase (Wakes on Wake Phrase, auto-sleeps after silence)</span>
+                    </label>
+                    <label class="hud-radio">
+                      <input type="radio" name="alwaysOnMode" value="wake_sleep_toggle" id="alwaysOnModeToggle">
+                      <span>3) Toggle listening with Wake/Sleep phrases (Wake Phrase turns mic ON, Stop Listening Phrase turns mic OFF)</span>
+                    </label>
+                  </div>
+
+                  <div class="grid-row row-double" id="alwaysOnPhrasesRow" style="margin-top: 12px;">
+                    <div class="form-group">
+                      <label for="input-wake-phrase">Wake Phrase</label>
+                      <input type="text" id="input-wake-phrase" class="hud-input" value="Hey Aether" placeholder="Hey Aether" />
+                      <span class="field-hint input-hint">Voice command to wake Aether or toggle microphone ON (e.g. "Hey Aether", "Aether start listening").</span>
+                    </div>
+                    <div class="form-group">
+                      <label for="input-sleep-phrase">Stop Listening Phrase</label>
+                      <input type="text" id="input-sleep-phrase" class="hud-input" value="Aether stop listening" placeholder="Aether stop listening" />
+                      <span class="field-hint input-hint">Voice command to put Aether in standby / toggle microphone OFF.</span>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- Push-To-Talk Options Panel (Behavior & Keybind) -->
-                <div class="form-group ptt-sub-settings" id="pttSettingsGroup" style="display: none;">
+                <div class="form-group ptt-sub-settings full" id="pttSettingsGroup" style="display: none;">
                   <label>Push-To-Talk Behavior</label>
                   <div class="radio-row">
                     <label class="hud-radio">

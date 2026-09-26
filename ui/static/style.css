@@ -2125,5 +2125,66 @@ label {
   border: 1px solid rgba(255, 170, 0, 0.3);
 }
 
+/* =========================================================================
+   Assistant Identity & AI Voice 4-Row Grid Layout (Feature A)
+   ========================================================================= */
+.settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.grid-row {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  align-items: start;
+}
+
+.grid-row.row-single {
+  grid-template-columns: 1fr;
+}
+
+.grid-row.row-double {
+  grid-template-columns: 1fr 1fr;
+}
+
+.grid-row.row-triple {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.form-group.full-width {
+  width: 100%;
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.status-pill.active {
+  background: rgba(0, 210, 255, 0.16);
+  color: #00d2ff;
+  border-color: rgba(0, 210, 255, 0.5);
+}
+
+.status-pill.active .pulse-dot {
+  background: #00d2ff;
+  box-shadow: 0 0 8px #00d2ff;
+}
+
+.status-pill.standby {
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+
+.status-pill.standby .pulse-dot {
+  background: #94a3b8;
+  box-shadow: none;
+}
+
 
 

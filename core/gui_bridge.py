@@ -21,6 +21,7 @@ from core.logger import (
     open_logs_folder,
 )
 from core.security import protect_secret, unprotect_secret
+from core.config_manager import sync_config_schema
 
 logger = get_logger("Bridge")
 
@@ -354,9 +355,7 @@ class GuiBridge:
                     cfg = json.load(f)
             except Exception as e:
                 print(f"[CONFIG LOAD ERROR] {e}")
-        if "vad_trailing_silence_ms" not in cfg:
-            cfg["vad_trailing_silence_ms"] = cfg.get("audio", {}).get("vad_trailing_silence_ms", 1400)
-        return cfg
+        return sync_config_schema(cfg)
 
     def get_raw_config(self) -> dict:
         return self._config
@@ -443,6 +442,7 @@ class GuiBridge:
         """Encrypts new API key if provided and saves updated configuration."""
         try:
             if new_config is None:
+                sync_config_schema(self._config)
                 with open(self._config_path, "w", encoding="utf-8") as f:
                     json.dump(self._config, f, indent=2)
                 self._on_engine_event("config_updated", self.get_config())
@@ -458,6 +458,11 @@ class GuiBridge:
                 elif hasattr(self._engine, "audio") and self._engine.audio:
                     self._engine.audio.set_vad_trailing_silence(silence_ms)
 
+            # Top-level wake_phrase / kill_phrase / agent_name updates
+            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds"):
+                if top_key in new_config:
+                    self._config[top_key] = new_config[top_key]
+
             api_cfg = new_config.get("api", {})
             raw_key_input = api_cfg.get("new_api_key", "").strip()
             if raw_key_input and not raw_key_input.startswith("*") and not raw_key_input.startswith("•"):
@@ -465,7 +470,15 @@ class GuiBridge:
                 self._config.setdefault("api", {})["api_key_encrypted"] = encrypted_key
             
             if "agent_name" in api_cfg:
-                self._config.setdefault("api", {})["agent_name"] = api_cfg["agent_name"].strip() or "Aether"
+                agent_name_val = api_cfg["agent_name"].strip() or "Aether"
+                self._config.setdefault("api", {})["agent_name"] = agent_name_val
+                self._config["agent_name"] = agent_name_val
+            if "wake_phrase" in api_cfg:
+                wp_val = api_cfg["wake_phrase"].strip()
+                if wp_val:
+                    self._config.setdefault("api", {})["wake_phrase"] = wp_val
+                    self._config.setdefault("audio", {})["wake_phrase"] = wp_val
+                    self._config["wake_phrase"] = wp_val
             if "model_id" in api_cfg:
                 self._config.setdefault("api", {})["model_id"] = api_cfg["model_id"]
             if "pipeline_mode" in api_cfg:
@@ -480,16 +493,20 @@ class GuiBridge:
                 self._config.setdefault("api", {})["stt_endpoint"] = api_cfg["stt_endpoint"]
             if "tts_endpoint" in api_cfg:
                 self._config.setdefault("api", {})["tts_endpoint"] = api_cfg["tts_endpoint"]
+                self._config["tts_endpoint"] = api_cfg["tts_endpoint"]
             if "pro_model_id" in api_cfg:
                 self._config.setdefault("api", {})["pro_model_id"] = api_cfg["pro_model_id"]
             if "temperature" in api_cfg:
                 self._config.setdefault("api", {})["temperature"] = float(api_cfg["temperature"])
             if "voice_name" in api_cfg:
                 self._config.setdefault("api", {})["voice_name"] = api_cfg["voice_name"]
+                self._config["tts_voice"] = api_cfg["voice_name"]
             if "voice_accent" in api_cfg:
                 self._config.setdefault("api", {})["voice_accent"] = api_cfg["voice_accent"]
+                self._config["voice_accent"] = api_cfg["voice_accent"]
             if "voice_speed" in api_cfg:
                 self._config.setdefault("api", {})["voice_speed"] = float(api_cfg["voice_speed"])
+                self._config["tts_speed"] = float(api_cfg["voice_speed"])
             if "local_tts_url" in api_cfg:
                 self._config.setdefault("api", {})["local_tts_url"] = api_cfg["local_tts_url"]
             if "system_instruction" in api_cfg:
@@ -497,6 +514,24 @@ class GuiBridge:
 
             if "audio" in new_config:
                 aud_cfg = new_config["audio"]
+                if "wake_phrase" in aud_cfg and aud_cfg["wake_phrase"]:
+                    self._config["wake_phrase"] = aud_cfg["wake_phrase"].strip()
+                    self._config.setdefault("api", {})["wake_phrase"] = self._config["wake_phrase"]
+                if "sleep_phrase" in aud_cfg and aud_cfg["sleep_phrase"]:
+                    self._config["sleep_phrase"] = aud_cfg["sleep_phrase"].strip()
+                elif "stop_listening_phrase" in aud_cfg and aud_cfg["stop_listening_phrase"]:
+                    self._config["sleep_phrase"] = aud_cfg["stop_listening_phrase"].strip()
+                    aud_cfg["sleep_phrase"] = self._config["sleep_phrase"]
+                if "always_on_mode" in aud_cfg and aud_cfg["always_on_mode"]:
+                    self._config["always_on_mode"] = aud_cfg["always_on_mode"].strip()
+                    self._config["wake_word_enabled"] = (self._config["always_on_mode"] != "always_on")
+                    aud_cfg["wake_word_enabled"] = self._config["wake_word_enabled"]
+                if "kill_phrase" in aud_cfg and aud_cfg["kill_phrase"]:
+                    self._config["kill_phrase"] = aud_cfg["kill_phrase"].strip()
+                    aud_cfg["safe_phrase"] = self._config["kill_phrase"]
+                elif "safe_phrase" in aud_cfg and aud_cfg["safe_phrase"]:
+                    self._config["kill_phrase"] = aud_cfg["safe_phrase"].strip()
+                    aud_cfg["kill_phrase"] = self._config["kill_phrase"]
                 if "vad_trailing_silence_ms" in aud_cfg:
                     silence_ms = int(aud_cfg["vad_trailing_silence_ms"])
                     self._config["vad_trailing_silence_ms"] = silence_ms
@@ -516,6 +551,31 @@ class GuiBridge:
                     if self._engine.audio:
                         self._engine.audio.set_mode(self._config["audio"].get("mode", "always_on"))
                         self._engine.audio.set_software_gate(self._config["audio"].get("software_gate", False))
+                        ao_mode = self._config.get("always_on_mode") or self._config["audio"].get("always_on_mode", "wake_word")
+                        wake_en = (ao_mode != "always_on")
+                        self._engine.audio.wake_word_enabled = wake_en
+                        self._engine.audio.config["wake_word_enabled"] = wake_en
+                        self._engine.audio.config["always_on_mode"] = ao_mode
+                        if hasattr(self._engine.audio, "wake_detector") and self._engine.audio.wake_detector:
+                            wp = self._config.get("wake_phrase") or self._config["audio"].get("wake_phrase")
+                            if wp:
+                                self._engine.audio.wake_detector.update_wake_phrase(wp)
+                            sp = self._config.get("sleep_phrase") or self._config["audio"].get("sleep_phrase")
+                            if sp:
+                                self._engine.audio.wake_detector.update_sleep_phrase(sp)
+                            self._engine.audio.wake_detector.update_listening_mode(ao_mode)
+                            if self._engine.is_running:
+                                ag_name = self._config.get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+                                if wake_en and self._engine.audio.wake_detector.state.value == "IDLE_LISTENING":
+                                    self._on_engine_event("status", {
+                                        "state": "standby",
+                                        "message": f"Standby — Say '{self._engine.audio.wake_detector.wake_phrase}' to wake {ag_name}."
+                                    })
+                                else:
+                                    self._on_engine_event("status", {
+                                        "state": "listening",
+                                        "message": f"{ag_name} is listening..."
+                                    })
                         new_in = self._config["audio"].get("input_device_index")
                         new_out = self._config["audio"].get("output_device_index")
                         if (
@@ -538,6 +598,7 @@ class GuiBridge:
                 if "hud_mode" in new_config["ui"]:
                     self.set_mode(new_config["ui"]["hud_mode"])
 
+            sync_config_schema(self._config)
             with open(self._config_path, "w", encoding="utf-8") as f:
                 json.dump(self._config, f, indent=2)
 
