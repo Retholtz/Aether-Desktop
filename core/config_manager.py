@@ -10,6 +10,13 @@ import tempfile
 from typing import Any, Dict, Optional
 
 from core.security import protect_secret, unprotect_secret
+from core.startup_manager import set_boot_on_startup
+
+
+def apply_startup_configuration(cfg: dict):
+    """Synchronizes registry state with stored config value."""
+    boot_enabled = cfg.get("boot_on_startup", False)
+    set_boot_on_startup(boot_enabled)
 
 DEFAULT_VOICE_CONFIG: Dict[str, Any] = {
     "agent_name": "Aether",
@@ -158,6 +165,9 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "vad_trailing_silence_ms" not in cfg:
         cfg["vad_trailing_silence_ms"] = audio_cfg.get("vad_trailing_silence_ms", 1400)
 
+    cfg.setdefault("boot_on_startup", False)
+    cfg.setdefault("start_minimized", False)
+
     return cfg
 
 
@@ -202,6 +212,8 @@ class ConfigManager:
                 "wake_word_enabled",
                 "idle_timeout_seconds",
                 "vad_trailing_silence_ms",
+                "boot_on_startup",
+                "start_minimized",
             ):
                 if key in updates:
                     self.config[key] = updates[key]
@@ -235,6 +247,10 @@ class ConfigManager:
                         self.config["voice_accent"] = sec_copy["voice_accent"]
                     if "tts_endpoint" in sec_copy:
                         self.config["tts_endpoint"] = sec_copy["tts_endpoint"]
+                    if "boot_on_startup" in sec_copy:
+                        self.config["boot_on_startup"] = sec_copy["boot_on_startup"]
+                    if "start_minimized" in sec_copy:
+                        self.config["start_minimized"] = sec_copy["start_minimized"]
 
         sync_config_schema(self.config)
         try:
@@ -259,6 +275,13 @@ def save_config_atomic(config_data: dict, config_path: str = "config.json"):
 
     # os.replace is an atomic operation on Windows (NTFS) and POSIX
     os.replace(temp_name, abs_config_path)
+
+    # Synchronize startup registry if boot_on_startup is in config_data
+    if isinstance(config_data, dict) and "boot_on_startup" in config_data:
+        try:
+            apply_startup_configuration(config_data)
+        except Exception as e:
+            print(f"[CONFIG_MANAGER] Failed to apply startup configuration: {e}")
 
 
 def load_config(config_path: str = "config.json") -> Dict[str, Any]:

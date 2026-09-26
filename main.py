@@ -14,6 +14,7 @@ from core.screen_stream import ensure_thread_desktop, init_dpi_awareness
 init_dpi_awareness()
 ensure_thread_desktop()
 
+from core.config_manager import load_config
 from core.gui_bridge import GuiBridge
 from tools.script_runner import prune_script_cache
 from ui.hud_window import HudWindow
@@ -23,6 +24,26 @@ from core.user_memory import (
     remove_dictionary_term,
     get_all_dictionary_terms,
 )
+
+
+def initialize_window(window):
+    """
+    Checks start_minimized upon application boot to hide or minimize the
+    main application window immediately.
+    """
+    cfg = load_config()
+    should_minimize = cfg.get("start_minimized", False)
+
+    if should_minimize:
+        # If running via pywebview or standard GUI window:
+        print("[INFO] [GUI] Launching directly to minimized state per user preferences.")
+        try:
+            window.minimize()  # or window.hide() if system tray is active
+        except Exception as e:
+            print(f"[WARN] [GUI] Could not minimize window on start: {e}")
+            window.show()
+    else:
+        window.show()
 
 # ---------------------------------------------------------------------------
 # Session Telemetry & Lifecycle State (Layer B Context Optimization)
@@ -105,6 +126,7 @@ def main():
         height=760,
         min_width=880,
         min_height=620,
+        on_init=initialize_window,
     )
 
     print("[HUD] WebView window initialized. Launching Aether Desktop...")

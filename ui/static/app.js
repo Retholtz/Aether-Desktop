@@ -1349,6 +1349,16 @@ window.aetherUI = {
         }
       }
 
+      // Application & Startup Behavior
+      const bootStartupToggle = document.getElementById("toggle-boot-startup");
+      if (bootStartupToggle) {
+        bootStartupToggle.checked = Boolean(cfg.boot_on_startup);
+      }
+      const startMinimizedToggle = document.getElementById("toggle-start-minimized");
+      if (startMinimizedToggle) {
+        startMinimizedToggle.checked = Boolean(cfg.start_minimized);
+      }
+
       this.updateTelemetryDeviceLabels();
 
     } catch (e) {
@@ -1487,7 +1497,9 @@ window.aetherUI = {
           hud_mode_key_display: this.hudModeKeyDisplay || "Ctrl+Space",
           hud_mode_vk: this.hudModeVk !== undefined ? this.hudModeVk : 32,
           hud_mode_modifiers: this.hudModeModifiers || ["Control"]
-        }
+        },
+        boot_on_startup: document.getElementById("toggle-boot-startup") ? document.getElementById("toggle-boot-startup").checked : false,
+        start_minimized: document.getElementById("toggle-start-minimized") ? document.getElementById("toggle-start-minimized").checked : false
       };
 
       const res = await window.pywebview.api.save_config(payload);
@@ -3025,5 +3037,16 @@ window.onAssistantSleep = function() {
     window.aetherUI.updateStatus("standby", "Standby (Wake Word Active)");
   }
 };
+
+function collectSettingsPayload() {
+  const bootEl = document.getElementById("toggle-boot-startup");
+  const minEl = document.getElementById("toggle-start-minimized");
+  return {
+    boot_on_startup: bootEl ? bootEl.checked : false,
+    start_minimized: minEl ? minEl.checked : false
+  };
+}
+window.collectSettingsPayload = collectSettingsPayload;
+
 
 

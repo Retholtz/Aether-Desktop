@@ -691,6 +691,82 @@ label {
   cursor: pointer;
 }
 
+/* Windows 11 style Toggle Switches */
+.toggle-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.toggle-container {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  gap: 12px;
+}
+
+.toggle-container input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  cursor: pointer;
+  height: 0;
+  width: 0;
+}
+
+.toggle-slider {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+  background-color: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 20px;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 12px;
+  width: 12px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #e2e8f0;
+  border-radius: 50%;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.toggle-container input:checked ~ .toggle-slider {
+  background-color: var(--win-accent, #0078d4);
+  border-color: var(--win-accent, #0078d4);
+}
+
+.toggle-container input:checked ~ .toggle-slider:before {
+  transform: translateX(20px);
+  background-color: #ffffff;
+}
+
+.toggle-container:hover .toggle-slider {
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.toggle-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #f1f5f9);
+}
+
+.field-hint {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
 /* Settings Actions */
 .settings-actions {
   display: flex;

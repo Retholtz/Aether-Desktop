@@ -436,6 +436,8 @@ class GuiBridge:
         """Returns application configuration for the UI (masking encrypted API key)."""
         with self._config_lock:
             cfg = json.loads(json.dumps(self._config))
+            cfg["boot_on_startup"] = self._config.get("boot_on_startup", False)
+            cfg["start_minimized"] = self._config.get("start_minimized", False)
             cfg["vad_trailing_silence_ms"] = self._config.get("vad_trailing_silence_ms", 1400)
             api_cfg = cfg.get("api", {})
             enc_key = api_cfg.get("api_key_encrypted", "")
@@ -505,10 +507,20 @@ class GuiBridge:
                 elif hasattr(self._engine, "audio") and self._engine.audio:
                     self._engine.audio.set_vad_trailing_silence(silence_ms)
 
-            # Top-level wake_phrase / kill_phrase / agent_name updates
-            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds"):
+            # Top-level wake_phrase / kill_phrase / agent_name / startup updates
+            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized"):
                 if top_key in new_config:
                     self._config[top_key] = new_config[top_key]
+
+            if "boot_on_startup" in new_config:
+                self._config["boot_on_startup"] = bool(new_config["boot_on_startup"])
+            elif "ui" in new_config and "boot_on_startup" in new_config["ui"]:
+                self._config["boot_on_startup"] = bool(new_config["ui"]["boot_on_startup"])
+
+            if "start_minimized" in new_config:
+                self._config["start_minimized"] = bool(new_config["start_minimized"])
+            elif "ui" in new_config and "start_minimized" in new_config["ui"]:
+                self._config["start_minimized"] = bool(new_config["ui"]["start_minimized"])
 
             api_cfg = new_config.get("api", {})
             raw_key_input = api_cfg.get("new_api_key", "").strip()

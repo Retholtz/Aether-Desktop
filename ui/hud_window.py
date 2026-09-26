@@ -346,6 +346,7 @@ class HudWindow:
         height: int = 760,
         min_width: int = 880,
         min_height: int = 620,
+        on_init: Optional[object] = None,
     ):
         ensure_thread_desktop()
         self.bridge = bridge
@@ -354,6 +355,7 @@ class HudWindow:
         self.height = height
         self.min_width = min_width
         self.min_height = min_height
+        self.on_init = on_init
         self._is_closing_permanently = False
 
         # Determine path to static UI assets
@@ -485,9 +487,22 @@ class HudWindow:
 
     def _on_started(self):
         """Called once pywebview event loop is ready."""
+        if self.on_init and callable(self.on_init):
+            try:
+                self.on_init(self.window)
+            except Exception as e:
+                print(f"[HUD] Error during window initialization hook: {e}")
+        else:
+            try:
+                from main import initialize_window
+                initialize_window(self.window)
+            except Exception:
+                pass
+
         cfg = self.bridge.get_raw_config().get("ui", {})
         overlay_mode = cfg.get("floating_overlay", "on_minimize")
-        if overlay_mode == "always":
+        raw_cfg = self.bridge.get_raw_config()
+        if overlay_mode == "always" or (raw_cfg.get("start_minimized", False) and overlay_mode == "on_minimize"):
             self.bridge.show_overlay()
 
     def close_all(self):
