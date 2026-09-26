@@ -289,21 +289,37 @@ def focus_window(app_name: str, auto_launch: bool = True) -> dict:
         return {"status": "error", "message": "Win32 window management is only supported on Windows."}
 
     hwnd = find_hwnd_by_query(app_name)
-    if not hwnd and auto_launch:
-        # Attempt to launch the app if whitelisted
-        try:
-            launch_res = WhitelistValidator.validate_and_launch(app_name, ["*"])
-            if launch_res.get("status") in ("success", "running"):
-                for _ in range(25):
-                    time.sleep(0.1)
-                    hwnd = find_hwnd_by_query(app_name)
-                    if hwnd:
-                        break
-        except Exception:
-            pass
-
     if not hwnd:
-        return {"status": "error", "message": f"No active window found for '{app_name}'."}
+        if auto_launch:
+            from security.whitelist import WhitelistValidator
+            from core.config_manager import load_config
+
+            cfg = load_config()
+            user_whitelist = cfg.get("allowed_applications") or cfg.get("security", {}).get("app_whitelist", [])
+
+            # Enforce active user whitelist instead of hardcoded wildcard ["*"]
+            launch_res = WhitelistValidator.validate_and_launch(app_name, user_whitelist)
+            if isinstance(launch_res, tuple):
+                is_valid = launch_res[0]
+                launch_err = launch_res[1]
+            else:
+                is_valid = launch_res.get("status") in ("success", "running")
+                launch_err = launch_res.get("error", "Launch failed")
+
+            if not is_valid:
+                return {"status": "error", "message": f"App launch blocked by whitelist: {launch_err}"}
+
+            for _ in range(25):
+                time.sleep(0.1)
+                hwnd = find_hwnd_by_query(app_name)
+                if hwnd:
+                    break
+
+            if not hwnd:
+                return {"status": "launched", "app": app_name}
+        else:
+            return {"status": "not_found", "app": app_name}
+
 
     try:
         title = win32gui.GetWindowText(hwnd) or app_name

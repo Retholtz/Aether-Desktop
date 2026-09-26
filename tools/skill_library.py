@@ -122,13 +122,14 @@ def promote_cached_script(source_script_path: str, intent_label: str, script_has
 class SkillLibrary:
     """Manages persistent repository of automation skills with dynamic fuzzy retrieval."""
 
-    def __init__(self, workspace_root: Optional[str] = None):
+    def __init__(self, workspace_root: Optional[str] = None, library_dir: Optional[str] = None):
         self.workspace_root = workspace_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.library_dir = os.path.join(self.workspace_root, "scripts", "library")
+        self.library_dir = library_dir or os.path.join(self.workspace_root, "scripts", "library")
         os.makedirs(self.library_dir, exist_ok=True)
         self.catalog_file = os.path.join(self.library_dir, "skills_catalog.json")
         self.script_runner = ScriptRunner(self.workspace_root)
         self._ensure_catalog()
+
 
     def _ensure_catalog(self):
         """Initializes empty skills_catalog.json if missing."""
@@ -412,23 +413,34 @@ class SkillLibrary:
         except Exception as e:
             return {"status": "error", "error": str(e), "message": f"Failed to save skill: {e}"}
 
-    def get_skill_code(self, skill_name: str) -> Optional[str]:
-        """Retrieves the source code of a saved skill by name or file name."""
-        clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", skill_name).strip("_").lower()
-        catalog = self._load_catalog()
-        meta = catalog.get(clean_name) or catalog.get(skill_name)
-        if meta:
-            script_path = os.path.join(self.library_dir, meta.get("file", f"{clean_name}.py"))
-            if os.path.exists(script_path):
-                with open(script_path, "r", encoding="utf-8") as f:
-                    return f.read()
+    def get_skill_code(self, skill_name: str) -> str:
+        """Loads Python code for a designated skill, enforcing path boundaries."""
+        if not skill_name.endswith(".py"):
+            file_name = skill_name + ".py"
+        else:
+            file_name = skill_name
 
-        # Fallback: check if file directly exists with .py or clean_name.py
-        for candidate_name in [f"{clean_name}.py", f"{skill_name}.py", skill_name]:
-            candidate_path = os.path.join(self.library_dir, candidate_name)
-            if os.path.exists(candidate_path):
-                with open(candidate_path, "r", encoding="utf-8") as f:
-                    return f.read()
+        base_dir = os.path.realpath(self.library_dir)
+        candidate_path = os.path.realpath(os.path.join(self.library_dir, file_name))
 
-        return None
+        # Enforce containment: candidate must reside within base_dir
+        if not candidate_path.startswith(base_dir + os.sep) and candidate_path != base_dir:
+            raise PermissionError(f"Access denied: Path traversal detected for '{skill_name}'")
+
+        if not os.path.exists(candidate_path):
+            clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", skill_name).strip("_").lower()
+            catalog = self._load_catalog()
+            meta = catalog.get(clean_name) or catalog.get(skill_name)
+            if meta and meta.get("file"):
+                meta_path = os.path.realpath(os.path.join(self.library_dir, meta["file"]))
+                if not meta_path.startswith(base_dir + os.sep) and meta_path != base_dir:
+                    raise PermissionError(f"Access denied: Path traversal detected for '{skill_name}'")
+                if os.path.exists(meta_path):
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        return f.read()
+            raise FileNotFoundError(f"Skill '{skill_name}' does not exist in library.")
+
+        with open(candidate_path, "r", encoding="utf-8") as f:
+            return f.read()
+
 

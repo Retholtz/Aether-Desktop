@@ -6,16 +6,20 @@ resolves executable paths across Windows Registry and system folders, and manage
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import urllib.parse
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 if sys.platform == "win32":
     import winreg
 else:
     winreg = None
+
+SAFE_PROCESS_NAME_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
 
 COMMON_ALIASES = {
     "google chrome": "chrome.exe",
@@ -356,7 +360,7 @@ class WhitelistValidator:
             # 3. Fallback to image name wildcard
             if not terminated:
                 for base in [target_exe[:-4] if target_exe.endswith(".exe") else target_exe, raw_clean]:
-                    if len(base) >= 3:
+                    if len(base) >= 3 and SAFE_PROCESS_NAME_REGEX.match(base):
                         res = subprocess.run(
                             ["taskkill", "/FI", f"IMAGENAME eq {base}*", "/F"],
                             capture_output=True,
@@ -388,6 +392,46 @@ class WhitelistValidator:
                 "executable": target_exe,
                 "error": f"Failed to close {app_name}: {e}"
             }
+
+    @staticmethod
+    def launch_uri(target: str) -> Tuple[bool, str]:
+        """Opens URLs strictly restricted to http or https schemas."""
+        target_clean = target.strip()
+        md_match = re.match(r"^\[.*?\]\((https?://[^\)]+)\)$", target_clean)
+        if md_match:
+            target_clean = md_match.group(1).strip()
+
+        if not (target_clean.startswith("http://") or target_clean.startswith("https://")):
+            return False, f"Blocked: Target '{target_clean}' is not an authorized http/https URL."
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(target_clean)
+            return True, "Launched"
+        except Exception as e:
+            return False, str(e)
+
+    @staticmethod
+    def terminate_process(app_name: str) -> Tuple[bool, str]:
+        """Safely terminates an application after sanitizing the image name."""
+        base = app_name.strip().lower()
+        if not SAFE_PROCESS_NAME_REGEX.match(base):
+            return False, f"Invalid process name format: '{app_name}'"
+
+        if not base.endswith(".exe"):
+            base += ".exe"
+
+        try:
+            res = subprocess.run(
+                ["taskkill", "/FI", f"IMAGENAME eq {base}", "/F"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            return True, res.stdout
+        except Exception as e:
+            return False, str(e)
+
 
     @classmethod
     def add_to_whitelist(cls, app_name: str, whitelist: List[str]) -> dict:
