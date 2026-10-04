@@ -1050,6 +1050,15 @@ def send_gamepad_button(button_name: str, duration_sec: float = 0.1) -> bool:
     try:
         import vgamepad as vg
         btn_key = button_name.lower().strip()
+        if btn_key.startswith("gamepad_") or btn_key.startswith("btn_"):
+            btn_key = btn_key.split("_", 1)[1]
+
+        # Trigger routing if trigger name passed as button
+        if btn_key in ("lt", "left_trigger"):
+            return send_gamepad_trigger("lt", 1.0, duration_sec)
+        elif btn_key in ("rt", "right_trigger"):
+            return send_gamepad_trigger("rt", 1.0, duration_sec)
+
         btn_map = {
             "a": vg.XUSB_BUTTON.XUSB_GAMEPAD_A,
             "b": vg.XUSB_BUTTON.XUSB_GAMEPAD_B,
@@ -1092,6 +1101,141 @@ def send_gamepad_button(button_name: str, duration_sec: float = 0.1) -> bool:
         return True
     except Exception as e:
         print(f"[ERROR] [INPUT] Failed sending gamepad button '{button_name}': {e}")
+        return False
+
+
+def send_gamepad_stick(stick: str = "left", x: float = 0.0, y: float = 0.0, duration_sec: float = 0.2) -> bool:
+    """
+    Deflects a virtual gamepad analog thumbstick (x, y normalized from -1.0 to 1.0).
+    stick: 'left' or 'right'.
+    Duration holds the stick position before returning it to center (0.0, 0.0).
+    """
+    pad = get_virtual_gamepad()
+    if not pad:
+        return False
+    try:
+        stick_clean = stick.lower().strip()
+        clamped_x = max(-1.0, min(1.0, float(x)))
+        clamped_y = max(-1.0, min(1.0, float(y)))
+
+        if stick_clean in ("left", "ls", "l"):
+            pad.left_joystick_float(clamped_x, clamped_y)
+        elif stick_clean in ("right", "rs", "r"):
+            pad.right_joystick_float(clamped_x, clamped_y)
+        else:
+            print(f"[WARN] [INPUT] Unknown gamepad stick: {stick}")
+            return False
+
+        pad.update()
+        time.sleep(duration_sec)
+
+        # Center stick back
+        if stick_clean in ("left", "ls", "l"):
+            pad.left_joystick_float(0.0, 0.0)
+        else:
+            pad.right_joystick_float(0.0, 0.0)
+        pad.update()
+        return True
+    except Exception as e:
+        print(f"[ERROR] [INPUT] Failed moving gamepad stick '{stick}': {e}")
+        return False
+
+
+def send_gamepad_trigger(trigger: str = "rt", value: float = 1.0, duration_sec: float = 0.1) -> bool:
+    """
+    Simulates depressing a virtual gamepad analog trigger (0.0 to 1.0).
+    trigger: 'left'/'lt' or 'right'/'rt'.
+    """
+    pad = get_virtual_gamepad()
+    if not pad:
+        return False
+    try:
+        trig_clean = trigger.lower().strip()
+        clamped_val = max(0.0, min(1.0, float(value)))
+
+        if trig_clean in ("left", "lt", "left_trigger"):
+            pad.left_trigger_float(clamped_val)
+        elif trig_clean in ("right", "rt", "right_trigger"):
+            pad.right_trigger_float(clamped_val)
+        else:
+            print(f"[WARN] [INPUT] Unknown gamepad trigger: {trigger}")
+            return False
+
+        pad.update()
+        time.sleep(duration_sec)
+
+        # Release trigger
+        if trig_clean in ("left", "lt", "left_trigger"):
+            pad.left_trigger_float(0.0)
+        else:
+            pad.right_trigger_float(0.0)
+        pad.update()
+        return True
+    except Exception as e:
+        print(f"[ERROR] [INPUT] Failed sending gamepad trigger '{trigger}': {e}")
+        return False
+
+
+def send_gamepad_combo(buttons: list, duration_sec: float = 0.1) -> bool:
+    """
+    Simulates pressing multiple virtual gamepad buttons simultaneously (e.g. ['lb', 'a']).
+    """
+    pad = get_virtual_gamepad()
+    if not pad:
+        return False
+    try:
+        import vgamepad as vg
+        btn_map = {
+            "a": vg.XUSB_BUTTON.XUSB_GAMEPAD_A,
+            "b": vg.XUSB_BUTTON.XUSB_GAMEPAD_B,
+            "x": vg.XUSB_BUTTON.XUSB_GAMEPAD_X,
+            "y": vg.XUSB_BUTTON.XUSB_GAMEPAD_Y,
+            "view": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "back": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "select": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "menu": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "start": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "lb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "left_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "rb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "right_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "ls": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "left_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "rs": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "right_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "dpad_up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "dpad_down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "dpad_left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "dpad_right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "guide": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+            "xbox": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+        }
+        resolved = []
+        for b in buttons:
+            k = b.lower().strip()
+            if k.startswith("gamepad_") or k.startswith("btn_"):
+                k = k.split("_", 1)[1]
+            mapped = btn_map.get(k)
+            if mapped:
+                resolved.append(mapped)
+
+        if not resolved:
+            return False
+
+        for btn in resolved:
+            pad.press_button(button=btn)
+        pad.update()
+        time.sleep(duration_sec)
+        for btn in resolved:
+            pad.release_button(button=btn)
+        pad.update()
+        return True
+    except Exception as e:
+        print(f"[ERROR] [INPUT] Failed sending gamepad combo: {e}")
         return False
 
 

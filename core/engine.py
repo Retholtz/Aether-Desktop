@@ -2236,6 +2236,27 @@ class AetherEngine:
                         "source": source
                     })
 
+                # Fast-Path Game Action Execution:
+                # If an active game profile exists and prompt matches an in-game voice macro, execute immediately!
+                if hasattr(self, "game_mgr") and self.game_mgr:
+                    active_game = self.game_mgr.data.get("active_profile")
+                    if active_game:
+                        clean_macro = re.sub(r'^[,\.\s]+|[,\.\s]+$', '', lower_prompt).strip()
+                        if clean_macro.startswith(agent_name.lower()):
+                            clean_macro = clean_macro[len(agent_name):].strip().lstrip(",. ")
+                        macro_res = self.game_mgr.trigger_action(clean_macro)
+                        if macro_res.get("status") == "executed":
+                            logger.info(f"[FAST-PATH MACRO] Executed action '{macro_res.get('action')}' for '{user_prompt}'")
+                            self.notify("chat_event", {
+                                "type": "system",
+                                "content": f"⚡ [In-Game Macro] Executed: {macro_res.get('action')}"
+                            })
+                            profile_binds = self.game_mgr.get_profile(active_game).get("keybinds", {})
+                            if clean_macro in profile_binds:
+                                if not is_wake_idle:
+                                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                                continue
+
                 self.notify("status", {"state": "thinking", "message": f"{agent_name} is thinking...", "user_prompt": user_prompt})
 
                 # 2. Send prompt to Cortex (gemini-3.8-flash) with dynamically routed tool declarations
@@ -2763,9 +2784,10 @@ class AetherEngine:
         matched via BM25 semantic skill routing.
         """
         # 1. Fetch dynamically filtered tool declarations
+        active_game = getattr(self, "game_mgr", None) and self.game_mgr.data.get("active_profile")
         active_tools = self.dispatcher.get_routed_tool_declarations(
             user_prompt=user_prompt,
-            max_dynamic_skills=3
+            max_dynamic_skills=0 if active_game else 3
         )
 
         if temperature is None:

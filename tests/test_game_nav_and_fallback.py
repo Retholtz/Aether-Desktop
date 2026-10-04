@@ -113,7 +113,7 @@ class TestGameNavAndFallback(unittest.TestCase):
              patch("core.game_nav.click_mouse_button") as mock_click, \
              patch.object(nav, "verify_marker_placement", return_value={"accurate": True, "correction_needed": False}):
 
-            res = nav.pan_and_place_marker("Legendary Bear Mount", general_direction="north")
+            res = nav.pan_and_place_marker("Legendary Bear Mount", general_direction="north", use_gamepad=True)
             self.assertEqual(res["status"], "success")
             self.assertEqual(res["placed_at"], [500, 500])
             self.assertTrue(res.get("verified"))
@@ -125,6 +125,24 @@ class TestGameNavAndFallback(unittest.TestCase):
             mock_move.assert_called_with(500, 500)
             # Right click to place waypoint
             mock_click.assert_called_with("right", hold_duration=0.08)
+
+    def test_pan_and_place_marker_keyboard_default(self):
+        json_resp = '{"found": true, "point": [500, 500]}'
+        client = MockClient(json_resp)
+        nav = GameNavigator(client=client)
+
+        with patch.object(nav, "capture_screen", return_value=(b"fake_jpeg", 1000, 1000)), \
+             patch("core.game_nav.send_gamepad_button") as mock_pad, \
+             patch("core.game_nav.send_directinput_key") as mock_key, \
+             patch("core.game_nav.move_mouse_absolute"), \
+             patch("core.game_nav.click_mouse_button"), \
+             patch.object(nav, "verify_marker_placement", return_value={"accurate": True, "correction_needed": False}):
+
+            res = nav.pan_and_place_marker("Legendary Bear Mount")
+            self.assertEqual(res["status"], "success")
+            # Defaults to keyboard 'm' without touching gamepad
+            mock_pad.assert_not_called()
+            mock_key.assert_called_with("m", duration_sec=0.1)
 
     def test_pan_and_place_marker_with_gamepad_success(self):
         json_resp = '{"found": true, "point": [400, 300]}'

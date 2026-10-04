@@ -242,6 +242,22 @@ class GameManager:
             "Use the 'update_game_scratchpad' tool when the player tells you to note down or remember something on their personal scratchpad."
         )
 
+        # 6. Strict Game Scope & Search Locking Directive
+        game_title = profile.get("display_name", active_id)
+        parts.append(
+            f"=== STRICT GAME SCOPE & SEARCH LOCK: {game_title.upper()} ===\n"
+            f"1. UNIVERSE LOCK: You are exclusively operating within the universe, mechanics, lore, and geography of {game_title}.\n"
+            f"   - NEVER search for, reference, or import terminology from unrelated games (e.g. World of Warcraft, Black Desert, Dark Souls, Elder Scrolls, etc.).\n"
+            f"   - When discussing game lore, builds, quests, or mechanics, provide rich, thorough, and detailed guidance as appropriate for the player's questions.\n"
+            f"2. GOOGLE SEARCH LOCK: If you perform a Google Search to assist the player, your search query MUST be strictly scoped with \"{game_title}\" (e.g. '\"{game_title}\" <topic>'). Never execute un-scoped generic searches.\n"
+            f"3. MAP & WAYPOINT DELEGATION:\n"
+            f"   - When the user asks to mark, view, or find a location on their map, delegate directly to `pan_and_mark_map_location` or `assist_game_navigation`.\n"
+            f"   - NEVER attempt to blindly click raw screen coordinates with generic `mouse_click` or send random `escape`, `Close`, or `t` keystrokes.\n"
+            f"4. SCREEN-FIRST GROUNDING:\n"
+            f"   - If web wiki information is incomplete, unreleased, or conflicting, call `inspect_screen_context` to read the active quest tracker, map labels, or HUD directly from the user's game screen.\n"
+            f"   - If a quest or location is ambiguous on screen, ask the player for visual clarification rather than guessing."
+        )
+
         return "\n\n".join(parts)
 
     def add_copilot_log_entry(
@@ -602,8 +618,18 @@ Format strictly as valid JSON.
         return self.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model_endpoint)
 
     def trigger_action(self, phrase: str) -> dict:
-        """Looks up spoken phrase in the active game profile and executes the DirectInput combo."""
-        from tools.os_controls import send_directinput_combo, send_directinput_key
+        """
+        Looks up spoken phrase in the active game profile and executes the action.
+        Supports DirectInput keyboard combos, mouse clicks, and virtual gamepad buttons/triggers.
+        """
+        from tools.os_controls import (
+            send_directinput_combo,
+            send_directinput_key,
+            click_mouse,
+            zoom_viewport,
+            send_gamepad_button,
+            send_gamepad_trigger,
+        )
         active_id = self.data.get("active_profile")
         profile = self.get_profile(active_id)
         if not profile:
@@ -612,16 +638,51 @@ Format strictly as valid JSON.
         keybinds = profile.get("keybinds", {})
         phrase_clean = phrase.lower().strip()
 
-        # Match trigger phrase
+        # Match trigger phrase (exact or normalized)
         action = keybinds.get(phrase_clean)
+        if not action:
+            for k, val in keybinds.items():
+                if phrase_clean == k.lower().strip():
+                    action = val
+                    break
         if not action:
             return {"status": "ignored", "message": f"No macro mapped to '{phrase}' in {profile['display_name']}."}
 
-        key = action.get("key")
+        key = str(action.get("key", "")).lower().strip()
         mods = action.get("modifiers", [])
+
+        # 1. Mouse Action Mapping
+        mouse_map = {
+            "mouse_left": "left",
+            "left_click": "left",
+            "mouse_right": "right",
+            "right_click": "right",
+            "mouse_middle": "middle",
+            "middle_click": "middle",
+        }
+        if key in mouse_map:
+            click_mouse(button=mouse_map[key])
+            return {"status": "executed", "game": profile["display_name"], "action": action.get("description", phrase), "type": "mouse"}
+
+        if key in ("scroll_up", "wheel_up"):
+            zoom_viewport(1)
+            return {"status": "executed", "game": profile["display_name"], "action": action.get("description", phrase), "type": "mouse_wheel"}
+        elif key in ("scroll_down", "wheel_down"):
+            zoom_viewport(-1)
+            return {"status": "executed", "game": profile["display_name"], "action": action.get("description", phrase), "type": "mouse_wheel"}
+
+        # 2. Virtual Gamepad Mapping
+        if key.startswith("gamepad_") or key.startswith("btn_") or key in ("lt", "rt", "left_trigger", "right_trigger"):
+            if key in ("lt", "rt", "left_trigger", "right_trigger"):
+                send_gamepad_trigger(key, 1.0)
+            else:
+                send_gamepad_button(key)
+            return {"status": "executed", "game": profile["display_name"], "action": action.get("description", phrase), "type": "gamepad"}
+
+        # 3. DirectInput Keyboard Mapping
         if mods:
             send_directinput_combo(mods, key)
         else:
             send_directinput_key(key)
 
-        return {"status": "executed", "game": profile["display_name"], "action": action.get("description", phrase)}
+        return {"status": "executed", "game": profile["display_name"], "action": action.get("description", phrase), "type": "keyboard"}

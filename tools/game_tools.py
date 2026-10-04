@@ -200,7 +200,11 @@ def register_game_tools(dispatcher, game_manager, engine=None):
     )
     def pan_and_mark_map_location(landmark: str, general_direction: Optional[str] = None) -> dict:
         from core.game_nav import GameNavigator
-        client = getattr(engine, "client", None) if engine else None
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
         model_endpoint = "gemini-2.5-flash"
         if engine:
             if hasattr(engine, "config") and isinstance(engine.config, dict):
@@ -211,6 +215,41 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         nav = GameNavigator(client=client, model_endpoint=model_endpoint)
         return nav.pan_and_place_marker(landmark, general_direction)
 
+    @dispatcher.register(
+        name="assist_game_navigation",
+        description="Autonomous closed-loop vision navigation. Iteratively reads on-screen HUD prompts, zooms, pans, visually identifies target landmark or quest objective, and verifies waypoint marker placement.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "target_description": {
+                    "type": "string",
+                    "description": "The destination, landmark, quest objective, or point of interest to navigate to."
+                },
+                "web_context": {
+                    "type": "string",
+                    "description": "Optional background hints or directions."
+                }
+            },
+            "required": ["target_description"]
+        }
+    )
+    def assist_game_navigation(target_description: str, web_context: str = "") -> dict:
+        from core.game_nav import UniversalGameNavigator
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        model_endpoint = "gemini-2.5-flash"
+        if engine:
+            if hasattr(engine, "config") and isinstance(engine.config, dict):
+                model_endpoint = engine.config.get("primary_model_endpoint", "gemini-2.5-flash")
+            elif hasattr(engine, "config_getter") and callable(engine.config_getter):
+                cfg = engine.config_getter()
+                model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-2.5-flash"))
+        nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint)
+        return nav.run_vision_navigation_loop(target_description=target_description, web_context=web_context)
+
     return {
         "get_current_game_telemetry": get_current_game_telemetry,
         "get_current_game_status": get_current_game_status,
@@ -219,4 +258,5 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "record_copilot_observation": record_copilot_observation,
         "update_game_scratchpad": update_game_scratchpad,
         "pan_and_mark_map_location": pan_and_mark_map_location,
+        "assist_game_navigation": assist_game_navigation,
     }

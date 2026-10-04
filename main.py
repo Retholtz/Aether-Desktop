@@ -99,6 +99,20 @@ def run_asyncio_loop(loop: asyncio.AbstractEventLoop):
 
 
 def main():
+    # Check for elevation argument (--elevate or --admin)
+    if "--elevate" in sys.argv or "--admin" in sys.argv:
+        from tools.os_controls import is_running_as_admin
+        if not is_running_as_admin():
+            import ctypes
+            print("[INFO] [ELEVATE] Elevating to Administrator privileges via Windows UAC...")
+            clean_args = [a for a in sys.argv if a not in ("--elevate", "--admin")]
+            params = " ".join([f'"{a}"' if " " in a else a for a in clean_args])
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+            if ret > 32:
+                sys.exit(0)
+            else:
+                print(f"[WARN] [ELEVATE] User declined UAC prompt or elevation failed (code: {ret}). Continuing normal startup.")
+
     print("=" * 60)
     print("           AETHER DESKTOP - MODULAR ARCHITECTURE")
     print("=" * 60)

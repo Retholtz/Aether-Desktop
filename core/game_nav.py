@@ -67,20 +67,22 @@ class UniversalGameNavigator:
         Examine this active game screen and read all visible UI prompts, legends, or footer tooltips.
         Identify the controls for:
         1. "waypoint": The mouse click or key used to place a pin or destination (e.g., "right_click", "left_click", or a key name).
-        2. "center_player": The key used to snap back to the player character or origin, if visible.
-        3. "zoom": The method used to zoom ("mouse_wheel" or specific buttons).
-        4. "close_map": Key or button to exit.
+        2. "pan": The mouse button used to pan/drag the map canvas (e.g. "right", "left", or "middle").
+        3. "center_player": The key used to snap back to the player character or origin, if visible.
+        4. "zoom": The method used to zoom ("mouse_wheel" or specific buttons).
+        5. "close_map": Key or button to exit.
 
         Return strictly a JSON object:
         {
             "waypoint_button": "right" or "left" or null,
+            "pan_button": "right" or "left" or null,
             "center_player_key": "r" or null,
             "zoom_method": "mouse_wheel",
             "detected_prompts": ["list of text prompts seen"]
         }
         """
         if not self.client:
-            return {"waypoint_button": "right", "center_player_key": None, "zoom_method": "mouse_wheel"}
+            return {"waypoint_button": "right", "pan_button": "right", "center_player_key": None, "zoom_method": "mouse_wheel"}
 
         try:
             try:
@@ -106,10 +108,13 @@ class UniversalGameNavigator:
             if raw_text.startswith("```"):
                 raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
                 raw_text = re.sub(r"\s*```$", "", raw_text)
-            return json.loads(raw_text)
+            parsed = json.loads(raw_text)
+            if "pan_button" not in parsed or not parsed["pan_button"]:
+                parsed["pan_button"] = "right"
+            return parsed
         except Exception as e:
             print(f"[WARN] [NAV_DISCOVERY] HUD read error: {e}")
-            return {"waypoint_button": "right", "center_player_key": None, "zoom_method": "mouse_wheel"}
+            return {"waypoint_button": "right", "pan_button": "right", "center_player_key": None, "zoom_method": "mouse_wheel"}
 
     def evaluate_viewport_step(
         self,
@@ -119,6 +124,7 @@ class UniversalGameNavigator:
     ) -> Dict[str, Any]:
         """
         Observes the screen and reasons about the next best physical action.
+        Supports dead-reckoning projection into fog-of-war / uncharted regions.
         """
         prompt = f"""
         You are an autonomous game copilot navigating an in-game interface.
@@ -129,14 +135,18 @@ class UniversalGameNavigator:
 
         Look at the current screen capture:
         1. If the target landmark/POI is visible, return its normalized coordinates (0-1000) and action "CLICK_TARGET".
-        2. If the viewport is zoomed in too far to see the territory, recommend action "ZOOM_OUT".
-        3. If you see the general territory or a regional clue in a specific direction, recommend action "PAN" with direction (north, south, east, west) and distance.
-        4. If you have arrived at the centered target region, recommend action "ZOOM_IN" to get precision.
-        5. If a marker was just placed, evaluate whether it accurately landed on the target. If accurate, return action "VERIFIED_DONE".
+        2. If the target landmark is inside an UNCHARTED or FOG-OF-WAR area where the specific icon is hidden:
+           - Look for the parent regional label (e.g. province name), border, or nearest visible landmark.
+           - Estimate the projected point inside that territory (dead-reckoning).
+           - Return action "CLICK_TARGET" with the estimated coordinates and note "DEAD_RECKONING" in analysis.
+        3. If the viewport is zoomed in too far to see the territory, recommend action "ZOOM_OUT".
+        4. If you see the general territory or a regional clue in a specific direction, recommend action "PAN" with direction (north, south, east, west) and distance.
+        5. If you have arrived at the centered target region, recommend action "ZOOM_IN" to get precision.
+        6. If a marker was just placed, evaluate whether it accurately landed on or near the target. If accurate, return action "VERIFIED_DONE".
 
         Return ONLY a JSON object:
         {{
-            "analysis": "Brief 1-sentence assessment of current view",
+            "analysis": "Brief 1-sentence assessment of current view (note if dead-reckoning was used)",
             "action": "CLICK_TARGET" | "ZOOM_OUT" | "ZOOM_IN" | "PAN" | "CENTER_ORIGIN" | "VERIFIED_DONE",
             "point": [y_normalized, x_normalized] or null,
             "pan_direction": "north" | "south" | "east" | "west" | null,
@@ -193,6 +203,7 @@ class UniversalGameNavigator:
         print(f"[INFO] [NAV_LOOP] Discovered HUD Controls: {hud_info}")
 
         waypoint_btn = hud_info.get("waypoint_button") or "right"
+        pan_btn = hud_info.get("pan_button") or "right"
         center_key = hud_info.get("center_player_key")
 
         # Anchor origin if a key was spotted
@@ -230,7 +241,7 @@ class UniversalGameNavigator:
                     "west": (dist, 0)
                 }
                 dx, dy = delta_map.get(direction.lower(), (0, 0))
-                drag_viewport(dx, dy, button=waypoint_btn)
+                drag_viewport(dx, dy, button=pan_btn)
                 time.sleep(0.4)
 
             elif action == "CENTER_ORIGIN":
@@ -284,7 +295,7 @@ class GameNavigator(UniversalGameNavigator):
             time.sleep(0.3)
 
     def locate_landmark_point(self, landmark_description: str) -> Optional[Tuple[int, int]]:
-        """Uses visual grounding to find the target landmark coordinates."""
+        """Uses visual grounding or regional dead-reckoning to find landmark coordinates."""
         if not self.client:
             print("[WARN] [GAME_NAV] No Gemini client provided for visual landmark grounding.")
             return None
@@ -292,10 +303,14 @@ class GameNavigator(UniversalGameNavigator):
         img_bytes, width, height = self.capture_screen()
         prompt = f"""
 Analyze this in-game world map screenshot. Locate the visual landmark, territory, or icon corresponding to: "{landmark_description}".
+If the exact landmark or vendor icon is locked behind Fog-of-War or uncharted terrain:
+- Identify the parent territory label (e.g. city or region name) or nearest visible boundary.
+- Estimate the projected point inside that territory (dead-reckoning).
+
 Return ONLY a JSON object:
 {{"found": true, "point": [y_center_normalized, x_center_normalized]}}
 Values must be normalized between 0 and 1000.
-If the landmark is not visible on screen, return {{"found": false}}.
+If neither the landmark nor its containing region/anchor can be found, return {{"found": false}}.
 """
         try:
             try:
@@ -336,28 +351,25 @@ If the landmark is not visible on screen, return {{"found": false}}.
     def verify_marker_placement(self, target_landmark: str) -> dict:
         """Captures a post-click screenshot to verify destination marker placement."""
         img_bytes, width, height = self.capture_screen()
-        if not self.client:
-            return {"accurate": True, "correction_needed": False, "correct_point": None}
+        if not self.client or not img_bytes:
+            return {"accurate": False, "marker_visible": False, "correction_needed": False, "correct_point": None}
 
         prompt = f"""
-Inspect this in-game map screenshot after a waypoint click was issued.
-Target Landmark: "{target_landmark}"
+        Inspect this in-game map screenshot after a waypoint click was issued.
+        Target Landmark: "{target_landmark}"
 
-Check if an active destination beacon, waypoint pin, or navigation marker is accurately placed on or near the target landmark.
-Return ONLY a JSON dictionary:
-{{
-    "accurate": true,
-    "correction_needed": false,
-    "correct_point": null
-}}
-If the marker is visibly missing or placed far from the landmark, return:
-{{
-    "accurate": false,
-    "correction_needed": true,
-    "correct_point": [y_center_normalized, x_center_normalized]
-}}
-Coordinates must be normalized [0-1000].
-"""
+        Check whether an active destination beacon, waypoint pin, glowing beacon, or navigation path line is visibly present on or near the target landmark.
+        Return strictly a JSON object:
+        {{
+            "marker_visible": true or false,
+            "accurate": true or false,
+            "correction_needed": true or false,
+            "correct_point": [y_center_normalized, x_center_normalized] or null
+        }}
+        - If NO waypoint pin or navigation beacon is visible on the map, set "marker_visible": false and "accurate": false.
+        - If a waypoint pin is clearly visible on or near the landmark, set "marker_visible": true and "accurate": true.
+        - If a pin was placed far from the landmark, set "marker_visible": true, "accurate": false, "correction_needed": true, and provide the correct point.
+        """
         try:
             try:
                 from google.genai import types
@@ -365,12 +377,7 @@ Coordinates must be normalized [0-1000].
                 contents = [part, prompt]
             except Exception:
                 contents = [
-                    {
-                        "parts": [
-                            {"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}},
-                            {"text": prompt}
-                        ]
-                    }
+                    {"parts": [{"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}}, {"text": prompt}]}
                 ]
 
             res = self.client.models.generate_content(
@@ -378,7 +385,6 @@ Coordinates must be normalized [0-1000].
                 contents=contents,
                 config={"response_mime_type": "application/json"}
             )
-
             raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
             if raw_text.startswith("```"):
                 raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
@@ -387,31 +393,73 @@ Coordinates must be normalized [0-1000].
             data = json.loads(raw_text) if raw_text else {}
             return data
         except Exception as e:
-            print(f"[ERROR] [GAME_NAV] Marker verification failed: {e}")
-            return {"accurate": True, "correction_needed": False, "correct_point": None}
+            print(f"[WARN] [GAME_NAV] Marker verification parse error: {e}")
+            return {"accurate": False, "marker_visible": False, "correction_needed": False, "correct_point": None}
+
+    def is_map_screen(self, img_bytes: bytes) -> bool:
+        """Determines if the captured screen is already displaying an in-game world map."""
+        if not self.client or not img_bytes:
+            return False
+        try:
+            prompt = (
+                "Inspect this screenshot from a video game. Is this currently an in-game world map, "
+                "territory map, or navigation map interface? "
+                "Return strictly JSON: {\"is_map\": true} or {\"is_map\": false}"
+            )
+            try:
+                from google.genai import types
+                part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+                contents = [part, prompt]
+            except Exception:
+                contents = [
+                    {"parts": [{"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}}, {"text": prompt}]}
+                ]
+            res = self.client.models.generate_content(
+                model=self.model_endpoint,
+                contents=contents,
+                config={"response_mime_type": "application/json"}
+            )
+            raw = res.text.strip() if res and hasattr(res, "text") and res.text else ""
+            if raw.startswith("```"):
+                raw = re.sub(r"^```(?:json)?\s*", "", raw)
+                raw = re.sub(r"\s*```$", "", raw)
+            data = json.loads(raw) if raw else {}
+            return bool(data.get("is_map", False))
+        except Exception as e:
+            print(f"[DEBUG] [GAME_NAV] Map screen check: {e}")
+            return False
 
     def pan_and_place_marker_verified(
         self,
         landmark_description: str,
         general_direction: Optional[str] = None,
         click_button: str = "right",
-        use_gamepad: bool = True
+        pan_button: str = "right",
+        use_gamepad: bool = False
     ) -> Dict[str, Any]:
-        """Executes map opening, panning, visual localization, click, and auto-correction."""
-        opened = False
-        if use_gamepad:
-            opened = send_gamepad_button("view", duration_sec=0.1)
-        if not opened:
-            send_directinput_key("m", duration_sec=0.1)
-        time.sleep(0.6)
+        """Executes map opening (keyboard default), panning, visual localization, click, and verification."""
+        # 1. Open the in-game map if not already displayed
+        initial_frame, width, height = self.capture_screen()
+        already_map = self.is_map_screen(initial_frame)
+        if not already_map:
+            opened = False
+            if use_gamepad:
+                opened = send_gamepad_button("view", duration_sec=0.1)
+            if not opened:
+                send_directinput_key("m", duration_sec=0.1)
+            time.sleep(0.6)
+        else:
+            print("[INFO] [GAME_NAV] Map screen is already open. Proceeding directly to navigation.")
 
+        # 2. Panning towards target direction if requested
         if general_direction:
-            self.pan_map(general_direction, distance=400, button=click_button)
+            self.pan_map(general_direction, distance=400, button=pan_button)
 
+        # 3. Locate landmark on viewport
         coords = self.locate_landmark_point(landmark_description)
         if not coords and not general_direction:
             for test_dir in ["north", "south", "east", "west"]:
-                self.pan_map(test_dir, distance=300, button=click_button)
+                self.pan_map(test_dir, distance=300, button=pan_button)
                 coords = self.locate_landmark_point(landmark_description)
                 if coords:
                     break
@@ -419,18 +467,51 @@ Coordinates must be normalized [0-1000].
         if not coords:
             return {
                 "status": "not_found",
-                "message": f"Could not find '{landmark_description}' on the visible map viewport."
+                "success": False,
+                "message": f"Could not find '{landmark_description}' on the visible map viewport. Try panning toward the region or zooming out."
             }
 
+        # 4. Click target coordinates
         px, py = coords
         move_mouse_absolute(px, py)
         time.sleep(0.15)
         click_mouse_button(click_button, hold_duration=0.08)
 
-        # Closed-Loop Verification & Auto-Correction
-        time.sleep(0.35)
+        # 5. Closed-Loop Verification & Auto-Correction
+        time.sleep(0.4)
         verification = self.verify_marker_placement(landmark_description)
 
+        marker_seen = (
+            verification.get("marker_visible", False)
+            or verification.get("accurate", False)
+            or verification.get("correction_needed", False)
+        )
+        if not marker_seen:
+            # First click may not have registered. Try alternate mouse button
+            alt_btn = "left" if click_button == "right" else "right"
+            print(f"[INFO] [GAME_NAV] Marker not confirmed with {click_button} click. Retrying with {alt_btn} click at ({px}, {py})...")
+            move_mouse_absolute(px, py)
+            time.sleep(0.1)
+            click_mouse_button(alt_btn, hold_duration=0.1)
+            time.sleep(0.4)
+            verification = self.verify_marker_placement(landmark_description)
+            marker_seen = (
+                verification.get("marker_visible", False)
+                or verification.get("accurate", False)
+                or verification.get("correction_needed", False)
+            )
+
+        if not marker_seen:
+            print(f"[WARN] [GAME_NAV] Waypoint marker was not detected after clicks at ({px}, {py}).")
+            return {
+                "status": "marker_unverified",
+                "success": False,
+                "placed_at": [px, py],
+                "landmark": landmark_description,
+                "message": f"Clicked at coordinates ({px}, {py}) for '{landmark_description}', but no active waypoint marker was detected on the map. The game may require a specific key or button to set waypoints."
+            }
+
+        # Auto-correction if marker landed far from landmark
         if verification.get("correction_needed") and verification.get("correct_point"):
             correct_pt = verification["correct_point"]
             if isinstance(correct_pt, (list, tuple)) and len(correct_pt) == 2:
@@ -442,10 +523,11 @@ Coordinates must be normalized [0-1000].
                 move_mouse_absolute(corr_px, corr_py)
                 time.sleep(0.15)
                 click_mouse_button(click_button, hold_duration=0.08)
-                time.sleep(0.2)
+                time.sleep(0.3)
 
                 return {
                     "status": "success",
+                    "success": True,
                     "placed_at": [corr_px, corr_py],
                     "initial_point": [px, py],
                     "landmark": landmark_description,
@@ -454,25 +536,27 @@ Coordinates must be normalized [0-1000].
                     "message": f"Waypoint placed and auto-corrected to ({corr_px}, {corr_py}) for '{landmark_description}'."
                 }
 
-        is_accurate = verification.get("accurate", True)
         return {
             "status": "success",
+            "success": True,
             "placed_at": [px, py],
             "landmark": landmark_description,
-            "verified": is_accurate,
+            "verified": True,
             "auto_corrected": False,
-            "message": f"Waypoint successfully placed at ({px}, {py}) for '{landmark_description}' (verified: {is_accurate})."
+            "message": f"Waypoint successfully placed and verified at ({px}, {py}) for '{landmark_description}'."
         }
 
     def pan_and_place_marker(
         self,
         landmark_description: str,
         general_direction: Optional[str] = None,
-        click_button: str = "right"
+        click_button: str = "right",
+        use_gamepad: bool = False
     ) -> Dict[str, Any]:
         """Wrapper maintaining backwards-compatibility, executing verified placement."""
         return self.pan_and_place_marker_verified(
             landmark_description=landmark_description,
             general_direction=general_direction,
-            click_button=click_button
+            click_button=click_button,
+            use_gamepad=use_gamepad
         )
