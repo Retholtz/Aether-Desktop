@@ -261,6 +261,23 @@ class GuiBridge:
                     self.engine.game_mgr = self.game_mgr
                 except Exception:
                     pass
+
+        orig_cb = self.game_mgr.on_game_mode_changed
+        def _bridge_on_game_mode_changed(enabled: bool, game_id: str, game_name: str):
+            if callable(orig_cb):
+                try:
+                    orig_cb(enabled, game_id, game_name)
+                except Exception:
+                    pass
+            self._on_engine_event("game_mode_changed", {
+                "enabled": enabled,
+                "game_mode_enabled": enabled,
+                "active_profile": game_id,
+                "game_id": game_id,
+                "display_name": game_name,
+                "game_name": game_name
+            })
+        self.game_mgr.on_game_mode_changed = _bridge_on_game_mode_changed
         register_ui_log_callback(self._on_log_record)
         self._last_audio_fp = get_windows_audio_fingerprint()
         self.start_audio_watcher()
@@ -393,6 +410,16 @@ class GuiBridge:
         if self._engine:
             self._engine.hud_window = window
 
+    def _is_window_ready(self, win) -> bool:
+        """Returns True only if the PyWebView window has a native handle and has finished loading."""
+        if not win:
+            return False
+        if not getattr(win, "native", None):
+            return False
+        if hasattr(win, "events") and hasattr(win.events, "loaded"):
+            return win.events.loaded.is_set()
+        return True
+
     def set_hud_bridge(self, hud_bridge):
         self._hud_bridge = hud_bridge
 
@@ -434,7 +461,7 @@ class GuiBridge:
             
             with self._js_lock:
                 # Dispatch to Main Window
-                if self._window:
+                if self._is_window_ready(self._window):
                     try:
                         js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
                         self._window.evaluate_js(js_code)
@@ -442,7 +469,7 @@ class GuiBridge:
                         pass
 
                 # Dispatch to Floating Overlay Window
-                if self._overlay_window:
+                if self._is_window_ready(self._overlay_window):
                     try:
                         overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
                         self._overlay_window.evaluate_js(overlay_js)
@@ -1179,7 +1206,7 @@ class GuiBridge:
         elif getattr(self, "_overlay_window", None):
             try:
                 if mode == "mini":
-                    self._overlay_window.resize(180, 52)
+                    self._overlay_window.resize(210, 56)
                 elif mode == "normal":
                     self._overlay_window.resize(440, 180)
                 elif mode == "max":
@@ -1495,7 +1522,10 @@ class GuiBridge:
         return {
             "active_profile": profiles_data.get("active_profile", ""),
             "profiles": profiles_data.get("profiles", {}),
-            "running_status": status_map
+            "running_status": status_map,
+            "game_mode_enabled": self.game_mgr.game_mode_enabled,
+            "is_game_mode_active": self.game_mgr.is_game_mode_active(),
+            "user_override": self.game_mgr.user_override_game_mode
         }
 
     def add_game_profile(self, display_name: str, process_name: str = "") -> dict:
@@ -1511,14 +1541,56 @@ class GuiBridge:
     def set_active_game_profile(self, game_id: str) -> dict:
         """Switches the active game profile in memory and disk."""
         if not game_id:
-            self.game_mgr.data["active_profile"] = ""
-            self.game_mgr._save_profiles(self.game_mgr.data)
-            return {"success": True, "active_profile": ""}
-        if game_id in self.game_mgr.data.get("profiles", {}):
-            self.game_mgr.data["active_profile"] = game_id
-            self.game_mgr._save_profiles(self.game_mgr.data)
-            return {"success": True, "active_profile": game_id}
+            self.game_mgr.set_active_profile("")
+            return {"success": True, "active_profile": "", "game_mode_enabled": self.game_mgr.game_mode_enabled}
+        success = self.game_mgr.set_active_profile(game_id)
+        if success:
+            if self.game_mgr.user_override_game_mode is not False:
+                self.game_mgr.set_game_mode(True)
+            return {
+                "success": True,
+                "active_profile": game_id,
+                "game_mode_enabled": self.game_mgr.game_mode_enabled
+            }
         return {"success": False, "error": f"Unknown game profile: {game_id}"}
+
+    def get_game_mode(self) -> dict:
+        """Returns the current Game Mode status and active profile."""
+        active_id = self.game_mgr.data.get("active_profile", "")
+        prof = self.game_mgr.get_profile(active_id) if active_id else None
+        is_running = self.game_mgr.is_game_running(active_id) if active_id else False
+        is_active = self.game_mgr.is_game_mode_active()
+        return {
+            "game_mode_enabled": self.game_mgr.game_mode_enabled,
+            "is_active": is_active,
+            "is_running": is_running,
+            "active_profile": active_id,
+            "display_name": prof.get("display_name", active_id) if prof else "",
+            "user_override": self.game_mgr.user_override_game_mode
+        }
+
+    def set_game_mode(self, enabled: bool) -> dict:
+        """Explicitly enables or disables Game Mode."""
+        res = self.game_mgr.set_game_mode(enabled, user_explicit=True)
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "_reset_context_flag"):
+            self._engine._reset_context_flag = True
+        elif hasattr(self, "engine") and self.engine and hasattr(self.engine, "_reset_context_flag"):
+            self.engine._reset_context_flag = True
+        return res
+
+    def toggle_game_mode(self) -> dict:
+        """Toggles Game Mode state."""
+        res = self.game_mgr.set_game_mode(not self.game_mgr.game_mode_enabled, user_explicit=True)
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "_reset_context_flag"):
+            self._engine._reset_context_flag = True
+        elif hasattr(self, "engine") and self.engine and hasattr(self.engine, "_reset_context_flag"):
+            self.engine._reset_context_flag = True
+        return res
+
+    def get_agent_name(self) -> dict:
+        """Returns the configured assistant agent name."""
+        api_cfg = self._config.get("api", {}) if hasattr(self, "_config") and self._config else {}
+        return {"agent_name": api_cfg.get("agent_name", "Aether")}
 
     def sync_game_bindings(self, game_id: str) -> dict:
         """Scans local directories or retrieves web defaults if files are absent."""

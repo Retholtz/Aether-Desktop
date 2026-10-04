@@ -1020,6 +1020,27 @@ def zoom_viewport(notches: int):
 
 _VIRTUAL_GAMEPAD = None
 
+try:
+    import vgamepad as vg
+    _XUSB_BUTTON = vg.XUSB_BUTTON
+except Exception:
+    class _XUSB_BUTTON:
+        XUSB_GAMEPAD_DPAD_UP = 0x0001
+        XUSB_GAMEPAD_DPAD_DOWN = 0x0002
+        XUSB_GAMEPAD_DPAD_LEFT = 0x0004
+        XUSB_GAMEPAD_DPAD_RIGHT = 0x0008
+        XUSB_GAMEPAD_START = 0x0010
+        XUSB_GAMEPAD_BACK = 0x0020
+        XUSB_GAMEPAD_LEFT_THUMB = 0x0040
+        XUSB_GAMEPAD_RIGHT_THUMB = 0x0080
+        XUSB_GAMEPAD_LEFT_SHOULDER = 0x0100
+        XUSB_GAMEPAD_RIGHT_SHOULDER = 0x0200
+        XUSB_GAMEPAD_GUIDE = 0x0400
+        XUSB_GAMEPAD_A = 0x1000
+        XUSB_GAMEPAD_B = 0x2000
+        XUSB_GAMEPAD_X = 0x4000
+        XUSB_GAMEPAD_Y = 0x8000
+
 
 def get_virtual_gamepad():
     """
@@ -1048,7 +1069,6 @@ def send_gamepad_button(button_name: str, duration_sec: float = 0.1) -> bool:
         return False
 
     try:
-        import vgamepad as vg
         btn_key = button_name.lower().strip()
         if btn_key.startswith("gamepad_") or btn_key.startswith("btn_"):
             btn_key = btn_key.split("_", 1)[1]
@@ -1060,33 +1080,33 @@ def send_gamepad_button(button_name: str, duration_sec: float = 0.1) -> bool:
             return send_gamepad_trigger("rt", 1.0, duration_sec)
 
         btn_map = {
-            "a": vg.XUSB_BUTTON.XUSB_GAMEPAD_A,
-            "b": vg.XUSB_BUTTON.XUSB_GAMEPAD_B,
-            "x": vg.XUSB_BUTTON.XUSB_GAMEPAD_X,
-            "y": vg.XUSB_BUTTON.XUSB_GAMEPAD_Y,
-            "view": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
-            "back": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
-            "select": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
-            "menu": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
-            "start": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
-            "lb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
-            "left_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
-            "rb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
-            "right_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
-            "ls": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
-            "left_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
-            "rs": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
-            "right_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
-            "dpad_up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
-            "up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
-            "dpad_down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
-            "down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
-            "dpad_left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
-            "left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
-            "dpad_right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
-            "right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
-            "guide": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
-            "xbox": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+            "a": _XUSB_BUTTON.XUSB_GAMEPAD_A,
+            "b": _XUSB_BUTTON.XUSB_GAMEPAD_B,
+            "x": _XUSB_BUTTON.XUSB_GAMEPAD_X,
+            "y": _XUSB_BUTTON.XUSB_GAMEPAD_Y,
+            "view": _XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "back": _XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "select": _XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "menu": _XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "start": _XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "lb": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "left_shoulder": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "rb": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "right_shoulder": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "ls": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "left_thumb": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "rs": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "right_thumb": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "dpad_up": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "up": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "dpad_down": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "down": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "dpad_left": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "left": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "dpad_right": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "right": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "guide": _XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+            "xbox": _XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
         }
         btn = btn_map.get(btn_key)
         if not btn:
@@ -1184,35 +1204,34 @@ def send_gamepad_combo(buttons: list, duration_sec: float = 0.1) -> bool:
     if not pad:
         return False
     try:
-        import vgamepad as vg
         btn_map = {
-            "a": vg.XUSB_BUTTON.XUSB_GAMEPAD_A,
-            "b": vg.XUSB_BUTTON.XUSB_GAMEPAD_B,
-            "x": vg.XUSB_BUTTON.XUSB_GAMEPAD_X,
-            "y": vg.XUSB_BUTTON.XUSB_GAMEPAD_Y,
-            "view": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
-            "back": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
-            "select": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
-            "menu": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
-            "start": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
-            "lb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
-            "left_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
-            "rb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
-            "right_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
-            "ls": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
-            "left_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
-            "rs": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
-            "right_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
-            "dpad_up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
-            "up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
-            "dpad_down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
-            "down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
-            "dpad_left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
-            "left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
-            "dpad_right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
-            "right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
-            "guide": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
-            "xbox": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+            "a": _XUSB_BUTTON.XUSB_GAMEPAD_A,
+            "b": _XUSB_BUTTON.XUSB_GAMEPAD_B,
+            "x": _XUSB_BUTTON.XUSB_GAMEPAD_X,
+            "y": _XUSB_BUTTON.XUSB_GAMEPAD_Y,
+            "view": _XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "back": _XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "select": _XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "menu": _XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "start": _XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "lb": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "left_shoulder": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "rb": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "right_shoulder": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "ls": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "left_thumb": _XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "rs": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "right_thumb": _XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "dpad_up": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "up": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "dpad_down": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "down": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "dpad_left": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "left": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "dpad_right": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "right": _XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "guide": _XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+            "xbox": _XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
         }
         resolved = []
         for b in buttons:

@@ -22,21 +22,33 @@ def register_game_tools(dispatcher, game_manager, engine=None):
 
     @dispatcher.register(
         name="get_current_game_telemetry",
-        description="Returns real-time in-game telemetry, location, and ship status for the active game (e.g. Elite Dangerous)."
+        description="Returns real-time in-game telemetry, location, active profile, and Game Mode focus status for the active game."
     )
     def get_current_game_telemetry() -> dict:
-        active_id = game_manager.data.get("active_profile")
+        active_id = game_manager.data.get("active_profile") or ""
+        is_active = game_manager.is_game_mode_active()
+        enabled = game_manager.game_mode_enabled
+        is_running = game_manager.is_game_running(active_id) if active_id else False
         if active_id == "elite_dangerous" and game_manager.ed_watcher:
-            return game_manager.ed_watcher.state
-        profile = game_manager.get_profile(active_id)
+            res = dict(game_manager.ed_watcher.state)
+            res["active_profile"] = active_id
+            res["game_mode_enabled"] = enabled
+            res["is_game_mode_active"] = is_active
+            res["is_game_running"] = is_running
+            return res
+        profile = game_manager.get_profile(active_id) if active_id else None
         return {
             "game": profile.get("display_name") if profile else "None",
+            "active_profile": active_id,
+            "game_mode_enabled": enabled,
+            "is_game_mode_active": is_active,
+            "is_game_running": is_running,
             "scratchpad": profile.get("scratchpad_raw", "") if profile else ""
         }
 
     @dispatcher.register(
         name="get_current_game_status",
-        description="Retrieves live in-game location, status, and ship state for the active game."
+        description="Retrieves live in-game location, status, active profile, and whether Game Mode is currently engaged."
     )
     def get_current_game_status() -> dict:
         return get_current_game_telemetry()
@@ -57,6 +69,26 @@ def register_game_tools(dispatcher, game_manager, engine=None):
     )
     def trigger_game_action(phrase: str) -> dict:
         return game_manager.trigger_action(phrase)
+
+    @dispatcher.register(
+        name="toggle_game_mode",
+        description="Enables or disables Aether's dedicated in-game focus mode. In game mode, Aether strictly locks into the active game universe and mechanics. When disabled, Aether can freely discuss real-world topics while in-game macros remain standing by.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "True to enable Game Mode (strict game focus), False to disable (open conversation)."
+                }
+            },
+            "required": ["enabled"]
+        }
+    )
+    def toggle_game_mode(enabled: bool) -> dict:
+        res = game_manager.set_game_mode(enabled, user_explicit=True)
+        if engine and hasattr(engine, "_reset_context_flag"):
+            engine._reset_context_flag = True
+        return res
 
     @dispatcher.register(
         name="lookup_inara_market",
@@ -254,6 +286,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "get_current_game_telemetry": get_current_game_telemetry,
         "get_current_game_status": get_current_game_status,
         "trigger_game_action": trigger_game_action,
+        "toggle_game_mode": toggle_game_mode,
         "lookup_inara_market": lookup_inara_market,
         "record_copilot_observation": record_copilot_observation,
         "update_game_scratchpad": update_game_scratchpad,

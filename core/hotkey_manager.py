@@ -164,11 +164,13 @@ class HotkeyManager:
         on_ptt_change: Optional[Callable[[bool], None]] = None,
         on_ptt_toggle: Optional[Callable[[], None]] = None,
         on_hud_mode_cycle: Optional[Callable[[], None]] = None,
+        on_game_mode_toggle: Optional[Callable[[], None]] = None,
         config_getter: Optional[Callable[[], dict]] = None,
     ):
         self.on_ptt_change = on_ptt_change
         self.on_ptt_toggle = on_ptt_toggle
         self.on_hud_mode_cycle = on_hud_mode_cycle
+        self.on_game_mode_toggle = on_game_mode_toggle
         self.config_getter = config_getter or (lambda: {})
 
         self.enabled = False
@@ -183,6 +185,12 @@ class HotkeyManager:
         self.hud_mode_modifiers: List[str] = ["Control"]
         self.hud_mode_display: str = "Ctrl+Space"
         self._is_hud_key_down = False
+
+        # Game Mode Focus Toggle Hotkey (default Ctrl+Shift+G)
+        self.game_mode_vk: Optional[int] = 0x47  # VK for 'G'
+        self.game_mode_modifiers: List[str] = ["Control", "Shift"]
+        self.game_mode_display: str = "Ctrl+Shift+G"
+        self._is_game_mode_key_down = False
 
         self._is_key_down = False
         self._input_focused = False
@@ -243,14 +251,28 @@ class HotkeyManager:
             hud_key_str = ui_cfg.get("hud_mode_hotkey", "Ctrl+Space")
             self.hud_mode_vk, self.hud_mode_modifiers = parse_keybind_string(hud_key_str)
 
+        # Game Mode hotkey settings
+        self.game_mode_display = ui_cfg.get("game_mode_key_display", "Ctrl+Shift+G")
+        explicit_gm_vk = ui_cfg.get("game_mode_vk")
+        explicit_gm_mods = ui_cfg.get("game_mode_modifiers")
+
+        if explicit_gm_vk is not None:
+            self.game_mode_vk = int(explicit_gm_vk)
+            self.game_mode_modifiers = list(explicit_gm_mods or [])
+        else:
+            gm_key_str = ui_cfg.get("game_mode_hotkey", "Ctrl+Shift+G")
+            self.game_mode_vk, self.game_mode_modifiers = parse_keybind_string(gm_key_str)
+
         self.enabled = (self.audio_mode == "ptt")
         self._is_key_down = False
         self._is_hud_key_down = False
+        self._is_game_mode_key_down = False
 
         logger.info(
             f"[HOTKEY] Config updated: PTT(mode={self.audio_mode}, ptt_type={self.ptt_type}, "
             f"key={self.key_display}, VK={self.target_vk:#04x}, mods={self.target_modifiers}) | "
-            f"HUD(key={self.hud_mode_display}, VK={self.hud_mode_vk:#04x}, mods={self.hud_mode_modifiers})"
+            f"HUD(key={self.hud_mode_display}, VK={self.hud_mode_vk:#04x}, mods={self.hud_mode_modifiers}) | "
+            f"GameMode(key={self.game_mode_display}, VK={self.game_mode_vk:#04x}, mods={self.game_mode_modifiers})"
         )
 
     def set_input_focused(self, focused: bool):
@@ -311,6 +333,18 @@ class HotkeyManager:
                                     self.on_hud_mode_cycle()
                     elif is_up:
                         self._is_hud_key_down = False
+
+                # 2. Check Game Mode Toggle Hotkey (system-wide global hotkey)
+                if self.game_mode_vk is not None and vk == self.game_mode_vk:
+                    if is_down:
+                        if self._check_modifiers(self.game_mode_modifiers):
+                            if not self._is_game_mode_key_down:
+                                self._is_game_mode_key_down = True
+                                logger.debug("[GAME MODE HOTKEY] Key down -> Toggle Game Mode")
+                                if self.on_game_mode_toggle:
+                                    self.on_game_mode_toggle()
+                    elif is_up:
+                        self._is_game_mode_key_down = False
 
                 # 2. Check Push-to-Talk Hotkey (active when audio mode is PTT)
                 if self.enabled and vk == self.target_vk:

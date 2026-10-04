@@ -220,6 +220,22 @@ class AetherEngine:
         self.game_mgr = GameManager()
         register_game_tools(self.dispatcher, self.game_mgr, engine=self)
 
+        def _on_game_mode_changed(enabled: bool, game_id: str, game_name: str, is_running: bool = False):
+            self._reset_context_flag = True
+            self.notify("game_mode_changed", {
+                "enabled": enabled,
+                "game_mode_enabled": enabled,
+                "is_active": enabled,
+                "is_running": is_running,
+                "active_profile": game_id,
+                "game_id": game_id,
+                "display_name": game_name,
+                "game_name": game_name
+            })
+        self.game_mgr.on_game_mode_changed = _on_game_mode_changed
+        self.game_mgr.start_foreground_watcher(interval=2.0)
+        self.game_mgr._notify_mode_changed()
+
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
         if not is_running_as_admin():
@@ -257,11 +273,29 @@ class AetherEngine:
         self._active_recv_task: Optional[asyncio.Task] = None
         self._base_system_instruction: str = ""
 
+        def _handle_game_mode_hotkey_toggle():
+            if hasattr(self, "game_mgr") and self.game_mgr:
+                new_state = not self.game_mgr.game_mode_enabled
+                self.game_mgr.set_game_mode(new_state, user_explicit=True)
+                active_id = self.game_mgr.data.get("active_profile", "")
+                prof = self.game_mgr.get_profile(active_id) if active_id else None
+                game_title = prof.get("display_name", active_id) if prof else "Game"
+                if new_state:
+                    msg = f"Game Mode active. Focused on {game_title}."
+                else:
+                    msg = f"Switched to open conversation. {game_title} macros remain standing by."
+                self.notify("chat_event", {
+                    "type": "system",
+                    "content": f"🎮 [Hotkey] {msg}"
+                })
+                self.notify("status", {"state": "connected", "message": msg})
+
         # Global Push-to-Talk Hotkey Manager (Hold & Toggle modes)
         self.hotkey_manager = HotkeyManager(
             on_ptt_change=self.set_ptt,
             on_ptt_toggle=self.toggle_ptt,
             on_hud_mode_cycle=lambda: self.notify("hud_cycle_mode", {}),
+            on_game_mode_toggle=_handle_game_mode_hotkey_toggle,
             config_getter=self.config_getter
         )
 
@@ -1872,6 +1906,7 @@ class AetherEngine:
             )
 
         chat = create_fresh_chat()
+        chat_game_mode_state = bool(getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
         self.conn_mgr.set_connected()
 
         # Proactive Startup Briefing Evaluation
@@ -1935,11 +1970,13 @@ class AetherEngine:
                 tools_ms = 0.0
                 tts_ms = 0.0
 
-                # Check if UI / external trigger requested a context reset
-                if self._reset_context_flag:
+                # Check if UI / external trigger requested a context reset OR game mode changed
+                current_gm_active = bool(getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
+                if self._reset_context_flag or current_gm_active != chat_game_mode_state:
                     self._reset_context_flag = False
                     chat = create_fresh_chat()
-                    logger.info("[SESSION] Conversational context reset to clean slate via flag.")
+                    chat_game_mode_state = current_gm_active
+                    logger.info(f"[SESSION] Conversational context reset to clean slate. Game Mode Active: {current_gm_active}")
 
                 # 1. Wait concurrently for either typed input or speech utterance from VAD
                 text_task = asyncio.create_task(self._text_queue.get())
@@ -2236,6 +2273,67 @@ class AetherEngine:
                         "source": source
                     })
 
+                # Voice Override for Game Mode:
+                # e.g., "Aether, disable game mode", "disable game mode", "turn off game mode", "enable game mode"
+                if hasattr(self, "game_mgr") and self.game_mgr:
+                    clean_voice_cmd = re.sub(r'^[,\.\s]+|[,\.\s]+$', '', lower_prompt).strip()
+                    if clean_voice_cmd.startswith(agent_name.lower()):
+                        clean_voice_cmd = clean_voice_cmd[len(agent_name):].strip().lstrip(",. ")
+
+                    # Check for disable game mode
+                    if re.search(r'\b(disable|exit|turn\s+off|leave|deactivate|stop)\s+game\s+mode\b', clean_voice_cmd) or re.search(r'\bgame\s+mode\s+(off|disable)\b', clean_voice_cmd):
+                        res = self.game_mgr.set_game_mode(False, user_explicit=True)
+                        chat = create_fresh_chat()
+                        chat_game_mode_state = False
+                        self._reset_context_flag = False
+                        active_id = self.game_mgr.data.get("active_profile", "")
+                        prof = self.game_mgr.get_profile(active_id) if active_id else None
+                        game_title = prof.get("display_name", active_id) if prof else "game"
+                        msg = f"Switched to open conversation. {game_title} macros remain standing by." if active_id else "Switched to open conversation."
+                        self.notify("chat_event", {
+                            "type": "agent",
+                            "content": msg,
+                            "source": "system"
+                        })
+                        self.notify("status", {"state": "speaking", "message": msg})
+                        try:
+                            api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+                            tts_model = api_cfg.get("tts_model_endpoint")
+                            if tts_model:
+                                await self._stream_synthesize_speech(text=msg)
+                        except Exception as e:
+                            logger.debug(f"[GAME_MODE] TTS feedback error: {e}")
+                        if not is_wake_idle:
+                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        continue
+
+                    # Check for enable game mode
+                    if re.search(r'\b(enable|enter|turn\s+on|activate|start)\s+game\s+mode\b', clean_voice_cmd) or re.search(r'\bgame\s+mode\s+(on|enable)\b', clean_voice_cmd):
+                        res = self.game_mgr.set_game_mode(True, user_explicit=True)
+                        chat = create_fresh_chat()
+                        chat_game_mode_state = True
+                        self._reset_context_flag = False
+                        active_id = self.game_mgr.data.get("active_profile", "")
+                        prof = self.game_mgr.get_profile(active_id) if active_id else None
+                        game_title = prof.get("display_name", active_id) if prof else "Game"
+                        msg = f"Game Mode active. Focused on {game_title}." if active_id else "Game Mode active."
+                        self.notify("chat_event", {
+                            "type": "agent",
+                            "content": msg,
+                            "source": "system"
+                        })
+                        self.notify("status", {"state": "speaking", "message": msg})
+                        try:
+                            api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+                            tts_model = api_cfg.get("tts_model_endpoint")
+                            if tts_model:
+                                await self._stream_synthesize_speech(text=msg)
+                        except Exception as e:
+                            logger.debug(f"[GAME_MODE] TTS feedback error: {e}")
+                        if not is_wake_idle:
+                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        continue
+
                 # Fast-Path Game Action Execution:
                 # If an active game profile exists and prompt matches an in-game voice macro, execute immediately!
                 if hasattr(self, "game_mgr") and self.game_mgr:
@@ -2258,6 +2356,14 @@ class AetherEngine:
                                 continue
 
                 self.notify("status", {"state": "thinking", "message": f"{agent_name} is thinking...", "user_prompt": user_prompt})
+
+                # Ensure chat session matches current game mode state
+                current_gm_active = bool(getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
+                if self._reset_context_flag or current_gm_active != chat_game_mode_state:
+                    self._reset_context_flag = False
+                    chat = create_fresh_chat()
+                    chat_game_mode_state = current_gm_active
+                    logger.info(f"[SESSION] Recreated Cortex chat session before turn. Game Mode Active: {current_gm_active}")
 
                 # 2. Send prompt to Cortex (gemini-3.8-flash) with dynamically routed tool declarations
                 self.is_tool_executing = True
@@ -2758,6 +2864,38 @@ class AetherEngine:
 
     def _build_system_instruction(self) -> str:
         """Returns the active system instruction for Cortex turn generation."""
+        game_mgr = getattr(self, "game_mgr", None)
+
+        if game_mgr and game_mgr.is_game_mode_active():
+            active_id = game_mgr.data.get("active_profile", "")
+            prof = game_mgr.get_profile(active_id) if active_id else {}
+            game_title = prof.get("display_name", active_id) if prof else "the game"
+            universe_name = prof.get("universe_name") or prof.get("world_name") or f"the universe of {game_title}"
+            hk_display = getattr(self, "hotkey_manager", None) and getattr(self.hotkey_manager, "game_mode_display", "Ctrl+Shift+G") or "Ctrl+Shift+G"
+
+            immersion_banner = (
+                f"================================================================================\n"
+                f"🚨 MAXIMUM OVERRIDE: IN-CHARACTER GAME MODE ENGAGED — {game_title.upper()} 🚨\n"
+                f"================================================================================\n"
+                f"You are operating in dedicated GAME MODE as the in-game co-pilot and companion in {universe_name} ({game_title}).\n"
+                f"THIS INSTRUCTION STRICTLY OVERRIDES ALL DESKTOP ASSISTANT, CODING, AND REAL-WORLD CAPABILITIES.\n\n"
+                f"STRICT IN-CHARACTER DIRECTIVES:\n"
+                f"1. UNIVERSE IMMERSION: You are completely immersed in {universe_name}. Speak, think, and react solely in-character.\n"
+                f"   Focus entirely on the player's immediate surroundings, quests, combat, exploration, inventory, and navigation in {game_title}.\n"
+                f"2. ZERO TOLERANCE FOR OUT-OF-UNIVERSE DEVIATION:\n"
+                f"   - You MUST NEVER break character to discuss out-of-game matters, real-world events, politics, science, personal tasks, Python code, software architecture, system bugs, or application development.\n"
+                f"   - Even if the user directly asks you about the code, software bugs, how Aether works, or real-world events (e.g., 'what happened to the code', 'why did the system do that', 'who won the election'):\n"
+                f"     YOU MUST NOT ANSWER OR DISCUSS OUT-OF-UNIVERSE TOPICS.\n"
+                f"     STAY FULLY IN-CHARACTER and deflect in-universe, reminding the user:\n"
+                f"     'My focus is entirely on our journey in {game_title}. If you wish to discuss real-world matters or inspect code, please tell me to \"disable Game Mode\" (or press {hk_display}).'\n"
+                f"3. IN-GAME MACROS & ACTIONS:\n"
+                f"   You can execute game actions and macros via `trigger_game_action` and check telemetry via `get_current_game_telemetry` / `get_current_game_status`.\n"
+                f"================================================================================\n"
+            )
+
+            game_context = game_mgr.get_active_game_context()
+            return f"{immersion_banner}\n\n{game_context}"
+
         if getattr(self, "_base_system_instruction", ""):
             base_inst = self._base_system_instruction
         else:
@@ -2767,15 +2905,6 @@ class AetherEngine:
         if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
             base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"
 
-        # Append live game telemetry & scratchpad context if available
-        try:
-            game_mgr = getattr(self, "game_mgr", None) or GameManager()
-            game_context = game_mgr.get_active_game_context()
-            if game_context and game_context.strip() not in base_inst:
-                base_inst = base_inst.rstrip() + "\n\n" + game_context.strip() + "\n"
-        except Exception as e:
-            logger.debug(f"[ENGINE] Failed injecting game context: {e}")
-
         return base_inst
 
     def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
@@ -2784,11 +2913,27 @@ class AetherEngine:
         matched via BM25 semantic skill routing.
         """
         # 1. Fetch dynamically filtered tool declarations
-        active_game = getattr(self, "game_mgr", None) and self.game_mgr.data.get("active_profile")
-        active_tools = self.dispatcher.get_routed_tool_declarations(
-            user_prompt=user_prompt,
-            max_dynamic_skills=0 if active_game else 3
-        )
+        active_game_focus = getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active()
+        if active_game_focus:
+            game_tool_names = {
+                "get_current_game_telemetry",
+                "get_current_game_status",
+                "trigger_game_action",
+                "toggle_game_mode",
+                "record_copilot_observation",
+                "update_game_scratchpad",
+                "pan_and_mark_map_location",
+                "assist_game_navigation",
+                "inspect_screen_context",
+                "lookup_inara_market"
+            }
+            all_decls = self.dispatcher.get_core_declarations()
+            active_tools = [d for d in all_decls if d.get("name") in game_tool_names]
+        else:
+            active_tools = self.dispatcher.get_routed_tool_declarations(
+                user_prompt=user_prompt,
+                max_dynamic_skills=3
+            )
 
         if temperature is None:
             try:
@@ -3313,15 +3458,25 @@ class AetherEngine:
         """Constructs types.LiveConnectConfig with Google Search, tool declarations, and voice."""
         api_cfg = self.config_getter().get("api", {})
         if system_instruction_text is None:
-            system_instruction_text = self._base_system_instruction or api_cfg.get("system_instruction", "You are Aether.")
+            system_instruction_text = self._build_system_instruction()
 
-        try:
-            game_mgr = getattr(self, "game_mgr", None) or GameManager()
-            game_context = game_mgr.get_active_game_context()
-            if game_context and game_context.strip() not in system_instruction_text:
-                system_instruction_text = system_instruction_text.rstrip() + "\n\n" + game_context.strip() + "\n"
-        except Exception:
-            pass
+        active_game_focus = getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active()
+        if active_game_focus:
+            game_tool_names = {
+                "get_current_game_telemetry",
+                "get_current_game_status",
+                "trigger_game_action",
+                "toggle_game_mode",
+                "record_copilot_observation",
+                "update_game_scratchpad",
+                "pan_and_mark_map_location",
+                "assist_game_navigation",
+                "inspect_screen_context",
+                "lookup_inara_market"
+            }
+            live_tools = [d for d in get_all_tool_declarations() if d.get("name") in game_tool_names]
+        else:
+            live_tools = get_all_tool_declarations()
 
         if voice_name is None:
             voice_name = api_cfg.get("voice_name", "Aoede")
@@ -3334,7 +3489,7 @@ class AetherEngine:
             safety_settings=get_permissive_safety_settings(),
             tools=[
                 types.Tool(google_search=types.GoogleSearch()),
-                types.Tool(function_declarations=get_all_tool_declarations())
+                types.Tool(function_declarations=live_tools)
             ],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -3640,6 +3795,12 @@ class AetherEngine:
             except Exception as e:
                 logger.warning(f"[STOP] Session transcript flush error: {e}")
 
+        if hasattr(self, "game_mgr") and self.game_mgr:
+            try:
+                self.game_mgr.close()
+            except Exception as e:
+                logger.warning(f"[STOP] Game manager close warning: {e}")
+
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 
     def shutdown(self):
@@ -3650,4 +3811,8 @@ class AetherEngine:
             except Exception as e:
                 logger.warning(f"[SHUTDOWN] Reflexion engine stop warning: {e}")
         self.stop()
+
+
+Engine = AetherEngine
+
 

@@ -279,6 +279,247 @@ class TestGameNavAndFallback(unittest.TestCase):
         self.assertTrue(sync_res["success"])
         self.assertEqual(sync_res["source"], "web_defaults")
 
+    # --- 5. Game Mode & Context Fencing Tests ---
+
+    @patch("tools.os_controls.send_directinput_key")
+    def test_game_mode_fencing_and_macro_retention(self, mock_key):
+        self.mgr.add_game("Elite Dangerous", process_name="EliteDangerous64.exe", keybinds={
+            "deploy landing gear": {"key": "l", "modifiers": [], "description": "Toggle landing gear"}
+        })
+        self.mgr.set_active_profile("elite_dangerous")
+
+        # 1. Game Mode Enabled: Context is strictly locked to Elite Dangerous
+        self.assertTrue(self.mgr.is_game_mode_active())
+        ctx = self.mgr.get_active_game_context()
+        self.assertIn("=== ACTIVE GAME COMPANION: Elite Dangerous ===", ctx)
+        self.assertIn("STRICT GAME SCOPE & SEARCH LOCK: ELITE DANGEROUS", ctx)
+
+        # 2. User says "disable game mode": Cognitive context is cleared (unfenced for open chat)
+        res = self.mgr.set_game_mode(False, user_explicit=True)
+        self.assertFalse(self.mgr.is_game_mode_active())
+        self.assertEqual(self.mgr.get_active_game_context(), "")
+
+        # 3. Macro Dispatcher remains standing by and executes in-game macros seamlessly!
+        macro_res = self.mgr.trigger_action("deploy landing gear")
+        self.assertEqual(macro_res.get("status"), "executed")
+        mock_key.assert_called_with("l")
+
+        # 4. User re-enables game mode
+        self.mgr.set_game_mode(True, user_explicit=True)
+        self.assertTrue(self.mgr.is_game_mode_active())
+        ctx_re = self.mgr.get_active_game_context()
+        self.assertIn("=== ACTIVE GAME COMPANION: Elite Dangerous ===", ctx_re)
+
+    def test_gui_bridge_game_mode_controls(self):
+        mock_engine = MagicMock()
+        bridge = GUIBridge(mock_engine)
+        bridge.game_mgr = self.mgr
+
+        self.mgr.add_game("Elite Dangerous", process_name="EliteDangerous64.exe")
+        self.mgr.set_active_profile("elite_dangerous")
+
+        status = bridge.get_game_mode()
+        self.assertTrue(status["is_active"])
+        self.assertEqual(status["active_profile"], "elite_dangerous")
+
+        # Toggle Game Mode via bridge
+        tog_res = bridge.toggle_game_mode()
+        self.assertFalse(tog_res["game_mode_enabled"])
+        self.assertFalse(bridge.get_game_mode()["is_active"])
+
+        # Set explicitly via bridge
+        set_res = bridge.set_game_mode(True)
+        self.assertTrue(set_res["game_mode_enabled"])
+        self.assertTrue(bridge.get_game_mode()["is_active"])
+
+    def test_toggle_game_mode_tool(self):
+        dispatcher = ToolDispatcher()
+        tools = register_game_tools(dispatcher, self.mgr)
+        self.assertIn("toggle_game_mode", dispatcher._custom_handlers)
+
+        self.mgr.add_game("Crimson Desert")
+        self.mgr.set_active_profile("crimson_desert")
+
+        # Call toggle tool to disable
+        res_off = tools["toggle_game_mode"](False)
+        self.assertFalse(res_off["game_mode_enabled"])
+        self.assertFalse(self.mgr.is_game_mode_active())
+
+        # Call toggle tool to re-enable
+        res_on = tools["toggle_game_mode"](True)
+        self.assertTrue(res_on["game_mode_enabled"])
+        self.assertTrue(self.mgr.is_game_mode_active())
+
+    def test_game_mode_hotkey_configuration(self):
+        from core.hotkey_manager import HotkeyManager
+        toggle_called = []
+        def on_toggle():
+            toggle_called.append(True)
+
+        hotkey_mgr = HotkeyManager(on_game_mode_toggle=on_toggle)
+        hotkey_mgr.update_config({
+            "game_mode_hotkey": "Ctrl+Shift+G",
+            "game_mode_vk": 0x47,
+            "game_mode_modifiers": ["Control", "Shift"]
+        })
+        self.assertEqual(hotkey_mgr.game_mode_vk, 0x47)
+        self.assertEqual(hotkey_mgr.game_mode_modifiers, ["Control", "Shift"])
+        self.assertEqual(hotkey_mgr.game_mode_display, "Ctrl+Shift+G")
+
+        # Test callback execution
+        hotkey_mgr.on_game_mode_toggle()
+        self.assertEqual(len(toggle_called), 1)
+
+    def test_game_mode_auto_enable_and_status_booleans(self):
+        from ui.hud_window import HUDBridge
+        self.mgr.add_game("Crimson Desert")
+        
+        # When active profile is set, game mode auto-engages and listener is notified
+        notifications = []
+        def on_changed(enabled, gid, gname):
+            notifications.append((enabled, gid, gname))
+        self.mgr.on_game_mode_changed = on_changed
+
+        self.mgr.set_active_profile("crimson_desert")
+        self.assertTrue(self.mgr.game_mode_enabled)
+        self.assertTrue(self.mgr.is_game_mode_active())
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0], (True, "crimson_desert", "Crimson Desert"))
+
+        # Test get_current_game_status tool returns explicit booleans
+        dispatcher = ToolDispatcher()
+        tools = register_game_tools(dispatcher, self.mgr)
+        status = tools["get_current_game_status"]()
+        self.assertTrue(status["game_mode_enabled"])
+        self.assertTrue(status["is_game_mode_active"])
+        self.assertEqual(status["active_profile"], "crimson_desert")
+        self.assertEqual(status["game"], "Crimson Desert")
+
+        # Test HUDBridge delegation for overlay
+        mock_bridge = MagicMock()
+        mock_bridge.get_game_mode.return_value = {
+            "game_mode_enabled": True,
+            "is_active": True,
+            "active_profile": "crimson_desert",
+            "display_name": "Crimson Desert"
+        }
+        mock_bridge.get_agent_name.return_value = {"agent_name": "Aether"}
+        hud_bridge = HUDBridge(window=None, bridge=mock_bridge)
+        gm_res = hud_bridge.get_game_mode()
+        self.assertTrue(gm_res["game_mode_enabled"])
+        self.assertTrue(gm_res["is_active"])
+        self.assertEqual(hud_bridge.get_agent_name()["agent_name"], "Aether")
+
+    def test_strict_universe_lock_prompt_and_tool_filtering(self):
+        from core.engine import Engine
+        engine = Engine(config_getter=lambda: {"api": {"system_instruction": "You are Aether desktop assistant."}})
+        engine.game_mgr = self.mgr
+        self.mgr.add_game("Crimson Desert")
+        self.mgr.data["profiles"]["crimson_desert"]["universe_name"] = "Pywel"
+        self.mgr.set_active_profile("crimson_desert")
+        self.assertTrue(self.mgr.is_game_mode_active())
+
+        # 1. System instruction when Game Mode is active
+        sys_inst = engine._build_system_instruction()
+        self.assertIn("IN-CHARACTER GAME MODE ENGAGED — CRIMSON DESERT", sys_inst)
+        self.assertIn("ZERO TOLERANCE FOR OUT-OF-UNIVERSE DEVIATION", sys_inst)
+        self.assertIn("Pywel", sys_inst)
+        self.assertIn("disable Game Mode", sys_inst)
+        self.assertNotIn("You are Aether desktop assistant.", sys_inst)
+
+        # 2. Tool declarations when Game Mode is active
+        cfg = engine._execute_turn_modular("what should I do next?")
+        tool_names = [fn.name for t in cfg.tools if t.function_declarations for fn in t.function_declarations]
+        self.assertIn("trigger_game_action", tool_names)
+        self.assertIn("get_current_game_status", tool_names)
+        # Invariant OS tools should be filtered out
+        self.assertNotIn("navigate_browser", tool_names)
+        self.assertNotIn("launch_application", tool_names)
+        self.assertNotIn("run_saved_script", tool_names)
+
+        # 3. When Game Mode is toggled off
+        self.mgr.set_game_mode(False, user_explicit=True)
+        self.assertFalse(self.mgr.is_game_mode_active())
+        sys_inst_off = engine._build_system_instruction()
+        self.assertIn("You are Aether desktop assistant.", sys_inst_off)
+        self.assertNotIn("IN-CHARACTER GAME MODE ENGAGED", sys_inst_off)
+        engine.shutdown()
+
+    def test_game_mode_boot_standby_and_dynamic_process_lifecycle(self):
+        """Verifies that boot without running game stays in standby, auto-engages when game runs, and disengages on game close."""
+        import tempfile
+        import uuid
+        tmp_json = os.path.join(tempfile.gettempdir(), f"test_games_{uuid.uuid4().hex[:8]}.json")
+        initial_data = {
+            "active_profile": "crimson_desert",
+            "profiles": {
+                "crimson_desert": {
+                    "display_name": "Crimson Desert",
+                    "process_name": "CrimsonDesert.exe",
+                    "universe_name": "Pywel"
+                }
+            }
+        }
+        with open(tmp_json, "w", encoding="utf-8") as f:
+            json.dump(initial_data, f)
+
+        try:
+            # 1. Boot up with no game process running
+            with patch.object(GameManager, "detect_foreground_game", return_value=None), \
+                 patch.object(GameManager, "detect_running_game", return_value=None):
+                mgr = GameManager(profiles_path=tmp_json)
+                self.assertFalse(mgr.game_mode_enabled)
+                self.assertFalse(mgr.is_game_mode_active())
+                self.assertFalse(mgr.is_game_running("crimson_desert"))
+
+            # 2. Game starts running
+            with patch.object(mgr, "detect_foreground_game", return_value="crimson_desert"), \
+                 patch.object(mgr, "detect_running_game", return_value="crimson_desert"):
+                status = mgr.check_and_update_foreground_game()
+                self.assertTrue(mgr.game_mode_enabled)
+                self.assertTrue(mgr.is_game_mode_active())
+                self.assertEqual(status["detected_game"], "crimson_desert")
+
+            # 3. Game closes
+            with patch.object(mgr, "detect_foreground_game", return_value=None), \
+                 patch.object(mgr, "detect_running_game", return_value=None):
+                status_closed = mgr.check_and_update_foreground_game()
+                self.assertFalse(mgr.game_mode_enabled)
+                self.assertFalse(mgr.is_game_mode_active())
+                self.assertIsNone(status_closed["detected_game"])
+        finally:
+            if os.path.exists(tmp_json):
+                os.remove(tmp_json)
+
+    def test_chat_context_invalidation_on_game_mode_toggle(self):
+        """Verifies that toggling game mode sets the context reset flag on the engine."""
+        from core.engine import Engine
+        engine = Engine(config_getter=lambda: {"api": {"system_instruction": "You are Aether."}})
+        engine.game_mgr = self.mgr
+        self.mgr.add_game("Crimson Desert")
+        self.mgr.set_active_profile("crimson_desert")
+
+        # Initial active state
+        self.assertTrue(self.mgr.is_game_mode_active())
+        engine._reset_context_flag = False
+
+        # 1. Turning off Game Mode triggers context reset flag
+        bridge = GUIBridge(engine)
+        bridge.game_mgr = self.mgr
+        bridge.set_game_mode(False)
+        self.assertFalse(self.mgr.is_game_mode_active())
+        self.assertTrue(engine._reset_context_flag)
+
+        # 2. Reset flag consumed
+        engine._reset_context_flag = False
+
+        # 3. Toggling Game Mode back on triggers context reset flag
+        bridge.toggle_game_mode()
+        self.assertTrue(self.mgr.is_game_mode_active())
+        self.assertTrue(engine._reset_context_flag)
+
+        engine.shutdown()
+
 
 if __name__ == "__main__":
     unittest.main()

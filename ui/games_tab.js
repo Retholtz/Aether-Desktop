@@ -109,6 +109,24 @@ function renderActiveGameDetail() {
         indicator.className = `badge-status ${isOnline ? 'badge-online' : 'badge-offline'}`;
     }
 
+    const gmIndicator = document.getElementById('game-mode-indicator');
+    if (gmIndicator) {
+        const gmEnabled = Boolean(currentGamesData && currentGamesData.game_mode_enabled);
+        gmIndicator.textContent = gmEnabled ? '🎮 Game Mode: ON (Universe Focused)' : '🌐 Open Chat (Macros Standby)';
+        gmIndicator.className = `badge-status ${gmEnabled ? 'badge-info' : 'badge-warning'}`;
+        gmIndicator.onclick = async () => {
+            try {
+                const res = await window.pywebview.api.toggle_game_mode();
+                if (currentGamesData) {
+                    currentGamesData.game_mode_enabled = res.game_mode_enabled;
+                }
+                renderActiveGameDetail();
+            } catch (e) {
+                console.error("Failed toggling game mode:", e);
+            }
+        };
+    }
+
     // Keybinds Table
     const tbody = document.getElementById('tbody-game-binds');
     if (tbody) {

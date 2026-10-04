@@ -109,9 +109,11 @@
       width: 100%;
       height: 100%;
       align-items: center;
-      justify-content: center;
-      gap: 9px;
+      justify-content: flex-start;
+      padding: 0 12px;
+      gap: 10px;
       cursor: grab;
+      box-sizing: border-box;
     }
 
     body.mode-mini .mini-pill-content {
@@ -132,16 +134,40 @@
       animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
     }
 
-    .mini-status-label {
-      font-size: 11.5px;
+    .mini-text-stack {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-start;
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      line-height: 1.25;
+      text-align: left;
+    }
+
+    .mini-title-label {
+      font-size: 11px;
       font-weight: 700;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      max-width: 100%;
+      color: #e2e8f0;
+      transition: color 0.3s ease;
+    }
+
+    .mini-status-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
       color: var(--current-status-color, var(--status-listening));
       transition: color 0.3s ease;
-      text-align: center;
     }
 
     /* =========================================================================
@@ -188,6 +214,34 @@
       text-transform: uppercase;
       color: var(--current-status-color, var(--status-listening));
       transition: color 0.3s ease;
+    }
+
+    .game-mode-badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      margin-left: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      white-space: nowrap;
+      transition: all 0.3s ease;
+    }
+
+    .game-mode-badge.focused {
+      background: rgba(0, 210, 255, 0.16);
+      border: 1px solid rgba(0, 210, 255, 0.45);
+      color: #00d2ff;
+      box-shadow: 0 0 6px rgba(0, 210, 255, 0.25);
+    }
+
+    .game-mode-badge.standby {
+      background: rgba(255, 209, 102, 0.16);
+      border: 1px solid rgba(255, 209, 102, 0.45);
+      color: #ffd166;
     }
 
     /* 3-Segment Mode Switcher Control: [ — | ▢ | ⤢ ] */
@@ -672,6 +726,11 @@
       color: #8e9bb0 !important;
     }
 
+    body.status-standby .mini-title-label {
+      color: #94a3b8 !important;
+      opacity: 0.85;
+    }
+
     body.status-standby .overlay-card {
       border-color: rgba(255, 255, 255, 0.09);
       filter: saturate(0.65);
@@ -684,7 +743,10 @@
     <!-- Mini Mode Pill Layout (visible only in .mode-mini) -->
     <div class="mini-pill-content pywebview-drag-region" id="miniPillContent">
       <div class="mini-status-dot" id="miniStatusDot"></div>
-      <span class="mini-status-label" id="miniStatusLabel">Aether: Standby</span>
+      <div class="mini-text-stack">
+        <span class="mini-title-label" id="miniTitleLabel">Aether:</span>
+        <span class="mini-status-label" id="miniStatusLabel">Standby</span>
+      </div>
     </div>
 
     <!-- Top Bar (Normal and Max Modes) -->
@@ -693,6 +755,7 @@
       <div class="status-group">
         <div class="status-dot" id="statusDot"></div>
         <span class="status-label" id="statusLabel">STANDBY</span>
+        <span class="game-mode-badge" id="gameModeBadge" style="display: none;">🎮 GAME MODE</span>
       </div>
 
       <!-- 3-Segment Toggle: [ — | ▢ | ⤢ ] -->
@@ -820,6 +883,7 @@
       const overlayCard = document.getElementById("overlayCard");
       const miniPillContent = document.getElementById("miniPillContent");
       const miniStatusDot = document.getElementById("miniStatusDot");
+      const miniTitleLabel = document.getElementById("miniTitleLabel");
       const miniStatusLabel = document.getElementById("miniStatusLabel");
 
       const statusDot = document.getElementById("statusDot");
@@ -862,9 +926,70 @@
         error: "Error"
       };
 
+      let gameModeState = {
+        active: false,
+        enabled: true,
+        game_id: "",
+        display_name: ""
+      };
+
+      function updateMiniLabels(state, action) {
+        let actionDisplay = stateLabels[state] || (state ? state.charAt(0).toUpperCase() + state.slice(1) : "Standby");
+        if (action && (state === "executing" || state === "thinking")) {
+          actionDisplay = action;
+        }
+
+        if (miniTitleLabel) {
+          if (gameModeState.active && gameModeState.enabled) {
+            miniTitleLabel.innerText = `🎮 ${gameModeState.display_name || "Game"}:`;
+            miniTitleLabel.title = `Game Mode Focused: ${gameModeState.display_name}`;
+          } else if (gameModeState.active && !gameModeState.enabled) {
+            miniTitleLabel.innerText = `🌐 ${gameModeState.display_name || agentName}:`;
+            miniTitleLabel.title = `Open Conversation (${gameModeState.display_name} macros active)`;
+          } else {
+            miniTitleLabel.innerText = `${agentName}:`;
+            miniTitleLabel.title = agentName;
+          }
+        }
+
+        if (miniStatusLabel) {
+          miniStatusLabel.innerText = actionDisplay;
+        }
+      }
+
+      function updateGameMode(data) {
+        if (!data) return;
+        gameModeState.enabled = data.enabled !== undefined ? Boolean(data.enabled) : (data.game_mode_enabled !== undefined ? Boolean(data.game_mode_enabled) : false);
+        gameModeState.game_id = data.game_id || data.active_profile || "";
+        gameModeState.display_name = data.display_name || data.game_name || "";
+        const isRunning = data.is_running !== undefined ? Boolean(data.is_running) : false;
+        const isActive = data.is_active !== undefined ? Boolean(data.is_active) : (data.enabled !== undefined ? Boolean(data.enabled) : false);
+        gameModeState.active = Boolean(gameModeState.game_id) && (gameModeState.enabled || isRunning || isActive);
+
+        const badge = document.getElementById("gameModeBadge");
+        if (badge) {
+          if (gameModeState.active && gameModeState.enabled) {
+            badge.style.display = "inline-flex";
+            const title = (gameModeState.display_name || "GAME").toUpperCase();
+            badge.innerText = `🎮 ${title}`;
+            badge.className = "game-mode-badge focused";
+            badge.title = `Game Mode Focused: ${gameModeState.display_name}`;
+          } else if (gameModeState.active && !gameModeState.enabled) {
+            badge.style.display = "inline-flex";
+            const title = (gameModeState.display_name || "GAME").toUpperCase();
+            badge.innerText = `🌐 ${title} (MACROS)`;
+            badge.className = "game-mode-badge standby";
+            badge.title = `Open Conversation (${gameModeState.display_name} macros active)`;
+          } else {
+            badge.style.display = "none";
+          }
+        }
+
+        updateMiniLabels(currentStatusState);
+      }
+
       function getMiniStatus(state) {
-        const action = stateLabels[state] || (state ? state.charAt(0).toUpperCase() + state.slice(1) : "Standby");
-        return `${agentName}: ${action}`;
+        return stateLabels[state] || (state ? state.charAt(0).toUpperCase() + state.slice(1) : "Standby");
       }
 
       function updateAgentName(newName) {
@@ -905,9 +1030,7 @@
         }
 
         // 5. Update Pill (Mini) label
-        if (miniStatusLabel) {
-          miniStatusLabel.innerText = getMiniStatus(currentStatusState);
-        }
+        updateMiniLabels(currentStatusState);
       }
 
       // Active Teleprompter Turn References
@@ -1328,8 +1451,10 @@
         } else {
           miniStatusDot.classList.add("pulse");
         }
-        miniStatusLabel.style.color = style.color;
-        miniStatusLabel.innerText = getMiniStatus(currentStatusState);
+        if (miniStatusLabel) {
+          miniStatusLabel.style.color = style.color;
+        }
+        updateMiniLabels(currentStatusState, action);
 
         if (action) {
           actionIcon.innerText = "⚙️";
@@ -1616,6 +1741,8 @@
             if (data.mode) {
               applyModeClasses(data.mode);
             }
+          } else if (type === "game_mode_changed") {
+            updateGameMode(data);
           } else if (type === "agent_speech_chunk") {
             if (data.chunk) {
               appendNormalAgentChunk(data.chunk);
@@ -1735,6 +1862,14 @@
                   updateAgentName(nameRes.agent_name);
                 }
               }
+            }
+            if (window.pywebview.api.get_game_mode) {
+              try {
+                const gmRes = await window.pywebview.api.get_game_mode();
+                if (gmRes) {
+                  updateGameMode(gmRes);
+                }
+              } catch(ex) {}
             }
             if (window.pywebview.api.apply_shape) {
               window.pywebview.api.apply_shape();

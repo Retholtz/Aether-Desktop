@@ -11,8 +11,10 @@ import copy
 import re
 import time
 import uuid
+import sys
+import threading
 import xml.etree.ElementTree as ET
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 
 from core.game_telemetry import EliteTelemetryWatcher
 
@@ -32,6 +34,24 @@ class GameManager:
         self.data = self._load_profiles()
         self.ed_watcher: Optional[EliteTelemetryWatcher] = None
         self._init_telemetry_watchers()
+
+        # Dedicated Game Mode state & automatic foreground window watcher
+        self.game_mode_enabled: bool = False
+        self.user_override_game_mode: Optional[bool] = None  # None = auto, True = explicit on, False = explicit off
+        self.on_game_mode_changed: Optional[Callable[..., None]] = None
+        self._foreground_watcher_thread: Optional[threading.Thread] = None
+        self._stop_foreground_watcher = threading.Event()
+        self._last_detected_game: Optional[str] = None
+
+        # Check if a configured game is already running at startup
+        detected = self.detect_foreground_game() or self.detect_running_game()
+        if detected:
+            self.data["active_profile"] = detected
+            self.game_mode_enabled = True
+            self._last_detected_game = detected
+        else:
+            self.game_mode_enabled = False
+            self._last_detected_game = None
 
     def _init_telemetry_watchers(self):
         """Initializes and starts background telemetry watchers for supported games."""
@@ -171,21 +191,297 @@ class GameManager:
         """Switches the currently active game profile."""
         if not game_id:
             self.data["active_profile"] = ""
+            self.game_mode_enabled = False
+            self.user_override_game_mode = None
             self._save_profiles(self.data)
+            self._notify_mode_changed()
             return True
         if game_id in self.data.get("profiles", {}):
             self.data["active_profile"] = game_id
+            if self.user_override_game_mode is not False:
+                self.game_mode_enabled = True
+                self.user_override_game_mode = True
             if game_id == "elite_dangerous" and (not self.ed_watcher or not self.ed_watcher.is_running):
                 self._init_telemetry_watchers()
             self._save_profiles(self.data)
+            self._notify_mode_changed()
             return True
         return False
+
+    def is_game_running(self, game_id: Optional[str] = None) -> bool:
+        """
+        Checks if a configured game (or the active/specified game) is currently running on the system.
+        """
+        target = game_id or self.data.get("active_profile")
+        if not target:
+            return False
+
+        # 1. Quick check against foreground window
+        fg = self.detect_foreground_game()
+        if fg == target:
+            return True
+
+        # 2. Check running system processes
+        if sys.platform != "win32":
+            return False
+
+        prof = self.get_profile(target)
+        if not prof:
+            return False
+
+        pname = (prof.get("process_name") or "").lower().strip()
+        if not pname:
+            return False
+
+        pstem = os.path.splitext(pname)[0]
+        try:
+            import psutil
+            for proc in psutil.process_iter(['name']):
+                try:
+                    p_info_name = proc.info.get('name')
+                    if not p_info_name:
+                        continue
+                    p_info_lower = p_info_name.lower().strip()
+                    if p_info_lower == pname or (pstem and pstem in p_info_lower):
+                        return True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            pass
+
+        return False
+
+    def is_game_mode_active(self) -> bool:
+        """Returns True if Game Mode is active."""
+        if not self.game_mode_enabled:
+            return False
+        active_id = self.data.get("active_profile")
+        if not active_id:
+            return False
+        if self.user_override_game_mode is True:
+            return True
+        if self.user_override_game_mode is False:
+            return False
+        if self._last_detected_game and self._last_detected_game == active_id:
+            return True
+        return self.is_game_running(active_id)
+
+    def set_game_mode(self, enabled: bool, user_explicit: bool = False) -> dict:
+        """
+        Enables or disables Game Mode.
+        When Game Mode is True: LLM is strictly fenced inside the game universe (preventing hallucinations).
+        When Game Mode is False: LLM can talk about real-world events / open topics,
+        while in-game macros remain standing by and functional.
+        """
+        self.game_mode_enabled = bool(enabled)
+        if user_explicit:
+            self.user_override_game_mode = bool(enabled)
+
+        self._notify_mode_changed()
+        active_id = self.data.get("active_profile", "")
+        active_name = self.get_profile(active_id).get("display_name", active_id) if active_id else ""
+        return {
+            "success": True,
+            "game_mode_enabled": self.game_mode_enabled,
+            "active_profile": active_id,
+            "display_name": active_name,
+            "user_override": self.user_override_game_mode
+        }
+
+    def _notify_mode_changed(self):
+        """Dispatches game mode change event to callback if registered."""
+        if callable(self.on_game_mode_changed):
+            try:
+                active_id = self.data.get("active_profile") or ""
+                active_name = ""
+                if active_id:
+                    prof = self.get_profile(active_id)
+                    if prof:
+                        active_name = prof.get("display_name", active_id)
+                is_running = self.is_game_running(active_id) if active_id else False
+                active_state = self.is_game_mode_active()
+                try:
+                    self.on_game_mode_changed(active_state, active_id, active_name, is_running)
+                except TypeError:
+                    self.on_game_mode_changed(active_state, active_id, active_name)
+            except Exception as e:
+                print(f"[WARN] [GAME_MGR] Failed notifying game mode changed: {e}")
+
+    def detect_foreground_game(self) -> Optional[str]:
+        """
+        Detects if the current active foreground window belongs to any configured game profile.
+        Returns the matching game_id or None.
+        """
+        if sys.platform != "win32":
+            return None
+        try:
+            from core.screen_stream import ensure_thread_desktop
+            ensure_thread_desktop()
+            import win32gui
+            import win32process
+            import psutil
+
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd:
+                return None
+
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if not pid:
+                return None
+
+            try:
+                proc = psutil.Process(pid)
+                proc_name = proc.name().lower().strip()
+            except Exception:
+                proc_name = ""
+
+            try:
+                window_title = win32gui.GetWindowText(hwnd).lower().strip()
+            except Exception:
+                window_title = ""
+
+            for gid, profile in self.data.get("profiles", {}).items():
+                pname = (profile.get("process_name") or "").lower().strip()
+                dname = (profile.get("display_name") or "").lower().strip()
+
+                # A. Match process executable name (exact, stem, or substring)
+                if pname and proc_name:
+                    pname_stem = os.path.splitext(pname)[0]
+                    if (proc_name == pname or
+                        pname_stem in proc_name or
+                        proc_name in pname or
+                        pname in proc_name):
+                        return gid
+
+                # B. Match window title containing game display name
+                if dname and len(dname) > 3 and dname in window_title:
+                    return gid
+        except Exception:
+            pass
+        return None
+
+    def detect_running_game(self) -> Optional[str]:
+        """
+        Checks running system processes to see if any configured game executable is loaded.
+        Returns the matching game_id or None.
+        """
+        if sys.platform != "win32":
+            return None
+        try:
+            import psutil
+            profiles = self.data.get("profiles", {})
+            if not profiles:
+                return None
+
+            targets = {}
+            for gid, profile in profiles.items():
+                pname = (profile.get("process_name") or "").lower().strip()
+                if pname:
+                    targets[gid] = (pname, os.path.splitext(pname)[0])
+
+            if not targets:
+                return None
+
+            for proc in psutil.process_iter(['name']):
+                try:
+                    p_name = proc.info.get('name')
+                    if not p_name:
+                        continue
+                    p_name_lower = p_name.lower().strip()
+                    for gid, (pname, pstem) in targets.items():
+                        if p_name_lower == pname or (pstem and pstem in p_name_lower):
+                            return gid
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            pass
+        return None
+
+    def check_and_update_foreground_game(self) -> dict:
+        """
+        Checks if a configured game is currently focused in the foreground or loaded.
+        If a game is loaded or focused:
+        1. Automatically sets active profile to detected game.
+        2. Automatically sets game_mode_enabled = True (unless explicit user override).
+        3. Dispatches _notify_mode_changed() so the overlay updates immediately.
+        """
+        detected_id = self.detect_foreground_game()
+        if not detected_id:
+            detected_id = self.detect_running_game()
+
+        active_id = self.data.get("active_profile")
+
+        if detected_id:
+            if detected_id != active_id:
+                self.set_active_profile(detected_id)
+            else:
+                if self.user_override_game_mode is not False and not self.game_mode_enabled:
+                    self.game_mode_enabled = True
+                    self._notify_mode_changed()
+                elif getattr(self, "_last_detected_game", None) != detected_id:
+                    self._notify_mode_changed()
+        else:
+            if getattr(self, "_last_detected_game", None) is not None:
+                # Game just closed/terminated
+                self.user_override_game_mode = None
+                if self.game_mode_enabled:
+                    self.game_mode_enabled = False
+                    self._notify_mode_changed()
+            elif self.user_override_game_mode is None and self.game_mode_enabled:
+                self.game_mode_enabled = False
+                self._notify_mode_changed()
+
+        self._last_detected_game = detected_id
+
+        return {
+            "detected_game": detected_id,
+            "active_profile": self.data.get("active_profile"),
+            "game_mode_enabled": self.game_mode_enabled,
+            "is_game_mode_active": self.is_game_mode_active(),
+            "user_override": self.user_override_game_mode
+        }
+
+    def start_foreground_watcher(self, interval: float = 2.0):
+        """Starts background daemon thread checking foreground game window."""
+        if self._foreground_watcher_thread and self._foreground_watcher_thread.is_alive():
+            return
+        self._stop_foreground_watcher.clear()
+        self._foreground_watcher_thread = threading.Thread(
+            target=self._foreground_watcher_loop,
+            args=(interval,),
+            daemon=True,
+            name="GameForegroundWatcher"
+        )
+        self._foreground_watcher_thread.start()
+
+    def stop_foreground_watcher(self):
+        """Stops background foreground game window polling thread."""
+        self._stop_foreground_watcher.set()
+        if self._foreground_watcher_thread:
+            try:
+                self._foreground_watcher_thread.join(timeout=1.0)
+            except Exception:
+                pass
+            self._foreground_watcher_thread = None
+
+    def _foreground_watcher_loop(self, interval: float = 2.0):
+        while not self._stop_foreground_watcher.is_set():
+            try:
+                self.check_and_update_foreground_game()
+            except Exception:
+                pass
+            self._stop_foreground_watcher.wait(interval)
 
     def get_active_game_context(self) -> str:
         """
         Gathers live context from the active game profile, including scratchpad
         notes and real-time telemetry if available.
+        When Game Mode is disabled, returns an empty string so the LLM is not locked
+        to the game universe and can freely discuss real-world topics while macros stay ready.
         """
+        if not self.is_game_mode_active():
+            return ""
+
         active_id = self.data.get("active_profile")
         if not active_id:
             return ""
@@ -244,11 +540,16 @@ class GameManager:
 
         # 6. Strict Game Scope & Search Locking Directive
         game_title = profile.get("display_name", active_id)
+        universe_name = profile.get("universe_name") or profile.get("world_name") or f"the universe of {game_title}"
         parts.append(
             f"=== STRICT GAME SCOPE & SEARCH LOCK: {game_title.upper()} ===\n"
-            f"1. UNIVERSE LOCK: You are exclusively operating within the universe, mechanics, lore, and geography of {game_title}.\n"
+            f"1. IMMERSION & IN-CHARACTER MANDATE:\n"
+            f"   - You are exclusively operating within {universe_name} in {game_title}.\n"
+            f"   - Speak, react, and advise solely as the player's in-game companion. Stay 100% in-character at all times.\n"
+            f"   - NEVER break character to discuss, explain, or troubleshoot real-world software, programming, Python code, system architecture, desktop bugs, or real-world events.\n"
+            f"   - If the player asks about real-world software, code, bugs, or out-of-game matters: DO NOT ANSWER OR DISCUSS SOFTWARE. Deflect in-character and remind the player: 'My focus is on our journey in {game_title}. If you want to talk about real-world topics or code, tell me to \"disable Game Mode\" first.'\n"
             f"   - NEVER search for, reference, or import terminology from unrelated games (e.g. World of Warcraft, Black Desert, Dark Souls, Elder Scrolls, etc.).\n"
-            f"   - When discussing game lore, builds, quests, or mechanics, provide rich, thorough, and detailed guidance as appropriate for the player's questions.\n"
+            f"   - When discussing game lore, builds, quests, or mechanics, provide rich, thorough, and detailed guidance grounded in {game_title}.\n"
             f"2. GOOGLE SEARCH LOCK: If you perform a Google Search to assist the player, your search query MUST be strictly scoped with \"{game_title}\" (e.g. '\"{game_title}\" <topic>'). Never execute un-scoped generic searches.\n"
             f"3. MAP & WAYPOINT DELEGATION:\n"
             f"   - When the user asks to mark, view, or find a location on their map, delegate directly to `pan_and_mark_map_location` or `assist_game_navigation`.\n"
@@ -341,7 +642,8 @@ class GameManager:
         return new_text
 
     def close(self):
-        """Shuts down background telemetry watchers."""
+        """Shuts down background telemetry watchers and foreground process watcher."""
+        self.stop_foreground_watcher()
         if self.ed_watcher:
             try:
                 self.ed_watcher.stop()

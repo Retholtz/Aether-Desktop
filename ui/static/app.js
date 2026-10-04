@@ -422,6 +422,32 @@ window.aetherUI = {
       });
     }
 
+    // Game Mode Keybind Recorder Controls
+    const gameModeBtn = document.getElementById("gameModeKeybindBtn");
+    if (gameModeBtn) {
+      gameModeBtn.addEventListener("click", () => {
+        if (this.isRecordingGameModeKeybind) {
+          this.stopGameModeKeybindRecording();
+        } else {
+          this.startGameModeKeybindRecording();
+        }
+      });
+    }
+
+    const resetGameModeBtn = document.getElementById("gameModeKeybindResetBtn");
+    if (resetGameModeBtn) {
+      resetGameModeBtn.addEventListener("click", () => {
+        this.gameModeKey = "Ctrl+Shift+G";
+        this.gameModeKeyDisplay = "Ctrl+Shift+G";
+        this.gameModeVk = 71;
+        this.gameModeModifiers = ["Control", "Shift"];
+        const disp = document.getElementById("gameModeKeybindDisplay");
+        if (disp) disp.innerText = "Ctrl+Shift+G";
+        this.saveSettings(true);
+        this.log("Game Mode Keybind reset to default (Ctrl+Shift+G).");
+      });
+    }
+
     const defaultHudModeSel = document.getElementById("defaultHudModeSelect");
     if (defaultHudModeSel) {
       defaultHudModeSel.addEventListener("change", (e) => {
@@ -472,6 +498,12 @@ window.aetherUI = {
         e.preventDefault();
         e.stopPropagation();
         this.handleRecordedHudModeKey(e);
+        return;
+      }
+      if (this.isRecordingGameModeKeybind) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.handleRecordedGameModeKey(e);
         return;
       }
       if (this.isRecordingKeybind) {
@@ -823,6 +855,59 @@ window.aetherUI = {
     this.stopHudModeKeybindRecording();
     this.saveSettings(true);
     this.log(`HUD Mode Keybind set to: ${this.hudModeKeyDisplay}`);
+  },
+
+  startGameModeKeybindRecording: function() {
+    this.isRecordingGameModeKeybind = true;
+    this.stopKeybindRecording();
+    this.stopHudModeKeybindRecording();
+    const btn = document.getElementById("gameModeKeybindBtn");
+    const display = document.getElementById("gameModeKeybindDisplay");
+    if (btn) btn.classList.add("recording");
+    if (display) display.innerText = "PRESS ANY KEY COMBO...";
+  },
+
+  stopGameModeKeybindRecording: function() {
+    this.isRecordingGameModeKeybind = false;
+    const btn = document.getElementById("gameModeKeybindBtn");
+    const display = document.getElementById("gameModeKeybindDisplay");
+    if (btn) btn.classList.remove("recording");
+    if (display) display.innerText = this.gameModeKeyDisplay || "Ctrl+Shift+G";
+  },
+
+  handleRecordedGameModeKey: function(e) {
+    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+      return;
+    }
+
+    const mods = [];
+    if (e.ctrlKey) mods.push("Control");
+    if (e.altKey) mods.push("Alt");
+    if (e.shiftKey) mods.push("Shift");
+
+    let keyName = e.code || e.key;
+    if (keyName.startsWith("Key")) keyName = keyName.substring(3);
+    if (keyName.startsWith("Digit")) keyName = keyName.substring(5);
+
+    let displayKey = keyName;
+    if (keyName === "Space") displayKey = "Space";
+    else if (keyName === "Backquote") displayKey = "~";
+    else if (keyName === "Escape") displayKey = "Esc";
+
+    const displayParts = [];
+    if (e.ctrlKey) displayParts.push("Ctrl");
+    if (e.altKey) displayParts.push("Alt");
+    if (e.shiftKey) displayParts.push("Shift");
+    displayParts.push(displayKey);
+
+    this.gameModeKey = displayParts.join("+");
+    this.gameModeKeyDisplay = displayParts.join("+");
+    this.gameModeVk = e.keyCode || 71;
+    this.gameModeModifiers = mods;
+
+    this.stopGameModeKeybindRecording();
+    this.saveSettings(true);
+    this.log(`Game Mode Keybind set to: ${this.gameModeKeyDisplay}`);
   },
 
   matchesPttKey: function(e) {
@@ -1393,6 +1478,20 @@ window.aetherUI = {
         if (cfg.ui.hud_mode_modifiers) {
           this.hudModeModifiers = cfg.ui.hud_mode_modifiers;
         }
+        if (cfg.ui.game_mode_hotkey) {
+          this.gameModeKey = cfg.ui.game_mode_hotkey;
+        }
+        if (cfg.ui.game_mode_key_display) {
+          this.gameModeKeyDisplay = cfg.ui.game_mode_key_display;
+          const gmDisp = document.getElementById("gameModeKeybindDisplay");
+          if (gmDisp) gmDisp.innerText = cfg.ui.game_mode_key_display;
+        }
+        if (cfg.ui.game_mode_vk !== undefined) {
+          this.gameModeVk = cfg.ui.game_mode_vk;
+        }
+        if (cfg.ui.game_mode_modifiers) {
+          this.gameModeModifiers = cfg.ui.game_mode_modifiers;
+        }
       }
 
       // Application & Startup Behavior
@@ -1553,7 +1652,11 @@ window.aetherUI = {
           hud_mode_hotkey: this.hudModeKey || "Ctrl+Space",
           hud_mode_key_display: this.hudModeKeyDisplay || "Ctrl+Space",
           hud_mode_vk: this.hudModeVk !== undefined ? this.hudModeVk : 32,
-          hud_mode_modifiers: this.hudModeModifiers || ["Control"]
+          hud_mode_modifiers: this.hudModeModifiers || ["Control"],
+          game_mode_hotkey: this.gameModeKey || "Ctrl+Shift+G",
+          game_mode_key_display: this.gameModeKeyDisplay || "Ctrl+Shift+G",
+          game_mode_vk: this.gameModeVk !== undefined ? this.gameModeVk : 71,
+          game_mode_modifiers: this.gameModeModifiers || ["Control", "Shift"]
         },
         primary_model_endpoint: (document.getElementById("select-primary-model") || document.getElementById("modelSelect"))?.value || "gemini-3.8-flash",
         tier2_heavy_model: (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect"))?.value || "gemini-3.1-pro-preview",

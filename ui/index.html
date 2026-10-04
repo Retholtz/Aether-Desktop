@@ -119,6 +119,7 @@
               <div>
                 <h2 id="game-active-title">No Game Selected</h2>
                 <span id="game-process-indicator" class="badge-status badge-offline">Process Inactive</span>
+                <span id="game-mode-indicator" class="badge-status badge-online" style="margin-left: 6px; cursor: pointer;" title="Click to toggle Game Mode focus">🎮 Game Mode: ON</span>
               </div>
               <div class="banner-actions" style="display: flex; gap: 8px; align-items: center;">
                 <button type="button" id="btn-sync-game-binds" class="btn-secondary-sm" title="Scan local files for keybinds">
@@ -741,6 +742,17 @@
                     <button type="button" id="hudModeKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Ctrl+Space)">RESET</button>
                   </div>
                   <span class="input-hint" id="hudModeKeybindHint">Click the button and press any key or combo (default: Ctrl+Space) to cycle HUD modes (Mini &rarr; Normal &rarr; Max) globally across all apps.</span>
+                </div>
+
+                <div class="form-group full" style="margin-top: 6px;">
+                  <label style="display: block; margin-bottom: 5px;">Game Mode Focus Keybind (Global Hotkey)</label>
+                  <div class="keybind-recorder-container">
+                    <button type="button" id="gameModeKeybindBtn" class="hud-btn-keybind" title="Click to assign a keybind">
+                      <span id="gameModeKeybindDisplay">Ctrl+Shift+G</span>
+                    </button>
+                    <button type="button" id="gameModeKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Ctrl+Shift+G)">RESET</button>
+                  </div>
+                  <span class="input-hint" id="gameModeKeybindHint">Click the button and press any key or combo (default: Ctrl+Shift+G) to toggle Game Mode focus on/off globally across all apps.</span>
                 </div>
               </div>
             </div>

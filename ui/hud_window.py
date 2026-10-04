@@ -96,8 +96,8 @@ def get_monitor_work_areas() -> list:
 def clamp_window_position(
     x: Optional[int],
     y: Optional[int],
-    width: int = 180,
-    height: int = 52,
+    width: int = 210,
+    height: int = 56,
     margin: int = 16
 ) -> tuple[int, int]:
     """
@@ -202,7 +202,7 @@ class HUDBridge:
         if mode not in ("mini", "normal", "max"):
             mode = "normal"
         if self._window:
-            w, h = (180, 52)
+            w, h = (210, 56)
             if mode == "normal":
                 w, h = self._normal_size[0], self._normal_size[1]
             elif mode == "max":
@@ -334,6 +334,30 @@ class HUDBridge:
             return self._bridge.get_config()
         return {}
 
+    def get_game_mode(self) -> dict:
+        """Relays get_game_mode call from HUD overlay to GuiBridge."""
+        if hasattr(self._bridge, "get_game_mode"):
+            return self._bridge.get_game_mode()
+        return {"game_mode_enabled": False, "is_active": False, "is_running": False, "active_profile": "", "display_name": ""}
+
+    def set_game_mode(self, enabled: bool) -> dict:
+        """Relays set_game_mode call from HUD overlay to GuiBridge."""
+        if hasattr(self._bridge, "set_game_mode"):
+            return self._bridge.set_game_mode(enabled)
+        return {"success": False}
+
+    def toggle_game_mode(self) -> dict:
+        """Relays toggle_game_mode call from HUD overlay to GuiBridge."""
+        if hasattr(self._bridge, "toggle_game_mode"):
+            return self._bridge.toggle_game_mode()
+        return {"success": False}
+
+    def get_agent_name(self) -> dict:
+        """Relays get_agent_name call from HUD overlay to GuiBridge."""
+        if hasattr(self._bridge, "get_agent_name"):
+            return self._bridge.get_agent_name()
+        return {"agent_name": "Aether"}
+
 
 class HudWindow:
     """Encapsulates the PyWebView HUD interface, floating overlay, and system tray."""
@@ -381,7 +405,7 @@ class HudWindow:
         cfg_mode = cfg_ui.get("hud_mode", "normal")
         init_w, init_h = (440, 180)
         if cfg_mode == "mini":
-            init_w, init_h = (180, 52)
+            init_w, init_h = (210, 56)
         elif cfg_mode == "max":
             init_w, init_h = (560, 480)
 
