@@ -252,7 +252,15 @@ class GuiBridge:
                 on_whitelist_update=self.update_whitelist
             )
             self.engine = self._engine
-        self.game_mgr = GameManager()
+        if hasattr(self.engine, "game_mgr") and self.engine.game_mgr is not None:
+            self.game_mgr = self.engine.game_mgr
+        else:
+            self.game_mgr = GameManager()
+            if self.engine is not None:
+                try:
+                    self.engine.game_mgr = self.game_mgr
+                except Exception:
+                    pass
         register_ui_log_callback(self._on_log_record)
         self._last_audio_fp = get_windows_audio_fingerprint()
         self.start_audio_watcher()
@@ -1552,6 +1560,203 @@ class GuiBridge:
             self.game_mgr._save_profiles(self.game_mgr.data)
             return {"success": True}
         return {"success": False, "error": "Profile not found"}
+
+    def get_copilot_log(self, game_id: Optional[str] = None) -> dict:
+        """Returns the Co-Pilot intel and milestone observations for the specified or active game."""
+        gid = game_id or self.game_mgr.data.get("active_profile", "")
+        entries = self.game_mgr.get_copilot_log(gid) if gid else []
+        return {"success": True, "game_id": gid, "entries": entries}
+
+    def clear_copilot_log(self, game_id: Optional[str] = None) -> dict:
+        """Clears all Co-Pilot observations for the specified or active game."""
+        gid = game_id or self.game_mgr.data.get("active_profile", "")
+        success = self.game_mgr.clear_copilot_log(gid) if gid else False
+        return {"success": success, "game_id": gid}
+
+    def delete_copilot_log_entry(self, game_id: str, entry_id: str) -> dict:
+        """Deletes a single Co-Pilot observation by ID."""
+        gid = game_id or self.game_mgr.data.get("active_profile", "")
+        success = self.game_mgr.delete_copilot_log_entry(gid, entry_id)
+        return {"success": success}
+
+    def add_copilot_log_entry(self, game_id: str, summary: str, category: str = "intel", location: str = "") -> dict:
+        """Adds an entry to the Co-Pilot observation log."""
+        gid = game_id or self.game_mgr.data.get("active_profile", "")
+        return self.game_mgr.add_copilot_log_entry(gid, summary=summary, category=category, location=location)
+
+    def get_game_telemetry(self) -> dict:
+        """Returns live in-game telemetry snapshot for the active profile."""
+        active_id = self.game_mgr.data.get("active_profile", "")
+        copilot_entries = self.game_mgr.get_copilot_log(active_id) if active_id else []
+        if active_id == "elite_dangerous" and self.game_mgr.ed_watcher:
+            res = dict(self.game_mgr.ed_watcher.state)
+            res["copilot_entries"] = copilot_entries
+            return res
+        profile = self.game_mgr.get_profile(active_id)
+        return {
+            "game": profile.get("display_name") if profile else active_id,
+            "active": False,
+            "star_system": "Unknown",
+            "docked": False,
+            "supercruise": False,
+            "station": None,
+            "scratchpad": profile.get("scratchpad_raw", "") if profile else "",
+            "copilot_entries": copilot_entries
+        }
+
+    def browse_game_executable(self) -> dict:
+        """
+        Opens a Windows file browser dialog for the user to navigate to and select a game executable (.exe).
+        Returns the selected file name, path, and suggested clean display name.
+        """
+        selected_path = None
+
+        # 1. Try pywebview window create_file_dialog if available
+        win = getattr(self, "_window", None)
+        if win:
+            try:
+                import webview
+                file_types = ('Executable files (*.exe)', 'All files (*.*)')
+                dialog_mode = getattr(webview.FileDialog, "OPEN", 10)
+                res = win.create_file_dialog(
+                    dialog_type=dialog_mode,
+                    allow_multiple=False,
+                    file_types=file_types
+                )
+                if res and len(res) > 0:
+                    selected_path = res[0]
+            except Exception as e:
+                logger.debug(f"[BRIDGE] pywebview file dialog error: {e}")
+
+        # 2. Fallback to PowerShell OpenFileDialog if pywebview window not active/available
+        if not selected_path and sys.platform == "win32":
+            try:
+                import subprocess
+                ps_script = (
+                    "Add-Type -AssemblyName System.Windows.Forms | Out-Null; "
+                    "$d = New-Object System.Windows.Forms.OpenFileDialog; "
+                    "$d.Filter = 'Executable (*.exe)|*.exe|All files (*.*)|*.*'; "
+                    "$d.Title = 'Select Game Executable'; "
+                    "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.FileName }"
+                )
+                proc = subprocess.run(
+                    ["powershell", "-STA", "-NoProfile", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                )
+                out = proc.stdout.strip()
+                if out and os.path.exists(out):
+                    selected_path = out
+            except Exception as e:
+                logger.debug(f"[BRIDGE] Fallback file dialog error: {e}")
+
+        if selected_path:
+            file_name = os.path.basename(selected_path)
+            # Create suggested clean display name: "Cyberpunk2077.exe" -> "Cyberpunk 2077"
+            base_name = os.path.splitext(file_name)[0]
+            import re
+            cleaned = re.sub(r'([a-z])([A-Z0-9])', r'\1 \2', base_name)
+            cleaned = cleaned.replace('_', ' ').replace('-', ' ').strip()
+            suggested_name = cleaned.title() if cleaned else base_name
+
+            return {
+                "success": True,
+                "file_path": selected_path,
+                "file_name": file_name,
+                "suggested_name": suggested_name
+            }
+
+        return {"success": False, "cancelled": True}
+
+    def get_running_processes(self) -> dict:
+        """
+        Scans currently active processes and open windows using psutil and win32gui.
+        Returns running applications (with window titles) and user processes to select as game executables.
+        """
+        import psutil
+        system_procs = {
+            "system", "system idle process", "registry", "smss.exe", "csrss.exe", "wininit.exe",
+            "services.exe", "lsass.exe", "svchost.exe", "fontdrvhost.exe", "winlogon.exe",
+            "dwm.exe", "sihost.exe", "taskhostw.exe", "runtimebroker.exe", "shellexperiencehost.exe",
+            "searchindexer.exe", "searchhost.exe", "startmenuexperiencehost.exe", "ctfmon.exe",
+            "explorer.exe", "conhost.exe", "wudfhost.exe", "spoolsv.exe"
+        }
+
+        # 1. Map window titles to processes if on Windows
+        window_titles = {}
+        if sys.platform == "win32":
+            try:
+                from core.screen_stream import ensure_thread_desktop
+                ensure_thread_desktop()
+                import win32gui
+                import win32process
+
+                def enum_cb(hwnd, _):
+                    if win32gui.IsWindowVisible(hwnd):
+                        txt = win32gui.GetWindowText(hwnd).strip()
+                        if txt and len(txt) > 1:
+                            try:
+                                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                                if pid not in window_titles:
+                                    window_titles[pid] = txt
+                            except Exception:
+                                pass
+                    return True
+
+                win32gui.EnumWindows(enum_cb, None)
+            except Exception:
+                pass
+
+        applications = []
+        seen_names = set()
+        user_processes = []
+
+        try:
+            for p in psutil.process_iter(['pid', 'name']):
+                try:
+                    pname = p.info.get('name') or ''
+                    pid = p.info.get('pid')
+                    if not pname or pname.lower() in system_procs:
+                        continue
+
+                    # If has a visible window, treat as primary application
+                    if pid in window_titles:
+                        w_title = window_titles[pid]
+                        applications.append({
+                            "pid": pid,
+                            "name": pname,
+                            "title": w_title
+                        })
+
+                    if pname.lower() not in seen_names:
+                        seen_names.add(pname.lower())
+                        user_processes.append(pname)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception as e:
+            logger.debug(f"[BRIDGE] Error scanning processes: {e}")
+
+        applications.sort(key=lambda a: a.get("title", "").lower())
+        user_processes.sort(key=lambda s: s.lower())
+
+        return {
+            "success": True,
+            "applications": applications,
+            "processes": user_processes
+        }
+
+    def open_task_manager(self) -> dict:
+        """Launches the native Windows Task Manager."""
+        if sys.platform == "win32":
+            try:
+                import subprocess
+                subprocess.Popen(["taskmgr.exe"])
+                return {"success": True}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Task Manager is only available on Windows."}
 
 
 GUIBridge = GuiBridge

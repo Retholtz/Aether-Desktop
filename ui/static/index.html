@@ -165,14 +165,33 @@
                 </table>
               </section>
 
-              <!-- Dynamic Scratchpad & Notes Card -->
-              <section class="game-card" style="margin-top: 20px;">
-                <div class="game-card-header">
-                  <h3>GAME SCRATCHPAD & OBJECTIVE TRACKER</h3>
-                  <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
-                </div>
-                <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints... Aether will remember these during gameplay."></textarea>
-              </section>
+              <!-- Hybrid Split Layout: Player Goals vs Co-Pilot Intel & Log -->
+              <div class="game-companion-grid" style="margin-top: 20px;">
+                <!-- Left Side: Player Scratchpad & Goals -->
+                <section class="game-card">
+                  <div class="game-card-header">
+                    <h3>📝 PLAYER GOALS & CHECKLISTS</h3>
+                    <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
+                  </div>
+                  <p class="field-hint">Your personal notes and shopping lists. Say <em>"Aether, note down..."</em> or edit directly.</p>
+                  <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints..."></textarea>
+                </section>
+
+                <!-- Right Side: Co-Pilot Intel & Milestone Log -->
+                <section class="game-card copilot-card">
+                  <div class="game-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <h3>🧭 CO-PILOT INTEL & LOG</h3>
+                      <span id="badge-copilot-count" class="badge-count">0</span>
+                    </div>
+                    <button type="button" id="btn-clear-copilot-log" class="btn-text-action" title="Clear recorded observations">Clear Log</button>
+                  </div>
+                  <p class="field-hint">Landmarks, clues, and milestones captured by Aether for proactive in-game guidance.</p>
+                  <div id="copilot-log-list" class="copilot-log-list">
+                    <!-- Populated dynamically -->
+                  </div>
+                </section>
+              </div>
             </div>
 
           </main>
@@ -1340,6 +1359,99 @@
         <span class="fab-text" id="fabButtonText">START ASSISTANT</span>
       </button>
     </footer>
+  </div>
+
+  <!-- Modal: Add New Game -->
+  <div id="modal-add-game" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">🎮</span>
+          <h3 style="margin: 0; font-size: 1rem; color: #f1f5f9;">Add New Game</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-game-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="input-add-game-name" class="modal-label">Game Display Name <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-add-game-name" class="modal-input" placeholder="e.g. Star Citizen, Cyberpunk 2077, Elite Dangerous" autocomplete="off" />
+          <span class="modal-hint">The title shown in your companion sidebar and voice commands.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-add-game-proc" class="modal-label">Executable / Process Name (Optional)</label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="input-add-game-proc" class="modal-input" style="flex: 1;" placeholder="e.g. StarCitizen.exe" autocomplete="off" />
+            <button type="button" id="btn-browse-game-exe" class="btn-secondary-sm" title="Browse File Explorer to locate game executable">
+              📁 Browse...
+            </button>
+            <button type="button" id="btn-toggle-running-procs" class="btn-secondary-sm" title="Choose from running games or applications">
+              ⚡ Running Apps
+            </button>
+          </div>
+          <span class="modal-hint">Used for live running status detection and background journal telemetry.</span>
+        </div>
+
+        <!-- Quick Pick Running Process Expandable Panel -->
+        <div id="panel-running-processes" class="running-proc-panel hidden">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Active Running Games & Processes</span>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="btn-refresh-running-procs" class="btn-text-action" title="Refresh process list">🔄 Refresh</button>
+              <button type="button" id="btn-open-taskmgr" class="btn-text-action" title="Open Windows Task Manager">📊 Open Task Manager</button>
+            </div>
+          </div>
+          <input type="text" id="input-filter-running-proc" class="modal-input" placeholder="Search processes..." style="font-size: 0.8rem; padding: 6px 10px; margin-bottom: 8px;" />
+          <div id="list-running-processes" class="running-proc-list">
+            <div style="padding: 12px; text-align: center; color: #64748b; font-size: 0.8rem;">Loading running processes...</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-game" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-game" class="btn-primary-sm" style="padding: 7px 18px;">Add Game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add Keybind Macro -->
+  <div id="modal-add-keybind" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">⌨️</span>
+          <h3 style="margin: 0; font-size: 1rem; color: #f1f5f9;">Add Voice Keybind Macro</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-keybind-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="input-bind-phrase" class="modal-label">Voice Trigger Phrase <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-bind-phrase" class="modal-input" placeholder="e.g. deploy heat sink, open map, balance power" autocomplete="off" />
+          <span class="modal-hint">What you say to Aether to trigger this command.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-bind-key" class="modal-label">Primary Key <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-bind-key" class="modal-input" placeholder="e.g. v, i, space, delete, f1" autocomplete="off" />
+          <span class="modal-hint">Key name according to DirectInput hardware mapping.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-bind-mods" class="modal-label">Modifiers (Optional)</label>
+          <input type="text" id="input-bind-mods" class="modal-input" placeholder="e.g. shift, ctrl, alt (comma-separated)" autocomplete="off" />
+        </div>
+
+        <div class="modal-field">
+          <label for="input-bind-desc" class="modal-label">Description (Optional)</label>
+          <input type="text" id="input-bind-desc" class="modal-input" placeholder="e.g. Deploy Heat Sink launcher" autocomplete="off" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-keybind" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-keybind" class="btn-primary-sm" style="padding: 7px 18px;">Save Keybind</button>
+      </div>
+    </div>
   </div>
 
   <script src="settings.js"></script>

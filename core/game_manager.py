@@ -9,8 +9,12 @@ import glob
 import json
 import copy
 import re
+import time
+import uuid
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, Optional, List
+
+from core.game_telemetry import EliteTelemetryWatcher
 
 GAMES_PROFILES_PATH = os.path.join("data", "games_profiles.json")
 
@@ -26,6 +30,33 @@ class GameManager:
     def __init__(self, profiles_path: str = GAMES_PROFILES_PATH):
         self.profiles_path = profiles_path
         self.data = self._load_profiles()
+        self.ed_watcher: Optional[EliteTelemetryWatcher] = None
+        self._init_telemetry_watchers()
+
+    def _init_telemetry_watchers(self):
+        """Initializes and starts background telemetry watchers for supported games."""
+        ed_prof = self.get_profile("elite_dangerous")
+        if ed_prof:
+            j_dir = ed_prof.get("journal_dir") or ed_prof.get("telemetry_dir")
+            if self.ed_watcher:
+                if self.ed_watcher.is_running and (j_dir is None or self.ed_watcher.journal_dir == os.path.expandvars(j_dir)):
+                    return
+                try:
+                    self.ed_watcher.stop()
+                except Exception:
+                    pass
+            self.ed_watcher = EliteTelemetryWatcher(journal_dir=j_dir, on_milestone=self._on_telemetry_milestone)
+            self.ed_watcher.start()
+
+    def _on_telemetry_milestone(self, category: str, summary: str, location: str = "", details: str = ""):
+        """Auto-records game milestone events into the Elite Dangerous Co-Pilot log."""
+        self.add_copilot_log_entry(
+            game_id="elite_dangerous",
+            summary=summary,
+            category=category,
+            location=location,
+            details=details
+        )
 
     def _load_profiles(self) -> Dict[str, Any]:
         """Loads profiles from JSON disk cache or initializes defaults if not present."""
@@ -79,6 +110,7 @@ class GameManager:
                 "general_notes": []
             },
             "scratchpad_raw": "",
+            "copilot_log": [],
             "keybinds": keybinds if keybinds is not None else {}
         }
         if bindings_dir:
@@ -89,6 +121,9 @@ class GameManager:
         self.data.setdefault("profiles", {})[game_id] = profile
         if not self.data.get("active_profile"):
             self.data["active_profile"] = game_id
+
+        if game_id == "elite_dangerous":
+            self._init_telemetry_watchers()
 
         self._save_profiles(self.data)
         return {
@@ -106,6 +141,12 @@ class GameManager:
             if self.data.get("active_profile") == game_id:
                 remaining = list(profiles.keys())
                 self.data["active_profile"] = remaining[0] if remaining else ""
+            if game_id == "elite_dangerous" and self.ed_watcher:
+                try:
+                    self.ed_watcher.stop()
+                except Exception:
+                    pass
+                self.ed_watcher = None
             self._save_profiles(self.data)
             return {
                 "success": True,
@@ -134,9 +175,163 @@ class GameManager:
             return True
         if game_id in self.data.get("profiles", {}):
             self.data["active_profile"] = game_id
+            if game_id == "elite_dangerous" and (not self.ed_watcher or not self.ed_watcher.is_running):
+                self._init_telemetry_watchers()
             self._save_profiles(self.data)
             return True
         return False
+
+    def get_active_game_context(self) -> str:
+        """
+        Gathers live context from the active game profile, including scratchpad
+        notes and real-time telemetry if available.
+        """
+        active_id = self.data.get("active_profile")
+        if not active_id:
+            return ""
+
+        profile = self.get_profile(active_id)
+        if not profile:
+            return ""
+
+        parts = [f"=== ACTIVE GAME COMPANION: {profile.get('display_name', active_id)} ==="]
+
+        # 1. Scratchpad / Objectives / Checklists
+        raw_notes = profile.get("scratchpad_raw", "").strip()
+        if raw_notes:
+            parts.append(f"PLAYER GOALS & OBJECTIVES:\n{raw_notes}")
+        elif profile.get("scratchpad"):
+            sp = profile["scratchpad"]
+            sp_lines = []
+            if sp.get("active_quests"):
+                sp_lines.append("Quests: " + ", ".join(sp["active_quests"]))
+            if sp.get("general_notes"):
+                sp_lines.append("Notes: " + ", ".join(sp["general_notes"]))
+            if sp_lines:
+                parts.append("PLAYER GOALS & OBJECTIVES:\n" + "\n".join(sp_lines))
+
+        # 2. Keybinds Reference (so the model knows which voice commands it can execute)
+        keybinds = profile.get("keybinds", {})
+        if keybinds:
+            macro_lines = [f'- "{phrase}" -> {data.get("description", phrase)}' for phrase, data in keybinds.items()]
+            parts.append("AVAILABLE IN-GAME VOICE MACROS (You can trigger these via the trigger_game_action tool):\n" + "\n".join(macro_lines))
+
+        # 3. Live Telemetry
+        if active_id == "elite_dangerous" and self.ed_watcher:
+            telemetry_ctx = self.ed_watcher.get_summary_prompt_context()
+            if telemetry_ctx:
+                parts.append(telemetry_ctx)
+
+        # 4. Co-Pilot Intel & Observed Landmarks / Clues (Past Events & Points of Interest)
+        copilot_entries = profile.get("copilot_log", [])
+        if copilot_entries:
+            recent_entries = copilot_entries[-12:]
+            log_lines = []
+            for entry in recent_entries:
+                loc = f" (at {entry['location']})" if entry.get("location") else ""
+                cat = entry.get("category", "INTEL").upper()
+                log_lines.append(f"- [{cat}]{loc}: {entry.get('summary', '')}")
+            parts.append("CO-PILOT INTEL & OBSERVED LANDMARKS / CLUES (PAST DISCOVERIES):\n" + "\n".join(log_lines))
+
+        # 5. Co-Pilot Role Directive
+        parts.append(
+            "CO-PILOT ROLE DIRECTIVE:\n"
+            "You are an active in-game co-pilot. Pay close attention to current telemetry, player surroundings, and past intel.\n"
+            "If the player encounters or approaches a landmark, clue, point of interest, or mission destination that relates to something logged earlier, proactively prompt or remind the player (e.g., 'Hey, that cave might hold treasure, we should check that out!' or 'Heads up Commander, we have a mission destination in this system.').\n"
+            "Use the 'record_copilot_observation' tool whenever you or the player notice a notable landmark, rumor, clue, or hazard worth remembering.\n"
+            "Use the 'update_game_scratchpad' tool when the player tells you to note down or remember something on their personal scratchpad."
+        )
+
+        return "\n\n".join(parts)
+
+    def add_copilot_log_entry(
+        self,
+        game_id: str,
+        summary: str,
+        category: str = "intel",
+        location: str = "",
+        details: str = ""
+    ) -> dict:
+        """Adds a milestone, landmark, or intel observation to the game's Co-Pilot log."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+
+        log = profile.setdefault("copilot_log", [])
+        entry_id = f"copilot_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+        now = time.time()
+        time_str = time.strftime("%H:%M:%S", time.localtime(now))
+
+        entry = {
+            "id": entry_id,
+            "timestamp": now,
+            "time_str": time_str,
+            "category": category.lower().strip() or "intel",
+            "summary": summary.strip(),
+            "location": location.strip(),
+            "details": details.strip()
+        }
+        log.append(entry)
+        if len(log) > 100:
+            profile["copilot_log"] = log[-100:]
+
+        self._save_profiles(self.data)
+        return {"success": True, "entry": entry, "total": len(profile["copilot_log"])}
+
+    def get_copilot_log(self, game_id: str) -> List[dict]:
+        """Returns the list of co-pilot log entries for the given game."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return []
+        return profile.get("copilot_log", [])
+
+    def clear_copilot_log(self, game_id: str) -> bool:
+        """Clears all co-pilot log entries for the given game."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return False
+        profile["copilot_log"] = []
+        self._save_profiles(self.data)
+        return True
+
+    def delete_copilot_log_entry(self, game_id: str, entry_id: str) -> bool:
+        """Deletes a specific co-pilot log entry by ID."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return False
+        log = profile.get("copilot_log", [])
+        new_log = [e for e in log if e.get("id") != entry_id]
+        if len(new_log) != len(log):
+            profile["copilot_log"] = new_log
+            self._save_profiles(self.data)
+            return True
+        return False
+
+    def append_to_scratchpad(self, game_id: str, note: str) -> str:
+        """Appends a new note or checklist item to the player's personal scratchpad."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return ""
+        current = profile.get("scratchpad_raw", "")
+        cleaned_note = note.strip()
+        if not cleaned_note:
+            return current
+        if current.strip():
+            new_text = current.rstrip() + "\n" + cleaned_note
+        else:
+            new_text = cleaned_note
+        profile["scratchpad_raw"] = new_text
+        self._save_profiles(self.data)
+        return new_text
+
+    def close(self):
+        """Shuts down background telemetry watchers."""
+        if self.ed_watcher:
+            try:
+                self.ed_watcher.stop()
+            except Exception:
+                pass
+            self.ed_watcher = None
 
     def list_profiles(self) -> Dict[str, Any]:
         """Returns metadata for all configured game profiles and the active profile indicator."""

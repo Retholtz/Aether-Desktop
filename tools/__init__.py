@@ -6,7 +6,7 @@ Tier 3: Sandboxed script runner (script_runner.py)
 Central Router: ToolDispatcher (dispatcher.py)
 """
 
-from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
+from tools.dispatcher import ToolDispatcher, get_all_tool_declarations, register_tool
 from tools.os_controls import (
     find_hwnd_by_query,
     maximize_window,
@@ -26,6 +26,7 @@ from tools.script_runner import ScriptRunner
 __all__ = [
     "ToolDispatcher",
     "get_all_tool_declarations",
+    "register_tool",
     "find_hwnd_by_query",
     "maximize_window",
     "minimize_window",

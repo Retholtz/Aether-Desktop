@@ -18,6 +18,7 @@ async function loadGamesUI() {
         activeGameId = currentGamesData.active_profile;
         renderGamesSidebar();
         renderActiveGameDetail();
+        startTelemetryPolling();
     } catch (err) {
         console.error("Failed loading games subsystem:", err);
     }
@@ -146,26 +147,325 @@ function renderActiveGameDetail() {
     if (pad) {
         pad.value = profile.scratchpad_raw || '';
     }
+
+    // Co-Pilot Intel & Log
+    renderCopilotLog(profile.copilot_log || []);
 }
 
-// Add New Game Profile
-async function promptAddGame() {
-    const name = prompt("Enter Game Name (e.g. Star Citizen, Cyberpunk 2077):");
-    if (!name || !name.trim()) return;
+function renderCopilotLog(entries) {
+    const listEl = document.getElementById('copilot-log-list');
+    const badgeEl = document.getElementById('badge-copilot-count');
+    if (!listEl) return;
 
-    const proc = prompt("Enter executable/process name (optional, e.g. StarCitizen.exe):", "");
+    const list = Array.isArray(entries) ? entries : [];
+    if (badgeEl) badgeEl.textContent = list.length;
 
+    if (list.length === 0) {
+        listEl.innerHTML = `
+            <div style="padding: 24px 12px; text-align: center; color: #64748b; font-size: 0.8rem;">
+                No co-pilot observations logged yet.<br>
+                Aether records landmarks, clues, and milestones as you explore.
+            </div>
+        `;
+        return;
+    }
+
+    listEl.innerHTML = '';
+    const reversed = [...list].reverse();
+    reversed.forEach(entry => {
+        const item = document.createElement('div');
+        item.className = 'copilot-entry-item';
+        const cat = (entry.category || 'intel').toLowerCase();
+        const catClass = `cat-${cat}`;
+        const locText = entry.location ? `📍 ${entry.location}` : '';
+        const timeText = entry.time_str || '';
+        const entryId = entry.id || '';
+
+        item.innerHTML = `
+            <div class="copilot-entry-header">
+                <div style="display: flex; align-items: center;">
+                    <span class="copilot-entry-cat ${catClass}">${cat}</span>
+                    ${locText ? `<span class="copilot-entry-loc">${locText}</span>` : ''}
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 0.68rem; color: #64748b;">${timeText}</span>
+                    <button type="button" class="copilot-entry-del" title="Dismiss" onclick="deleteCopilotEntry('${entryId}')">✕</button>
+                </div>
+            </div>
+            <div class="copilot-entry-summary">${entry.summary || ''}</div>
+        `;
+        listEl.appendChild(item);
+    });
+}
+
+async function deleteCopilotEntry(entryId) {
+    if (!activeGameId || !entryId) return;
     try {
-        const res = await window.pywebview.api.add_game_profile(name.trim(), proc ? proc.trim() : "");
+        const res = await window.pywebview.api.delete_copilot_log_entry(activeGameId, entryId);
         if (res && res.success) {
-            await loadGamesUI();
-        } else {
-            alert((res && res.error) || "Failed to add game profile.");
+            const profile = currentGamesData?.profiles?.[activeGameId];
+            if (profile && Array.isArray(profile.copilot_log)) {
+                profile.copilot_log = profile.copilot_log.filter(e => e.id !== entryId);
+                renderCopilotLog(profile.copilot_log);
+            }
         }
     } catch (e) {
-        console.error("add_game_profile error:", e);
+        console.error("deleteCopilotEntry error:", e);
     }
 }
+
+async function handleClearCopilotLog() {
+    if (!activeGameId) return;
+    if (!confirm("Clear all Co-Pilot observations and milestone entries for this game?")) return;
+    try {
+        const res = await window.pywebview.api.clear_copilot_log(activeGameId);
+        if (res && res.success) {
+            const profile = currentGamesData?.profiles?.[activeGameId];
+            if (profile) profile.copilot_log = [];
+            renderCopilotLog([]);
+        }
+    } catch (e) {
+        console.error("handleClearCopilotLog error:", e);
+    }
+}
+
+// --- Modal & In-App Dialog Controllers ---
+
+function openAddGameModal() {
+    const modal = document.getElementById('modal-add-game');
+    if (!modal) return;
+    const nameInput = document.getElementById('input-add-game-name');
+    const procInput = document.getElementById('input-add-game-proc');
+    const procPanel = document.getElementById('panel-running-processes');
+    if (nameInput) {
+        nameInput.value = '';
+        nameInput.style.borderColor = '';
+    }
+    if (procInput) procInput.value = '';
+    if (procPanel) procPanel.classList.add('hidden');
+    modal.classList.remove('hidden');
+    if (nameInput) nameInput.focus();
+}
+
+function closeAddGameModal() {
+    const modal = document.getElementById('modal-add-game');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function handleBrowseGameExe() {
+    try {
+        const res = await window.pywebview.api.browse_game_executable();
+        if (res && res.success) {
+            const procInput = document.getElementById('input-add-game-proc');
+            const nameInput = document.getElementById('input-add-game-name');
+            if (procInput) procInput.value = res.file_name || '';
+            if (nameInput && !nameInput.value.trim()) {
+                nameInput.value = res.suggested_name || '';
+            }
+        }
+    } catch (err) {
+        console.error("Failed browsing game executable:", err);
+    }
+}
+
+let cachedRunningProcesses = null;
+
+async function toggleRunningProcesses() {
+    const panel = document.getElementById('panel-running-processes');
+    if (!panel) return;
+    const isHidden = panel.classList.contains('hidden');
+    if (isHidden) {
+        panel.classList.remove('hidden');
+        await loadRunningProcesses();
+    } else {
+        panel.classList.add('hidden');
+    }
+}
+
+async function loadRunningProcesses() {
+    const list = document.getElementById('list-running-processes');
+    if (!list) return;
+    list.innerHTML = '<div style="padding: 12px; text-align: center; color: #64748b; font-size: 0.8rem;">Scanning running processes...</div>';
+    try {
+        const res = await window.pywebview.api.get_running_processes();
+        cachedRunningProcesses = res;
+        renderRunningProcessesList(res);
+    } catch (err) {
+        list.innerHTML = '<div style="padding: 12px; text-align: center; color: #f87171; font-size: 0.8rem;">Could not load running processes.</div>';
+    }
+}
+
+function renderRunningProcessesList(data, filterText = '') {
+    const list = document.getElementById('list-running-processes');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const q = (filterText || '').toLowerCase().trim();
+    const apps = (data && data.applications) || [];
+    const procs = (data && data.processes) || [];
+
+    const filteredApps = apps.filter(a => !q || a.name.toLowerCase().includes(q) || (a.title && a.title.toLowerCase().includes(q)));
+    const filteredProcs = procs.filter(p => !q || p.toLowerCase().includes(q));
+
+    if (filteredApps.length === 0 && filteredProcs.length === 0) {
+        list.innerHTML = '<div style="padding: 12px; text-align: center; color: #64748b; font-size: 0.8rem;">No matching processes found.</div>';
+        return;
+    }
+
+    // 1. Applications with windows
+    if (filteredApps.length > 0) {
+        const sectionHeader = document.createElement('div');
+        sectionHeader.style.cssText = 'padding: 6px 10px; background: rgba(59, 130, 246, 0.08); font-size: 0.72rem; color: #60a5fa; font-weight: 700;';
+        sectionHeader.textContent = 'RUNNING WINDOWED APPLICATIONS';
+        list.appendChild(sectionHeader);
+
+        filteredApps.forEach(app => {
+            const item = document.createElement('div');
+            item.className = 'proc-item';
+            item.innerHTML = `
+                <span class="proc-item-title">🪟 ${app.title || app.name}</span>
+                <span class="proc-item-exe">${app.name}</span>
+            `;
+            item.onclick = () => selectRunningProcess(app.name, app.title);
+            list.appendChild(item);
+        });
+    }
+
+    // 2. All running processes
+    if (filteredProcs.length > 0) {
+        const sectionHeader = document.createElement('div');
+        sectionHeader.style.cssText = 'padding: 6px 10px; background: rgba(255, 255, 255, 0.03); font-size: 0.72rem; color: #94a3b8; font-weight: 700;';
+        sectionHeader.textContent = 'ALL RUNNING PROCESSES';
+        list.appendChild(sectionHeader);
+
+        filteredProcs.forEach(pname => {
+            const item = document.createElement('div');
+            item.className = 'proc-item';
+            item.innerHTML = `
+                <span class="proc-item-title" style="color: #cbd5e1;">⚡ ${pname}</span>
+                <span class="proc-item-exe">${pname}</span>
+            `;
+            item.onclick = () => selectRunningProcess(pname);
+            list.appendChild(item);
+        });
+    }
+}
+
+function selectRunningProcess(exeName, windowTitle = '') {
+    const procInput = document.getElementById('input-add-game-proc');
+    const nameInput = document.getElementById('input-add-game-name');
+    if (procInput) procInput.value = exeName;
+    if (nameInput && !nameInput.value.trim()) {
+        let clean = windowTitle || exeName.replace(/\.exe$/i, '');
+        clean = clean.replace(/([a-z])([A-Z0-9])/g, '$1 $2').replace(/[_-]/g, ' ').trim();
+        nameInput.value = clean.charAt(0).toUpperCase() + clean.slice(1);
+    }
+    const panel = document.getElementById('panel-running-processes');
+    if (panel) panel.classList.add('hidden');
+}
+
+function handleFilterRunningProcesses(e) {
+    const query = e.target.value;
+    if (cachedRunningProcesses) {
+        renderRunningProcessesList(cachedRunningProcesses, query);
+    }
+}
+
+async function handleOpenTaskManager() {
+    try {
+        await window.pywebview.api.open_task_manager();
+    } catch (err) {
+        console.error("Failed opening task manager:", err);
+    }
+}
+
+async function handleConfirmAddGame() {
+    const nameInput = document.getElementById('input-add-game-name');
+    const procInput = document.getElementById('input-add-game-proc');
+    const name = (nameInput?.value || '').trim();
+    const proc = (procInput?.value || '').trim();
+
+    if (!name) {
+        if (nameInput) {
+            nameInput.style.borderColor = '#ef4444';
+            nameInput.focus();
+        }
+        return;
+    }
+
+    try {
+        const res = await window.pywebview.api.add_game_profile(name, proc);
+        if (res && res.success) {
+            closeAddGameModal();
+            await loadGamesUI();
+        } else {
+            alert((res && res.error) || 'Failed to add game profile.');
+        }
+    } catch (err) {
+        console.error("add_game_profile error:", err);
+    }
+}
+
+// Add Keybind Modal Handlers
+function openAddKeybindModal() {
+    if (!activeGameId) {
+        alert("Please select or add a game first.");
+        return;
+    }
+    const modal = document.getElementById('modal-add-keybind');
+    if (!modal) return;
+    const p = document.getElementById('input-bind-phrase');
+    const k = document.getElementById('input-bind-key');
+    const m = document.getElementById('input-bind-mods');
+    const d = document.getElementById('input-bind-desc');
+    if (p) { p.value = ''; p.style.borderColor = ''; }
+    if (k) { k.value = ''; k.style.borderColor = ''; }
+    if (m) m.value = '';
+    if (d) d.value = '';
+    modal.classList.remove('hidden');
+    if (p) p.focus();
+}
+
+function closeAddKeybindModal() {
+    const modal = document.getElementById('modal-add-keybind');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function handleConfirmAddKeybind() {
+    const p = document.getElementById('input-bind-phrase');
+    const k = document.getElementById('input-bind-key');
+    const m = document.getElementById('input-bind-mods');
+    const d = document.getElementById('input-bind-desc');
+
+    const phrase = (p?.value || '').trim();
+    const key = (k?.value || '').trim();
+    const modsInput = (m?.value || '').trim();
+    const modifiers = modsInput ? modsInput.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
+    const desc = (d?.value || '').trim() || phrase;
+
+    if (!phrase) {
+        if (p) { p.style.borderColor = '#ef4444'; p.focus(); }
+        return;
+    }
+    if (!key) {
+        if (k) { k.style.borderColor = '#ef4444'; k.focus(); }
+        return;
+    }
+
+    try {
+        const res = await window.pywebview.api.save_game_keybind(activeGameId, phrase, key, modifiers, desc);
+        if (res && res.success) {
+            currentGamesData.profiles[activeGameId].keybinds = res.keybinds;
+            closeAddKeybindModal();
+            renderActiveGameDetail();
+        }
+    } catch (e) {
+        console.error("save_game_keybind error:", e);
+    }
+}
+
+// Legacy alias pointing to modern in-app modal
+const promptAddGame = openAddGameModal;
 
 // Delete Active Game Profile
 async function promptDeleteGame() {
@@ -218,8 +518,43 @@ async function deleteMacro(phrase) {
 
 function initGamesTabEvents() {
     // Add Game buttons
-    document.getElementById('btn-add-game')?.addEventListener('click', promptAddGame);
-    document.getElementById('btn-add-game-empty')?.addEventListener('click', promptAddGame);
+    document.getElementById('btn-add-game')?.addEventListener('click', openAddGameModal);
+    document.getElementById('btn-add-game-empty')?.addEventListener('click', openAddGameModal);
+
+    // Modal Add Game actions
+    document.getElementById('btn-close-add-game-modal')?.addEventListener('click', closeAddGameModal);
+    document.getElementById('btn-cancel-add-game')?.addEventListener('click', closeAddGameModal);
+    document.getElementById('btn-confirm-add-game')?.addEventListener('click', handleConfirmAddGame);
+    document.getElementById('btn-browse-game-exe')?.addEventListener('click', handleBrowseGameExe);
+    document.getElementById('btn-toggle-running-procs')?.addEventListener('click', toggleRunningProcesses);
+    document.getElementById('btn-refresh-running-procs')?.addEventListener('click', loadRunningProcesses);
+    document.getElementById('btn-open-taskmgr')?.addEventListener('click', handleOpenTaskManager);
+    document.getElementById('input-filter-running-proc')?.addEventListener('input', handleFilterRunningProcesses);
+
+    // Modal Add Keybind actions
+    document.getElementById('btn-add-keybind')?.addEventListener('click', openAddKeybindModal);
+    document.getElementById('btn-close-add-keybind-modal')?.addEventListener('click', closeAddKeybindModal);
+    document.getElementById('btn-cancel-add-keybind')?.addEventListener('click', closeAddKeybindModal);
+    document.getElementById('btn-confirm-add-keybind')?.addEventListener('click', handleConfirmAddKeybind);
+
+    // Close modals on clicking overlay backdrop
+    document.getElementById('modal-add-game')?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal-add-game') closeAddGameModal();
+    });
+    document.getElementById('modal-add-keybind')?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal-add-keybind') closeAddKeybindModal();
+    });
+
+    // Close modals on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeAddGameModal();
+            closeAddKeybindModal();
+        }
+    });
+
+    // Clear Co-Pilot Log
+    document.getElementById('btn-clear-copilot-log')?.addEventListener('click', handleClearCopilotLog);
 
     // Delete Game button
     document.getElementById('btn-delete-game')?.addEventListener('click', promptDeleteGame);
@@ -270,44 +605,60 @@ function initGamesTabEvents() {
             }
         }, 600);
     });
+}
 
-    // Prompt Modal for Adding Keybind
-    document.getElementById('btn-add-keybind')?.addEventListener('click', async () => {
-        if (!activeGameId) {
-            alert("Please select or add a game first.");
-            return;
-        }
+let telemetryPollInterval = null;
 
-        const phrase = prompt("Enter voice trigger phrase (e.g., 'deploy heat sink' or 'open map'):");
-        if (!phrase) return;
-
-        const key = prompt("Enter primary key (e.g., 'v', 'i', 'delete', 'f1'):");
-        if (!key) return;
-
-        const modsInput = prompt("Enter modifier keys separated by comma (e.g., 'shift' or 'ctrl') or leave blank:");
-        const modifiers = modsInput ? modsInput.split(',').map(s => s.trim()).filter(Boolean) : [];
-
-        const desc = prompt("Enter brief description:", phrase);
-
-        try {
-            const res = await window.pywebview.api.save_game_keybind(activeGameId, phrase, key, modifiers, desc || phrase);
-            if (res && res.success) {
-                currentGamesData.profiles[activeGameId].keybinds = res.keybinds;
-                renderActiveGameDetail();
+function startTelemetryPolling() {
+    if (telemetryPollInterval) clearInterval(telemetryPollInterval);
+    telemetryPollInterval = setInterval(async () => {
+        if (activeGameId && window.pywebview && window.pywebview.api) {
+            try {
+                const telemetry = await window.pywebview.api.get_game_telemetry();
+                if (activeGameId === 'elite_dangerous') {
+                    updateTelemetryHUD(telemetry);
+                }
+                if (telemetry) {
+                    if (telemetry.copilot_entries) {
+                        const profile = currentGamesData?.profiles?.[activeGameId];
+                        if (profile) profile.copilot_log = telemetry.copilot_entries;
+                        renderCopilotLog(telemetry.copilot_entries);
+                    }
+                    if (telemetry.scratchpad !== undefined && document.activeElement !== document.getElementById('game-scratchpad-input')) {
+                        const pad = document.getElementById('game-scratchpad-input');
+                        if (pad && pad.value !== telemetry.scratchpad) {
+                            pad.value = telemetry.scratchpad;
+                            const profile = currentGamesData?.profiles?.[activeGameId];
+                            if (profile) profile.scratchpad_raw = telemetry.scratchpad;
+                        }
+                    }
+                }
+            } catch (e) {
+                // Ignore background poll errors
             }
-        } catch (e) {
-            console.error("save_game_keybind error:", e);
         }
-    });
+    }, 2500);
+}
+
+function updateTelemetryHUD(data) {
+    const banner = document.getElementById('game-process-indicator');
+    if (banner && data && data.active) {
+        banner.textContent = `${data.star_system} | ${data.docked ? 'Docked (' + data.station + ')' : (data.supercruise ? 'Supercruise' : 'Normal Space')}`;
+        banner.className = 'badge-status badge-online';
+    }
 }
 
 // Global exposure for onclick handlers & external callers
 window.testMacro = testMacro;
 window.deleteMacro = deleteMacro;
+window.deleteCopilotEntry = deleteCopilotEntry;
+window.renderCopilotLog = renderCopilotLog;
 window.loadGamesUI = loadGamesUI;
 window.switchActiveGame = switchActiveGame;
 window.promptAddGame = promptAddGame;
 window.promptDeleteGame = promptDeleteGame;
+window.startTelemetryPolling = startTelemetryPolling;
+window.updateTelemetryHUD = updateTelemetryHUD;
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initGamesTabEvents);

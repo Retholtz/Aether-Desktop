@@ -34,6 +34,8 @@ from core.hotkey_manager import HotkeyManager
 from core.startup_runner import StartupJobRunner
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
+from core.game_manager import GameManager
+from tools.game_tools import register_game_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -213,6 +215,10 @@ class AetherEngine:
             whitelist_updater=self._update_whitelist,
             config_getter=self.config_getter
         )
+
+        # Gaming Subsystem & Live Companion Dispatcher
+        self.game_mgr = GameManager()
+        register_game_tools(self.dispatcher, self.game_mgr)
 
         # Target Speaker Verification (CAM++ Offline Biometrics)
         self.voice_verifier = VoiceProfileVerifier()
@@ -2734,6 +2740,16 @@ class AetherEngine:
 
         if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
             base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"
+
+        # Append live game telemetry & scratchpad context if available
+        try:
+            game_mgr = getattr(self, "game_mgr", None) or GameManager()
+            game_context = game_mgr.get_active_game_context()
+            if game_context and game_context.strip() not in base_inst:
+                base_inst = base_inst.rstrip() + "\n\n" + game_context.strip() + "\n"
+        except Exception as e:
+            logger.debug(f"[ENGINE] Failed injecting game context: {e}")
+
         return base_inst
 
     def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
@@ -3271,6 +3287,15 @@ class AetherEngine:
         api_cfg = self.config_getter().get("api", {})
         if system_instruction_text is None:
             system_instruction_text = self._base_system_instruction or api_cfg.get("system_instruction", "You are Aether.")
+
+        try:
+            game_mgr = getattr(self, "game_mgr", None) or GameManager()
+            game_context = game_mgr.get_active_game_context()
+            if game_context and game_context.strip() not in system_instruction_text:
+                system_instruction_text = system_instruction_text.rstrip() + "\n\n" + game_context.strip() + "\n"
+        except Exception:
+            pass
+
         if voice_name is None:
             voice_name = api_cfg.get("voice_name", "Aoede")
         if temperature is None:

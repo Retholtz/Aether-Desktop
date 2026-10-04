@@ -119,6 +119,31 @@ class TestGameEnginePhase2(unittest.TestCase):
         res_add_empty = self.bridge.add_game_profile("   ")
         self.assertFalse(res_add_empty["success"])
 
+    def test_browse_game_executable_mock(self):
+        class MockWindow:
+            def create_file_dialog(self, **kwargs):
+                return [r"C:\Games\Cyberpunk2077\bin\x64\Cyberpunk2077.exe"]
+
+        self.bridge._window = MockWindow()
+        res = self.bridge.browse_game_executable()
+        self.assertTrue(res["success"])
+        self.assertEqual(res["file_name"], "Cyberpunk2077.exe")
+        self.assertEqual(res["suggested_name"], "Cyberpunk 2077")
+
+    def test_get_running_processes_structure(self):
+        res = self.bridge.get_running_processes()
+        self.assertTrue(res["success"])
+        self.assertIn("applications", res)
+        self.assertIn("processes", res)
+        self.assertIsInstance(res["applications"], list)
+        self.assertIsInstance(res["processes"], list)
+
+    @patch("subprocess.Popen")
+    def test_open_task_manager(self, mock_popen):
+        res = self.bridge.open_task_manager()
+        self.assertTrue(res["success"])
+        self.assertTrue(mock_popen.called)
+
 
 if __name__ == "__main__":
     unittest.main()

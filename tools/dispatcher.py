@@ -818,9 +818,52 @@ EXPORT_DOSSIER_DECLARATION = {
 }
 
 
+_CUSTOM_TOOL_DECLARATIONS: Dict[str, dict] = {}
+_CUSTOM_TOOL_HANDLERS: Dict[str, Callable] = {}
+
+
+def register_tool(*args, **kwargs):
+    """
+    Registers a tool declaration and handler globally.
+    Supports decorator usage:
+        @register_tool(name="foo", description="bar", parameters={...})
+        def foo(): ...
+    Or direct function call:
+        register_tool(name, declaration_dict, handler_fn)
+    """
+    if len(args) == 3 and callable(args[2]):
+        name, decl, handler = args
+        _CUSTOM_TOOL_DECLARATIONS[name] = decl
+        _CUSTOM_TOOL_HANDLERS[name] = handler
+        return handler
+
+    name = kwargs.get("name") or (args[0] if len(args) > 0 and isinstance(args[0], str) else None)
+    description = kwargs.get("description") or (args[1] if len(args) > 1 and isinstance(args[1], str) else "")
+    parameters = kwargs.get("parameters") or (args[2] if len(args) > 2 and isinstance(args[2], dict) else None)
+
+    def decorator(fn: Callable):
+        tool_name = name or fn.__name__
+        decl = {
+            "name": tool_name,
+            "description": description or (fn.__doc__ or "").strip(),
+            "parameters": parameters or {
+                "type": "OBJECT",
+                "properties": {},
+                "required": []
+            }
+        }
+        _CUSTOM_TOOL_DECLARATIONS[tool_name] = decl
+        _CUSTOM_TOOL_HANDLERS[tool_name] = fn
+        return fn
+
+    if len(args) == 1 and callable(args[0]):
+        return decorator(args[0])
+    return decorator
+
+
 def get_all_tool_declarations() -> List[dict]:
     """Returns the full list of tool declarations for Gemini Multimodal Live."""
-    return [
+    decls = [
         MAXIMIZE_WINDOW_DECLARATION,
         MINIMIZE_WINDOW_DECLARATION,
         RESTORE_WINDOW_DECLARATION,
@@ -854,6 +897,10 @@ def get_all_tool_declarations() -> List[dict]:
         SEND_DESKTOP_NOTIFICATION_DECLARATION,
         EXPORT_DOSSIER_DECLARATION,
     ]
+    for d in _CUSTOM_TOOL_DECLARATIONS.values():
+        if d not in decls:
+            decls.append(d)
+    return decls
 
 
 class ToolDispatcher:
@@ -883,9 +930,38 @@ class ToolDispatcher:
         self.genai_client = genai_client
         self.last_blocked_app = ""
         self.last_target_app = ""
+        self._custom_declarations: Dict[str, dict] = dict(_CUSTOM_TOOL_DECLARATIONS)
+        self._custom_handlers: Dict[str, Callable] = dict(_CUSTOM_TOOL_HANDLERS)
         self.skill_router = BM25CatalogRouter()
         self._catalog_mtime = 0.0
         self._refresh_skill_index()
+
+    def register(self, name: str = "", description: str = "", parameters: Optional[dict] = None):
+        """Decorator to register a custom tool function directly onto this dispatcher instance."""
+        def decorator(fn: Callable):
+            tool_name = name or fn.__name__
+            decl = {
+                "name": tool_name,
+                "description": description or (fn.__doc__ or "").strip(),
+                "parameters": parameters or {
+                    "type": "OBJECT",
+                    "properties": {},
+                    "required": []
+                }
+            }
+            self._custom_declarations[tool_name] = decl
+            self._custom_handlers[tool_name] = fn
+            _CUSTOM_TOOL_DECLARATIONS[tool_name] = decl
+            _CUSTOM_TOOL_HANDLERS[tool_name] = fn
+            return fn
+        return decorator
+
+    def register_tool(self, name: str, declaration: dict, handler: Callable):
+        """Registers a custom tool declaration and handler directly onto this dispatcher."""
+        self._custom_declarations[name] = declaration
+        self._custom_handlers[name] = handler
+        _CUSTOM_TOOL_DECLARATIONS[name] = declaration
+        _CUSTOM_TOOL_HANDLERS[name] = handler
 
     def _refresh_skill_index(self):
         """Loads and indexes promoted skills from skills_catalog.json."""
@@ -943,7 +1019,7 @@ class ToolDispatcher:
         # Returns inspect_screen_context, google_search, query_user_memory,
         # search_past_sessions, execute_automation_script, send_desktop_notification
         # alongside essential desktop/memory primitives.
-        return [
+        core = [
             INSPECT_SCREEN_CONTEXT_DECLARATION,
             QUERY_USER_MEMORY_DECLARATION,
             SEARCH_PAST_SESSIONS_DECLARATION,
@@ -972,6 +1048,10 @@ class ToolDispatcher:
             REGISTER_MONITORING_TASK_DECLARATION,
             LIST_BACKGROUND_MONITORS_DECLARATION,
         ]
+        for d in self._custom_declarations.values():
+            if d not in core:
+                core.append(d)
+        return core
 
     def get_routed_tool_declarations(self, user_prompt: str, max_dynamic_skills: int = 3) -> List[dict]:
         """
@@ -1721,6 +1801,38 @@ class ToolDispatcher:
                     "content": f"📁 [DOSSIER] Saved '{result.get('filename', args.get('title', 'Research_Dossier'))}' ({result.get('char_count', 0)} chars)"
                 })
                 return result
+
+            elif fn_name in self._custom_handlers or fn_name in _CUSTOM_TOOL_HANDLERS:
+                handler = self._custom_handlers.get(fn_name) or _CUSTOM_TOOL_HANDLERS.get(fn_name)
+                import inspect
+                sig = inspect.signature(handler)
+                if len(sig.parameters) == 0:
+                    call_result = handler()
+                elif len(sig.parameters) == 1 and not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    p_name = next(iter(sig.parameters.keys()))
+                    if p_name in args:
+                        call_result = handler(args[p_name])
+                    elif p_name in ("args", "params", "data", "payload"):
+                        call_result = handler(args)
+                    else:
+                        call_result = handler(args)
+                else:
+                    try:
+                        call_result = handler(**args)
+                    except TypeError:
+                        call_result = handler(args)
+
+                if asyncio.iscoroutine(call_result):
+                    result = await call_result
+                else:
+                    result = call_result
+
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Custom Tool",
+                    "content": f"🛠️ [{fn_name}] {str(result)[:100]}"
+                })
+                return result if isinstance(result, dict) else {"status": "success", "result": result}
 
             else:
                 # Check if fn_name is a dynamically routed catalog skill
