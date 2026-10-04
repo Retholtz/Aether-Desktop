@@ -515,25 +515,91 @@ class GameManager:
 
         return discovered
 
-    def sync_game_binds(self, game_id: str) -> dict:
-        """Attempts auto-detection; merges into profile while preserving manual overrides."""
+    def fetch_web_default_keybinds(self, game_name: str, client, model_endpoint: str = "gemini-2.5-flash") -> Dict[str, dict]:
+        """
+        Queries online reference knowledge to retrieve standard PC default
+        keyboard and mouse bindings for titles without local XML/INI files.
+        """
+        if not client:
+            return {}
+
+        prompt = f"""
+Provide the official default PC Keyboard and Mouse keybindings for the game: "{game_name}".
+Focus on essential gameplay, UI, movement, and consumable shortcuts (e.g., call mount, open inventory, map, crouch, quick slots).
+
+Return ONLY a JSON dictionary where keys are natural trigger phrases in lowercase (e.g. "call mount", "open map", "crouch"):
+{{
+    "voice trigger phrase": {{
+        "key": "single key string (e.g. 'h', 'm', 'c', 'space', 'i', 'f1')",
+        "modifiers": ["optional list of modifier strings like 'shift', 'ctrl' or empty list"],
+        "description": "Short explanation of the action",
+        "source": "web_defaults"
+    }}
+}}
+Format strictly as valid JSON.
+"""
+        try:
+            res = client.models.generate_content(
+                model=model_endpoint,
+                contents=prompt,
+                config={"response_mime_type": "application/json"}
+            )
+            raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                raw_text = re.sub(r"\s*```$", "", raw_text)
+
+            parsed = json.loads(raw_text) if raw_text else {}
+            if isinstance(parsed, dict) and parsed:
+                clean_dict = {}
+                for k, v in parsed.items():
+                    if isinstance(v, dict):
+                        v["source"] = "web_defaults"
+                        v.setdefault("modifiers", [])
+                        v.setdefault("description", k)
+                        clean_dict[k.lower().strip()] = v
+                return clean_dict
+        except Exception as e:
+            print(f"[ERROR] [GAME_MGR] Web keybind ingestion failed: {e}")
+        return {}
+
+    def sync_game_binds_with_fallback(self, game_id: str, client=None, model_endpoint: str = "gemini-2.5-flash") -> dict:
+        """
+        1. Tries local XML/INI directory scanning.
+        2. If unavailable, fetches published PC defaults from online references.
+        3. Merges into profile and persists to data/games_profiles.json.
+        """
         profile = self.get_profile(game_id)
         if not profile:
-            return {"success": False, "reason": f"Profile '{game_id}' not found."}
+            return {"success": False, "reason": "Profile not found"}
 
-        detected = {}
+        # 1. Local file scan attempt
         if game_id == "elite_dangerous":
             detected = self.scan_elite_dangerous_binds()
+            if detected:
+                profile.setdefault("keybinds", {}).update(detected)
+                self._save_profiles(self.data)
+                return {"success": True, "count": len(detected), "source": "local_files", "keybinds": profile["keybinds"]}
         else:
             detected = self.detect_heuristic_config(game_id)
+            if detected:
+                profile.setdefault("keybinds", {}).update(detected)
+                self._save_profiles(self.data)
+                return {"success": True, "count": len(detected), "source": "local_files", "keybinds": profile["keybinds"]}
 
-        if detected:
-            # Merge: detected keys update base, existing non-conflicting stay
-            profile.setdefault("keybinds", {}).update(detected)
-            self._save_profiles(self.data)
-            return {"success": True, "count": len(detected), "keybinds": profile["keybinds"]}
+        # 2. Web Reference Fallback
+        if client:
+            web_binds = self.fetch_web_default_keybinds(profile.get("display_name", game_id), client, model_endpoint)
+            if web_binds:
+                profile.setdefault("keybinds", {}).update(web_binds)
+                self._save_profiles(self.data)
+                return {"success": True, "count": len(web_binds), "source": "web_defaults", "keybinds": profile["keybinds"]}
 
-        return {"success": False, "reason": "No auto-parser available or no files found. Use manual overrides."}
+        return {"success": False, "reason": "No local files found and web retrieval returned no valid bindings."}
+
+    def sync_game_binds(self, game_id: str, client=None, model_endpoint: str = "gemini-2.5-flash") -> dict:
+        """Attempts local scan or web fallback keybind synchronization."""
+        return self.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model_endpoint)
 
     def trigger_action(self, phrase: str) -> dict:
         """Looks up spoken phrase in the active game profile and executes the DirectInput combo."""

@@ -218,7 +218,12 @@ class AetherEngine:
 
         # Gaming Subsystem & Live Companion Dispatcher
         self.game_mgr = GameManager()
-        register_game_tools(self.dispatcher, self.game_mgr)
+        register_game_tools(self.dispatcher, self.game_mgr, engine=self)
+
+        # Check Windows Administrator privilege for gaming input reliability
+        from tools.os_controls import is_running_as_admin
+        if not is_running_as_admin():
+            logger.warning("[ENGINE] Running without Administrator privileges. DirectInput/hardware keystroke injection may be blocked by Windows UIPI when interacting with elevated games.")
 
         # Target Speaker Verification (CAM++ Offline Biometrics)
         self.voice_verifier = VoiceProfileVerifier()

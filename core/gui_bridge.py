@@ -1521,8 +1521,14 @@ class GuiBridge:
         return {"success": False, "error": f"Unknown game profile: {game_id}"}
 
     def sync_game_bindings(self, game_id: str) -> dict:
-        """Triggers local file scanning for keybinds (e.g. Elite Dangerous XML)."""
-        return self.game_mgr.sync_game_binds(game_id)
+        """Scans local directories or retrieves web defaults if files are absent."""
+        client = getattr(self.engine, "client", None) or getattr(self._engine, "client", None)
+        model = "gemini-2.5-flash"
+        if hasattr(self, "_config") and isinstance(self._config, dict):
+            model = self._config.get("primary_model_endpoint", "gemini-2.5-flash")
+        elif hasattr(self, "engine") and hasattr(self.engine, "config"):
+            model = getattr(self.engine.config, "get", lambda k, d: d)("primary_model_endpoint", "gemini-2.5-flash")
+        return self.game_mgr.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model)
 
     def test_game_macro(self, phrase: str) -> dict:
         """Tests execution of a keybind via DirectInput hardware scancode."""

@@ -601,6 +601,42 @@ class OSControls:
         """Executes a modifier combo using DirectInput scancodes."""
         return send_directinput_combo(modifiers, key_name, hold_duration=hold_duration)
 
+    def drag_mouse_relative(self, dx: int, dy: int, button: str = "right", steps: int = 12, step_delay: float = 0.015):
+        """Relative mouse drag across screen for panning maps."""
+        return drag_mouse_relative(dx, dy, button=button, steps=steps, step_delay=step_delay)
+
+    def move_mouse_absolute(self, x: int, y: int) -> bool:
+        """Moves the hardware cursor to screen coordinates (x, y)."""
+        return move_mouse_absolute(x, y)
+
+    def click_mouse_button(self, button: str = "right", hold_duration: float = 0.08) -> bool:
+        """Clicks a mouse button (left or right) with hold duration."""
+        return click_mouse_button(button=button, hold_duration=hold_duration)
+
+    def send_gamepad_button(self, button_name: str, duration_sec: float = 0.1) -> bool:
+        """Sends a hardware controller button press via ViGEmBus."""
+        return send_gamepad_button(button_name, duration_sec=duration_sec)
+
+    def pulse_key(self, key_name: str, duration_sec: float = 0.08) -> bool:
+        """Universal DirectInput key pulse."""
+        return pulse_key(key_name, duration_sec=duration_sec)
+
+    def move_cursor_to_point(self, x: int, y: int, screen_width: int = 1920, screen_height: int = 1080):
+        """Universal absolute cursor placement."""
+        return move_cursor_to_point(x, y, screen_width=screen_width, screen_height=screen_height)
+
+    def click_mouse(self, button: str = "left", duration_sec: float = 0.06):
+        """Universal mouse click."""
+        return click_mouse(button=button, duration_sec=duration_sec)
+
+    def drag_viewport(self, dx: int, dy: int, button: str = "right", steps: int = 12):
+        """Pans a viewport smoothly using relative mouse delta motions."""
+        return drag_viewport(dx, dy, button=button, steps=steps)
+
+    def zoom_viewport(self, notches: int):
+        """Scrolls mouse wheel: negative = zoom out, positive = zoom in."""
+        return zoom_viewport(notches=notches)
+
     def _type_keystrokes_direct(self, text: str) -> dict:
         """Types short text directly using standard keystroke simulation."""
         from tools.gui_primitives import GuiPrimitivesController
@@ -681,10 +717,24 @@ def type_text(text: str, fast_paste_threshold: int = 25) -> dict:
 
 
 # DirectInput / Win32 Constants
+INPUT_MOUSE = 0
 INPUT_KEYBOARD = 1
-KEYEVENTF_SCANCODE = 0x0008
-KEYEVENTF_KEYUP = 0x0002
+INPUT_HARDWARE = 2
+
 KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_ABSOLUTE = 0x8000
 
 # Mapping common key names to DirectX / DirectInput hardware scancodes
 SCANCODE_MAP = {
@@ -821,3 +871,235 @@ def send_directinput_combo(modifiers: list[str], key_name: str, hold_duration: f
             _send_scancode_event(sc, ext | KEYEVENTF_KEYUP)
 
 
+def drag_mouse_relative(dx: int, dy: int, button: str = "right", steps: int = 12, step_delay: float = 0.015):
+    """
+    Simulates clicking and dragging the mouse across the screen to pan game maps.
+    Uses relative motion deltas (MOUSEEVENTF_MOVE).
+    """
+    if sys.platform != "win32":
+        return
+    ensure_thread_desktop()
+
+    down_flag = MOUSEEVENTF_RIGHTDOWN if button.lower() == "right" else MOUSEEVENTF_LEFTDOWN
+    up_flag = MOUSEEVENTF_RIGHTUP if button.lower() == "right" else MOUSEEVENTF_LEFTUP
+
+    # 1. Mouse Button Down
+    inp_down = INPUT()
+    inp_down.type = INPUT_MOUSE
+    inp_down.mi = MOUSEINPUT(0, 0, 0, down_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(INPUT))
+    time.sleep(0.04)
+
+    # 2. Smooth incremental drag steps
+    steps = max(1, steps)
+    step_x = int(dx / steps)
+    step_y = int(dy / steps)
+    for _ in range(steps):
+        inp_move = INPUT()
+        inp_move.type = INPUT_MOUSE
+        inp_move.mi = MOUSEINPUT(step_x, step_y, 0, MOUSEEVENTF_MOVE, 0, 0)
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp_move), ctypes.sizeof(INPUT))
+        time.sleep(step_delay)
+
+    # 3. Mouse Button Up
+    inp_up = INPUT()
+    inp_up.type = INPUT_MOUSE
+    inp_up.mi = MOUSEINPUT(0, 0, 0, up_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(INPUT))
+    time.sleep(0.04)
+
+
+def move_mouse_absolute(x: int, y: int) -> bool:
+    """Moves the hardware cursor to screen coordinates (x, y)."""
+    if sys.platform != "win32":
+        return False
+    ensure_thread_desktop()
+    return bool(ctypes.windll.user32.SetCursorPos(int(x), int(y)))
+
+
+def click_mouse_button(button: str = "right", hold_duration: float = 0.08) -> bool:
+    """Clicks a mouse button (left or right) with hold duration for 3D game engines."""
+    if sys.platform != "win32":
+        return False
+    ensure_thread_desktop()
+    down_flag = MOUSEEVENTF_RIGHTDOWN if button.lower() == "right" else MOUSEEVENTF_LEFTDOWN
+    up_flag = MOUSEEVENTF_RIGHTUP if button.lower() == "right" else MOUSEEVENTF_LEFTUP
+
+    inp_down = INPUT()
+    inp_down.type = INPUT_MOUSE
+    inp_down.mi = MOUSEINPUT(0, 0, 0, down_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(INPUT))
+    time.sleep(hold_duration)
+
+    inp_up = INPUT()
+    inp_up.type = INPUT_MOUSE
+    inp_up.mi = MOUSEINPUT(0, 0, 0, up_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(INPUT))
+    time.sleep(0.04)
+    return True
+
+
+def pulse_key(key_name: str, duration_sec: float = 0.08) -> bool:
+    """Universal DirectInput key pulse."""
+    return send_directinput_key(key_name, duration_sec=duration_sec)
+
+
+def move_cursor_to_point(x: int, y: int, screen_width: int = 1920, screen_height: int = 1080):
+    """Universal absolute cursor placement."""
+    if sys.platform != "win32":
+        return
+    ensure_thread_desktop()
+    norm_x = int(x * (65535.0 / screen_width))
+    norm_y = int(y * (65535.0 / screen_height))
+    inp = INPUT(type=INPUT_MOUSE)
+    inp.mi = MOUSEINPUT(norm_x, norm_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+
+def click_mouse(button: str = "left", duration_sec: float = 0.06):
+    """Universal mouse click."""
+    if sys.platform != "win32":
+        return
+    ensure_thread_desktop()
+    btn = button.lower().strip()
+    down_flag = MOUSEEVENTF_RIGHTDOWN if btn == "right" else MOUSEEVENTF_LEFTDOWN
+    up_flag = MOUSEEVENTF_RIGHTUP if btn == "right" else MOUSEEVENTF_LEFTUP
+
+    inp_d = INPUT(type=INPUT_MOUSE)
+    inp_d.mi = MOUSEINPUT(0, 0, 0, down_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_d), ctypes.sizeof(INPUT))
+    time.sleep(duration_sec)
+
+    inp_u = INPUT(type=INPUT_MOUSE)
+    inp_u.mi = MOUSEINPUT(0, 0, 0, up_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_u), ctypes.sizeof(INPUT))
+
+
+def drag_viewport(dx: int, dy: int, button: str = "right", steps: int = 12):
+    """Pans a viewport smoothly using relative mouse delta motions."""
+    if sys.platform != "win32":
+        return
+    ensure_thread_desktop()
+    btn = button.lower().strip()
+    down_flag = MOUSEEVENTF_RIGHTDOWN if btn == "right" else MOUSEEVENTF_LEFTDOWN
+    up_flag = MOUSEEVENTF_RIGHTUP if btn == "right" else MOUSEEVENTF_LEFTUP
+
+    inp_d = INPUT(type=INPUT_MOUSE)
+    inp_d.mi = MOUSEINPUT(0, 0, 0, down_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_d), ctypes.sizeof(INPUT))
+    time.sleep(0.04)
+
+    steps = max(1, steps)
+    sx = int(dx / steps)
+    sy = int(dy / steps)
+    for _ in range(steps):
+        inp_m = INPUT(type=INPUT_MOUSE)
+        inp_m.mi = MOUSEINPUT(sx, sy, 0, MOUSEEVENTF_MOVE, 0, 0)
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp_m), ctypes.sizeof(INPUT))
+        time.sleep(0.012)
+
+    inp_u = INPUT(type=INPUT_MOUSE)
+    inp_u.mi = MOUSEINPUT(0, 0, 0, up_flag, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp_u), ctypes.sizeof(INPUT))
+    time.sleep(0.04)
+
+
+def zoom_viewport(notches: int):
+    """Scrolls mouse wheel: negative = zoom out, positive = zoom in."""
+    if sys.platform != "win32":
+        return
+    ensure_thread_desktop()
+    WHEEL_DELTA = 120
+    direction = 1 if notches > 0 else -1
+    for _ in range(abs(notches)):
+        inp = INPUT(type=INPUT_MOUSE)
+        inp.mi = MOUSEINPUT(0, 0, direction * WHEEL_DELTA, MOUSEEVENTF_WHEEL, 0, 0)
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+        time.sleep(0.03)
+
+
+_VIRTUAL_GAMEPAD = None
+
+
+def get_virtual_gamepad():
+    """
+    Lazy initialization for ViGEmBus virtual Xbox 360 controller.
+    Gracefully falls back to None if vgamepad is not installed or ViGEmBus driver is absent.
+    """
+    global _VIRTUAL_GAMEPAD
+    if _VIRTUAL_GAMEPAD is None:
+        try:
+            import vgamepad as vg
+            _VIRTUAL_GAMEPAD = vg.VX360Gamepad()
+            print("[INFO] [INPUT] ViGEmBus Virtual Xbox 360 Gamepad initialized.")
+        except Exception as e:
+            print(f"[WARN] [INPUT] Virtual gamepad unavailable: {e}")
+            _VIRTUAL_GAMEPAD = False
+    return _VIRTUAL_GAMEPAD if _VIRTUAL_GAMEPAD is not False else None
+
+
+def send_gamepad_button(button_name: str, duration_sec: float = 0.1) -> bool:
+    """
+    Simulates pressing a button on a virtual Xbox 360 controller via ViGEmBus.
+    Bypasses Windows LLKHF_INJECTED keyboard hook filters in protected game engines.
+    """
+    pad = get_virtual_gamepad()
+    if not pad:
+        return False
+
+    try:
+        import vgamepad as vg
+        btn_key = button_name.lower().strip()
+        btn_map = {
+            "a": vg.XUSB_BUTTON.XUSB_GAMEPAD_A,
+            "b": vg.XUSB_BUTTON.XUSB_GAMEPAD_B,
+            "x": vg.XUSB_BUTTON.XUSB_GAMEPAD_X,
+            "y": vg.XUSB_BUTTON.XUSB_GAMEPAD_Y,
+            "view": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "back": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "select": vg.XUSB_BUTTON.XUSB_GAMEPAD_BACK,
+            "menu": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "start": vg.XUSB_BUTTON.XUSB_GAMEPAD_START,
+            "lb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "left_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_SHOULDER,
+            "rb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "right_shoulder": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_SHOULDER,
+            "ls": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "left_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_LEFT_THUMB,
+            "rs": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "right_thumb": vg.XUSB_BUTTON.XUSB_GAMEPAD_RIGHT_THUMB,
+            "dpad_up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "up": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_UP,
+            "dpad_down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "down": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_DOWN,
+            "dpad_left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "left": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_LEFT,
+            "dpad_right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "right": vg.XUSB_BUTTON.XUSB_GAMEPAD_DPAD_RIGHT,
+            "guide": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+            "xbox": vg.XUSB_BUTTON.XUSB_GAMEPAD_GUIDE,
+        }
+        btn = btn_map.get(btn_key)
+        if not btn:
+            print(f"[WARN] [INPUT] Unknown gamepad button: {button_name}")
+            return False
+
+        pad.press_button(button=btn)
+        pad.update()
+        time.sleep(duration_sec)
+        pad.release_button(button=btn)
+        pad.update()
+        return True
+    except Exception as e:
+        print(f"[ERROR] [INPUT] Failed sending gamepad button '{button_name}': {e}")
+        return False
+
+
+def is_running_as_admin() -> bool:
+    """Checks if the current process is running with elevated Administrator privileges."""
+    if sys.platform != "win32":
+        return False
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin() != 0)
+    except Exception:
+        return False
