@@ -5,8 +5,10 @@ import sys
 import threading
 import time
 import sounddevice as sd
-from typing import Optional
+from typing import Optional, Any
+import psutil
 
+from core.game_manager import GameManager
 from core.audio_stream import (
     get_available_audio_devices,
     get_windows_audio_fingerprint,
@@ -216,7 +218,10 @@ class GuiBridge:
     handling configuration, hardware enumeration, engine lifecycle, and telemetry.
     All internal non-RPC fields are prefixed with '_' to prevent pywebview reflection loops.
     """
-    def __init__(self, config_path: str = "config.json", loop: Optional[asyncio.AbstractEventLoop] = None):
+    def __init__(self, config_path: Any = "config.json", loop: Optional[asyncio.AbstractEventLoop] = None, engine: Any = None):
+        if not isinstance(config_path, str):
+            engine = config_path
+            config_path = "config.json"
 
         self._config_path = config_path
         if loop:
@@ -237,12 +242,17 @@ class GuiBridge:
         self._audio_watcher_thread = None
         self._config = self._load_config()
         self._current_hud_mode = self._config.get("ui", {}).get("hud_mode", "normal")
-        self._engine = AetherEngine(
-            config_getter=self.get_raw_config,
-            on_event=self._on_engine_event,
-            on_whitelist_update=self.update_whitelist
-        )
-        self.engine = self._engine
+        if engine is not None:
+            self._engine = engine
+            self.engine = engine
+        else:
+            self._engine = AetherEngine(
+                config_getter=self.get_raw_config,
+                on_event=self._on_engine_event,
+                on_whitelist_update=self.update_whitelist
+            )
+            self.engine = self._engine
+        self.game_mgr = GameManager()
         register_ui_log_callback(self._on_log_record)
         self._last_audio_fp = get_windows_audio_fingerprint()
         self.start_audio_watcher()
@@ -1450,6 +1460,98 @@ class GuiBridge:
         except Exception as e:
             logger.error(f"[BRIDGE ERROR] clear_all_stored_sessions: {e}")
             return {"success": False, "error": str(e)}
+
+    # --- GAMES SUBSYSTEM BRIDGES ---
+
+    def get_game_profiles(self) -> dict:
+        """Returns all game profiles, active profile ID, and live process detection status."""
+        profiles_data = self.game_mgr.data
+        running_processes = set()
+        try:
+            for p in psutil.process_iter(['name']):
+                try:
+                    name = p.name()
+                    if name:
+                        running_processes.add(name.lower())
+                except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+                    pass
+        except Exception:
+            pass
+
+        # Annotate whether each game's process is currently detected
+        status_map = {}
+        for gid, pdata in profiles_data.get("profiles", {}).items():
+            proc_name = pdata.get("process_name", "").lower()
+            status_map[gid] = proc_name in running_processes if proc_name else False
+
+        return {
+            "active_profile": profiles_data.get("active_profile", ""),
+            "profiles": profiles_data.get("profiles", {}),
+            "running_status": status_map
+        }
+
+    def add_game_profile(self, display_name: str, process_name: str = "") -> dict:
+        """Creates a new game profile and switches to it if no active game is set."""
+        if not display_name or not display_name.strip():
+            return {"success": False, "error": "Game name cannot be empty."}
+        return self.game_mgr.add_game(display_name=display_name.strip(), process_name=process_name.strip())
+
+    def delete_game_profile(self, game_id: str) -> dict:
+        """Deletes a game profile from memory and disk."""
+        return self.game_mgr.delete_game(game_id)
+
+    def set_active_game_profile(self, game_id: str) -> dict:
+        """Switches the active game profile in memory and disk."""
+        if not game_id:
+            self.game_mgr.data["active_profile"] = ""
+            self.game_mgr._save_profiles(self.game_mgr.data)
+            return {"success": True, "active_profile": ""}
+        if game_id in self.game_mgr.data.get("profiles", {}):
+            self.game_mgr.data["active_profile"] = game_id
+            self.game_mgr._save_profiles(self.game_mgr.data)
+            return {"success": True, "active_profile": game_id}
+        return {"success": False, "error": f"Unknown game profile: {game_id}"}
+
+    def sync_game_bindings(self, game_id: str) -> dict:
+        """Triggers local file scanning for keybinds (e.g. Elite Dangerous XML)."""
+        return self.game_mgr.sync_game_binds(game_id)
+
+    def test_game_macro(self, phrase: str) -> dict:
+        """Tests execution of a keybind via DirectInput hardware scancode."""
+        return self.game_mgr.trigger_action(phrase)
+
+    def save_game_keybind(self, game_id: str, phrase: str, key: str, modifiers: list, description: str) -> dict:
+        """Adds or updates a voice-to-scancode macro in a game profile."""
+        profile = self.game_mgr.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": "Profile not found"}
+
+        clean_phrase = phrase.lower().strip()
+        profile.setdefault("keybinds", {})[clean_phrase] = {
+            "key": key.lower().strip(),
+            "modifiers": [m.lower().strip() for m in (modifiers or []) if isinstance(m, str) and m.strip()],
+            "description": description.strip() or phrase.title()
+        }
+        self.game_mgr._save_profiles(self.game_mgr.data)
+        return {"success": True, "keybinds": profile["keybinds"]}
+
+    def delete_game_keybind(self, game_id: str, phrase: str) -> dict:
+        """Removes a voice macro from a game profile."""
+        profile = self.game_mgr.get_profile(game_id)
+        if profile and phrase in profile.get("keybinds", {}):
+            del profile["keybinds"][phrase]
+            self.game_mgr._save_profiles(self.game_mgr.data)
+            return {"success": True, "keybinds": profile["keybinds"]}
+        return {"success": False, "error": "Binding not found"}
+
+    def update_game_scratchpad(self, game_id: str, scratchpad_text: str) -> dict:
+        """Saves freeform or structured game notes to the profile."""
+        profile = self.game_mgr.get_profile(game_id)
+        if profile:
+            profile["scratchpad_raw"] = scratchpad_text
+            self.game_mgr._save_profiles(self.game_mgr.data)
+            return {"success": True}
+        return {"success": False, "error": "Profile not found"}
 
 
 GUIBridge = GuiBridge

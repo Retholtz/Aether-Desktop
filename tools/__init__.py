@@ -16,6 +16,9 @@ from tools.os_controls import (
     close_window,
     OSControls,
     type_text,
+    send_directinput_key,
+    send_directinput_combo,
+    SCANCODE_MAP,
 )
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
@@ -31,6 +34,9 @@ __all__ = [
     "close_window",
     "OSControls",
     "type_text",
+    "send_directinput_key",
+    "send_directinput_combo",
+    "SCANCODE_MAP",
     "GuiPrimitivesController",
     "ScriptRunner",
 ]

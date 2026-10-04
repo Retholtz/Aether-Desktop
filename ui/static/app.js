@@ -102,35 +102,48 @@ window.aetherUI = {
   // Tab Switching
   // =========================================================================
   setupTabs: function() {
-    const tabs = document.querySelectorAll(".hud-tab");
+    const tabs = document.querySelectorAll(".hud-tab, .nav-btn");
     tabs.forEach(tab => {
       tab.addEventListener("click", () => {
         tabs.forEach(t => t.classList.remove("active"));
-        document.querySelectorAll(".tab-pane").forEach(p => p.classList.remove("active"));
+        document.querySelectorAll(".tab-pane").forEach(p => {
+          p.classList.remove("active");
+          p.classList.add("hidden");
+        });
 
         tab.classList.add("active");
-        const targetPane = document.getElementById("tab-" + tab.dataset.tab);
+        const tabKey = (tab.dataset.tab || "").replace(/^tab-/, "");
+        let targetPane = document.getElementById("tab-" + tabKey) || document.getElementById(tab.dataset.tab);
+        if (!targetPane && (tabKey === "stored" || tabKey === "chats")) {
+          targetPane = document.getElementById("tab-chats") || document.getElementById("tab-stored");
+        }
         if (targetPane) {
           targetPane.classList.add("active");
-          if (tab.dataset.tab === "settings") {
+          targetPane.classList.remove("hidden");
+          if (tabKey === "settings") {
             targetPane.focus();
             this.loadAudioDevices(true);
-          } else if (tab.dataset.tab === "preferences") {
+          } else if (tabKey === "preferences") {
             targetPane.focus();
             this.loadUserName();
             this.loadUserPreferences();
             this.loadUserFacts();
             this.loadDictionaryTerms();
-          } else if (tab.dataset.tab === "chats") {
+          } else if (tabKey === "chats" || tabKey === "stored") {
             targetPane.focus();
             this.loadStoredSessions();
+          } else if (tabKey === "games") {
+            targetPane.focus();
+            if (typeof loadGamesUI === "function") {
+              loadGamesUI();
+            }
           }
         }
       });
     });
 
     // Smooth wheel scrolling for Settings, User Preferences, and Stored Chats tab panes
-    ["tab-settings", "tab-preferences", "tab-chats"].forEach(paneId => {
+    ["tab-settings", "tab-preferences", "tab-chats", "tab-games"].forEach(paneId => {
       const pane = document.getElementById(paneId);
       if (pane) {
         pane.addEventListener("wheel", (e) => {

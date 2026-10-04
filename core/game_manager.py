@@ -8,46 +8,15 @@ import os
 import glob
 import json
 import copy
+import re
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, Optional, List
 
 GAMES_PROFILES_PATH = os.path.join("data", "games_profiles.json")
 
 DEFAULT_PROFILES = {
-    "active_profile": "crimson_desert",
-    "profiles": {
-        "crimson_desert": {
-            "display_name": "Crimson Desert",
-            "process_name": "CrimsonDesert.exe",
-            "telemetry_type": "scratchpad_only",
-            "scratchpad": {
-                "active_quests": [],
-                "crafting_materials": [],
-                "general_notes": []
-            },
-            "keybinds": {
-                "open inventory": {"key": "i", "modifiers": [], "description": "Open Inventory"},
-                "use health potion": {"key": "h", "modifiers": [], "description": "Quick Health Consumable"},
-                "open world map": {"key": "m", "modifiers": [], "description": "Toggle Map"}
-            }
-        },
-        "elite_dangerous": {
-            "display_name": "Elite Dangerous",
-            "process_name": "EliteDangerous64.exe",
-            "telemetry_type": "journal_tail",
-            "journal_dir": os.path.expandvars(r"%USERPROFILE%\Saved Games\Frontier Developments\Elite Dangerous"),
-            "bindings_dir": os.path.expandvars(r"%LOCALAPPDATA%\Frontier Developments\Elite Dangerous\Options\Bindings"),
-            "scratchpad": {
-                "targets": [],
-                "trade_notes": []
-            },
-            "keybinds": {
-                "silent running": {"key": "delete", "modifiers": ["shift"], "description": "Toggle Silent Running"},
-                "deploy heat sink": {"key": "v", "modifiers": [], "description": "Deploy Heat Sink"},
-                "toggle flight assist": {"key": "z", "modifiers": [], "description": "Toggle Flight Assist"}
-            }
-        }
-    }
+    "active_profile": "",
+    "profiles": {}
 }
 
 
@@ -78,6 +47,74 @@ class GameManager:
         with open(self.profiles_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
 
+    def add_game(
+        self,
+        display_name: str,
+        process_name: str = "",
+        telemetry_type: str = "scratchpad_only",
+        keybinds: Optional[Dict] = None,
+        scratchpad: Optional[Dict] = None,
+        bindings_dir: str = "",
+        config_dir: str = ""
+    ) -> dict:
+        """Creates a new game profile and switches to it if no active game is set."""
+        name_clean = display_name.strip()
+        if not name_clean:
+            return {"success": False, "error": "Game name cannot be empty."}
+
+        base_id = re.sub(r'[^a-zA-Z0-9]+', '_', name_clean.lower()).strip('_') or "game"
+        game_id = base_id
+        counter = 2
+        while game_id in self.data.get("profiles", {}):
+            game_id = f"{base_id}_{counter}"
+            counter += 1
+
+        profile = {
+            "display_name": name_clean,
+            "process_name": process_name.strip(),
+            "telemetry_type": telemetry_type or "scratchpad_only",
+            "scratchpad": scratchpad if scratchpad is not None else {
+                "active_quests": [],
+                "crafting_materials": [],
+                "general_notes": []
+            },
+            "scratchpad_raw": "",
+            "keybinds": keybinds if keybinds is not None else {}
+        }
+        if bindings_dir:
+            profile["bindings_dir"] = bindings_dir
+        if config_dir:
+            profile["config_dir"] = config_dir
+
+        self.data.setdefault("profiles", {})[game_id] = profile
+        if not self.data.get("active_profile"):
+            self.data["active_profile"] = game_id
+
+        self._save_profiles(self.data)
+        return {
+            "success": True,
+            "game_id": game_id,
+            "profile": profile,
+            "active_profile": self.data.get("active_profile")
+        }
+
+    def delete_game(self, game_id: str) -> dict:
+        """Deletes a game profile from memory and disk."""
+        profiles = self.data.get("profiles", {})
+        if game_id in profiles:
+            del profiles[game_id]
+            if self.data.get("active_profile") == game_id:
+                remaining = list(profiles.keys())
+                self.data["active_profile"] = remaining[0] if remaining else ""
+            self._save_profiles(self.data)
+            return {
+                "success": True,
+                "deleted_id": game_id,
+                "active_profile": self.data.get("active_profile"),
+                "remaining_count": len(profiles)
+            }
+        return {"success": False, "error": f"Game profile '{game_id}' not found."}
+
     def get_profile(self, game_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves profile dictionary for specified game ID."""
         return self.data.get("profiles", {}).get(game_id)
@@ -85,10 +122,16 @@ class GameManager:
     def get_active_profile(self) -> Optional[Dict[str, Any]]:
         """Returns the profile dictionary for the currently active game."""
         active_id = self.data.get("active_profile")
+        if not active_id:
+            return None
         return self.get_profile(active_id)
 
     def set_active_profile(self, game_id: str) -> bool:
         """Switches the currently active game profile."""
+        if not game_id:
+            self.data["active_profile"] = ""
+            self._save_profiles(self.data)
+            return True
         if game_id in self.data.get("profiles", {}):
             self.data["active_profile"] = game_id
             self._save_profiles(self.data)

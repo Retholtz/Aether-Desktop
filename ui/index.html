@@ -22,24 +22,27 @@
       </div>
 
       <!-- Navigation Tabs -->
-      <nav class="hud-tabs">
-        <button class="hud-tab active" data-tab="chat">
-          <span class="tab-icon">💬</span> CHAT THREAD
+      <nav class="hud-tabs app-nav">
+        <button type="button" class="hud-tab nav-btn active" data-tab="tab-chat" id="btn-tab-chat">
+          <span class="tab-icon icon">💬</span> CHAT THREAD
         </button>
-        <button class="hud-tab" data-tab="settings">
-          <span class="tab-icon">⚙️</span> SETTINGS
+        <button type="button" class="hud-tab nav-btn" data-tab="tab-games" id="btn-tab-games">
+          <span class="tab-icon icon">🎮</span> GAMES
         </button>
-        <button class="hud-tab" data-tab="preferences">
-          <span class="tab-icon">🧠</span> USER PREFERENCES
+        <button type="button" class="hud-tab nav-btn" data-tab="tab-settings" id="btn-tab-settings">
+          <span class="tab-icon icon">⚙️</span> SETTINGS
         </button>
-        <button class="hud-tab" data-tab="telemetry">
-          <span class="tab-icon">📊</span> TELEMETRY
+        <button type="button" class="hud-tab nav-btn" data-tab="tab-preferences" id="btn-tab-preferences">
+          <span class="tab-icon icon">🧠</span> USER PREFERENCES
         </button>
-        <button class="hud-tab" data-tab="chats">
-          <span class="tab-icon">📁</span> STORED CHATS
+        <button type="button" class="hud-tab nav-btn" data-tab="tab-telemetry" id="btn-tab-telemetry">
+          <span class="tab-icon icon">📊</span> TELEMETRY
         </button>
-        <button class="hud-tab" data-tab="logs">
-          <span class="tab-icon">📄</span> LOGS
+        <button type="button" class="hud-tab nav-btn" data-tab="tab-stored" id="btn-tab-stored">
+          <span class="tab-icon icon">📁</span> STORED CHATS
+        </button>
+        <button type="button" class="hud-tab nav-btn" data-tab="tab-logs" id="btn-tab-logs">
+          <span class="tab-icon icon">📄</span> LOGS
         </button>
       </nav>
 
@@ -90,6 +93,91 @@
           </div>
         </div>
       </section>
+ 
+      <!-- ============================================================= -->
+      <!-- TAB: GAMES                                                    -->
+      <!-- ============================================================= -->
+      <!-- GAMES TAB CONTAINER -->
+      <div id="tab-games" class="tab-pane hidden">
+        <div class="games-split-container">
+          
+          <!-- LEFT SIDEBAR: GAME SELECTOR -->
+          <aside class="games-sidebar">
+            <div class="sidebar-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <h4>LINKED GAMES</h4>
+              <button type="button" id="btn-add-game" class="btn-primary-sm" title="Add a new game">+ Add</button>
+            </div>
+            <div id="games-list" class="games-list-group">
+              <!-- Dynamically rendered by JS -->
+            </div>
+          </aside>
+
+          <!-- RIGHT DETAIL: GAME HUB & CONFIGURATION -->
+          <main class="games-main-panel">
+            <!-- Active Game Status Banner -->
+            <div class="game-banner" id="game-active-banner">
+              <div>
+                <h2 id="game-active-title">No Game Selected</h2>
+                <span id="game-process-indicator" class="badge-status badge-offline">Process Inactive</span>
+              </div>
+              <div class="banner-actions" style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btn-sync-game-binds" class="btn-secondary-sm" title="Scan local files for keybinds">
+                  <span class="icon">🔍</span> Scan / Sync Keybinds
+                </button>
+                <button type="button" id="btn-delete-game" class="btn-danger-sm" title="Delete current game profile">
+                  <span class="icon">🗑️</span> Delete Game
+                </button>
+              </div>
+            </div>
+
+            <!-- Empty State View when no games are configured -->
+            <div id="games-empty-view" class="games-empty-state hidden" style="text-align: center; padding: 60px 20px;">
+              <div style="font-size: 3rem; margin-bottom: 16px;">🎮</div>
+              <h3 style="margin-bottom: 8px; color: #93c5fd;">No Games Linked</h3>
+              <p style="color: #94a3b8; max-width: 420px; margin: 0 auto 20px auto; font-size: 0.9rem;">
+                Add a game to manage voice macros, DirectInput hardware key injection, and game objectives.
+              </p>
+              <button type="button" id="btn-add-game-empty" class="btn-primary-sm" style="padding: 8px 18px; font-size: 13px;">+ Add Your First Game</button>
+            </div>
+
+            <div id="game-details-content">
+              <!-- Keybinds & Voice Triggers Card -->
+              <section class="game-card">
+                <div class="game-card-header">
+                  <h3>VOICE MACROS & SCANCODE BINDINGS</h3>
+                  <button type="button" id="btn-add-keybind" class="btn-primary-sm">+ Add Keybind</button>
+                </div>
+                <p class="field-hint">Voice phrases spoken to Aether that inject DirectInput scancodes directly into the game.</p>
+                
+                <table class="game-table" id="table-game-binds">
+                  <thead>
+                    <tr>
+                      <th>Voice Trigger Phrase</th>
+                      <th>Modifier(s)</th>
+                      <th>Key</th>
+                      <th>Action Description</th>
+                      <th style="width: 140px;">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-game-binds">
+                    <!-- Dynamically populated -->
+                  </tbody>
+                </table>
+              </section>
+
+              <!-- Dynamic Scratchpad & Notes Card -->
+              <section class="game-card" style="margin-top: 20px;">
+                <div class="game-card-header">
+                  <h3>GAME SCRATCHPAD & OBJECTIVE TRACKER</h3>
+                  <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
+                </div>
+                <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints... Aether will remember these during gameplay."></textarea>
+              </section>
+            </div>
+
+          </main>
+        </div>
+      </div>
 
       <!-- ============================================================= -->
       <!-- TAB 2: SETTINGS MENU                                          -->
@@ -1255,6 +1343,8 @@
   </div>
 
   <script src="settings.js"></script>
+  <script src="games_tab.js"></script>
+  <script src="main.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
