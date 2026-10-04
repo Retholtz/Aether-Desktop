@@ -593,6 +593,14 @@ class OSControls:
         controller = GuiPrimitivesController()
         return controller.press_key(combo)
 
+    def send_directinput_key(self, key_name: str, duration_sec: float = 0.08) -> bool:
+        """Sends a DirectInput hardware scancode pulse."""
+        return send_directinput_key(key_name, duration_sec=duration_sec)
+
+    def send_directinput_combo(self, modifiers: list[str], key_name: str, hold_duration: float = 0.08) -> bool:
+        """Executes a modifier combo using DirectInput scancodes."""
+        return send_directinput_combo(modifiers, key_name, hold_duration=hold_duration)
+
     def _type_keystrokes_direct(self, text: str) -> dict:
         """Types short text directly using standard keystroke simulation."""
         from tools.gui_primitives import GuiPrimitivesController
@@ -670,4 +678,146 @@ class OSControls:
 def type_text(text: str, fast_paste_threshold: int = 25) -> dict:
     """Module-level type_text with non-destructive clipboard preservation."""
     return OSControls().type_text(text, fast_paste_threshold=fast_paste_threshold)
+
+
+# DirectInput / Win32 Constants
+INPUT_KEYBOARD = 1
+KEYEVENTF_SCANCODE = 0x0008
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_EXTENDEDKEY = 0x0001
+
+# Mapping common key names to DirectX / DirectInput hardware scancodes
+SCANCODE_MAP = {
+    # Alphanumeric
+    "escape": 0x01, "esc": 0x01, "1": 0x02, "2": 0x03, "3": 0x04, "4": 0x05,
+    "5": 0x06, "6": 0x07, "7": 0x08, "8": 0x09, "9": 0x0A, "0": 0x0B,
+    "-": 0x0C, "=": 0x0D, "backspace": 0x0E, "tab": 0x0F,
+    "q": 0x10, "w": 0x11, "e": 0x12, "r": 0x13, "t": 0x14, "y": 0x15,
+    "u": 0x16, "i": 0x17, "o": 0x18, "p": 0x19, "[": 0x1A, "]": 0x1B,
+    "enter": 0x1C, "return": 0x1C, "ctrl": 0x1D, "left_ctrl": 0x1D,
+    "a": 0x1E, "s": 0x1F, "d": 0x20, "f": 0x21, "g": 0x22, "h": 0x23,
+    "j": 0x24, "k": 0x25, "l": 0x26, ";": 0x27, "'": 0x28, "`": 0x29,
+    "shift": 0x2A, "left_shift": 0x2A, "\\": 0x2B, "z": 0x2C, "x": 0x2D,
+    "c": 0x2E, "v": 0x2F, "b": 0x30, "n": 0x31, "m": 0x32, ",": 0x33,
+    ".": 0x34, "/": 0x35, "right_shift": 0x36, "alt": 0x38, "left_alt": 0x38,
+    "space": 0x39, "spacebar": 0x39, "capslock": 0x3A,
+    # Function keys
+    "f1": 0x3B, "f2": 0x3C, "f3": 0x3D, "f4": 0x3E, "f5": 0x3F, "f6": 0x40,
+    "f7": 0x41, "f8": 0x42, "f9": 0x43, "f10": 0x44, "f11": 0x57, "f12": 0x58,
+    # Navigation / Arrow keys (Extended)
+    "home": (0x47, True), "up": (0x48, True), "page_up": (0x49, True),
+    "left": (0x4B, True), "right": (0x4D, True), "end": (0x4F, True),
+    "down": (0x50, True), "page_down": (0x51, True), "insert": (0x52, True),
+    "delete": (0x53, True),
+    # Common aliases & extended keys
+    "leftshift": 0x2A, "rightshift": 0x36, "leftctrl": 0x1D, "rightctrl": (0x1D, True),
+    "control": 0x1D, "leftcontrol": 0x1D, "rightcontrol": (0x1D, True),
+    "leftalt": 0x38, "rightalt": (0x38, True),
+    "pageup": (0x49, True), "pagedown": (0x51, True),
+    "uparrow": (0x48, True), "downarrow": (0x50, True),
+    "leftarrow": (0x4B, True), "rightarrow": (0x4D, True),
+}
+
+# Win32 C Structs
+ULONG_PTR = ctypes.c_size_t
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR)
+    ]
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD)
+    ]
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR)
+    ]
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = [
+        ("mi", MOUSEINPUT),
+        ("ki", KEYBDINPUT),
+        ("hi", HARDWAREINPUT)
+    ]
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = ("u",)
+    _fields_ = [
+        ("type", wintypes.DWORD),
+        ("u", _INPUT_UNION)
+    ]
+
+
+def _send_scancode_event(scancode: int, flags: int):
+    """Low-level Win32 SendInput call."""
+    if sys.platform != "win32":
+        return
+    ensure_thread_desktop()
+    inp = INPUT()
+    inp.type = INPUT_KEYBOARD
+    inp.ki = KEYBDINPUT(0, scancode, KEYEVENTF_SCANCODE | flags, 0, 0)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+def send_directinput_key(key_name: str, duration_sec: float = 0.08) -> bool:
+    """
+    Sends a DirectInput hardware scancode pulse. 
+    Maintains a hold duration (default 80ms) so 3D game engines register the frame tick.
+    """
+    normalized = key_name.lower().strip()
+    mapping = SCANCODE_MAP.get(normalized)
+    if not mapping:
+        print(f"[WARN] [INPUT] Unknown key scancode for: {key_name}")
+        return False
+
+    if isinstance(mapping, tuple):
+        scancode, is_extended = mapping
+        base_flag = KEYEVENTF_EXTENDEDKEY if is_extended else 0
+    else:
+        scancode = mapping
+        base_flag = 0
+
+    # Key Down
+    _send_scancode_event(scancode, base_flag)
+    time.sleep(duration_sec)
+    # Key Up
+    _send_scancode_event(scancode, base_flag | KEYEVENTF_KEYUP)
+    return True
+
+def send_directinput_combo(modifiers: list[str], key_name: str, hold_duration: float = 0.08) -> bool:
+    """Executes a modifier combo (e.g., Shift + Delete) using DirectInput scancodes."""
+    active_mods = []
+    try:
+        # Press all modifiers down
+        for mod in modifiers:
+            m_norm = mod.lower().strip()
+            mapping = SCANCODE_MAP.get(m_norm)
+            if mapping:
+                sc = mapping[0] if isinstance(mapping, tuple) else mapping
+                ext = KEYEVENTF_EXTENDEDKEY if isinstance(mapping, tuple) and mapping[1] else 0
+                _send_scancode_event(sc, ext)
+                active_mods.append((sc, ext))
+        
+        time.sleep(0.02)
+        # Pulse primary action key
+        send_directinput_key(key_name, duration_sec=hold_duration)
+        return True
+    finally:
+        # Release modifiers in reverse order
+        for sc, ext in reversed(active_mods):
+            _send_scancode_event(sc, ext | KEYEVENTF_KEYUP)
+
 
