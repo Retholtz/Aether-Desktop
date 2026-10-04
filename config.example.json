@@ -2,15 +2,44 @@
   "agent_name": "Aether",
   "wake_phrase": "Hey Aether",
   "kill_phrase": "Aether stop",
-  "tts_endpoint": "gemini_live",
+  "tts_endpoint": "gemini-live-voice-stream",
   "tts_voice": "Achernar",
   "tts_speed": 1.0,
   "voice_accent": "Default (Native / Standard)",
   "api_key_encrypted": "",
   "primary_model_endpoint": "gemini-3.8-flash",
+  "tier2_heavy_model": "gemini-3.1-pro-preview",
+  "stt_model_endpoint": "gemini-3.8-transcribe",
+  "tts_model_endpoint": "gemini-live-voice-stream",
   "creativity_temperature": 0.7,
   "wake_word_enabled": true,
   "idle_timeout_seconds": 8.0,
   "boot_on_startup": false,
-  "start_minimized": false
+  "start_minimized": false,
+  "models": {
+    "tier1_options": [
+      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)" },
+      { "id": "gemini-3.8-live", "label": "Gemini 3.8 Live (gemini-3.8-live)" },
+      { "id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)" },
+      { "id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash (gemini-3.5-flash)" },
+      { "id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite (gemini-3.5-flash-lite)" }
+    ],
+    "tier2_options": [
+      { "id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview (gemini-3.1-pro-preview)" },
+      { "id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)" },
+      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)" }
+    ],
+    "stt_options": [
+      { "id": "gemini-3.8-transcribe", "label": "gemini-3.8-transcribe (High Accuracy Cloud STT - Recommended)" },
+      { "id": "gemini-3.8-transcribe-live", "label": "gemini-3.8-transcribe-live (Streaming Cloud STT)" },
+      { "id": "gemini-live-native-audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional)" }
+    ],
+    "tts_options": [
+      { "id": "gemini-live-voice-stream", "label": "Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)" },
+      { "id": "gemini-3.8-flash-tts", "label": "Gemini 3.8 Flash TTS (Streaming Cloud Speech)" },
+      { "id": "edge-neural-tts", "label": "Edge Neural TTS (300+ Regional & Accent Voices)" },
+      { "id": "windows-sapi5", "label": "Windows Native SAPI5 / Local Voices (Instantaneous Offline)" },
+      { "id": "local-tts", "label": "Local TTS Server (Kokoro / OpenAI / FastTTS)" }
+    ]
+  }
 }

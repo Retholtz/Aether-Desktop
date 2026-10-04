@@ -121,13 +121,14 @@
                 <div class="grid-row row-double">
                   <div class="form-group">
                     <label for="select-tts-endpoint">Text to Speech (TTS) Endpoint</label>
-                    <select id="select-tts-endpoint" class="hud-select">
-                      <option value="gemini-live-native" selected>Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)</option>
-                      <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 Flash TTS (Streaming Cloud Speech Preview)</option>
-                      <option value="gemini-2.5-flash-preview-tts">Gemini 2.5 Flash TTS (Legacy Cloud Speech Preview)</option>
-                      <option value="edge-tts">Edge Neural TTS (300+ Regional & Accent Voices)</option>
-                      <option value="windows-local">Windows Native SAPI5 / Local Voices (Instantaneous Offline)</option>
-                      <option value="local-tts">Local TTS Server (Kokoro / OpenAI / FastTTS)</option>
+                    <select id="select-tts-endpoint" name="tts_endpoint" class="hud-select" data-alias="tts_endpoint">
+                      <option value="gemini_live" selected>Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)</option>
+                      <option value="gemini-3.8-flash-tts">Gemini 3.8 Flash TTS (Cloud)</option>
+                      <option value="gemini-3.8-flash-lite-tts">Gemini 3.8 Flash Lite TTS (Cloud)</option>
+                      <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 Flash TTS Preview (Cloud)</option>
+                      <option value="edge_neural">Edge Neural TTS (300+ Regional & Accent Voices)</option>
+                      <option value="sapi5">Windows Native SAPI5 / Local Voices (Instantaneous Offline)</option>
+                      <option value="local_server">Local TTS Server (Kokoro / OpenAI / FastTTS)</option>
                     </select>
                     <span class="field-hint input-hint">Voice synthesis engine for assistant speech playback.</span>
                   </div>
@@ -214,22 +215,6 @@
                   <span class="input-hint" id="apiKeyHint">Stored securely in your Windows user DPAPI vault.</span>
                 </div>
 
-                <!-- Model Endpoint -->
-                <div class="form-group">
-                  <label for="modelSelect">Primary Model Endpoint</label>
-                  <select id="modelSelect" class="hud-select">
-                    <option value="gemini-3.8-flash" selected>gemini-3.8-flash (Modular Cortex - Recommended: Superfast Reasoning & Coding)</option>
-                    <option value="gemini-3.7-flash">gemini-3.7-flash (Hybrid Thinking & Quick Execution)</option>
-                    <option value="gemini-3.6-flash">gemini-3.6-flash (Fast Everyday Reasoning)</option>
-                    <option value="gemini-3.5-flash">gemini-3.5-flash (Balanced Multimodal Agent)</option>
-                    <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Deep Complex Reasoning & Advanced Scripts)</option>
-                    <option value="gemini-2.5-pro">gemini-2.5-pro (Deep Reasoning)</option>
-                    <option value="gemini-3.1-flash-live-preview">gemini-3.1-flash-live-preview (Gemini Live WebSocket Bidirectional)</option>
-                    <option value="gemini-2.5-flash-native-audio-latest">gemini-2.5-flash-native-audio-latest (Legacy Live Audio WebSocket)</option>
-                  </select>
-                  <span class="input-hint">Primary reasoning and orchestration model.</span>
-                </div>
-
                 <!-- LLM Temperature Slider -->
                 <div class="form-group">
                   <div class="slider-header">
@@ -246,25 +231,14 @@
 
                 <!-- Speech to Text (STT) Endpoint -->
                 <div class="form-group full">
-                  <label for="sttSelect">Speech to Text (STT) Endpoint</label>
-                  <select id="sttSelect" class="hud-select">
-                    <option value="gemini-3.5-transcribe" selected>gemini-3.5-transcribe (High Accuracy Cloud STT - Recommended)</option>
-                    <option value="gemini-3.5-transcribe-live">gemini-3.5-transcribe-live (Streaming Cloud STT)</option>
-                    <option value="gemini-live-native">Gemini Live Native Audio Stream (Real-Time Bidirectional)</option>
+                  <label for="stt_endpoint">Speech to Text (STT) Endpoint</label>
+                  <select id="stt_endpoint" name="stt_endpoint" class="hud-select" data-alias="sttSelect">
+                    <option value="primary_flash_stt" selected>Gemini Flash Multimodal Audio (One-Shot REST Transcription)</option>
+                    <option value="gemini_live_audio">Gemini Live Native Audio Stream (Real-Time Bidirectional)</option>
+                    <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe (High Accuracy Cloud STT)</option>
+                    <option value="gemini-3.5-transcribe-live">Gemini 3.5 Transcribe Live (Streaming Cloud STT)</option>
                   </select>
                   <span class="input-hint">Microphone speech recognition pipeline.</span>
-                </div>
-
-                <!-- Complex Problem-Solving LLM Endpoint -->
-                <div class="form-group full">
-                  <label for="proModelSelect">Problem Solving LLM Endpoint (Complex Tasks & Reasoning)</label>
-                  <select id="proModelSelect" class="hud-select">
-                    <option value="gemini-3.1-pro-preview" selected>gemini-3.1-pro-preview (Deep Reasoning, Desktop Automation & Coding - Recommended)</option>
-                    <option value="gemini-3.8-flash">gemini-3.8-flash (Fast Everyday Reasoning)</option>
-                    <option value="gemini-3.7-flash">gemini-3.7-flash (Hybrid Thinking & Quick Execution)</option>
-                    <option value="gemini-2.5-pro">gemini-2.5-pro (Deep Reasoning)</option>
-                  </select>
-                  <span class="input-hint">Heavy reasoning model for desktop problem-solving, code editing, and complex actions.</span>
                 </div>
 
                 <!-- System Instruction -->
@@ -272,6 +246,38 @@
                   <label for="systemPromptInput">Personality & Instructions</label>
                   <textarea id="systemPromptInput" rows="3" class="hud-textarea"></textarea>
                   <span class="input-hint">Use <strong>[Agent Name]</strong> anywhere to dynamically insert the agent's name.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- MODEL & REASONING CONFIGURATION -->
+          <div class="settings-card hud-card">
+            <div class="settings-card-header card-header">
+              <h3 class="card-title">MODEL & REASONING ENDPOINTS</h3>
+              <button type="button" id="btn-refresh-models" class="btn-secondary-sm hud-btn-secondary sm" title="Check Google GenAI for new model releases">
+                <span class="icon">🔄</span> Refresh Available Models
+              </button>
+            </div>
+
+            <div class="card-body">
+              <div class="settings-grid form-grid">
+                <!-- Primary Model Dropdown -->
+                <div class="form-group">
+                  <label for="select-primary-model">Primary Model Endpoint</label>
+                  <select id="select-primary-model" class="form-control hud-select">
+                    <!-- Dynamically populated via JS -->
+                  </select>
+                  <span class="field-hint input-hint">Primary model used for core chat, live tools, and fast multimodal response.</span>
+                </div>
+
+                <!-- Tier 2 Heavy Model Dropdown -->
+                <div class="form-group">
+                  <label for="select-heavy-model">Tier 2 Heavy Model Endpoint</label>
+                  <select id="select-heavy-model" class="form-control hud-select">
+                    <!-- Dynamically populated via JS -->
+                  </select>
+                  <span class="field-hint input-hint">Used for structured research dossiers, code generation, and deep analysis.</span>
                 </div>
               </div>
             </div>
@@ -375,6 +381,26 @@
                   <select id="outputDeviceSelect" class="hud-select">
                     <!-- Populated dynamically -->
                   </select>
+                </div>
+
+                <div class="grid-row row-double" style="grid-column: span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px;">
+                  <!-- STT Model Selector -->
+                  <div class="form-group">
+                    <label for="select-stt-model">Speech-to-Text (STT) Model</label>
+                    <select id="select-stt-model" class="form-control hud-select">
+                      <!-- Dynamically populated via JS -->
+                    </select>
+                    <span class="field-hint input-hint">Select the active Gemini transcription endpoint.</span>
+                  </div>
+
+                  <!-- TTS Model Selector -->
+                  <div class="form-group">
+                    <label for="select-tts-model">Text-to-Speech (TTS) Model</label>
+                    <select id="select-tts-model" class="form-control hud-select">
+                      <!-- Dynamically populated via JS -->
+                    </select>
+                    <span class="field-hint input-hint">Select the active Gemini voice synthesis endpoint.</span>
+                  </div>
                 </div>
 
                 <!-- Preferred Spoken Language (STT Strict Filter) -->
@@ -1228,6 +1254,7 @@
     </footer>
   </div>
 
+  <script src="settings.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

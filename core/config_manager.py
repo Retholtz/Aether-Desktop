@@ -4,6 +4,7 @@ Handles loading, schema validation, DPAPI secret protection, and persistence
 for config.json, including wake_phrase, kill_phrase, and voice settings.
 """
 
+import copy
 import json
 import os
 import tempfile
@@ -17,6 +18,34 @@ def apply_startup_configuration(cfg: dict):
     """Synchronizes registry state with stored config value."""
     boot_enabled = cfg.get("boot_on_startup", False)
     set_boot_on_startup(boot_enabled)
+
+
+DEFAULT_CURATED_MODELS: Dict[str, List[Dict[str, str]]] = {
+    "tier1_options": [
+        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)"},
+        {"id": "gemini-3.8-live", "label": "Gemini 3.8 Live (gemini-3.8-live)"},
+        {"id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)"},
+        {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash (gemini-3.5-flash)"},
+        {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite (gemini-3.5-flash-lite)"}
+    ],
+    "tier2_options": [
+        {"id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview (gemini-3.1-pro-preview)"},
+        {"id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)"},
+        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)"}
+    ],
+    "stt_options": [
+        {"id": "gemini-3.8-transcribe", "label": "gemini-3.8-transcribe (High Accuracy Cloud STT - Recommended)"},
+        {"id": "gemini-3.8-transcribe-live", "label": "gemini-3.8-transcribe-live (Streaming Cloud STT)"},
+        {"id": "gemini-live-native-audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional)"}
+    ],
+    "tts_options": [
+        {"id": "gemini-live-voice-stream", "label": "Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)"},
+        {"id": "gemini-3.8-flash-tts", "label": "Gemini 3.8 Flash TTS (Streaming Cloud Speech)"},
+        {"id": "edge-neural-tts", "label": "Edge Neural TTS (300+ Regional & Accent Voices)"},
+        {"id": "windows-sapi5", "label": "Windows Native SAPI5 / Local Voices (Instantaneous Offline)"},
+        {"id": "local-tts", "label": "Local TTS Server (Kokoro / OpenAI / FastTTS)"}
+    ]
+}
 
 DEFAULT_VOICE_CONFIG: Dict[str, Any] = {
     "agent_name": "Aether",
@@ -130,12 +159,25 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     tts_endpoint = (
         api_cfg.get("tts_endpoint")
         or api_cfg.get("tts_model_id")
+        or cfg.get("tts_model_endpoint")
         or cfg.get("tts_endpoint")
-        or "gemini-live-native"
+        or "gemini-live-voice-stream"
     )
     cfg["tts_endpoint"] = tts_endpoint
+    cfg["tts_model_endpoint"] = tts_endpoint
     api_cfg.setdefault("tts_endpoint", tts_endpoint)
     api_cfg.setdefault("tts_model_id", tts_endpoint)
+
+    stt_endpoint = (
+        api_cfg.get("stt_endpoint")
+        or api_cfg.get("stt_model_id")
+        or cfg.get("stt_model_endpoint")
+        or "gemini-3.8-transcribe"
+    )
+    cfg["stt_model_endpoint"] = stt_endpoint
+    cfg["stt_endpoint"] = stt_endpoint
+    api_cfg.setdefault("stt_endpoint", stt_endpoint)
+    api_cfg.setdefault("stt_model_id", stt_endpoint)
 
     tts_voice = (
         api_cfg.get("voice_name")
@@ -164,6 +206,33 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     if "vad_trailing_silence_ms" not in cfg:
         cfg["vad_trailing_silence_ms"] = audio_cfg.get("vad_trailing_silence_ms", 1400)
+
+    # Curated Models Configuration Store
+    if "models" not in cfg or not isinstance(cfg["models"], dict):
+        cfg["models"] = copy.deepcopy(DEFAULT_CURATED_MODELS)
+    else:
+        for opt_key, opt_val in DEFAULT_CURATED_MODELS.items():
+            if opt_key not in cfg["models"] or not cfg["models"][opt_key]:
+                cfg["models"][opt_key] = copy.deepcopy(opt_val)
+
+    # Dynamic Model Discovery Endpoints
+    primary_model = (
+        cfg.get("primary_model_endpoint")
+        or cfg.get("tier1_fast_model")
+        or api_cfg.get("model_id")
+        or "gemini-3.8-flash"
+    )
+    cfg["primary_model_endpoint"] = primary_model
+    cfg["tier1_fast_model"] = primary_model
+    api_cfg["model_id"] = primary_model
+
+    heavy_model = (
+        cfg.get("tier2_heavy_model")
+        or api_cfg.get("pro_model_id")
+        or "gemini-3.1-pro-preview"
+    )
+    cfg["tier2_heavy_model"] = heavy_model
+    api_cfg["pro_model_id"] = heavy_model
 
     cfg.setdefault("boot_on_startup", False)
     cfg.setdefault("start_minimized", False)
@@ -206,6 +275,9 @@ class ConfigManager:
                 "kill_phrase",
                 "always_on_mode",
                 "tts_endpoint",
+                "tts_model_endpoint",
+                "stt_endpoint",
+                "stt_model_endpoint",
                 "tts_voice",
                 "tts_speed",
                 "voice_accent",
@@ -214,12 +286,35 @@ class ConfigManager:
                 "vad_trailing_silence_ms",
                 "boot_on_startup",
                 "start_minimized",
+                "primary_model_endpoint",
+                "tier1_fast_model",
+                "tier2_heavy_model",
             ):
                 if key in updates:
                     self.config[key] = updates[key]
 
+            if "primary_model_endpoint" in updates:
+                self.config["primary_model_endpoint"] = updates["primary_model_endpoint"]
+                self.config["tier1_fast_model"] = updates["primary_model_endpoint"]
+                self.config.setdefault("api", {})["model_id"] = updates["primary_model_endpoint"]
+            if "tier2_heavy_model" in updates:
+                self.config["tier2_heavy_model"] = updates["tier2_heavy_model"]
+                self.config.setdefault("api", {})["pro_model_id"] = updates["tier2_heavy_model"]
+            if "stt_model_endpoint" in updates or "stt_endpoint" in updates:
+                stt_val = updates.get("stt_endpoint") or updates.get("stt_model_endpoint")
+                self.config["stt_model_endpoint"] = stt_val
+                self.config["stt_endpoint"] = stt_val
+                self.config.setdefault("api", {})["stt_model_id"] = stt_val
+                self.config.setdefault("api", {})["stt_endpoint"] = stt_val
+            if "tts_model_endpoint" in updates or "tts_endpoint" in updates:
+                tts_val = updates.get("tts_endpoint") or updates.get("tts_model_endpoint")
+                self.config["tts_model_endpoint"] = tts_val
+                self.config["tts_endpoint"] = tts_val
+                self.config.setdefault("api", {})["tts_model_id"] = tts_val
+                self.config.setdefault("api", {})["tts_endpoint"] = tts_val
+
             # Apply nested dictionary updates
-            for section in ("api", "audio", "vision", "security", "ui", "user"):
+            for section in ("api", "audio", "vision", "security", "ui", "user", "models"):
                 if section in updates and isinstance(updates[section], dict):
                     sec_copy = dict(updates[section])
                     sec_copy.pop("new_api_key", None)
@@ -247,10 +342,32 @@ class ConfigManager:
                         self.config["voice_accent"] = sec_copy["voice_accent"]
                     if "tts_endpoint" in sec_copy:
                         self.config["tts_endpoint"] = sec_copy["tts_endpoint"]
+                        self.config["tts_model_endpoint"] = sec_copy["tts_endpoint"]
+                    if "tts_model_endpoint" in sec_copy:
+                        self.config["tts_model_endpoint"] = sec_copy["tts_model_endpoint"]
+                        self.config["tts_endpoint"] = sec_copy["tts_model_endpoint"]
+                        self.config.setdefault("api", {})["tts_model_id"] = sec_copy["tts_model_endpoint"]
+                    if "stt_model_endpoint" in sec_copy:
+                        self.config["stt_model_endpoint"] = sec_copy["stt_model_endpoint"]
+                        self.config.setdefault("api", {})["stt_model_id"] = sec_copy["stt_model_endpoint"]
+                        self.config.setdefault("api", {})["stt_endpoint"] = sec_copy["stt_model_endpoint"]
+                    if "stt_model_id" in sec_copy:
+                        self.config["stt_model_endpoint"] = sec_copy["stt_model_id"]
+                        self.config.setdefault("api", {})["stt_endpoint"] = sec_copy["stt_model_id"]
+                    if "tts_model_id" in sec_copy:
+                        self.config["tts_model_endpoint"] = sec_copy["tts_model_id"]
+                        self.config["tts_endpoint"] = sec_copy["tts_model_id"]
                     if "boot_on_startup" in sec_copy:
                         self.config["boot_on_startup"] = sec_copy["boot_on_startup"]
                     if "start_minimized" in sec_copy:
                         self.config["start_minimized"] = sec_copy["start_minimized"]
+                    if "primary_model_endpoint" in sec_copy:
+                        self.config["primary_model_endpoint"] = sec_copy["primary_model_endpoint"]
+                        self.config["tier1_fast_model"] = sec_copy["primary_model_endpoint"]
+                        self.config.setdefault("api", {})["model_id"] = sec_copy["primary_model_endpoint"]
+                    if "tier2_heavy_model" in sec_copy:
+                        self.config["tier2_heavy_model"] = sec_copy["tier2_heavy_model"]
+                        self.config.setdefault("api", {})["pro_model_id"] = sec_copy["tier2_heavy_model"]
 
         sync_config_schema(self.config)
         try:

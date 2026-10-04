@@ -277,6 +277,37 @@ class AetherEngine:
         except Exception:
             pass
 
+        try:
+            from core.stt_service import set_active_engine
+            set_active_engine(self)
+        except Exception:
+            pass
+
+    @property
+    def client(self) -> Optional[genai.Client]:
+        """Provides or lazily initializes the active Google GenAI Client."""
+        if self.genai_client is not None:
+            return self.genai_client
+        try:
+            config = self.config_getter()
+            api_cfg = config.get("api", {})
+            encrypted_key = api_cfg.get("api_key_encrypted", "")
+            api_key = unprotect_secret(encrypted_key) if encrypted_key else os.environ.get("GEMINI_API_KEY", "")
+            if api_key:
+                self.genai_client = genai.Client(api_key=api_key)
+                if hasattr(self, "dispatcher") and self.dispatcher:
+                    self.dispatcher.genai_client = self.genai_client
+                return self.genai_client
+        except Exception as e:
+            logger.warning(f"Could not initialize GenAI client: {e}")
+        return None
+
+    @client.setter
+    def client(self, value: Optional[genai.Client]):
+        self.genai_client = value
+        if hasattr(self, "dispatcher") and self.dispatcher:
+            self.dispatcher.genai_client = value
+
     def start_connection_watchdog(self):
         """Spawns an idle watchdog thread to monitor connection health."""
         self._stop_watchdog.clear()
@@ -984,6 +1015,17 @@ class AetherEngine:
             "content": text.strip(),
             "source": "text"
         })
+
+    def send_live_audio_buffer(self, audio_bytes: bytes) -> str:
+        """Sends raw audio buffer to active Gemini Live Multimodal WebSocket session."""
+        if hasattr(self, "session") and self.session is not None:
+            try:
+                if hasattr(self.session, "send"):
+                    self.session.send(input={"data": audio_bytes, "mime_type": "audio/pcm"})
+                    return ""
+            except Exception as e:
+                logger.warning(f"[ENGINE] Failed to send live audio buffer: {e}")
+        return ""
 
     def _send_multimodal_turn(self, tool_response: dict):
         """
@@ -1753,8 +1795,16 @@ class AetherEngine:
         - Stage 3 (TTS): gemini-3.1-flash-tts-preview
         Immunizes the assistant against WebSocket 1011 errors during complex tool runs.
         """
-        stt_model = api_cfg.get("stt_model_id", "gemini-3.5-transcribe")
+        raw_stt = (
+            api_cfg.get("stt_endpoint")
+            or api_cfg.get("stt_model_id")
+            or self.config_getter().get("stt_endpoint")
+            or self.config_getter().get("stt_model_endpoint")
+            or "primary_flash_stt"
+        )
         cortex_model = api_cfg.get("model_id", "gemini-3.8-flash")
+        from core.stt_service import resolve_stt_model_endpoint
+        stt_model = resolve_stt_model_endpoint(raw_stt, fallback=cortex_model)
         tts_model = api_cfg.get("tts_model_id", "gemini-live-native")
         voice_speed = float(api_cfg.get("voice_speed", 1.0))
         audio_cfg = self.config_getter().get("audio", {})

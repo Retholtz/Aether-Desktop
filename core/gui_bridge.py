@@ -22,6 +22,11 @@ from core.logger import (
 )
 from core.security import protect_secret, unprotect_secret
 from core.config_manager import sync_config_schema, save_config_atomic
+from core.model_discovery import (
+    load_cached_categorized_models,
+    load_cached_models,
+    fetch_available_gemini_models,
+)
 
 logger = get_logger("Bridge")
 
@@ -508,9 +513,32 @@ class GuiBridge:
                     self._engine.audio.set_vad_trailing_silence(silence_ms)
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
-            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized"):
+            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint"):
                 if top_key in new_config:
                     self._config[top_key] = new_config[top_key]
+
+            if "primary_model_endpoint" in new_config:
+                self._config["primary_model_endpoint"] = new_config["primary_model_endpoint"]
+                self._config["tier1_fast_model"] = new_config["primary_model_endpoint"]
+                self._config.setdefault("api", {})["model_id"] = new_config["primary_model_endpoint"]
+
+            if "tier2_heavy_model" in new_config:
+                self._config["tier2_heavy_model"] = new_config["tier2_heavy_model"]
+                self._config.setdefault("api", {})["pro_model_id"] = new_config["tier2_heavy_model"]
+
+            if "stt_model_endpoint" in new_config and new_config["stt_model_endpoint"]:
+                self._config["stt_model_endpoint"] = new_config["stt_model_endpoint"]
+                self._config.setdefault("api", {})["stt_model_id"] = new_config["stt_model_endpoint"]
+                self._config.setdefault("api", {})["stt_endpoint"] = new_config["stt_model_endpoint"]
+
+            if "tts_model_endpoint" in new_config and new_config["tts_model_endpoint"]:
+                self._config["tts_model_endpoint"] = new_config["tts_model_endpoint"]
+                self._config.setdefault("api", {})["tts_model_id"] = new_config["tts_model_endpoint"]
+                self._config.setdefault("api", {})["tts_endpoint"] = new_config["tts_model_endpoint"]
+                self._config["tts_endpoint"] = new_config["tts_model_endpoint"]
+
+            if "models" in new_config and isinstance(new_config["models"], dict):
+                self._config.setdefault("models", {}).update(new_config["models"])
 
             if "boot_on_startup" in new_config:
                 self._config["boot_on_startup"] = bool(new_config["boot_on_startup"])
@@ -710,6 +738,25 @@ class GuiBridge:
             {"id": "Indian", "label": "Indian Accent"},
             {"id": "Japanese", "label": "Japanese Accent"}
         ]
+
+    def get_discovered_models(self) -> dict:
+        """Returns cached models grouped by chat, tts, and stt."""
+        return load_cached_categorized_models()
+
+    def refresh_discovered_models(self) -> dict:
+        """Forces a live model query and updates all three categories."""
+        try:
+            client = getattr(self.engine, "client", None)
+            if not client:
+                return {"success": False, "error": "API client not initialized."}
+            data = fetch_available_gemini_models(client)
+            return {
+                "success": True,
+                "categorized_models": data,
+                "models": data.get("chat_models", [])
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     def get_monitors(self) -> list:
         """Enumerates connected monitors for the frontend settings."""

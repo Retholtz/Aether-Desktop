@@ -14,8 +14,13 @@
     "input-sleep-phrase": "sleepPhraseInput",
     "safePhraseInput": "input-kill-phrase",
     "input-kill-phrase": "safePhraseInput",
+    "tts_endpoint": "select-tts-endpoint",
     "ttsSelect": "select-tts-endpoint",
-    "select-tts-endpoint": "ttsSelect",
+    "select-tts-endpoint": "tts_endpoint",
+    "select-tts-model": "select-tts-endpoint",
+    "stt_endpoint": "stt_endpoint",
+    "sttSelect": "stt_endpoint",
+    "select-stt-model": "stt_endpoint",
     "voiceSelect": "select-output-voice",
     "select-output-voice": "voiceSelect",
     "voiceSpeedSlider": "input-tts-speed",
@@ -23,7 +28,11 @@
     "voiceAccentSelect": "select-voice-accent",
     "select-voice-accent": "voiceAccentSelect",
     "topSaveSettingsBtn": "btn-save-settings",
-    "btn-save-settings": "topSaveSettingsBtn"
+    "btn-save-settings": "topSaveSettingsBtn",
+    "modelSelect": "select-primary-model",
+    "select-primary-model": "modelSelect",
+    "proModelSelect": "select-heavy-model",
+    "select-heavy-model": "proModelSelect"
   };
   document.getElementById = function(id) {
     const el = origGetElementById(id);
@@ -239,10 +248,14 @@ window.aetherUI = {
     }
 
     // Refresh Audio Hardware
-    document.getElementById("refreshDevicesBtn").addEventListener("click", async () => {
+    const handleRefreshHardware = async () => {
       await this.loadAudioDevices(true);
       this.log("Audio devices re-enumerated (matched with System\\Sound).");
-    });
+    };
+    const refreshBtn1 = document.getElementById("refreshDevicesBtn");
+    if (refreshBtn1) refreshBtn1.addEventListener("click", handleRefreshHardware);
+    const refreshBtn2 = document.getElementById("btn-refresh-audio");
+    if (refreshBtn2) refreshBtn2.addEventListener("click", handleRefreshHardware);
 
     const inDevSel = document.getElementById("inputDeviceSelect");
     if (inDevSel) {
@@ -1187,16 +1200,35 @@ window.aetherUI = {
         document.getElementById("apiKeyHint").innerText = "No key saved. Enter your Gemini API key above.";
       }
 
-      if (api.model_id) document.getElementById("modelSelect").value = api.model_id;
-      const currentStt = api.stt_model_id || api.stt_endpoint;
-      if (currentStt && document.getElementById("sttSelect")) {
-        document.getElementById("sttSelect").value = currentStt;
+      // Discover and populate dynamic model endpoints
+      try {
+        const discoveredModels = await window.pywebview.api.get_discovered_models();
+        if (typeof updateSettingsModelDropdowns === "function") {
+          updateSettingsModelDropdowns(discoveredModels, cfg);
+        } else if (typeof updateAllModelDropdowns === "function") {
+          updateAllModelDropdowns(discoveredModels, cfg);
+        } else if (typeof populateModelDropdowns === "function") {
+          populateModelDropdowns(discoveredModels, cfg);
+        }
+      } catch (err) {
+        console.warn("Could not load discovered models:", err);
+      }
+
+      if (api.model_id) {
+        const primSel = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
+        if (primSel) primSel.value = api.model_id;
+      }
+      const currentStt = cfg.stt_endpoint || cfg.stt_model_endpoint || api.stt_model_id || api.stt_endpoint || "gemini-3.5-transcribe";
+      const sttEl = document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
+      if (sttEl) {
+        sttEl.value = currentStt;
       }
 
       // TTS Engine, Voice, Accent & Local TTS URL
-      const currentTts = api.tts_model_id || api.tts_endpoint || cfg.tts_endpoint || "gemini-live-native";
-      if (document.getElementById("select-tts-endpoint")) {
-        document.getElementById("select-tts-endpoint").value = currentTts;
+      const currentTts = cfg.tts_endpoint || cfg.tts_model_endpoint || api.tts_model_id || api.tts_endpoint || "gemini_live";
+      const ttsEl = document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model");
+      if (ttsEl) {
+        ttsEl.value = currentTts;
       }
       if (document.getElementById("localTtsUrlInput")) {
         document.getElementById("localTtsUrlInput").value = api.local_tts_url || "http://localhost:8880/v1/audio/speech";
@@ -1222,8 +1254,9 @@ window.aetherUI = {
         }
       }
       this.updateVoiceLabels();
-      if (api.pro_model_id && document.getElementById("proModelSelect")) {
-        document.getElementById("proModelSelect").value = api.pro_model_id;
+      const heavySel = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect");
+      if (api.pro_model_id && heavySel) {
+        heavySel.value = api.pro_model_id;
       }
       if (vision.endpoint && document.getElementById("visionEndpointSelect")) {
         document.getElementById("visionEndpointSelect").value = vision.endpoint;
@@ -1402,7 +1435,7 @@ window.aetherUI = {
       const whitelistRaw = document.getElementById("whitelistInput").value;
       const whitelist = whitelistRaw.split(",").map(s => s.trim()).filter(Boolean);
 
-      const ttsVal = document.getElementById("select-tts-endpoint")?.value || "gemini-live-native";
+      const ttsVal = (document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint"))?.value || "gemini_live";
       const isLocal = ttsVal.toLowerCase().includes("local") && !ttsVal.toLowerCase().includes("windows");
       const voiceName = isLocal
         ? (document.getElementById("voiceTextInput")?.value.trim() || "")
@@ -1412,6 +1445,11 @@ window.aetherUI = {
       const voiceSpeedNum = parseFloat(document.getElementById("input-tts-speed")?.value || "1.00");
       const voiceAccentVal = document.getElementById("select-voice-accent")?.value || "default";
 
+      const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || "gemini-3.5-transcribe";
+      const ttsModelVal = (document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model"))?.value || ttsVal;
+      const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || "gemini-3.8-flash";
+      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]'))?.value || "gemini-3.1-pro-preview";
+
       const payload = {
         agent_name: agentName,
         wake_phrase: wakePhrase,
@@ -1419,7 +1457,13 @@ window.aetherUI = {
         stop_listening_phrase: sleepPhrase,
         kill_phrase: killPhrase,
         always_on_mode: alwaysOnMode,
-        tts_endpoint: ttsVal,
+        tts_endpoint: ttsModelVal,
+        tts_model_endpoint: ttsModelVal,
+        stt_endpoint: sttModelVal,
+        stt_model_endpoint: sttModelVal,
+        primary_model_endpoint: primaryModelVal,
+        tier1_fast_model: primaryModelVal,
+        tier2_heavy_model: heavyModelVal,
         tts_voice: voiceName,
         tts_speed: voiceSpeedNum,
         voice_accent: voiceAccentVal,
@@ -1437,14 +1481,14 @@ window.aetherUI = {
           voice_accent: voiceAccentVal,
           voice_speed: voiceSpeedNum,
           local_tts_url: document.getElementById("localTtsUrlInput")?.value || "http://localhost:8880/v1/audio/speech",
-          model_id: document.getElementById("modelSelect").value,
-          pipeline_mode: document.getElementById("modelSelect").value.includes("live") ? "live" : "modular",
-          stt_model_id: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
-          tts_model_id: ttsVal,
+          model_id: primaryModelVal,
+          pipeline_mode: primaryModelVal.includes("live") ? "live" : "modular",
+          stt_model_id: sttModelVal,
+          tts_model_id: ttsModelVal,
           live_model_id: "gemini-3.1-flash-live-preview",
-          stt_endpoint: document.getElementById("sttSelect")?.value || "gemini-3.5-transcribe",
-          tts_endpoint: ttsVal,
-          pro_model_id: document.getElementById("proModelSelect")?.value || "gemini-3.1-pro-preview",
+          stt_endpoint: sttModelVal,
+          tts_endpoint: ttsModelVal,
+          pro_model_id: heavyModelVal,
           temperature: parseFloat(document.getElementById("temperatureSlider").value),
           system_instruction: document.getElementById("systemPromptInput").value
         },
@@ -1498,6 +1542,8 @@ window.aetherUI = {
           hud_mode_vk: this.hudModeVk !== undefined ? this.hudModeVk : 32,
           hud_mode_modifiers: this.hudModeModifiers || ["Control"]
         },
+        primary_model_endpoint: (document.getElementById("select-primary-model") || document.getElementById("modelSelect"))?.value || "gemini-3.8-flash",
+        tier2_heavy_model: (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect"))?.value || "gemini-3.1-pro-preview",
         boot_on_startup: document.getElementById("toggle-boot-startup") ? document.getElementById("toggle-boot-startup").checked : false,
         start_minimized: document.getElementById("toggle-start-minimized") ? document.getElementById("toggle-start-minimized").checked : false
       };
@@ -3041,12 +3087,23 @@ window.onAssistantSleep = function() {
 function collectSettingsPayload() {
   const bootEl = document.getElementById("toggle-boot-startup");
   const minEl = document.getElementById("toggle-start-minimized");
+  const primaryEl = document.getElementById("select-primary-model") || document.getElementById("modelSelect");
+  const heavyEl = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect");
   return {
     boot_on_startup: bootEl ? bootEl.checked : false,
-    start_minimized: minEl ? minEl.checked : false
+    start_minimized: minEl ? minEl.checked : false,
+    primary_model_endpoint: primaryEl ? primaryEl.value : "gemini-3.8-flash",
+    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-3.1-pro-preview"
   };
 }
 window.collectSettingsPayload = collectSettingsPayload;
+
+if (typeof populateModelDropdowns !== "undefined") {
+  window.populateModelDropdowns = populateModelDropdowns;
+}
+if (typeof loadSettingsUI !== "undefined") {
+  window.loadSettingsUI = loadSettingsUI;
+}
 
 
 
