@@ -218,6 +218,8 @@ class AetherEngine:
 
         # Gaming Subsystem & Live Companion Dispatcher
         self.game_mgr = GameManager()
+        from core.program_manager import ProgramManager
+        self.program_mgr = ProgramManager()
         register_game_tools(self.dispatcher, self.game_mgr, engine=self)
 
         def _on_game_mode_changed(enabled: bool, game_id: str, game_name: str, is_running: bool = False):
@@ -832,6 +834,8 @@ class AetherEngine:
         logger.info("[ENGINE] Updated active user identity directive in base system instruction.")
 
     def _get_whitelist(self) -> list:
+        if hasattr(self, "program_mgr") and self.program_mgr:
+            return self.program_mgr.get_whitelist_names()
         cfg = self.config_getter()
         return cfg.get("security", {}).get("app_whitelist", [])
 

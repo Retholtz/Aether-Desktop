@@ -276,9 +276,24 @@ async function handleBrowseGameExe() {
         if (res && res.success) {
             const procInput = document.getElementById('input-add-game-proc');
             const nameInput = document.getElementById('input-add-game-name');
-            if (procInput) procInput.value = res.file_name || '';
+            if (procInput) {
+                procInput.value = res.file_path || res.file_name || '';
+                procInput.style.borderColor = '#10b981';
+                procInput.style.boxShadow = '0 0 0 2px rgba(16, 185, 129, 0.25)';
+                setTimeout(() => {
+                    if (procInput) {
+                        procInput.style.borderColor = '';
+                        procInput.style.boxShadow = '';
+                    }
+                }, 3000);
+                procInput.dispatchEvent(new Event('input', { bubbles: true }));
+                procInput.dispatchEvent(new Event('change', { bubbles: true }));
+                procInput.scrollLeft = procInput.scrollWidth;
+            }
             if (nameInput && !nameInput.value.trim()) {
                 nameInput.value = res.suggested_name || '';
+                nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+                nameInput.dispatchEvent(new Event('change', { bubbles: true }));
             }
         }
     } catch (err) {

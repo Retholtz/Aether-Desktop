@@ -14,4 +14,16 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
+
+    const programsBtn = document.getElementById("btn-tab-programs") ||
+                        document.querySelector('[data-tab="tab-programs"]') ||
+                        document.querySelector('[data-tab="programs"]');
+    if (programsBtn) {
+        programsBtn.addEventListener("click", () => {
+            if (typeof loadProgramsUI === "function") {
+                loadProgramsUI();
+            }
+        });
+    }
 });
+

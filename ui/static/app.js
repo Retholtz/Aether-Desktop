@@ -137,18 +137,23 @@ window.aetherUI = {
             if (typeof loadGamesUI === "function") {
               loadGamesUI();
             }
+          } else if (tabKey === "programs") {
+            targetPane.focus();
+            if (typeof loadProgramsUI === "function") {
+              loadProgramsUI();
+            }
           }
         }
       });
     });
 
-    // Smooth wheel scrolling for Settings, User Preferences, and Stored Chats tab panes
-    ["tab-settings", "tab-preferences", "tab-chats", "tab-games"].forEach(paneId => {
+    // Smooth wheel scrolling for Settings, User Preferences, Stored Chats, Games, and Programs tab panes
+    ["tab-settings", "tab-preferences", "tab-chats", "tab-games", "tab-programs"].forEach(paneId => {
       const pane = document.getElementById(paneId);
       if (pane) {
         pane.addEventListener("wheel", (e) => {
-          if (e.target.tagName === "TEXTAREA" || e.target.closest(".facts-table-wrap") || e.target.closest(".stored-sessions-list") || e.target.closest(".stored-turns-scroll")) {
-            const el = e.target.tagName === "TEXTAREA" ? e.target : (e.target.closest(".facts-table-wrap") || e.target.closest(".stored-sessions-list") || e.target.closest(".stored-turns-scroll"));
+          if (e.target.tagName === "TEXTAREA" || e.target.closest(".facts-table-wrap") || e.target.closest(".stored-sessions-list") || e.target.closest(".stored-turns-scroll") || e.target.closest(".programs-sidebar") || e.target.closest(".programs-main-panel")) {
+            const el = e.target.tagName === "TEXTAREA" ? e.target : (e.target.closest(".facts-table-wrap") || e.target.closest(".stored-sessions-list") || e.target.closest(".stored-turns-scroll") || e.target.closest(".programs-sidebar") || e.target.closest(".programs-main-panel"));
             const atTop = el.scrollTop === 0 && e.deltaY < 0;
             const atBottom = (el.scrollHeight - el.clientHeight <= el.scrollTop + 1) && e.deltaY > 0;
             if (!atTop && !atBottom) return;
@@ -160,6 +165,15 @@ window.aetherUI = {
         }, { passive: true });
       }
     });
+
+    // Wire up "Open Programs Tab" button in settings
+    const btnGotoPrograms = document.getElementById("btn-goto-programs");
+    if (btnGotoPrograms) {
+      btnGotoPrograms.addEventListener("click", () => {
+        const tabBtn = document.getElementById("btn-tab-programs") || document.querySelector('[data-tab="tab-programs"]');
+        if (tabBtn) tabBtn.click();
+      });
+    }
   },
 
   // =========================================================================
@@ -1544,8 +1558,11 @@ window.aetherUI = {
       const sleepPhrase = (document.getElementById("input-sleep-phrase")?.value || document.getElementById("audio-sleep-phrase-input")?.value || "").trim() || `${agentName} stop listening`;
       const killPhrase = document.getElementById("input-kill-phrase")?.value.trim() || `${agentName} stop`;
 
-      const whitelistRaw = document.getElementById("whitelistInput").value;
-      const whitelist = whitelistRaw.split(",").map(s => s.trim()).filter(Boolean);
+      const whitelistRaw = document.getElementById("whitelistInput") ? document.getElementById("whitelistInput").value : "";
+      let whitelist = whitelistRaw.split(",").map(s => s.trim()).filter(Boolean);
+      if (whitelist.length === 0 && this.currentConfig && this.currentConfig.security && Array.isArray(this.currentConfig.security.app_whitelist)) {
+        whitelist = this.currentConfig.security.app_whitelist;
+      }
 
       const ttsVal = (document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint"))?.value || "gemini_live";
       const isLocal = ttsVal.toLowerCase().includes("local") && !ttsVal.toLowerCase().includes("windows");

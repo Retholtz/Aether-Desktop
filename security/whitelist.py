@@ -121,24 +121,40 @@ class WhitelistValidator:
     @classmethod
     def is_whitelisted(cls, target_exe: str, whitelist: List[str]) -> bool:
         """Checks whether the application is permitted by the security whitelist."""
-        if not whitelist:
-            return False
-
-        target_clean = target_exe.lower().strip()
+        target_clean = (target_exe or "").lower().strip()
         target_base = target_clean[:-4] if target_clean.endswith(".exe") else target_clean
 
-        for item in whitelist:
-            item_clean = item.lower().strip()
-            item_base = item_clean[:-4] if item_clean.endswith(".exe") else item_clean
+        if whitelist:
+            for item in whitelist:
+                item_clean = item.lower().strip()
+                item_base = item_clean[:-4] if item_clean.endswith(".exe") else item_clean
+                if item_clean == "*" or item_clean == target_clean or item_base == target_base:
+                    return True
 
-            if item_clean == "*" or item_clean == target_clean or item_base == target_base:
+        # Check ProgramManager subsystem
+        try:
+            from core.program_manager import ProgramManager
+            pm = ProgramManager()
+            if pm.is_whitelisted(target_exe):
                 return True
+        except Exception:
+            pass
+
         return False
 
     @classmethod
     def resolve_app_path(cls, target_exe: str) -> Optional[str]:
         """Resolves the full executable file path on Windows."""
-        # 1. Search PATH via shutil.which
+        # 1. Check ProgramManager deep resolver (Steam, Start Menu, Registry, Running procs)
+        try:
+            from core.program_manager import ProgramManager
+            resolved = ProgramManager.resolve_program_path(target_exe)
+            if resolved and os.path.exists(resolved):
+                return resolved
+        except Exception:
+            pass
+
+        # 2. Search PATH via shutil.which
         which_path = shutil.which(target_exe)
         if which_path and os.path.exists(which_path):
             return which_path
@@ -146,7 +162,7 @@ class WhitelistValidator:
         if not winreg:
             return None
 
-        # 2. Check Windows Registry App Paths
+        # 3. Check Windows Registry App Paths
         for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
             for sub in (
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
@@ -163,7 +179,7 @@ class WhitelistValidator:
                 except OSError:
                     pass
 
-        # 3. Check AppData Local Programs and WindowsApps
+        # 4. Check AppData Local Programs and WindowsApps
         local_appdata = os.environ.get("LOCALAPPDATA", "")
         if local_appdata:
             base_no_ext = target_exe[:-4] if target_exe.endswith(".exe") else target_exe
@@ -205,6 +221,15 @@ class WhitelistValidator:
                     f"If the user grants permission (e.g. 'yes', 'add it', 'sure'), invoke add_to_whitelist('{target_exe}') and then launch it."
                 )
             }
+
+        # 1.5 Delegate to ProgramManager if registered
+        try:
+            from core.program_manager import ProgramManager
+            pm = ProgramManager()
+            if pm.is_whitelisted(target_exe) or pm.is_whitelisted(app_name):
+                return pm.launch_program(app_name, target=target, profile=profile)
+        except Exception:
+            pass
 
         # 2. Resolve executable path
         exe_path = cls.resolve_app_path(target_exe)
@@ -435,9 +460,17 @@ class WhitelistValidator:
 
     @classmethod
     def add_to_whitelist(cls, app_name: str, whitelist: List[str]) -> dict:
-        """Adds normalized executable to the whitelist."""
+        """Adds normalized executable to the whitelist and registers in ProgramManager."""
         target_exe = cls.normalize_app_name(app_name)
         current_list = list(whitelist) if whitelist else []
+
+        # Sync to ProgramManager
+        try:
+            from core.program_manager import ProgramManager
+            pm = ProgramManager()
+            pm.add_program(name=app_name, path=target_exe)
+        except Exception:
+            pass
 
         if cls.is_whitelisted(target_exe, current_list):
             return {
@@ -459,10 +492,20 @@ class WhitelistValidator:
 
     @classmethod
     def remove_from_whitelist(cls, app_name: str, whitelist: List[str]) -> dict:
-        """Removes normalized executable from the whitelist."""
+        """Removes normalized executable from the whitelist and ProgramManager."""
         target_exe = cls.normalize_app_name(app_name)
         target_clean = target_exe.lower().strip()
         target_base = target_clean[:-4] if target_clean.endswith(".exe") else target_clean
+
+        # Sync to ProgramManager
+        try:
+            from core.program_manager import ProgramManager
+            pm = ProgramManager()
+            prog = pm.get_program(app_name)
+            if prog:
+                pm.delete_program(prog["id"])
+        except Exception:
+            pass
 
         current_list = list(whitelist) if whitelist else []
         new_list = []

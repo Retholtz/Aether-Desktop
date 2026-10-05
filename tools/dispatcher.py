@@ -136,16 +136,16 @@ FOCUS_WINDOW_DECLARATION = {
 LAUNCH_APPLICATION_DECLARATION = {
     "name": "launch_application",
     "description": (
-        "Launches an installed Windows desktop application (e.g. Google Chrome, Notepad, Word, "
-        "Excel, Calculator, Spotify, Blender, File Explorer) if permitted by the user's security whitelist. "
-        "Can optionally open a target URL, file, or search query. Supports user profile selection for browsers (e.g. profile='Michael')."
+        "Launches an installed Windows desktop application (e.g. Crimson Desert, Google Chrome, Notepad, Word, "
+        "Excel, Calculator, Spotify, Blender, File Explorer) if permitted by the user's security whitelist / programs list. "
+        "Can optionally pass command-line arguments/extensions (e.g. '--elevate'), open a target URL/file, or specify browser profile."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "app_name": {
                 "type": "STRING",
-                "description": "The name or executable of the application to launch (e.g. 'chrome', 'notepad', 'calc', 'winword', 'excel', 'spotify', 'blender', 'explorer')."
+                "description": "The name or executable of the application to launch (e.g. 'Crimson Desert', 'chrome', 'notepad', 'calc', 'explorer')."
             },
             "target": {
                 "type": "STRING",
@@ -154,6 +154,10 @@ LAUNCH_APPLICATION_DECLARATION = {
             "profile": {
                 "type": "STRING",
                 "description": "Optional user profile name for browsers (e.g. 'Michael', 'Default', 'Profile 1'). When launching Chrome with profile='Michael', it opens directly under Michael's profile without the profile picker."
+            },
+            "arguments": {
+                "type": "STRING",
+                "description": "Optional command-line arguments or launch extensions/flags (e.g. '--elevate', '-windowed', '--incognito')."
             }
         },
         "required": ["app_name"]
@@ -178,7 +182,7 @@ CLOSE_APPLICATION_DECLARATION = {
 ADD_TO_WHITELIST_DECLARATION = {
     "name": "add_to_whitelist",
     "description": (
-        "Adds an application (e.g. explorer.exe, calc.exe, steam.exe, discord.exe) to the user's security whitelist "
+        "Adds an application (e.g. Crimson Desert, explorer.exe, calc.exe, steam.exe, discord.exe) to the user's security whitelist / programs list "
         "so that it can be launched. ALWAYS call this when an application was blocked by the whitelist and the user gives "
         "verbal permission (e.g. 'yes', 'add it', 'sure', 'go ahead', 'please do') to add it. "
         "After adding it to the whitelist, immediately launch the requested application to complete the user's request."
@@ -188,7 +192,19 @@ ADD_TO_WHITELIST_DECLARATION = {
         "properties": {
             "app_name": {
                 "type": "STRING",
-                "description": "The name or executable of the application to add to the whitelist (e.g. 'explorer', 'calc', 'steam'). If the user simply said 'yes' or 'add it', pass the name of the blocked application or 'last_blocked'."
+                "description": "The name or executable of the application to add to the whitelist (e.g. 'Crimson Desert', 'explorer', 'calc', 'steam'). If the user simply said 'yes' or 'add it', pass the name of the blocked application or 'last_blocked'."
+            },
+            "path": {
+                "type": "STRING",
+                "description": "Optional executable path (e.g. 'C:\\Games\\Crimson Desert\\bin64\\CrimsonDesert.exe'). If omitted, Aether automatically discovers it."
+            },
+            "arguments": {
+                "type": "STRING",
+                "description": "Optional launch arguments or extensions (e.g. '--elevate', '-windowed')."
+            },
+            "elevate": {
+                "type": "BOOLEAN",
+                "description": "Optional boolean whether to run as Administrator with elevated privileges."
             }
         },
         "required": ["app_name"]
@@ -1321,14 +1337,30 @@ class ToolDispatcher:
                     self.last_target_app = app_name
                 target = args.get("target", None)
                 profile = args.get("profile", None)
-                whitelist = self.whitelist_getter()
-                result = WhitelistValidator.validate_and_launch(app_name, whitelist, target=target, profile=profile)
+                arguments = args.get("arguments", None)
+
+                # Check ProgramManager first
+                prog_result = None
+                try:
+                    from core.program_manager import ProgramManager
+                    pm = ProgramManager()
+                    prog_result = pm.launch_program(app_name, target=target, profile=profile, extra_args=arguments)
+                except Exception as e:
+                    logger.debug(f"[DISPATCHER] ProgramManager launch fallback: {e}")
+
+                if prog_result and prog_result.get("status") in ("success", "blocked"):
+                    result = prog_result
+                else:
+                    whitelist = self.whitelist_getter()
+                    result = WhitelistValidator.validate_and_launch(app_name, whitelist, target=target, profile=profile)
+
                 if result.get("status") == "success":
                     prof_info = f" [Profile: {result.get('profile')}]" if result.get("profile") else ""
+                    elev_info = " [Elevated / Admin]" if result.get("elevated") else ""
                     self.notify("chat_event", {
                         "type": "tool",
                         "name": "Desktop Hook",
-                        "content": f"🚀 [LAUNCHED] {result.get('executable', app_name)}{prof_info}" + (f" -> '{target}'" if target else "")
+                        "content": f"🚀 [LAUNCHED] {result.get('executable', app_name)}{prof_info}{elev_info}" + (f" -> '{target}'" if target else "")
                     })
                 else:
                     self.last_blocked_app = result.get("executable") or app_name
@@ -1367,6 +1399,18 @@ class ToolDispatcher:
                 generic_aliases = ("it", "that", "this", "the app", "the program", "last_blocked", "blocked_app", "yes", "add it", "sure", "please do", "go ahead")
                 if (not app_name or app_name.lower() in generic_aliases) and self.last_blocked_app:
                     app_name = self.last_blocked_app
+
+                path = str(args.get("path", "")).strip()
+                arguments = str(args.get("arguments", "")).strip()
+                elevate = bool(args.get("elevate", False))
+
+                # Register in ProgramManager
+                try:
+                    from core.program_manager import ProgramManager
+                    pm = ProgramManager()
+                    pm.add_program(name=app_name, path=path, arguments=arguments, elevate=elevate)
+                except Exception as e:
+                    logger.debug(f"[DISPATCHER] ProgramManager add error: {e}")
 
                 whitelist = self.whitelist_getter()
                 result = WhitelistValidator.add_to_whitelist(app_name, whitelist)

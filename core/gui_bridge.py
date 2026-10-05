@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -259,6 +260,17 @@ class GuiBridge:
             if self.engine is not None:
                 try:
                     self.engine.game_mgr = self.game_mgr
+                except Exception:
+                    pass
+
+        from core.program_manager import ProgramManager
+        if hasattr(self.engine, "program_mgr") and self.engine.program_mgr is not None:
+            self.program_mgr = self.engine.program_mgr
+        else:
+            self.program_mgr = ProgramManager()
+            if self.engine is not None:
+                try:
+                    self.engine.program_mgr = self.program_mgr
                 except Exception:
                     pass
 
@@ -1682,70 +1694,133 @@ class GuiBridge:
             "copilot_entries": copilot_entries
         }
 
-    def browse_game_executable(self) -> dict:
+    def _open_native_file_dialog(self, title: str = "Select Executable") -> Optional[str]:
         """
-        Opens a Windows file browser dialog for the user to navigate to and select a game executable (.exe).
-        Returns the selected file name, path, and suggested clean display name.
+        Opens a native Windows open file dialog for choosing an executable.
+        Uses pywebview native modal dialog, Win32 GetOpenFileNameW via ctypes, or Tkinter fallback.
         """
-        selected_path = None
-
-        # 1. Try pywebview window create_file_dialog if available
+        # Method 1: pywebview Window create_file_dialog (Native WinForms dialog parented to main window)
         win = getattr(self, "_window", None)
         if win:
             try:
                 import webview
-                file_types = ('Executable files (*.exe)', 'All files (*.*)')
+                file_types = (
+                    'Executable files (*.exe)',
+                    'Batch files (*.bat;*.cmd;*.ps1)',
+                    'All files (*.*)'
+                )
                 dialog_mode = getattr(webview.FileDialog, "OPEN", 10)
                 res = win.create_file_dialog(
                     dialog_type=dialog_mode,
                     allow_multiple=False,
                     file_types=file_types
                 )
-                if res and len(res) > 0:
-                    selected_path = res[0]
+                if res and len(res) > 0 and os.path.exists(res[0]):
+                    logger.info(f"[BRIDGE] pywebview file dialog selected: {res[0]}")
+                    return os.path.normpath(res[0])
+                if res is not None:
+                    # User explicitly cancelled
+                    return None
             except Exception as e:
                 logger.debug(f"[BRIDGE] pywebview file dialog error: {e}")
 
-        # 2. Fallback to PowerShell OpenFileDialog if pywebview window not active/available
-        if not selected_path and sys.platform == "win32":
+        # Method 2: Win32 GetOpenFileNameW via ctypes
+        if sys.platform == "win32":
             try:
-                import subprocess
-                ps_script = (
-                    "Add-Type -AssemblyName System.Windows.Forms | Out-Null; "
-                    "$d = New-Object System.Windows.Forms.OpenFileDialog; "
-                    "$d.Filter = 'Executable (*.exe)|*.exe|All files (*.*)|*.*'; "
-                    "$d.Title = 'Select Game Executable'; "
-                    "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.FileName }"
-                )
-                proc = subprocess.run(
-                    ["powershell", "-STA", "-NoProfile", "-Command", ps_script],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                )
-                out = proc.stdout.strip()
-                if out and os.path.exists(out):
-                    selected_path = out
+                import ctypes
+                from ctypes import wintypes
+                class OPENFILENAMEW(ctypes.Structure):
+                    _fields_ = [
+                        ('lStructSize', wintypes.DWORD),
+                        ('hwndOwner', wintypes.HWND),
+                        ('hInstance', wintypes.HINSTANCE),
+                        ('lpstrFilter', wintypes.LPCWSTR),
+                        ('lpstrCustomFilter', wintypes.LPWSTR),
+                        ('nMaxCustFilter', wintypes.DWORD),
+                        ('nFilterIndex', wintypes.DWORD),
+                        ('lpstrFile', wintypes.LPWSTR),
+                        ('nMaxFile', wintypes.DWORD),
+                        ('lpstrFileTitle', wintypes.LPWSTR),
+                        ('nMaxFileTitle', wintypes.DWORD),
+                        ('lpstrInitialDir', wintypes.LPCWSTR),
+                        ('lpstrTitle', wintypes.LPCWSTR),
+                        ('Flags', wintypes.DWORD),
+                        ('nFileOffset', wintypes.WORD),
+                        ('nFileExtension', wintypes.WORD),
+                        ('lpstrDefExt', wintypes.LPCWSTR),
+                        ('lCustData', wintypes.LPARAM),
+                        ('lpfnHook', wintypes.LPVOID),
+                        ('lpTemplateName', wintypes.LPCWSTR),
+                        ('pvReserved', wintypes.LPVOID),
+                        ('dwReserved', wintypes.DWORD),
+                        ('FlagsEx', wintypes.DWORD)
+                    ]
+                buf = ctypes.create_unicode_buffer(1024)
+                ofn = OPENFILENAMEW()
+                ofn.lStructSize = ctypes.sizeof(OPENFILENAMEW)
+                ofn.lpstrFilter = "Executable files (*.exe)\0*.exe\0Batch files (*.bat;*.cmd;*.ps1)\0*.bat;*.cmd;*.ps1\0All files (*.*)\0*.*\0\0"
+                ofn.nFilterIndex = 1
+                ofn.lpstrFile = ctypes.cast(buf, wintypes.LPWSTR)
+                ofn.nMaxFile = 1024
+                ofn.lpstrTitle = title
+                ofn.Flags = 0x00001000 | 0x00000800 | 0x00080000 | 0x00000008
+                if ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+                    if buf.value and os.path.exists(buf.value):
+                        logger.info(f"[BRIDGE] GetOpenFileNameW selected: {buf.value}")
+                        return os.path.normpath(buf.value)
             except Exception as e:
-                logger.debug(f"[BRIDGE] Fallback file dialog error: {e}")
+                logger.debug(f"[BRIDGE] GetOpenFileNameW fallback error: {e}")
 
+        # Method 3: Tkinter Topmost File Dialog fallback
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            root.focus_force()
+            selected = filedialog.askopenfilename(
+                parent=root,
+                title=title,
+                filetypes=[
+                    ("Executable files (*.exe)", "*.exe"),
+                    ("Batch files (*.bat;*.cmd;*.ps1)", "*.bat;*.cmd;*.ps1"),
+                    ("All files (*.*)", "*.*")
+                ]
+            )
+            root.destroy()
+            if selected and os.path.exists(selected):
+                logger.info(f"[BRIDGE] Tkinter file dialog selected: {selected}")
+                return os.path.normpath(selected)
+        except Exception as e:
+            logger.debug(f"[BRIDGE] tkinter file dialog error: {e}")
+
+        return None
+
+    def browse_game_executable(self) -> dict:
+        """
+        Opens a native Windows file selection dialog for choosing a game executable.
+        Returns file path, clean suggested name, and process basename.
+        """
+        selected_path = self._open_native_file_dialog("Select Game Executable")
         if selected_path:
             file_name = os.path.basename(selected_path)
-            # Create suggested clean display name: "Cyberpunk2077.exe" -> "Cyberpunk 2077"
             base_name = os.path.splitext(file_name)[0]
-            import re
             cleaned = re.sub(r'([a-z])([A-Z0-9])', r'\1 \2', base_name)
             cleaned = cleaned.replace('_', ' ').replace('-', ' ').strip()
             suggested_name = cleaned.title() if cleaned else base_name
+            directory = os.path.dirname(selected_path)
 
+            logger.info(f"[BRIDGE] browse_game_executable successfully resolved: {selected_path} (dir: {directory})")
             return {
                 "success": True,
                 "file_path": selected_path,
                 "file_name": file_name,
-                "suggested_name": suggested_name
+                "suggested_name": suggested_name,
+                "directory": directory
             }
 
+        logger.info("[BRIDGE] browse_game_executable cancelled or no file selected.")
         return {"success": False, "cancelled": True}
 
     def get_running_processes(self) -> dict:
@@ -1835,6 +1910,146 @@ class GuiBridge:
             except Exception as e:
                 return {"success": False, "error": str(e)}
         return {"success": False, "error": "Task Manager is only available on Windows."}
+
+    # -------------------------------------------------------------------------
+    # Whitelisted Programs & Application Subsystem RPCs
+    # -------------------------------------------------------------------------
+    def get_programs(self) -> dict:
+        """Returns all whitelisted programs, active program, and process running status."""
+        return self.program_mgr.list_programs()
+
+    def add_program(
+        self,
+        display_name: Any = "",
+        path: str = "",
+        launch_args: str = "",
+        elevate: bool = False,
+        working_dir: str = "",
+        *args,
+        **kwargs
+    ) -> dict:
+        """Adds a new program to the whitelist."""
+        # Support dict argument e.g. add_program({"name": "...", "path": "..."})
+        if isinstance(display_name, dict):
+            data = display_name
+            name_val = str(data.get("name") or data.get("display_name") or "").strip()
+            path_val = str(data.get("path") or "").strip()
+            args_val = str(data.get("launch_args") or data.get("arguments") or data.get("args") or "").strip()
+            elev_val = bool(data.get("elevate", False))
+            cwd_val = str(data.get("working_dir") or data.get("cwd") or "").strip()
+            return self.program_mgr.add_program(
+                name=name_val,
+                path=path_val,
+                arguments=args_val,
+                elevate=elev_val,
+                working_dir=cwd_val
+            )
+
+        name_val = str(display_name or "").strip()
+        path_val = str(path or "").strip()
+        args_val = str(launch_args or kwargs.get("arguments") or kwargs.get("launch_args") or kwargs.get("args") or "").strip()
+        elev_val = bool(elevate or kwargs.get("elevate", False))
+        cwd_val = str(working_dir or kwargs.get("working_dir") or kwargs.get("cwd") or "").strip()
+
+        if not name_val:
+            return {"success": False, "error": "Program display name cannot be empty."}
+
+        return self.program_mgr.add_program(
+            name=name_val,
+            path=path_val,
+            arguments=args_val,
+            elevate=elev_val,
+            working_dir=cwd_val
+        )
+
+    def update_program(
+        self,
+        prog_id: Any = "",
+        display_name: str = "",
+        path: str = "",
+        launch_args: str = "",
+        elevate: bool = False,
+        working_dir: str = "",
+        *args,
+        **kwargs
+    ) -> dict:
+        """Updates an existing whitelisted program configuration."""
+        if isinstance(prog_id, dict):
+            data = prog_id
+            pid_val = str(data.get("id") or data.get("prog_id") or "").strip()
+            name_val = str(data.get("name") or data.get("display_name") or "").strip()
+            path_val = str(data.get("path") or "").strip()
+            args_val = str(data.get("launch_args") or data.get("arguments") or data.get("args") or "").strip()
+            elev_val = bool(data.get("elevate", False))
+            cwd_val = str(data.get("working_dir") or data.get("cwd") or "").strip()
+            return self.program_mgr.update_program(
+                prog_id=pid_val,
+                name=name_val,
+                path=path_val,
+                arguments=args_val,
+                elevate=elev_val,
+                working_dir=cwd_val
+            )
+
+        pid_val = str(prog_id or "").strip()
+        name_val = str(display_name or "").strip()
+        path_val = str(path or "").strip()
+        args_val = str(launch_args or kwargs.get("arguments") or kwargs.get("launch_args") or kwargs.get("args") or "").strip()
+        elev_val = bool(elevate or kwargs.get("elevate", False))
+        cwd_val = str(working_dir or kwargs.get("working_dir") or kwargs.get("cwd") or "").strip()
+
+        return self.program_mgr.update_program(
+            prog_id=pid_val,
+            name=name_val,
+            path=path_val,
+            arguments=args_val,
+            elevate=elev_val,
+            working_dir=cwd_val
+        )
+
+    def delete_program(self, prog_id: str) -> dict:
+        """Deletes a program from the whitelist."""
+        return self.program_mgr.delete_program(prog_id)
+
+    def set_active_program(self, prog_id: str) -> dict:
+        """Sets the currently selected program in the UI."""
+        success = self.program_mgr.set_active_program(prog_id)
+        return {"success": success, "active_program": prog_id}
+
+    def launch_program(self, prog_id: str) -> dict:
+        """Launches the specified program detached or elevated."""
+        return self.program_mgr.launch_program(prog_id)
+
+    def close_program(self, prog_id: str) -> dict:
+        """Terminates the specified program's process."""
+        return self.program_mgr.close_program(prog_id)
+
+    def browse_program_executable(self) -> dict:
+        """
+        Opens a Windows file browser dialog for the user to navigate to and select any program executable (.exe).
+        Returns the selected file name, path, and suggested clean display name.
+        """
+        selected_path = self._open_native_file_dialog("Select Program Executable")
+
+        if selected_path:
+            file_name = os.path.basename(selected_path)
+            base_name = os.path.splitext(file_name)[0]
+            cleaned = re.sub(r'([a-z])([A-Z0-9])', r'\1 \2', base_name)
+            cleaned = cleaned.replace('_', ' ').replace('-', ' ').strip()
+            suggested_name = cleaned.title() if cleaned else base_name
+            directory = os.path.dirname(selected_path)
+
+            logger.info(f"[BRIDGE] browse_program_executable successfully resolved: {selected_path} (dir: {directory})")
+            return {
+                "success": True,
+                "file_path": selected_path,
+                "file_name": file_name,
+                "suggested_name": suggested_name,
+                "directory": directory
+            }
+
+        logger.info("[BRIDGE] browse_program_executable cancelled or no file selected.")
+        return {"success": False, "cancelled": True}
 
 
 GUIBridge = GuiBridge

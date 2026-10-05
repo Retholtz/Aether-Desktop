@@ -24,19 +24,19 @@
       <!-- Navigation Tabs -->
       <nav class="hud-tabs app-nav">
         <button type="button" class="hud-tab nav-btn active" data-tab="tab-chat" id="btn-tab-chat">
-          <span class="tab-icon icon">💬</span> CHAT THREAD
+          <span class="tab-icon icon">💬</span> CHATS
         </button>
         <button type="button" class="hud-tab nav-btn" data-tab="tab-games" id="btn-tab-games">
           <span class="tab-icon icon">🎮</span> GAMES
+        </button>
+        <button type="button" class="hud-tab nav-btn" data-tab="tab-programs" id="btn-tab-programs">
+          <span class="tab-icon icon">💻</span> PROGRAMS
         </button>
         <button type="button" class="hud-tab nav-btn" data-tab="tab-settings" id="btn-tab-settings">
           <span class="tab-icon icon">⚙️</span> SETTINGS
         </button>
         <button type="button" class="hud-tab nav-btn" data-tab="tab-preferences" id="btn-tab-preferences">
           <span class="tab-icon icon">🧠</span> USER PREFERENCES
-        </button>
-        <button type="button" class="hud-tab nav-btn" data-tab="tab-telemetry" id="btn-tab-telemetry">
-          <span class="tab-icon icon">📊</span> TELEMETRY
         </button>
         <button type="button" class="hud-tab nav-btn" data-tab="tab-stored" id="btn-tab-stored">
           <span class="tab-icon icon">📁</span> STORED CHATS
@@ -195,6 +195,119 @@
               </div>
             </div>
 
+          </main>
+        </div>
+      </div>
+
+      <!-- ============================================================= -->
+      <!-- TAB: PROGRAMS (APPLICATION WHITELIST)                         -->
+      <!-- ============================================================= -->
+      <div id="tab-programs" class="tab-pane hidden" tabindex="0">
+        <div class="programs-split-container">
+          
+          <!-- LEFT SIDEBAR: PROGRAMS SELECTOR -->
+          <aside class="programs-sidebar">
+            <div class="sidebar-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <h4>ALLOWED PROGRAMS</h4>
+              <button type="button" id="btn-add-program" class="btn-primary-sm" title="Add a new program to whitelist">+ Add</button>
+            </div>
+            <div id="programs-list" class="programs-list-group">
+              <!-- Dynamically populated by JS -->
+            </div>
+          </aside>
+
+          <!-- RIGHT DETAIL: PROGRAM DETAILS & EXECUTION -->
+          <main class="programs-main-panel">
+            <!-- Active Program Status Banner -->
+            <div class="program-banner" id="program-active-banner">
+              <div>
+                <h2 id="program-active-title">No Program Selected</h2>
+                <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px;">
+                  <span id="program-process-indicator" class="badge-status badge-offline">Process Inactive</span>
+                  <span id="program-elevate-indicator" class="badge-status badge-info">Standard User</span>
+                </div>
+              </div>
+              <div class="banner-actions" style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btn-launch-program" class="btn-primary-sm" title="Launch this program">
+                  <span class="icon">🚀</span> Launch Program
+                </button>
+                <button type="button" id="btn-close-program" class="btn-secondary-sm" title="Close running process">
+                  <span class="icon">⏹</span> Close
+                </button>
+                <button type="button" id="btn-delete-program" class="btn-danger-sm" title="Remove program from whitelist">
+                  <span class="icon">🗑️</span> Remove
+                </button>
+              </div>
+            </div>
+
+            <!-- Empty State View when no programs are configured -->
+            <div id="programs-empty-view" class="programs-empty-state hidden" style="text-align: center; padding: 60px 20px;">
+              <div style="font-size: 3rem; margin-bottom: 16px;">💻</div>
+              <h3 style="margin-bottom: 8px; color: #93c5fd;">No Whitelisted Programs</h3>
+              <p style="color: #94a3b8; max-width: 440px; margin: 0 auto 20px auto; font-size: 0.9rem;">
+                Add applications you want Aether to be able to open, launch with custom extensions, or control.
+              </p>
+              <button type="button" id="btn-add-program-empty" class="btn-primary-sm" style="padding: 8px 18px; font-size: 13px;">+ Add Your First Program</button>
+            </div>
+
+            <!-- Program Configuration Card -->
+            <div id="program-details-content">
+              <section class="game-card">
+                <div class="game-card-header">
+                  <h3>PROGRAM CONFIGURATION & LAUNCH PARAMETERS</h3>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 14px;">
+                  <div class="form-group">
+                    <label for="input-prog-name" style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 4px; display: block;">Program Display Name *</label>
+                    <input type="text" id="input-prog-name" class="modal-input" placeholder="e.g. Crimson Desert, Google Chrome, VS Code" style="width: 100%; box-sizing: border-box;" />
+                    <span style="font-size: 0.74rem; color: #7d8597; margin-top: 3px; display: block;">The name you speak or use to launch this program.</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="input-prog-path" style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 4px; display: block;">Executable / Application Path *</label>
+                    <div style="display: flex; gap: 8px;">
+                      <input type="text" id="input-prog-path" class="modal-input" placeholder="e.g. C:\Games\Crimson Desert\bin64\CrimsonDesert.exe or chrome.exe" style="flex: 1;" />
+                      <button type="button" id="btn-browse-prog-exe" class="btn-secondary-sm" style="white-space: nowrap;">📁 Browse...</button>
+                      <button type="button" id="btn-prog-running-apps" class="btn-secondary-sm" style="white-space: nowrap;">⚡ Running Apps</button>
+                    </div>
+                    <span style="font-size: 0.74rem; color: #7d8597; margin-top: 3px; display: block;">Full path to .exe or system executable name.</span>
+                  </div>
+
+                  <!-- Collapsible running apps panel in detail view -->
+                  <div id="panel-prog-detail-running" class="hidden" style="border: 1px solid #334155; border-radius: 6px; background: rgba(15, 23, 42, 0.8); padding: 10px; max-height: 220px; overflow-y: auto;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                      <span style="font-size: 0.75rem; color: #94a3b8; font-weight: 600;">ACTIVE RUNNING PROCESSES</span>
+                      <input type="text" id="input-prog-detail-proc-search" placeholder="Filter processes..." style="padding: 3px 8px; font-size: 0.75rem; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 4px;" />
+                    </div>
+                    <div id="list-prog-detail-running"></div>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="input-prog-args" style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 4px; display: block;">Launch Arguments & Extensions (Optional)</label>
+                    <input type="text" id="input-prog-args" class="modal-input" placeholder="e.g. --elevate, --incognito, -windowed, --profile-directory=Default" style="width: 100%; box-sizing: border-box;" />
+                    <span style="font-size: 0.74rem; color: #7d8597; margin-top: 3px; display: block;">Command-line arguments or launch suffixes passed to the executable upon launch (e.g. <code>--elevate</code>).</span>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="input-prog-cwd" style="font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 4px; display: block;">Working Directory (Optional)</label>
+                    <input type="text" id="input-prog-cwd" class="modal-input" placeholder="Optional. Defaults to executable folder." style="width: 100%; box-sizing: border-box;" />
+                  </div>
+
+                  <div class="form-group" style="display: flex; align-items: center; gap: 8px; padding-top: 4px;">
+                    <input type="checkbox" id="input-prog-elevate" style="width: 16px; height: 16px; cursor: pointer;" />
+                    <label for="input-prog-elevate" style="font-size: 0.82rem; color: #e2e8f0; cursor: pointer; user-select: none;">
+                      Run as Administrator (Elevated / Windows UAC)
+                    </label>
+                  </div>
+
+                  <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
+                    <button type="button" id="btn-save-program" class="btn-primary-sm" style="padding: 8px 20px; font-size: 0.85rem;">
+                      💾 Save Program
+                    </button>
+                  </div>
+                </div>
+              </section>
+            </div>
           </main>
         </div>
       </div>
@@ -688,10 +801,15 @@
 
                 </div>
 
-                <div class="form-group full">
-                  <label for="whitelistInput">Allowed Applications Whitelist (Comma separated)</label>
-                  <input type="text" id="whitelistInput" class="hud-input" value="chrome.exe, notepad.exe, winword.exe, excel.exe, spotify.exe, blender.exe">
-                  <span class="input-hint">Only programs in this list can be opened or controlled.</span>
+                <div class="form-group full" style="background: rgba(59, 130, 246, 0.06); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 6px; padding: 14px 16px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <label style="font-weight: 700; color: #93c5fd; font-size: 0.88rem; margin: 0;">ALLOWED APPLICATIONS WHITELIST</label>
+                    <button type="button" id="btn-goto-programs" class="btn-primary-sm" style="padding: 4px 12px; font-size: 0.78rem;">Open Programs Tab →</button>
+                  </div>
+                  <p style="color: #94a3b8; font-size: 0.82rem; margin: 0; line-height: 1.45;">
+                    The whitelist has moved to the dedicated <strong>Programs</strong> tab next to Games. You can now add programs by name, browse executables, pick from active running apps, configure launch arguments & extensions (such as <code>--elevate</code>), and test launching directly.
+                  </p>
+                  <input type="hidden" id="whitelistInput" value="" />
                 </div>
               </div>
             </div>
@@ -1130,65 +1248,6 @@
 
       </section>
 
-      <!-- ============================================================= -->
-      <!-- TAB 4: TELEMETRY & SYSTEM STATUS                              -->
-      <!-- ============================================================= -->
-      <section id="tab-telemetry" class="tab-pane">
-        <div class="telemetry-grid">
-          <div class="telemetry-box">
-            <div class="telemetry-label">CORE STATE</div>
-            <div class="telemetry-val" id="telCoreState">OFFLINE</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">AGENT NAME</div>
-            <div class="telemetry-val" id="telAgentName">Aether</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">ACTIVE VOICE</div>
-            <div class="telemetry-val" id="telVoice">Aoede</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">LLM TEMPERATURE</div>
-            <div class="telemetry-val" id="telTemp">1.00</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">AUDIO MODE</div>
-            <div class="telemetry-val" id="telAudioMode">ALWAYS-ON</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">ACTIVE MIC</div>
-            <div class="telemetry-val sm" id="telMicName">--</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">ACTIVE SPEAKER</div>
-            <div class="telemetry-val sm" id="telSpeakerName">--</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">KILL PHRASE</div>
-            <div class="telemetry-val sm" id="telSafePhrase">"Aether stop"</div>
-          </div>
-          <div class="telemetry-box highlight">
-            <div class="telemetry-label">TOTAL TURN LATENCY</div>
-            <div class="telemetry-val" id="telTotalLatency">-- ms</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">STT TRANSCRIBE LATENCY</div>
-            <div class="telemetry-val" id="telSttLatency">-- ms</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">CORTEX LLM LATENCY</div>
-            <div class="telemetry-val" id="telLlmlatency">-- ms</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">TOOLS & SCRIPT LATENCY</div>
-            <div class="telemetry-val" id="telToolsLatency">-- ms</div>
-          </div>
-          <div class="telemetry-box">
-            <div class="telemetry-label">TTS AUDIO LATENCY</div>
-            <div class="telemetry-val" id="telTtsLatency">-- ms</div>
-          </div>
-        </div>
-      </section>
 
       <!-- ============================================================= -->
       <!-- TAB: STORED CHATS & MANIFEST BROWSER                         -->
@@ -1447,8 +1506,77 @@
     </div>
   </div>
 
+  <!-- Modal: Add Whitelisted Program -->
+  <div id="modal-add-program" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 560px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">💻</span>
+          <h3 style="margin: 0; font-size: 1rem; color: #f1f5f9;">Add Whitelisted Program</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-program-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="input-add-prog-name" class="modal-label">Program Display Name <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-add-prog-name" class="modal-input" placeholder="e.g. Crimson Desert, Google Chrome, VS Code" autocomplete="off" />
+          <span class="modal-hint">The title shown in your whitelist and recognized by voice commands.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-add-prog-path" class="modal-label">Executable / Application Path <span style="color: #ef4444;">*</span></label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="input-add-prog-path" class="modal-input" placeholder="e.g. C:\Games\Crimson Desert\bin64\CrimsonDesert.exe or chrome.exe" autocomplete="off" style="flex: 1;" />
+            <button type="button" id="btn-add-prog-browse" class="btn-secondary-sm">📁 Browse...</button>
+            <button type="button" id="btn-add-prog-running" class="btn-secondary-sm">⚡ Running Apps</button>
+          </div>
+          <span class="modal-hint">Full file path to the executable, or filename if registered in Windows.</span>
+          <div id="add-prog-browse-banner" class="hidden" style="margin-top: 8px; padding: 8px 12px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 6px; font-size: 0.78rem; color: #34d399; display: none; align-items: center; gap: 8px;">
+            <span style="font-size: 1rem; color: #10b981;">✓</span>
+            <div style="display: flex; flex-direction: column; overflow: hidden; min-width: 0;">
+              <span id="add-prog-browse-text" style="font-weight: 700; color: #a7f3d0; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">Executable grabbed</span>
+              <span id="add-prog-browse-subtext" style="font-size: 0.72rem; color: #6ee7b7; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Pick Running Process Expandable Panel -->
+        <div id="panel-add-prog-running" class="running-proc-panel hidden" style="margin-top: 6px; border: 1px solid #334155; border-radius: 6px; background: rgba(15, 23, 42, 0.9); padding: 8px; max-height: 180px; overflow-y: auto;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-size: 0.72rem; color: #94a3b8; font-weight: 700;">ACTIVE RUNNING PROCESSES</span>
+            <input type="text" id="input-add-prog-proc-search" placeholder="Search processes..." style="padding: 2px 6px; font-size: 0.72rem; background: #1e293b; border: 1px solid #475569; color: #fff; border-radius: 4px;" />
+          </div>
+          <div id="list-add-prog-running"></div>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-add-prog-args" class="modal-label">Launch Arguments & Extensions (Optional)</label>
+          <input type="text" id="input-add-prog-args" class="modal-input" placeholder="e.g. --elevate, -windowed, --profile-directory=Default" autocomplete="off" />
+          <span class="modal-hint">Command-line flags or suffixes passed on launch (e.g. <code>--elevate</code>).</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-add-prog-cwd" class="modal-label">Working Directory (Optional)</label>
+          <input type="text" id="input-add-prog-cwd" class="modal-input" placeholder="Optional. Defaults to executable folder." autocomplete="off" />
+        </div>
+
+        <div class="modal-field" style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+          <input type="checkbox" id="input-add-prog-elevate" style="width: 16px; height: 16px; cursor: pointer;" />
+          <label for="input-add-prog-elevate" class="modal-label" style="margin: 0; cursor: pointer;">
+            Run as Administrator (Elevated / Windows UAC)
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-prog" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-prog" class="btn-primary-sm" style="padding: 7px 18px;">Add Program</button>
+      </div>
+    </div>
+  </div>
+
   <script src="settings.js"></script>
   <script src="games_tab.js"></script>
+  <script src="programs_tab.js"></script>
   <script src="main.js"></script>
   <script src="app.js"></script>
 </body>
