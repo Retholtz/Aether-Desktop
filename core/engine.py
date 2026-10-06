@@ -980,6 +980,9 @@ class AetherEngine:
 
     def set_ptt(self, active: bool):
         self._ptt_active = active
+        if active and not self.is_running and self._loop:
+            logger.info("[PTT] Auto-starting engine from PTT press")
+            self.start(self._loop)
         if self.audio:
             self.audio.set_ptt(active)
         self.notify("mic_status", {
@@ -2013,6 +2016,8 @@ class AetherEngine:
                         self.audio.reset_vad()
                 elif audio_task in done:
                     wav_bytes = audio_task.result()
+                    cur_audio_mode = getattr(self.audio, "mode", "unknown") if self.audio else "unknown"
+                    logger.info(f"[ENGINE] Received speech utterance: {len(wav_bytes) if wav_bytes else 0} bytes from queue (audio_mode={cur_audio_mode})")
                     is_wake_idle = (
                         self.audio is not None
                         and hasattr(self.audio, "wake_detector")
@@ -2030,7 +2035,7 @@ class AetherEngine:
                     # Target Speaker Verification Gate (CAM++ Offline Biometrics)
                     live_audio_cfg = self.config_getter().get("audio", {})
                     live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
-                    is_ptt_mode = live_audio_cfg.get("mode", "always_on") == "ptt"
+                    is_ptt_mode = (live_audio_cfg.get("mode", "always_on") == "ptt" or cur_audio_mode == "ptt")
                     if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled() and not is_ptt_mode:
                         thresh = float(live_bio_cfg.get("threshold", 0.40))
                         is_user, score = self.voice_verifier.verify(wav_bytes, threshold=thresh)
@@ -2099,6 +2104,7 @@ class AetherEngine:
                                 elif getattr(part, "text", None):
                                     user_prompt += part.text
                         user_prompt = user_prompt.strip()
+                        logger.info(f"[STT RESULT] Raw transcribed text: '{user_prompt}'")
 
                         # Language / Script validation filter
                         if user_prompt:

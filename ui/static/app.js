@@ -66,21 +66,26 @@ window.aetherUI = {
   selectedStoredSessionId: null,
 
   init: async function() {
-    this.setupTabs();
-    this.setupEventHandlers();
-    await this.applyWindowsTheme();
-    await this.loadAccents();
-    await this.loadAudioDevices();
-    await this.loadMonitors();
-    await this.loadConfig();
-    await this.loadVoiceProfileStatus();
-    await this.loadUserName();
-    await this.loadUserPreferences();
-    await this.loadUserFacts();
-    await this.loadDictionaryTerms();
-    await this.loadRecentLogs();
-    this.startTelemetryLoop();
-    this.log("Aether Desktop initialized and ready.");
+    this._isConfigLoading = true;
+    try {
+      this.setupTabs();
+      await this.applyWindowsTheme();
+      await this.loadAccents();
+      await this.loadAudioDevices();
+      await this.loadMonitors();
+      await this.loadConfig();
+      await this.loadVoiceProfileStatus();
+      await this.loadUserName();
+      await this.loadUserPreferences();
+      await this.loadUserFacts();
+      await this.loadDictionaryTerms();
+      await this.loadRecentLogs();
+      this.setupEventHandlers();
+      this.startTelemetryLoop();
+      this.log("Aether Desktop initialized and ready.");
+    } finally {
+      this._isConfigLoading = false;
+    }
   },
 
   // =========================================================================
@@ -123,6 +128,9 @@ window.aetherUI = {
           if (tabKey === "settings") {
             targetPane.focus();
             this.loadAudioDevices(true);
+            if (typeof loadSettingsUI === "function") {
+              loadSettingsUI();
+            }
           } else if (tabKey === "preferences") {
             targetPane.focus();
             this.loadUserName();
@@ -244,28 +252,41 @@ window.aetherUI = {
     const keyInput = document.getElementById("apiKeyInput");
     const toggleKeyBtn = document.getElementById("toggleKeyVisibilityBtn");
 
-    keyInput.addEventListener("focus", () => {
-      if (keyInput.dataset.stored === "true" && keyInput.value.includes("***")) {
-        keyInput.value = "";
-        keyInput.dataset.stored = "false";
-      }
-    });
+    if (keyInput) {
+      keyInput.addEventListener("focus", () => {
+        if (keyInput.dataset.stored === "true" && (keyInput.value.includes("***") || keyInput.value.includes("•••"))) {
+          keyInput.value = "";
+          keyInput.dataset.stored = "false";
+          keyInput.placeholder = "Enter new Gemini API key to update...";
+        }
+      });
 
-    toggleKeyBtn.addEventListener("click", () => {
-      if (keyInput.type === "password") {
-        keyInput.type = "text";
-        toggleKeyBtn.innerText = "HIDE";
-        if (keyInput.dataset.stored === "true" && this.currentConfig?.api?.api_key_display) {
-          keyInput.value = this.currentConfig.api.api_key_display;
-        }
-      } else {
-        keyInput.type = "password";
-        toggleKeyBtn.innerText = "SHOW";
-        if (keyInput.dataset.stored === "true") {
+      keyInput.addEventListener("blur", () => {
+        if (!keyInput.value.trim() && (keyInput.dataset.hadKey === "true" || this.currentConfig?.api?.has_key)) {
           keyInput.value = "********************************";
+          keyInput.dataset.stored = "true";
+          keyInput.placeholder = "**************** (DPAPI Key Stored)";
         }
-      }
-    });
+      });
+    }
+
+    if (toggleKeyBtn && keyInput) {
+      toggleKeyBtn.addEventListener("click", () => {
+        if (keyInput.type === "password") {
+          keyInput.type = "text";
+          toggleKeyBtn.innerText = "HIDE";
+          if ((keyInput.dataset.stored === "true" || keyInput.dataset.hadKey === "true") && this.currentConfig?.api?.api_key_display) {
+            keyInput.value = this.currentConfig.api.api_key_display;
+          }
+        } else {
+          keyInput.type = "password";
+          toggleKeyBtn.innerText = "SHOW";
+          if (keyInput.dataset.stored === "true" || keyInput.dataset.hadKey === "true") {
+            keyInput.value = "********************************";
+          }
+        }
+      });
+    }
 
     // Save Settings buttons (both top and bottom)
     document.getElementById("saveSettingsBtn").addEventListener("click", () => this.saveSettings());
@@ -475,7 +496,17 @@ window.aetherUI = {
 
     // Push-To-Talk Button Events (Supports both Hold and Toggle interactions)
     const pttBtn = document.getElementById("pttButton");
+    const blurActiveInput = () => {
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+        active.blur();
+        if (window.pywebview?.api?.set_input_focused) {
+          window.pywebview.api.set_input_focused(false);
+        }
+      }
+    };
     const startHoldPTT = (e) => {
+      blurActiveInput();
       if (this.pttType === "hold") {
         if (e && e.type === "touchstart") e.preventDefault();
         if (window.pywebview && window.pywebview.api) {
@@ -492,19 +523,22 @@ window.aetherUI = {
       }
     };
 
-    pttBtn.addEventListener("mousedown", startHoldPTT);
-    pttBtn.addEventListener("mouseup", stopHoldPTT);
-    pttBtn.addEventListener("mouseleave", stopHoldPTT);
-    pttBtn.addEventListener("touchstart", startHoldPTT);
-    pttBtn.addEventListener("touchend", stopHoldPTT);
+    if (pttBtn) {
+      pttBtn.addEventListener("mousedown", startHoldPTT);
+      pttBtn.addEventListener("mouseup", stopHoldPTT);
+      pttBtn.addEventListener("mouseleave", stopHoldPTT);
+      pttBtn.addEventListener("touchstart", startHoldPTT);
+      pttBtn.addEventListener("touchend", stopHoldPTT);
 
-    pttBtn.addEventListener("click", (e) => {
-      if (this.pttType === "toggle") {
-        if (window.pywebview && window.pywebview.api && window.pywebview.api.toggle_ptt) {
-          window.pywebview.api.toggle_ptt();
+      pttBtn.addEventListener("click", (e) => {
+        blurActiveInput();
+        if (this.pttType === "toggle") {
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.toggle_ptt) {
+            window.pywebview.api.toggle_ptt();
+          }
         }
-      }
-    });
+      });
+    }
 
     // Window Key Listeners for Keybind Recording & In-Window PTT Trigger
     window.addEventListener("keydown", (e) => {
@@ -577,6 +611,38 @@ window.aetherUI = {
         }
       }
     });
+
+    // Deselect input on clicking outside so global hotkey (Space) immediately works
+    document.addEventListener("pointerdown", (e) => {
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+        if (e.target !== active) {
+          active.blur();
+          if (window.pywebview?.api?.set_input_focused) {
+            window.pywebview.api.set_input_focused(false);
+          }
+        }
+      }
+    });
+
+    // Clear focused input flag when window itself blurs
+    window.addEventListener("blur", () => {
+      if (window.pywebview?.api?.set_input_focused) {
+        window.pywebview.api.set_input_focused(false);
+      }
+    });
+
+    const chatInputEl = document.getElementById("chatTextInput");
+    if (chatInputEl) {
+      chatInputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          chatInputEl.blur();
+          if (window.pywebview?.api?.set_input_focused) {
+            window.pywebview.api.set_input_focused(false);
+          }
+        }
+      });
+    }
 
     // Voice Biometrics Toggle & Sensitivity Slider
     const bioCheck = document.getElementById("voiceBiometricsCheck");
@@ -681,13 +747,13 @@ window.aetherUI = {
   },
 
   updateVoiceLabels: function() {
-    const eng = (document.getElementById("ttsSelect")?.value || "").toLowerCase();
+    const eng = (document.getElementById("select-tts-endpoint")?.value || document.getElementById("ttsSelect")?.value || "").toLowerCase();
     const isLocal = eng.includes("local") && !eng.includes("windows");
-    const select = document.getElementById("voiceSelect");
+    const select = document.getElementById("select-output-voice") || document.getElementById("voiceSelect");
     const textInput = document.getElementById("voiceTextInput");
     const v = isLocal ? (textInput?.value.trim() || "") : (select?.value || "");
     const selectedOpt = select?.selectedOptions ? select.selectedOptions[0] : null;
-    const a = document.getElementById("voiceAccentSelect")?.value || "default";
+    const a = (document.getElementById("select-voice-accent") || document.getElementById("voiceAccentSelect"))?.value || "default";
     const accentSuffix = (a && a !== "default" && !isLocal) ? ` (${a})` : "";
 
     let displayVoice = v;
@@ -974,7 +1040,7 @@ window.aetherUI = {
   populateEdgeVoicesForRegion: function(regionId, selectedVoice) {
     if (!this.edgeCatalog || !this.edgeCatalog.voices) return;
     const voices = this.edgeCatalog.voices[regionId] || [];
-    const select = document.getElementById("voiceSelect");
+    const select = document.getElementById("select-output-voice") || document.getElementById("voiceSelect");
     if (!select) return;
     const prevVal = selectedVoice || select.value;
     select.innerHTML = "";
@@ -996,7 +1062,7 @@ window.aetherUI = {
   },
 
   updateTtsUiVisibility: function(engine) {
-    const eng = (engine || document.getElementById("ttsSelect")?.value || "").toLowerCase();
+    const eng = (engine || document.getElementById("select-tts-endpoint")?.value || document.getElementById("ttsSelect")?.value || "").toLowerCase();
     const isEdge = eng.includes("edge");
     const isGemini = eng.includes("gemini") || !eng;
     const isWindows = eng.includes("windows") || eng.includes("sapi");
@@ -1007,7 +1073,7 @@ window.aetherUI = {
     const localGroup = document.getElementById("localTtsGroup");
     const speedGroup = document.getElementById("voiceSpeedGroup");
 
-    const voiceSelect = document.getElementById("voiceSelect");
+    const voiceSelect = document.getElementById("select-output-voice") || document.getElementById("voiceSelect");
     const voiceTextInput = document.getElementById("voiceTextInput");
     const voiceSelectLabel = document.getElementById("voiceSelectLabel");
     const voiceSelectHint = document.getElementById("voiceSelectHint");
@@ -1057,7 +1123,7 @@ window.aetherUI = {
   loadVoices: async function(ttsEngine, selectedVoice) {
     if (!window.pywebview || !window.pywebview.api) return;
     try {
-      const engine = ttsEngine || document.getElementById("ttsSelect")?.value || "gemini-live-native";
+      const engine = ttsEngine || document.getElementById("select-tts-endpoint")?.value || document.getElementById("ttsSelect")?.value || "gemini-live-native";
       const isEdge = engine.toLowerCase().includes("edge");
       const isLocal = engine.toLowerCase().includes("local") && !engine.toLowerCase().includes("windows");
 
@@ -1097,7 +1163,7 @@ window.aetherUI = {
         }
       } else {
         const voices = await window.pywebview.api.get_available_voices(engine);
-        const select = document.getElementById("voiceSelect");
+        const select = document.getElementById("select-output-voice") || document.getElementById("voiceSelect");
         if (!select) return;
         const prevVal = selectedVoice || select.value;
         select.innerHTML = "";
@@ -1272,6 +1338,8 @@ window.aetherUI = {
 
   loadConfig: async function() {
     if (!window.pywebview || !window.pywebview.api) return;
+    const wasLoading = this._isConfigLoading;
+    this._isConfigLoading = true;
     try {
       const cfg = await window.pywebview.api.get_config();
       this.currentConfig = cfg;
@@ -1302,19 +1370,30 @@ window.aetherUI = {
 
       // Gemini & Voice
       const keyInput = document.getElementById("apiKeyInput");
-      if (api.has_key) {
-        keyInput.value = "********************************";
-        keyInput.dataset.stored = "true";
-        document.getElementById("apiKeyHint").innerText = `Active Key: ${api.api_key_display} (DPAPI Encrypted)`;
-      } else {
-        keyInput.value = "";
-        keyInput.dataset.stored = "false";
-        document.getElementById("apiKeyHint").innerText = "No key saved. Enter your Gemini API key above.";
+      if (keyInput) {
+        if (api.has_key) {
+          keyInput.value = "********************************";
+          keyInput.dataset.stored = "true";
+          keyInput.dataset.hadKey = "true";
+          keyInput.placeholder = "**************** (DPAPI Key Stored)";
+          const keyHint = document.getElementById("apiKeyHint");
+          if (keyHint) keyHint.innerText = `Active Key: ${api.api_key_display} (DPAPI Encrypted)`;
+        } else {
+          keyInput.value = "";
+          keyInput.dataset.stored = "false";
+          keyInput.dataset.hadKey = "false";
+          keyInput.placeholder = "Enter Gemini API key...";
+          const keyHint = document.getElementById("apiKeyHint");
+          if (keyHint) keyHint.innerText = "No key saved. Enter your Gemini API key above.";
+        }
       }
 
       // Discover and populate dynamic model endpoints
       try {
-        const discoveredModels = await window.pywebview.api.get_discovered_models();
+        let discoveredModels = null;
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.get_discovered_models) {
+          discoveredModels = await window.pywebview.api.get_discovered_models();
+        }
         if (typeof updateSettingsModelDropdowns === "function") {
           updateSettingsModelDropdowns(discoveredModels, cfg);
         } else if (typeof updateAllModelDropdowns === "function") {
@@ -1324,13 +1403,19 @@ window.aetherUI = {
         }
       } catch (err) {
         console.warn("Could not load discovered models:", err);
+        if (typeof updateSettingsModelDropdowns === "function") {
+          updateSettingsModelDropdowns({}, cfg);
+        }
       }
 
-      if (api.model_id) {
-        const primSel = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
-        if (primSel) primSel.value = api.model_id;
-      }
-      const currentStt = cfg.stt_endpoint || cfg.stt_model_endpoint || api.stt_model_id || api.stt_endpoint || "gemini-3.5-transcribe";
+      const activePrimary = cfg.primary_model_endpoint || api.model_id || cfg.tier1_fast_model || "gemini-3.8-flash";
+      const primSel = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
+      if (primSel) primSel.value = activePrimary;
+
+      const activeHeavy = cfg.tier2_heavy_model || api.pro_model_id || "gemini-3.1-pro-preview";
+      const heavySel = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]');
+      if (heavySel) heavySel.value = activeHeavy;
+      const currentStt = cfg.stt_endpoint || cfg.stt_model_endpoint || api.stt_model_id || api.stt_endpoint || "primary_flash_stt";
       const sttEl = document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
       if (sttEl) {
         sttEl.value = currentStt;
@@ -1366,10 +1451,6 @@ window.aetherUI = {
         }
       }
       this.updateVoiceLabels();
-      const heavySel = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect");
-      if (api.pro_model_id && heavySel) {
-        heavySel.value = api.pro_model_id;
-      }
       if (vision.endpoint && document.getElementById("visionEndpointSelect")) {
         document.getElementById("visionEndpointSelect").value = vision.endpoint;
       }
@@ -1384,10 +1465,9 @@ window.aetherUI = {
       }
 
       // Audio & Mode
-      if (audio.mode) {
-        const radio = document.querySelector(`input[name='audioMode'][value='${audio.mode}']`);
-        if (radio) radio.checked = true;
-      }
+      const activeAudioMode = audio.mode || cfg.mode || "always_on";
+      const radio = document.querySelector(`input[name='audioMode'][value='${activeAudioMode}']`);
+      if (radio) radio.checked = true;
       const resolvedAlwaysOnMode = cfg.always_on_mode || audio.always_on_mode || api.always_on_mode || (cfg.wake_word_enabled === false ? "always_on" : "wake_word");
       const aoRadio = document.querySelector(`input[name='alwaysOnMode'][value='${resolvedAlwaysOnMode}']`);
       if (aoRadio) aoRadio.checked = true;
@@ -1405,7 +1485,7 @@ window.aetherUI = {
       }
       if (audio.ptt_vk !== undefined) this.pttVk = audio.ptt_vk;
       if (audio.ptt_modifiers) this.pttModifiers = audio.ptt_modifiers;
-      this.updateAudioModeUI(audio.mode || "always_on");
+      this.updateAudioModeUI(activeAudioMode);
       const resolvedKillPhrase = cfg.kill_phrase || audio.safe_phrase || audio.kill_phrase || api.kill_phrase || `${this.agentName} stop`;
       const killInput = document.getElementById("input-kill-phrase");
       if (killInput) killInput.value = resolvedKillPhrase;
@@ -1522,6 +1602,8 @@ window.aetherUI = {
 
     } catch (e) {
       console.error("Failed to load config:", e);
+    } finally {
+      this._isConfigLoading = wasLoading;
     }
   },
 
@@ -1540,6 +1622,10 @@ window.aetherUI = {
   // Saving Settings
   // =========================================================================
   saveSettings: async function(silent = false) {
+    if (this._isConfigLoading) {
+      console.warn("Skipping saveSettings because config is currently loading.");
+      return false;
+    }
     if (!window.pywebview || !window.pywebview.api) return false;
     const saveMsg = document.getElementById("saveStatusMsg");
     if (!silent && saveMsg) saveMsg.innerText = "Encrypting & saving...";
@@ -1574,12 +1660,13 @@ window.aetherUI = {
       const voiceSpeedNum = parseFloat(document.getElementById("input-tts-speed")?.value || "1.00");
       const voiceAccentVal = document.getElementById("select-voice-accent")?.value || "default";
 
-      const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || "gemini-3.5-transcribe";
+      const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || "primary_flash_stt";
       const ttsModelVal = (document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model"))?.value || ttsVal;
       const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || "gemini-3.8-flash";
       const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]'))?.value || "gemini-3.1-pro-preview";
 
       const payload = {
+        mode: mode,
         agent_name: agentName,
         wake_phrase: wakePhrase,
         sleep_phrase: sleepPhrase,
@@ -1687,7 +1774,11 @@ window.aetherUI = {
           saveMsg.innerText = "✓ Settings Saved (DPAPI Encrypted)";
           setTimeout(() => { saveMsg.innerText = ""; }, 4000);
         }
-        document.getElementById("apiKeyInput").value = "";
+        const keyEl = document.getElementById("apiKeyInput");
+        if (keyEl && (keyEl.dataset.stored === "true" || keyEl.dataset.hadKey === "true" || this.currentConfig?.api?.has_key)) {
+          keyEl.value = "********************************";
+          keyEl.dataset.stored = "true";
+        }
         await this.loadConfig();
 
         // Dynamically reflect floating overlay setting change
@@ -1794,9 +1885,15 @@ window.aetherUI = {
 
   sendChatMessage: async function() {
     const input = document.getElementById("chatTextInput");
-    const text = input.value.trim();
+    const text = input ? input.value.trim() : "";
     if (!text) return;
-    input.value = "";
+    if (input) {
+      input.value = "";
+      input.blur();
+    }
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.set_input_focused) {
+      window.pywebview.api.set_input_focused(false);
+    }
 
     if (!window.pywebview || !window.pywebview.api) return;
     await window.pywebview.api.send_text_message(text);
@@ -3161,12 +3258,48 @@ window.aetherUI = {
 };
 
 // Bootstrap on pywebview ready or window load
-if (window.pywebview) {
-  window.aetherUI.init();
+let _hasInitializedUI = false;
+function bootstrapAetherUI() {
+  if (_hasInitializedUI) return;
+  if (window.pywebview && window.pywebview.api) {
+    _hasInitializedUI = true;
+    window.aetherUI.init();
+  }
+}
+
+// Immediately wire tab navigation on DOM ready so panels are interactive instantly
+if (typeof document !== "undefined") {
+  const attachEarlyTabs = () => {
+    if (window.aetherUI && typeof window.aetherUI.setupTabs === "function") {
+      window.aetherUI.setupTabs();
+    }
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", attachEarlyTabs);
+  } else {
+    attachEarlyTabs();
+  }
+}
+
+if (window.pywebview && window.pywebview.api) {
+  bootstrapAetherUI();
 } else {
   window.addEventListener("pywebviewready", () => {
-    window.aetherUI.init();
+    bootstrapAetherUI();
   });
+  const _initCheckInterval = setInterval(() => {
+    if (window.pywebview && window.pywebview.api) {
+      clearInterval(_initCheckInterval);
+      bootstrapAetherUI();
+    }
+  }, 100);
+  setTimeout(() => {
+    clearInterval(_initCheckInterval);
+    if (!_hasInitializedUI && window.aetherUI) {
+      _hasInitializedUI = true;
+      window.aetherUI.init();
+    }
+  }, 3000);
 }
 
 function updateSilenceDisplay(val) {
@@ -3220,13 +3353,20 @@ window.onAssistantSleep = function() {
 function collectSettingsPayload() {
   const bootEl = document.getElementById("toggle-boot-startup");
   const minEl = document.getElementById("toggle-start-minimized");
-  const primaryEl = document.getElementById("select-primary-model") || document.getElementById("modelSelect");
-  const heavyEl = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect");
+  const primaryEl = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
+  const heavyEl = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]');
+  const sttEl = document.getElementById("stt_endpoint") || document.querySelector('select[name="stt_endpoint"]') || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
+  const ttsEl = document.getElementById("tts_endpoint") || document.querySelector('select[name="tts_endpoint"]') || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model") || document.getElementById("ttsSelect");
   return {
     boot_on_startup: bootEl ? bootEl.checked : false,
     start_minimized: minEl ? minEl.checked : false,
     primary_model_endpoint: primaryEl ? primaryEl.value : "gemini-3.8-flash",
-    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-3.1-pro-preview"
+    tier1_fast_model: primaryEl ? primaryEl.value : "gemini-3.8-flash",
+    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-3.1-pro-preview",
+    stt_model_endpoint: sttEl ? sttEl.value : "primary_flash_stt",
+    stt_endpoint: sttEl ? sttEl.value : "primary_flash_stt",
+    tts_model_endpoint: ttsEl ? ttsEl.value : "gemini_live",
+    tts_endpoint: ttsEl ? ttsEl.value : "gemini_live"
   };
 }
 window.collectSettingsPayload = collectSettingsPayload;

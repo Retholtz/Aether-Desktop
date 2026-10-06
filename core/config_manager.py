@@ -118,6 +118,15 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     audio_cfg["kill_phrase"] = kill_phrase
     audio_cfg["safe_phrase"] = kill_phrase
 
+    # Audio Mode: "always_on" vs "ptt"
+    mode = (
+        cfg.get("mode")
+        or audio_cfg.get("mode")
+        or "always_on"
+    )
+    cfg["mode"] = mode
+    audio_cfg["mode"] = mode
+
     # Always-On Listening Sub-Mode:
     # 1) "always_on" -> Continuous Open Mic (wake_word_enabled=False)
     # 2) "wake_word" -> Listen only with Wake Phrase (auto-sleeps after silence)
@@ -161,7 +170,7 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         or api_cfg.get("tts_model_id")
         or cfg.get("tts_model_endpoint")
         or cfg.get("tts_endpoint")
-        or "gemini-live-voice-stream"
+        or "gemini_live"
     )
     cfg["tts_endpoint"] = tts_endpoint
     cfg["tts_model_endpoint"] = tts_endpoint
@@ -172,7 +181,8 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         api_cfg.get("stt_endpoint")
         or api_cfg.get("stt_model_id")
         or cfg.get("stt_model_endpoint")
-        or "gemini-3.8-transcribe"
+        or cfg.get("stt_endpoint")
+        or "primary_flash_stt"
     )
     cfg["stt_model_endpoint"] = stt_endpoint
     cfg["stt_endpoint"] = stt_endpoint
@@ -289,6 +299,7 @@ class ConfigManager:
                 "primary_model_endpoint",
                 "tier1_fast_model",
                 "tier2_heavy_model",
+                "mode",
             ):
                 if key in updates:
                     self.config[key] = updates[key]
@@ -347,6 +358,13 @@ class ConfigManager:
                         self.config["tts_model_endpoint"] = sec_copy["tts_model_endpoint"]
                         self.config["tts_endpoint"] = sec_copy["tts_model_endpoint"]
                         self.config.setdefault("api", {})["tts_model_id"] = sec_copy["tts_model_endpoint"]
+                    if "mode" in sec_copy:
+                        self.config["mode"] = sec_copy["mode"]
+                    if "stt_endpoint" in sec_copy:
+                        self.config["stt_endpoint"] = sec_copy["stt_endpoint"]
+                        self.config["stt_model_endpoint"] = sec_copy["stt_endpoint"]
+                        self.config.setdefault("api", {})["stt_endpoint"] = sec_copy["stt_endpoint"]
+                        self.config.setdefault("api", {})["stt_model_id"] = sec_copy["stt_endpoint"]
                     if "stt_model_endpoint" in sec_copy:
                         self.config["stt_model_endpoint"] = sec_copy["stt_model_endpoint"]
                         self.config.setdefault("api", {})["stt_model_id"] = sec_copy["stt_model_endpoint"]

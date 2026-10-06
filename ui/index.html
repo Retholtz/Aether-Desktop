@@ -356,7 +356,15 @@
                   <div class="form-group" id="voiceSelectGroup">
                     <label for="select-output-voice" id="voiceSelectLabel">AI Output Voice</label>
                     <select id="select-output-voice" class="hud-select">
-                      <!-- Dynamically populated voice profiles -->
+                      <option value="Sulafat" selected>Sulafat — Warm, deep, balanced studio narrator (Female)</option>
+                      <option value="Aoede">Aoede — Breezy, warm and natural (Female)</option>
+                      <option value="Puck">Puck — Upbeat, youthful, animated (Male)</option>
+                      <option value="Charon">Charon — Deep, authoritative, measured (Male)</option>
+                      <option value="Kore">Kore — Relaxed, gentle, calm (Female)</option>
+                      <option value="Fenrir">Fenrir — Intense, commanding (Male)</option>
+                      <option value="Leda">Leda — Youthful, bright (Female)</option>
+                      <option value="Orus">Orus — Confident, energetic (Male)</option>
+                      <option value="Zephyr">Zephyr — Soft, airy, friendly (Female)</option>
                     </select>
                     <input type="text" id="voiceTextInput" class="hud-input" style="display: none;" placeholder="e.g. af_heart, kokoro, or custom model">
                     <span class="field-hint input-hint" id="voiceSelectHint">Synthesizer voice tailored to your selected TTS engine.</span>
@@ -430,7 +438,7 @@
                 <div class="form-group full">
                   <label for="apiKeyInput">Gemini API Key</label>
                   <div class="input-with-action">
-                    <input type="password" id="apiKeyInput" placeholder="Enter Gemini API key...">
+                    <input type="password" id="apiKeyInput" placeholder="**************** (DPAPI Key Stored)">
                     <button type="button" class="hud-btn-secondary" id="toggleKeyVisibilityBtn">SHOW</button>
                   </div>
                   <span class="input-hint" id="apiKeyHint">Stored securely in your Windows user DPAPI vault.</span>
@@ -487,7 +495,12 @@
                 <div class="form-group">
                   <label for="select-primary-model">Primary Model Endpoint</label>
                   <select id="select-primary-model" class="form-control hud-select">
-                    <!-- Dynamically populated via JS -->
+                    <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (High Speed)</option>
+                    <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+                    <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                    <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                    <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
+                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Heavy Reasoning)</option>
                   </select>
                   <span class="field-hint input-hint">Primary model used for core chat, live tools, and fast multimodal response.</span>
                 </div>
@@ -496,7 +509,11 @@
                 <div class="form-group">
                   <label for="select-heavy-model">Tier 2 Heavy Model Endpoint</label>
                   <select id="select-heavy-model" class="form-control hud-select">
-                    <!-- Dynamically populated via JS -->
+                    <option value="gemini-3.1-pro-preview" selected>Gemini 3.1 Pro Preview (Heavy Reasoning)</option>
+                    <option value="gemini-3.8-flash">Gemini 3.8 Flash (High Speed)</option>
+                    <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+                    <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                    <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
                   </select>
                   <span class="field-hint input-hint">Used for structured research dossiers, code generation, and deep analysis.</span>
                 </div>

@@ -14,11 +14,48 @@ from core.screen_stream import ensure_thread_desktop
 from ui.tray import SystemTrayManager
 
 
+def force_foreground_window(hwnd: int, maximize: bool = False):
+    """
+    Brings a window to the foreground and unminimizes/maximizes it reliably on Windows,
+    bypassing foreground lock restrictions by attaching input threads.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return
+    try:
+        import ctypes
+        import win32gui
+        import win32con
+
+        user32 = ctypes.windll.user32
+        user32.AllowSetForegroundWindow(-1)
+
+        cur_thread_id = user32.GetCurrentThreadId()
+        fore_hwnd = user32.GetForegroundWindow()
+        fore_thread_id = user32.GetWindowThreadProcessId(fore_hwnd, 0) if fore_hwnd else 0
+
+        attached = False
+        if fore_thread_id and fore_thread_id != cur_thread_id:
+            attached = bool(user32.AttachThreadInput(cur_thread_id, fore_thread_id, True))
+
+        try:
+            cmd = win32con.SW_MAXIMIZE if maximize else win32con.SW_RESTORE
+            win32gui.ShowWindow(hwnd, cmd)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(cur_thread_id, fore_thread_id, False)
+    except Exception as e:
+        print(f"[HUD] force_foreground_window error: {e}")
+
+
 def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
     """
-    Applies an OS-level window clipping region using Win32 GDI SetWindowRgn.
-    Clips out any window borders/corners so pixels outside the rounded pill or card
-    are 100% transparent and pass-through to the desktop on Windows.
+    Applies OS-level window styling for the HUD overlay.
+    Avoids Win32 GDI SetWindowRgn which conflicts with Chromium/WebView2
+    DirectComposition GPU rendering and causes the overlay window to render blank.
+    On Windows 11+, requests native DWM rounded corners via DwmSetWindowAttribute;
+    CSS border-radius handles visual card rounding across all modes.
     """
     if sys.platform != "win32" or not window:
         return
@@ -37,16 +74,18 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
         if not hwnd:
             return
 
-        rect = win32gui.GetWindowRect(hwnd)
-        w = max(1, rect[2] - rect[0])
-        h = max(1, rect[3] - rect[1])
-
-        dpi = ctypes.windll.user32.GetDpiForWindow(hwnd) if hasattr(ctypes.windll.user32, "GetDpiForWindow") else 96
-        scale = dpi / 96.0
-        # Unified sleek 14px rounded corner styling across all modes (mini, normal, max)
-        corner_diam = max(8, int(28 * scale))
-        rgn = ctypes.windll.gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, corner_diam, corner_diam)
-        ctypes.windll.user32.SetWindowRgn(hwnd, rgn, True)
+        # On Windows 11+ (build >= 22000), enable DWM native rounded corners cleanly
+        try:
+            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+            DWMWCP_ROUND = 2
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                ctypes.byref(ctypes.c_int(DWMWCP_ROUND)),
+                ctypes.sizeof(ctypes.c_int)
+            )
+        except Exception:
+            pass
     except Exception as e:
         print(f"[HUD SHAPE ERROR] Failed to apply window shape: {e}")
 
@@ -54,22 +93,33 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
 def get_monitor_work_areas() -> list:
     """
     Returns a list of connected monitor work areas (excluding taskbars)
-    with per-monitor bounds and primary monitor indicator.
+    with per-monitor bounds and primary monitor indicator in logical coordinates.
     """
     monitors = []
     if sys.platform == "win32":
         try:
             import win32api
+            import ctypes
             for hmon, _, _ in win32api.EnumDisplayMonitors():
                 info = win32api.GetMonitorInfo(hmon)
                 work = info.get("Work") or info.get("rcWork") or info.get("Monitor")
                 is_primary = bool(info.get("Flags", 0) & 1)
                 if work:
+                    scale = 1.0
+                    try:
+                        dpi_x = ctypes.c_uint()
+                        dpi_y = ctypes.c_uint()
+                        ctypes.windll.shcore.GetDpiForMonitor(int(hmon), 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y))
+                        if dpi_x.value > 0:
+                            scale = dpi_x.value / 96.0
+                    except Exception:
+                        pass
+
                     monitors.append({
-                        "left": work[0],
-                        "top": work[1],
-                        "right": work[2],
-                        "bottom": work[3],
+                        "left": int(work[0] / scale),
+                        "top": int(work[1] / scale),
+                        "right": int(work[2] / scale),
+                        "bottom": int(work[3] / scale),
                         "is_primary": is_primary
                     })
         except Exception:
@@ -284,15 +334,36 @@ class HUDBridge:
         apply_hud_window_shape(self._window, cur_mode)
         return {"success": True}
 
+    def start_drag(self) -> dict:
+        """Triggers native OS-level window drag via Win32."""
+        if sys.platform == "win32" and self._window:
+            try:
+                import win32gui
+                import win32con
+                hwnd = None
+                if hasattr(self._window, "native") and self._window.native and hasattr(self._window.native, "Handle"):
+                    try:
+                        hwnd = self._window.native.Handle.ToInt64()
+                    except Exception:
+                        hwnd = None
+                if not hwnd:
+                    hwnd = win32gui.FindWindow(None, "Aether Overlay")
+                if hwnd:
+                    win32gui.ReleaseCapture()
+                    win32gui.PostMessage(hwnd, win32con.WM_NCLBUTTONDOWN, win32con.HTCAPTION, 0)
+                return {"success": True}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Not supported on this platform"}
+
     def move_overlay(self, x: int, y: int) -> dict:
         """Moves the HUD overlay window to screen coordinates (x, y) with boundary clamping."""
         try:
             if self._window:
-                w = getattr(self._window, "width", 180)
-                h = getattr(self._window, "height", 52)
+                w = getattr(self._window, "width", None) or 440
+                h = getattr(self._window, "height", None) or 180
                 cx, cy = clamp_window_position(x, y, width=w, height=h)
                 self._window.move(cx, cy)
-                self._bridge.save_overlay_position(cx, cy)
                 return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -424,7 +495,7 @@ class HudWindow:
             "min_size": (10, 10),
             "frameless": True,
             "on_top": True,
-            "easy_drag": True,
+            "easy_drag": False,
             "hidden": True,
             "transparent": False,
             "background_color": "#121620"
@@ -444,14 +515,18 @@ class HudWindow:
         self._last_moved_pos = None
 
         def _save_debounced_pos():
-            if self._last_moved_pos:
+            if self._last_moved_pos and self.overlay_window:
                 mx, my = self._last_moved_pos
+                cur_x = getattr(self.overlay_window, "x", None)
+                cur_y = getattr(self.overlay_window, "y", None)
+                if cur_x is not None and cur_y is not None and (cur_x != mx or cur_y != my):
+                    self.overlay_window.move(mx, my)
                 self.bridge.save_overlay_position(mx, my)
 
         def _on_overlay_moved(x, y):
             try:
-                w = getattr(self.overlay_window, "width", 180)
-                h = getattr(self.overlay_window, "height", 52)
+                w = getattr(self.overlay_window, "width", None) or 440
+                h = getattr(self.overlay_window, "height", None) or 180
                 cx, cy = clamp_window_position(x, y, width=w, height=h)
                 self._last_moved_pos = (cx, cy)
                 if self._pos_save_timer:

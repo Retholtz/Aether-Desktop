@@ -252,6 +252,7 @@ class GuiBridge:
                 on_event=self._on_engine_event,
                 on_whitelist_update=self.update_whitelist
             )
+            self._engine._loop = self._loop
             self.engine = self._engine
         if hasattr(self.engine, "game_mgr") and self.engine.game_mgr is not None:
             self.game_mgr = self.engine.game_mgr
@@ -570,9 +571,13 @@ class GuiBridge:
                     self._engine.audio.set_vad_trailing_silence(silence_ms)
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
-            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint"):
+            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode"):
                 if top_key in new_config:
                     self._config[top_key] = new_config[top_key]
+
+            if "mode" in new_config:
+                self._config["mode"] = new_config["mode"]
+                self._config.setdefault("audio", {})["mode"] = new_config["mode"]
 
             if "primary_model_endpoint" in new_config:
                 self._config["primary_model_endpoint"] = new_config["primary_model_endpoint"]
@@ -583,8 +588,15 @@ class GuiBridge:
                 self._config["tier2_heavy_model"] = new_config["tier2_heavy_model"]
                 self._config.setdefault("api", {})["pro_model_id"] = new_config["tier2_heavy_model"]
 
+            if "stt_endpoint" in new_config and new_config["stt_endpoint"]:
+                self._config["stt_endpoint"] = new_config["stt_endpoint"]
+                self._config["stt_model_endpoint"] = new_config["stt_endpoint"]
+                self._config.setdefault("api", {})["stt_endpoint"] = new_config["stt_endpoint"]
+                self._config.setdefault("api", {})["stt_model_id"] = new_config["stt_endpoint"]
+
             if "stt_model_endpoint" in new_config and new_config["stt_model_endpoint"]:
                 self._config["stt_model_endpoint"] = new_config["stt_model_endpoint"]
+                self._config["stt_endpoint"] = new_config["stt_model_endpoint"]
                 self._config.setdefault("api", {})["stt_model_id"] = new_config["stt_model_endpoint"]
                 self._config.setdefault("api", {})["stt_endpoint"] = new_config["stt_model_endpoint"]
 
@@ -666,6 +678,8 @@ class GuiBridge:
                 elif "stop_listening_phrase" in aud_cfg and aud_cfg["stop_listening_phrase"]:
                     self._config["sleep_phrase"] = aud_cfg["stop_listening_phrase"].strip()
                     aud_cfg["sleep_phrase"] = self._config["sleep_phrase"]
+                if "mode" in aud_cfg and aud_cfg["mode"]:
+                    self._config["mode"] = aud_cfg["mode"]
                 if "always_on_mode" in aud_cfg and aud_cfg["always_on_mode"]:
                     self._config["always_on_mode"] = aud_cfg["always_on_mode"].strip()
                     self._config["wake_word_enabled"] = (self._config["always_on_mode"] != "always_on")
@@ -739,8 +753,8 @@ class GuiBridge:
                 self._config.setdefault("ui", {}).update(new_config["ui"])
                 if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
                     self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
-                if "hud_mode" in new_config["ui"]:
-                    self.set_mode(new_config["ui"]["hud_mode"])
+                # Note: HUD mode view is changed via explicit set_mode() calls or hotkey,
+                # NOT during general background save_config calls to prevent unwanted resizing.
 
             sync_config_schema(self._config)
             save_config_atomic(self._config, self._config_path)
@@ -862,12 +876,16 @@ class GuiBridge:
             return {"success": False, "error": str(e)}
 
     def set_ptt(self, active: bool) -> dict:
-        """Sets the Push-To-Talk state (active = True/False)."""
+        """Sets the Push-To-Talk state (active = True/False), auto-starting engine if idle."""
+        if active and not self._engine.is_running:
+            self.start_assistant()
         self._engine.set_ptt(active)
         return {"success": True}
 
     def toggle_ptt(self) -> dict:
-        """Toggles active Push-to-Talk state."""
+        """Toggles active Push-to-Talk state, auto-starting engine if idle."""
+        if not self._engine.is_running:
+            self.start_assistant()
         if self._engine:
             new_state = self._engine.toggle_ptt()
             return {"success": True, "active": new_state}
@@ -1191,11 +1209,14 @@ class GuiBridge:
             return {"success": False, "error": str(e)}
 
     def move_overlay(self, x: int, y: int) -> dict:
-        """Moves the floating HUD overlay window to screen coordinates (x, y)."""
+        """Moves the floating HUD overlay window to screen coordinates (x, y) with boundary clamping."""
         try:
             if getattr(self, "_overlay_window", None):
-                self._overlay_window.move(int(x), int(y))
-                self.save_overlay_position(x, y)
+                from ui.hud_window import clamp_window_position
+                cur_mode = getattr(self, "_current_hud_mode", "normal")
+                w, h = (180, 52) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+                cx, cy = clamp_window_position(x, y, width=w, height=h)
+                self._overlay_window.move(cx, cy)
                 return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1715,10 +1736,10 @@ class GuiBridge:
                     allow_multiple=False,
                     file_types=file_types
                 )
-                if res and len(res) > 0 and os.path.exists(res[0]):
+                if res and len(res) > 0 and res[0]:
                     logger.info(f"[BRIDGE] pywebview file dialog selected: {res[0]}")
                     return os.path.normpath(res[0])
-                if res is not None:
+                if res is not None and len(res) == 0:
                     # User explicitly cancelled
                     return None
             except Exception as e:

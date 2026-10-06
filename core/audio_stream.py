@@ -115,6 +115,7 @@ class AudioPipeline:
         engine: Any = None,
         on_wake_callback: Optional[Callable[[], None]] = None,
         on_sleep_callback: Optional[Callable[[], None]] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         self.input_device = input_device
         self.output_device = output_device
@@ -156,7 +157,7 @@ class AudioPipeline:
         self._last_output_active_time: float = 0.0
         self.buffer_lock = threading.Lock()
         
-        self.loop = None
+        self.loop = loop
         self._running = False
         self._stop_lock = threading.Lock()
         self.in_stream = None
@@ -204,7 +205,7 @@ class AudioPipeline:
         self._vad_onset_threshold = 0.018    # Relaxed RMS threshold to trigger speech onset cleanly
         self._vad_hangover_threshold = 0.012 # Lower RMS threshold to maintain speech (adaptive)
         self._silence_limit = 18             # ~900ms of sub-hangover silence before finalizing (18 blocks at ~50ms/block)
-        self._preroll_limit = 8              # ~400ms pre-speech audio retained
+        self._preroll_limit = 28             # ~1400ms pre-speech audio retained to prevent cutting off early words in PTT
         self._postroll_padding = 5           # ~250ms post-speech audio retained
         self._max_speech_frames = 200        # ~10 seconds maximum utterance guard to prevent endless accumulation
 
@@ -215,6 +216,7 @@ class AudioPipeline:
 
         # Near-field speaker dominance tracking (ensures loud speaker is separated from room noise)
         self._utterance_peak_rms = 0.0
+        self._was_ptt_utterance = False
 
     def _handle_wake_transition(self):
         """
@@ -285,8 +287,9 @@ class AudioPipeline:
                 self.engine.audio_player.trigger_barge_in()
             return (None, pa_continue)
 
-        # 2. Wake Word Gating
-        if self.config.get("wake_word_enabled", True):
+        # 2. Wake Word Gating (bypassed in PTT mode or while PTT key is active)
+        is_ptt = (self.mode == "ptt" or self.ptt_active)
+        if not is_ptt and self.config.get("wake_word_enabled", True):
             should_route = self.wake_detector.process_frame(in_data)
             if not should_route:
                 # Suppressed: Assistant is idling in standby mode
@@ -308,10 +311,17 @@ class AudioPipeline:
     def set_ptt(self, active: bool):
         was_active = self.ptt_active
         self.ptt_active = active
+        logger.info(f"[AUDIO] PTT state transition: {was_active} -> {active} (mode={self.mode})")
         if active and not was_active:
-            # PTT pressed: begin speech capture immediately
-            self._is_in_speech = True
-            self._speech_frames = list(self._preroll_frames)
+            # PTT pressed: begin speech capture immediately, capturing rolling pre-roll audio
+            self._was_ptt_utterance = True
+            if not self._is_in_speech:
+                self._is_in_speech = True
+                self._speech_frames = list(self._preroll_frames)
+            else:
+                if self._preroll_frames:
+                    self._speech_frames = list(self._preroll_frames) + self._speech_frames
+            self._preroll_frames.clear()
             self._utterance_peak_rms = 0.0
             self._silence_count = 0
             if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
@@ -324,6 +334,7 @@ class AudioPipeline:
                     pass
         elif was_active and not active:
             # PTT released: finalize any speech immediately
+            logger.info(f"[AUDIO] PTT released -> finalizing speech ({len(self._speech_frames)} speech frames collected)")
             self._finalize_utterance()
 
     def set_mode(self, mode: str):
@@ -419,23 +430,25 @@ class AudioPipeline:
 
         is_wake_enabled = bool(self.config.get("wake_word_enabled", self.wake_word_enabled))
         should_route_live = True
-        if is_wake_enabled and self.mode != "ptt" and not speaker_active and hasattr(self, "wake_detector") and self.wake_detector:
+        if is_wake_enabled and self.mode != "ptt" and not self.ptt_active and not speaker_active and hasattr(self, "wake_detector") and self.wake_detector:
             should_route_live = self.wake_detector.process_frame(pcm16)
 
         if should_route_live and self.loop and self.loop.is_running() and not (self.software_gate and speaker_active):
             self.loop.call_soon_threadsafe(self.input_queue.put_nowait, pcm16)
 
         # Check PTT condition & direct speech ingestion
-        if self.mode == "ptt":
+        if self.mode == "ptt" or self.ptt_active:
             if not self.ptt_active:
                 self._preroll_frames.append(pcm16)
                 if len(self._preroll_frames) > self._preroll_limit:
                     self._preroll_frames.pop(0)
                 return
             # While PTT is held: directly capture incoming audio without premature VAD cutoffs
+            self._was_ptt_utterance = True
             if not self._is_in_speech:
                 self._is_in_speech = True
                 self._speech_frames = list(self._preroll_frames)
+                self._preroll_frames.clear()
                 self._utterance_peak_rms = rms
                 if self.on_speech_state:
                     try:
@@ -546,9 +559,12 @@ class AudioPipeline:
                 self._preroll_frames.pop(0)
 
     def _finalize_utterance(self):
+        is_ptt_turn = (self.mode == "ptt" or getattr(self, "_was_ptt_utterance", False))
+        self._was_ptt_utterance = False
+
         is_wake_idle = (
             bool(self.config.get("wake_word_enabled", self.wake_word_enabled))
-            and self.mode != "ptt"
+            and not is_ptt_turn
             and hasattr(self, "wake_detector")
             and self.wake_detector
             and self.wake_detector.state == AudioGateState.IDLE_LISTENING
@@ -568,22 +584,24 @@ class AudioPipeline:
             return
 
         # Speaker Dominance Check: require near-field speech loudness or clear SNR above ambient floor
-        snr = self._utterance_peak_rms / max(0.005, self._noise_floor)
-        if self._utterance_peak_rms < 0.016 and snr < 1.6:
-            logger.debug(
-                f"[VAD GATE] Discarded ambient noise utterance "
-                f"(Peak: {self._utterance_peak_rms:.4f}, Noise: {self._noise_floor:.4f}, SNR: {snr:.1f}x)"
-            )
-            self._speech_frames = []
-            self._is_in_speech = False
-            self._silence_count = 0
-            self._utterance_peak_rms = 0.0
-            if self.on_speech_state and not is_wake_idle:
-                try:
-                    self.on_speech_state("speech_idle")
-                except Exception:
-                    pass
-            return
+        # Intentional PTT button presses bypass this check so quiet/normal speech is never discarded
+        if not is_ptt_turn:
+            snr = self._utterance_peak_rms / max(0.005, self._noise_floor)
+            if self._utterance_peak_rms < 0.016 and snr < 1.6:
+                logger.info(
+                    f"[VAD GATE] Discarded ambient noise utterance "
+                    f"(Peak: {self._utterance_peak_rms:.4f}, Noise: {self._noise_floor:.4f}, SNR: {snr:.1f}x)"
+                )
+                self._speech_frames = []
+                self._is_in_speech = False
+                self._silence_count = 0
+                self._utterance_peak_rms = 0.0
+                if self.on_speech_state and not is_wake_idle:
+                    try:
+                        self.on_speech_state("speech_idle")
+                    except Exception:
+                        pass
+                return
 
         # Keep only up to _postroll_padding frames of silence at the end of utterance
         # to ensure soft trailing syllables ('t', 's', 'k') are retained without dead air
@@ -594,14 +612,30 @@ class AudioPipeline:
             frames_to_send = self._speech_frames
 
         total_pcm = b"".join(frames_to_send)
+        num_frames = len(frames_to_send)
+        peak_rms = self._utterance_peak_rms
         self._speech_frames = []
+        if is_ptt_turn:
+            self._preroll_frames.clear()
         self._is_in_speech = False
         self._silence_count = 0
         self._utterance_peak_rms = 0.0
 
-        # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono)
-        if len(total_pcm) < 11200:
-            logger.debug(f"[VAD GATE] Utterance too short ({len(total_pcm)} bytes < 11200), discarding.")
+        # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono) for VAD,
+        # but for deliberate PTT button presses allow shorter crisp commands down to ~150ms (~4,800 bytes)
+        min_bytes = 4800 if is_ptt_turn else 11200
+        if len(total_pcm) < min_bytes:
+            logger.info(f"[VAD GATE] Utterance too short ({len(total_pcm)} bytes < {min_bytes}), discarding.")
+            if self.on_speech_state and not is_wake_idle:
+                try:
+                    self.on_speech_state("speech_idle")
+                except Exception:
+                    pass
+            return
+
+        # Dead microphone safeguard for PTT
+        if is_ptt_turn and peak_rms < 0.0008:
+            logger.warning(f"[AUDIO] Discarded PTT utterance: no audio signal detected (peak RMS: {peak_rms:.5f})")
             if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
@@ -623,8 +657,17 @@ class AudioPipeline:
             wf.writeframes(total_pcm)
         buf.seek(0)
         wav_bytes = buf.read()
+        logger.info(
+            f"[AUDIO] Emitted {len(wav_bytes)} bytes WAV to utterance queue "
+            f"({num_frames} frames, ~{len(total_pcm)/32000:.2f}s, peak RMS: {peak_rms:.4f}, PTT: {is_ptt_turn})"
+        )
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.utterance_queue.put_nowait, wav_bytes)
+        else:
+            try:
+                self.utterance_queue.put_nowait(wav_bytes)
+            except Exception:
+                pass
 
     def _output_callback(self, outdata, frames, time_info, status):
         if not self._running:
@@ -808,6 +851,8 @@ class AudioPipeline:
         out_channels = min(max(1, int(out_info.get("max_output_channels", 2))), 2)
 
         in_blocksize = 2400 if self.hw_in_rate == 48000 else 2048
+        frame_duration = in_blocksize / self.hw_in_rate if self.hw_in_rate > 0 else 0.05
+        self._preroll_limit = max(14, int(round(1.4 / frame_duration)))
         self.in_stream = sd.InputStream(
             device=self.input_device,
             samplerate=self.hw_in_rate,

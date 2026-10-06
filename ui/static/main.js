@@ -25,5 +25,16 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
+
+    const settingsBtn = document.getElementById("btn-tab-settings") ||
+                        document.querySelector('[data-tab="tab-settings"]') ||
+                        document.querySelector('[data-tab="settings"]');
+    if (settingsBtn) {
+        settingsBtn.addEventListener("click", () => {
+            if (typeof loadSettingsUI === "function") {
+                loadSettingsUI();
+            }
+        });
+    }
 });
 

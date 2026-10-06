@@ -1211,11 +1211,16 @@
       let suppressTimeoutId = null;
 
       function onDragMouseDown(e) {
-        // Exclude interactive buttons, toggles, controls, scrollable text, and resize handles
-        if (e.target.closest('button, .mode-toggle-group, .window-controls, .transcript-pane, .exchange-body, .hud-resizer')) {
+        // Exclude interactive buttons, toggles, controls, and resize handles
+        if (e.target.closest('button, input, select, textarea, .mode-toggle-group, .window-controls, .hud-resizer, .no-drag')) {
           return;
         }
         if (e.button !== 0) return; // Only left-click drags
+
+        // Allow text selection inside Max mode transcript turns
+        if (currentMode === "max" && e.target.closest('.transcript-turn') && window.getSelection().toString().length > 0) {
+          return;
+        }
 
         isDragging = true;
         hasMovedDuringDrag = false;
@@ -1241,10 +1246,7 @@
         const newX = e.screenX - dragStartX;
         const newY = e.screenY - dragStartY;
 
-        // Try PyWebView move callback first, fall back to RPC move_overlay
-        if (window.pywebview && window.pywebview._jsApiCallback) {
-          window.pywebview._jsApiCallback('pywebviewMoveWindow', [newX, newY], 'move');
-        } else if (window.pywebview && window.pywebview.api && window.pywebview.api.move_overlay) {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.move_overlay) {
           window.pywebview.api.move_overlay(newX, newY);
         }
       }

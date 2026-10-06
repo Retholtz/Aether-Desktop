@@ -7,9 +7,15 @@ supporting Push-to-Talk in both Hold mode (active while held) and Toggle mode (t
 import ctypes
 from ctypes import wintypes
 import logging
+import os
 import sys
 import threading
 from typing import Callable, List, Optional, Set
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 from core.screen_stream import ensure_thread_desktop
 
@@ -281,10 +287,39 @@ class HotkeyManager:
         inside the Aether Desktop window to prevent single-key hotkeys (like Space) from firing.
         """
         self._input_focused = focused
+        logger.debug(f"[HOTKEY] set_input_focused: {focused}")
         if focused and self._is_key_down and self.ptt_type == "hold":
             self._is_key_down = False
             if self.on_ptt_change:
                 self.on_ptt_change(False)
+
+    def _is_aether_foreground(self) -> bool:
+        """
+        Checks if the currently active foreground window belongs to the Aether Desktop process
+        or one of its child renderer processes (e.g. WebView2).
+        """
+        if sys.platform != "win32":
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return False
+            pid = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            current_pid = os.getpid()
+            if pid.value == current_pid:
+                return True
+            if psutil is not None:
+                try:
+                    proc = psutil.Process(pid.value)
+                    if proc.ppid() == current_pid:
+                        return True
+                except Exception:
+                    pass
+            return False
+        except Exception:
+            return False
 
     def _check_modifiers(self, target_modifiers: Optional[List[str]] = None) -> bool:
         """Verifies if the current physical modifier state matches target modifiers."""
@@ -328,7 +363,7 @@ class HotkeyManager:
                         if self._check_modifiers(self.hud_mode_modifiers):
                             if not self._is_hud_key_down:
                                 self._is_hud_key_down = True
-                                logger.debug("[HUD HOTKEY] Key down -> Cycle HUD Mode")
+                                logger.info("[HUD HOTKEY] Key down -> Cycle HUD Mode")
                                 if self.on_hud_mode_cycle:
                                     self.on_hud_mode_cycle()
                     elif is_up:
@@ -340,34 +375,43 @@ class HotkeyManager:
                         if self._check_modifiers(self.game_mode_modifiers):
                             if not self._is_game_mode_key_down:
                                 self._is_game_mode_key_down = True
-                                logger.debug("[GAME MODE HOTKEY] Key down -> Toggle Game Mode")
+                                logger.info("[GAME MODE HOTKEY] Key down -> Toggle Game Mode")
                                 if self.on_game_mode_toggle:
                                     self.on_game_mode_toggle()
                     elif is_up:
                         self._is_game_mode_key_down = False
 
-                # 2. Check Push-to-Talk Hotkey (active when audio mode is PTT)
+                # 3. Check Push-to-Talk Hotkey (active when audio mode is PTT)
                 if self.enabled and vk == self.target_vk:
-                    # Smart typing safeguard: suppress single-key hotkeys if user is typing text in Aether
-                    if self._input_focused and not self.target_modifiers:
-                        pass
+                    is_foreground_aether = self._is_aether_foreground()
+                    # Smart typing safeguard: suppress single-key hotkeys ONLY if user is typing text in Aether
+                    # If Aether is not the foreground window, typing safeguard is never applied
+                    is_typing_suppressed = self._input_focused and is_foreground_aether and not self.target_modifiers
+
+                    if not is_foreground_aether and self._input_focused:
+                        # Auto-clear stale input focus when user switches to other windows
+                        self._input_focused = False
+
+                    if is_typing_suppressed:
+                        if is_down and not self._is_key_down:
+                            logger.info("[PTT] Hotkey ignored: typing safeguard active in Aether text field")
                     elif is_down:
                         if self._check_modifiers(self.target_modifiers):
                             if not self._is_key_down:
                                 self._is_key_down = True
                                 if self.ptt_type == "hold":
-                                    logger.debug("[PTT] Key down -> Hold Speak ON")
+                                    logger.info("[PTT] Hotkey pressed -> Hold Speak ON")
                                     if self.on_ptt_change:
                                         self.on_ptt_change(True)
                                 elif self.ptt_type == "toggle":
-                                    logger.debug("[PTT] Key down -> Toggle Mic")
+                                    logger.info("[PTT] Hotkey pressed -> Toggle Mic")
                                     if self.on_ptt_toggle:
                                         self.on_ptt_toggle()
                     elif is_up:
                         if self._is_key_down:
                             self._is_key_down = False
                             if self.ptt_type == "hold":
-                                logger.debug("[PTT] Key up -> Hold Speak OFF")
+                                logger.info("[PTT] Hotkey released -> Hold Speak OFF")
                                 if self.on_ptt_change:
                                     self.on_ptt_change(False)
             except Exception as ex:

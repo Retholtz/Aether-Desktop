@@ -4,11 +4,11 @@
 function loadStartupSettings(config) {
   config = config || {};
   const bootEl = document.getElementById('toggle-boot-startup');
-  if (bootEl) {
+  if (bootEl && config.boot_on_startup !== undefined) {
     bootEl.checked = Boolean(config.boot_on_startup);
   }
   const minEl = document.getElementById('toggle-start-minimized');
-  if (minEl) {
+  if (minEl && config.start_minimized !== undefined) {
     minEl.checked = Boolean(config.start_minimized);
   }
 }
@@ -79,6 +79,24 @@ function sortModelsChronologically(models) {
   });
 }
 
+// Base default options for conversational and heavy models
+const DEFAULT_CHAT_MODELS = [
+  { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (High Speed)" },
+  { id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash" },
+  { id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash" },
+  { id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash" },
+  { id: "gemini-3.5-flash-lite", display_name: "Gemini 3.5 Flash Lite" },
+  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview (Heavy Reasoning)" }
+];
+
+const DEFAULT_HEAVY_MODELS = [
+  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview (Heavy Reasoning)" },
+  { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (High Speed)" },
+  { id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash" },
+  { id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash" },
+  { id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash" }
+];
+
 // Base fixed options for TTS (offline/native engines that are not Google API endpoints)
 const STATIC_TTS_ENGINES = [
   { id: "gemini_live", display_name: "Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)" },
@@ -133,16 +151,28 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
                   document.getElementById('proModelSelect') || 
                   document.querySelector('select[name="tier2_heavy_model"]');
 
-  const chatModels = categorizedData.chat_models || categorizedData.tier1_options;
-  if (primaryEl && chatModels && chatModels.length > 0) {
+  const rawChat = categorizedData.chat_models || categorizedData.tier1_options;
+  const chatModels = (Array.isArray(rawChat) && rawChat.length > 0)
+    ? rawChat
+    : ((currentConfig.models && Array.isArray(currentConfig.models.tier1_options) && currentConfig.models.tier1_options.length > 0)
+        ? currentConfig.models.tier1_options
+        : DEFAULT_CHAT_MODELS);
+
+  const rawHeavy = categorizedData.tier2_options || categorizedData.chat_models;
+  const heavyModels = (Array.isArray(rawHeavy) && rawHeavy.length > 0)
+    ? rawHeavy
+    : ((currentConfig.models && Array.isArray(currentConfig.models.tier2_options) && currentConfig.models.tier2_options.length > 0)
+        ? currentConfig.models.tier2_options
+        : DEFAULT_HEAVY_MODELS);
+
+  if (primaryEl) {
     populateDropdown(
       primaryEl, 
       chatModels, 
       currentConfig.primary_model_endpoint || (currentConfig.api && currentConfig.api.model_id) || currentConfig.tier1_fast_model || 'gemini-3.8-flash'
     );
   }
-  if (heavyEl && chatModels && chatModels.length > 0) {
-    const heavyModels = categorizedData.tier2_options || chatModels;
+  if (heavyEl) {
     populateDropdown(
       heavyEl, 
       heavyModels, 
@@ -197,18 +227,63 @@ const updateAllModelDropdowns = updateSettingsModelDropdowns;
 const populateModelDropdowns = updateSettingsModelDropdowns;
 const populateSelectOptions = populateDropdown;
 
+// Voices Loading routine for Settings:
+async function loadVoicesUI(config) {
+  config = config || {};
+  const ttsEl = document.getElementById('select-tts-endpoint') || 
+                document.getElementById('tts_endpoint') || 
+                document.getElementById('select-tts-model') || 
+                document.getElementById('ttsSelect');
+  const engine = (ttsEl && ttsEl.value) || config.tts_endpoint || config.tts_model_endpoint || (config.api && config.api.tts_model_id) || 'gemini_live';
+  const voice = config.tts_voice || (config.api && config.api.voice_name) || 'Sulafat';
+
+  if (window.aetherUI && typeof window.aetherUI.loadVoices === 'function') {
+    await window.aetherUI.loadVoices(engine, voice);
+    return;
+  }
+
+  if (typeof window !== "undefined" && window.pywebview && window.pywebview.api && window.pywebview.api.get_available_voices) {
+    try {
+      const voices = await window.pywebview.api.get_available_voices(engine);
+      const voiceEl = document.getElementById('select-output-voice') || document.getElementById('voiceSelect');
+      if (voiceEl && Array.isArray(voices) && voices.length > 0) {
+        voiceEl.innerHTML = '';
+        voices.forEach(v => {
+          const opt = document.createElement('option');
+          opt.value = v.name;
+          opt.innerText = `${v.name} — ${v.trait} (${v.gender})`;
+          if (v.name === voice) opt.selected = true;
+          voiceEl.appendChild(opt);
+        });
+        if (!voiceEl.value && voiceEl.options.length > 0) {
+          voiceEl.selectedIndex = 0;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load voices in settings.js:", e);
+    }
+  }
+}
+
 // Initialization routine inside Settings load:
 async function loadSettingsUI() {
-  if (typeof window === "undefined" || !window.pywebview || !window.pywebview.api) return;
-  try {
-    const config = await window.pywebview.api.get_config();
-    const modelData = await window.pywebview.api.get_discovered_models();
-
-    loadStartupSettings(config);
-    updateSettingsModelDropdowns(modelData, config);
-  } catch (err) {
-    console.warn("Could not load settings UI:", err);
+  let config = {};
+  let modelData = null;
+  if (typeof window !== "undefined" && window.pywebview && window.pywebview.api) {
+    try {
+      if (window.pywebview.api.get_config) {
+        config = await window.pywebview.api.get_config();
+      }
+      if (window.pywebview.api.get_discovered_models) {
+        modelData = await window.pywebview.api.get_discovered_models();
+      }
+    } catch (err) {
+      console.warn("Could not load settings UI via pywebview api:", err);
+    }
   }
+  loadStartupSettings(config);
+  updateSettingsModelDropdowns(modelData, config);
+  await loadVoicesUI(config);
 }
 
 // Refresh button event listener wiring:
@@ -240,13 +315,35 @@ function wireModelRefreshButton() {
   });
 }
 
+function wireTtsChangeListener() {
+  const ttsEl = document.getElementById('select-tts-endpoint') || 
+                document.getElementById('tts_endpoint') || 
+                document.getElementById('select-tts-model') || 
+                document.getElementById('ttsSelect');
+  if (ttsEl && ttsEl.dataset.wiredVoices !== "true") {
+    ttsEl.dataset.wiredVoices = "true";
+    ttsEl.addEventListener("change", async (e) => {
+      await loadVoicesUI({ tts_endpoint: e.target.value });
+    });
+  }
+}
+
 // Attach listener when document is ready
 if (typeof document !== "undefined") {
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", wireModelRefreshButton);
-  } else {
+  const initSettingsOnReady = () => {
     wireModelRefreshButton();
+    wireTtsChangeListener();
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initSettingsOnReady);
+  } else {
+    initSettingsOnReady();
   }
+
+  window.addEventListener("pywebviewready", () => {
+    loadSettingsUI();
+  });
 }
 
 // Packing settings for Save:
@@ -283,6 +380,8 @@ function collectSettingsPayload() {
 }
 
 if (typeof window !== "undefined") {
+  window.DEFAULT_CHAT_MODELS = DEFAULT_CHAT_MODELS;
+  window.DEFAULT_HEAVY_MODELS = DEFAULT_HEAVY_MODELS;
   window.STATIC_TTS_ENGINES = STATIC_TTS_ENGINES;
   window.STATIC_STT_ENGINES = STATIC_STT_ENGINES;
   window.populateDropdown = populateDropdown;
@@ -293,12 +392,15 @@ if (typeof window !== "undefined") {
   window.loadStartupSettings = loadStartupSettings;
   window.sortModelsChronologically = sortModelsChronologically;
   window.loadSettingsUI = loadSettingsUI;
+  window.loadVoicesUI = loadVoicesUI;
   window.wireModelRefreshButton = wireModelRefreshButton;
   window.collectSettingsPayload = collectSettingsPayload;
 }
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    DEFAULT_CHAT_MODELS,
+    DEFAULT_HEAVY_MODELS,
     STATIC_TTS_ENGINES,
     STATIC_STT_ENGINES,
     populateDropdown,
@@ -309,6 +411,7 @@ if (typeof module !== "undefined" && module.exports) {
     loadStartupSettings,
     sortModelsChronologically,
     loadSettingsUI,
+    loadVoicesUI,
     wireModelRefreshButton,
     collectSettingsPayload
   };
