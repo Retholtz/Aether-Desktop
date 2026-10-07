@@ -155,6 +155,8 @@ class AudioPipeline:
         self._current_output_rms: float = 0.0
         self._output_rms_history = collections.deque(maxlen=16)
         self._last_output_active_time: float = 0.0
+        self._is_draining: bool = False
+        self._prebuffer_bytes: int = 7200  # ~150ms jitter buffer at 24kHz 16-bit PCM
         self.buffer_lock = threading.Lock()
         
         self.loop = loop
@@ -165,6 +167,7 @@ class AudioPipeline:
         self.is_speaking = False
         self.is_calibrating = False
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
+        self._last_utterance_was_ptt: bool = False
         _active_pipelines.add(self)
 
         # Wake Word Gating & State Machine
@@ -207,7 +210,7 @@ class AudioPipeline:
         self._silence_limit = 18             # ~900ms of sub-hangover silence before finalizing (18 blocks at ~50ms/block)
         self._preroll_limit = 28             # ~1400ms pre-speech audio retained to prevent cutting off early words in PTT
         self._postroll_padding = 5           # ~250ms post-speech audio retained
-        self._max_speech_frames = 200        # ~10 seconds maximum utterance guard to prevent endless accumulation
+        self._max_speech_frames = 600        # ~30 seconds maximum utterance guard to prevent endless accumulation
 
         # Digital 85Hz high-pass filter state (attenuates AC rumble, fan hum, and desk vibrations)
         self._hp_alpha = 0.9677
@@ -394,19 +397,21 @@ class AudioPipeline:
             resampled = mono
 
         # Apply 85Hz digital high-pass filter (strips AC rumble, fan hum, and desk contact noise)
-        filtered = np.empty_like(resampled)
-        prev_x = self._hp_prev_x
-        prev_y = self._hp_prev_y
-        alpha = self._hp_alpha
-        for i in range(len(resampled)):
-            curr_x = resampled[i]
-            curr_y = alpha * (prev_y + curr_x - prev_x)
-            filtered[i] = curr_y
-            prev_x = curr_x
-            prev_y = curr_y
-        self._hp_prev_x = prev_x
-        self._hp_prev_y = prev_y
-        resampled = filtered
+        # Vectorized IIR formulation eliminates scalar Python loop overhead on real-time audio thread
+        if len(resampled) > 0:
+            alpha = self._hp_alpha
+            prev_x = self._hp_prev_x
+            prev_y = self._hp_prev_y
+            n = len(resampled)
+            d = np.empty_like(resampled)
+            d[0] = alpha * (resampled[0] - prev_x)
+            if n > 1:
+                d[1:] = alpha * (resampled[1:] - resampled[:-1])
+            powers = alpha ** np.arange(n)
+            filtered = np.convolve(d, powers)[:n] + (alpha ** np.arange(1, n + 1)) * prev_y
+            self._hp_prev_x = float(resampled[-1])
+            self._hp_prev_y = float(filtered[-1])
+            resampled = filtered
 
         # Recalculate RMS from the filtered speech signal and update UI meter
         rms = float(np.sqrt(np.mean(resampled**2)))
@@ -561,6 +566,7 @@ class AudioPipeline:
     def _finalize_utterance(self):
         is_ptt_turn = (self.mode == "ptt" or getattr(self, "_was_ptt_utterance", False))
         self._was_ptt_utterance = False
+        self._last_utterance_was_ptt = is_ptt_turn
 
         is_wake_idle = (
             bool(self.config.get("wake_word_enabled", self.wake_word_enabled))
@@ -621,9 +627,9 @@ class AudioPipeline:
         self._silence_count = 0
         self._utterance_peak_rms = 0.0
 
-        # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono) for VAD,
-        # but for deliberate PTT button presses allow shorter crisp commands down to ~150ms (~4,800 bytes)
-        min_bytes = 4800 if is_ptt_turn else 11200
+        # Minimum speech duration: ~350ms (11,200 bytes at 16kHz 16-bit mono) for voice activation VAD,
+        # but for deliberate physical PTT button presses allow crisp single-word commands down to ~75ms (~2,400 bytes)
+        min_bytes = 2400 if is_ptt_turn else 11200
         if len(total_pcm) < min_bytes:
             logger.info(f"[VAD GATE] Utterance too short ({len(total_pcm)} bytes < {min_bytes}), discarding.")
             if self.on_speech_state and not is_wake_idle:
@@ -680,23 +686,28 @@ class AudioPipeline:
             needed_model_samples = frames
 
         needed_bytes = needed_model_samples * 2
+        needed_bytes -= (needed_bytes % 2)
         fade_samples_24k = None
+        raw_chunk = None
 
         with self.buffer_lock:
             buf_len = len(self.output_buffer)
-            if buf_len > 0:
+            # Drain if pre-buffer threshold was met or output was explicitly flushed
+            if self._is_draining and buf_len > 0:
                 take_bytes = min(buf_len, needed_bytes)
-                raw_chunk = bytes(self.output_buffer[:take_bytes])
-                del self.output_buffer[:take_bytes]
+                if take_bytes % 2 != 0:
+                    take_bytes -= 1
+                if take_bytes > 0:
+                    raw_chunk = bytes(self.output_buffer[:take_bytes])
+                    del self.output_buffer[:take_bytes]
                 if len(self.output_buffer) == 0:
+                    self._is_draining = False
                     self.is_speaking = False
             elif self._fade_out_buffer is not None:
-                raw_chunk = None
                 fade_samples_24k = self._fade_out_buffer
                 self._fade_out_buffer = None
                 self.is_speaking = False
             else:
-                raw_chunk = None
                 self.is_speaking = False
                 self._current_output_rms = 0.0
 
@@ -732,6 +743,8 @@ class AudioPipeline:
             actual_len = min(len(resampled), frames)
             outdata[:actual_len, 0] = resampled[:actual_len]
             if actual_len < frames:
+                if actual_len > 32:
+                    outdata[actual_len - 32:actual_len, 0] *= np.linspace(1.0, 0.0, 32, dtype=np.float32)
                 outdata[actual_len:, 0] = 0.0
 
             if outdata.shape[1] > 1:
@@ -746,6 +759,7 @@ class AudioPipeline:
         to eliminate acoustic pop/click artifacts without resetting active microphone VAD capture.
         """
         with self.buffer_lock:
+            self._is_draining = False
             if len(self.output_buffer) >= 2:
                 fade_bytes = apply_micro_fade_out(
                     bytes(self.output_buffer[:960]),
@@ -761,6 +775,7 @@ class AudioPipeline:
 
     def clear_output_buffer(self):
         with self.buffer_lock:
+            self._is_draining = False
             if len(self.output_buffer) >= 2:
                 fade_bytes = apply_micro_fade_out(
                     bytes(self.output_buffer[:960]),
@@ -795,10 +810,21 @@ class AudioPipeline:
         self.reset_vad()
 
     def write_output_chunk(self, data: bytes):
+        if not data:
+            return
         with self.buffer_lock:
             self._fade_out_buffer = None
             self.is_speaking = True
             self.output_buffer.extend(data)
+            if not self._is_draining and len(self.output_buffer) >= self._prebuffer_bytes:
+                self._is_draining = True
+
+    def flush_output(self):
+        """Signals that all chunks for the current speech turn have been written so remaining audio drains immediately."""
+        with self.buffer_lock:
+            if len(self.output_buffer) > 0:
+                self._is_draining = True
+                self.is_speaking = True
 
     def is_output_empty(self) -> bool:
         with self.buffer_lock:

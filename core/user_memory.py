@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Dict, List, Optional, Any
 
+import contextlib
 from core.logger import get_logger
 
 logger = get_logger("UserMemory")
@@ -32,6 +33,19 @@ def configure_sqlite_connection(conn: sqlite3.Connection):
         logger.debug(f"[USER MEMORY] PRAGMA configuration note: {e}")
 
 
+@contextlib.contextmanager
+def _open_connection(target_path: str):
+    """Opens a SQLite connection and ensures it is deterministically closed upon context exit."""
+    conn = sqlite3.connect(target_path, timeout=10.0)
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _resolve_db_path(db_path: Optional[str] = None) -> str:
     if db_path is not None:
         return db_path
@@ -45,7 +59,7 @@ def init_memory_db(db_path: Optional[str] = None):
     """Initializes SQLite user memory database and ensures user_facts schema supports fact batches."""
     target_path = _resolve_db_path(db_path)
     os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
-    with sqlite3.connect(target_path, timeout=10.0) as conn:
+    with _open_connection(target_path) as conn:
         try:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute("PRAGMA synchronous=NORMAL;")
@@ -153,7 +167,7 @@ def add_fact_batch(facts: List[Dict[str, str]], source_session: str, db_path: Op
     """Batch inserts or updates extracted user facts from a conversation session."""
     target_path = _resolve_db_path(db_path)
     init_memory_db(target_path)
-    with sqlite3.connect(target_path, timeout=10.0) as conn:
+    with _open_connection(target_path) as conn:
         configure_sqlite_connection(conn)
         with conn:
             for item in facts:
@@ -188,7 +202,7 @@ def get_all_facts(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Retrieves all stored facts sorted by updated_at descending."""
     target_path = _resolve_db_path(db_path)
     init_memory_db(target_path)
-    with sqlite3.connect(target_path, timeout=10.0) as conn:
+    with _open_connection(target_path) as conn:
         configure_sqlite_connection(conn)
         conn.row_factory = sqlite3.Row
         cur = conn.execute("""
@@ -213,7 +227,7 @@ def replace_facts(
     """
     target_path = _resolve_db_path(db_path)
     init_memory_db(target_path)
-    with sqlite3.connect(target_path, timeout=10.0) as conn:
+    with _open_connection(target_path) as conn:
         configure_sqlite_connection(conn)
         conn.row_factory = sqlite3.Row
         with conn:
@@ -817,6 +831,19 @@ class UserMemory:
                 except Exception:
                     pass
                 self._conn = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
 
 
 # Default user memory singleton reference with double-checked locking

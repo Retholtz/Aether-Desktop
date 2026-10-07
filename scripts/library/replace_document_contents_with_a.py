@@ -1,35 +1,15 @@
-import ctypes
-from ctypes import wintypes
 import time
+import win32api
 import win32clipboard
 import win32con
 import win32gui
 from tools.os_controls import bring_hwnd_to_foreground
 
-# --- Win32 Structures and Constants ---
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
+# --- Win32 Constants ---
 VK_CONTROL = 0x11
 VK_A = 0x41
 VK_BACK = 0x08
 VK_V = 0x56
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.c_ulong),
-    ]
-
-class INPUT(ctypes.Structure):
-    class _INPUT_UNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("union", _INPUT_UNION),
-    ]
 
 # --- Helper Functions ---
 
@@ -104,29 +84,17 @@ def set_clipboard_html_and_text(html_content: str, text_content: str, max_retrie
             time.sleep(0.05)
 
 def send_key_combo(vk_mod: int, vk_key: int):
-    """Dispatch combined modifier + key down and up sequence via a single SendInput call."""
-    inputs = (INPUT * 4)()
-    inputs[0].type = INPUT_KEYBOARD
-    inputs[0].union.ki.wVk = vk_mod
-    inputs[1].type = INPUT_KEYBOARD
-    inputs[1].union.ki.wVk = vk_key
-    inputs[2].type = INPUT_KEYBOARD
-    inputs[2].union.ki.wVk = vk_key
-    inputs[2].union.ki.dwFlags = KEYEVENTF_KEYUP
-    inputs[3].type = INPUT_KEYBOARD
-    inputs[3].union.ki.wVk = vk_mod
-    inputs[3].union.ki.dwFlags = KEYEVENTF_KEYUP
-    ctypes.windll.user32.SendInput(4, ctypes.byref(inputs), ctypes.sizeof(INPUT))
+    """Dispatch combined modifier + key sequence via win32api."""
+    win32api.keybd_event(vk_mod, 0, 0, 0)
+    win32api.keybd_event(vk_key, 0, 0, 0)
+    win32api.keybd_event(vk_key, 0, win32con.KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(vk_mod, 0, win32con.KEYEVENTF_KEYUP, 0)
+
 
 def send_single_key(vk_key: int):
-    """Dispatch single key down and up sequence."""
-    inputs = (INPUT * 2)()
-    inputs[0].type = INPUT_KEYBOARD
-    inputs[0].union.ki.wVk = vk_key
-    inputs[1].type = INPUT_KEYBOARD
-    inputs[1].union.ki.wVk = vk_key
-    inputs[1].union.ki.dwFlags = KEYEVENTF_KEYUP
-    ctypes.windll.user32.SendInput(2, ctypes.byref(inputs), ctypes.sizeof(INPUT))
+    """Dispatch single key down and up sequence via win32api."""
+    win32api.keybd_event(vk_key, 0, 0, 0)
+    win32api.keybd_event(vk_key, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 # --- Document Content ---
 HTML_TABLE = """

@@ -1,53 +1,20 @@
-import ctypes
-from ctypes import wintypes
 import time
+import win32api
 import win32clipboard
+import win32con
 import win32gui
 from tools.os_controls import bring_hwnd_to_foreground
 
-# --- CTypes Structures for SendInput ---
-user32 = ctypes.WinDLL('user32', use_last_error=True)
-
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
 VK_CONTROL = 0x11
 VK_V = 0x56
 
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = (("wVk", wintypes.WORD),
-                ("wScan", wintypes.WORD),
-                ("dwFlags", wintypes.DWORD),
-                ("time", wintypes.DWORD),
-                ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)))
-
-class INPUT(ctypes.Structure):
-    class _INPUT(ctypes.Union):
-        _fields_ = (("ki", KEYBDINPUT),
-                    ("mi", ctypes.c_byte * 28),
-                    ("hi", ctypes.c_byte * 32))
-    _anonymous_ = ("_input",)
-    _fields_ = (("type", wintypes.DWORD),
-                ("_input", _INPUT))
 
 def send_ctrl_v():
-    """Sends Ctrl+V using the native SendInput API for deterministic execution."""
-    inputs = (INPUT * 4)()
-    
-    inputs[0].type = INPUT_KEYBOARD
-    inputs[0].ki.wVk = VK_CONTROL
-    
-    inputs[1].type = INPUT_KEYBOARD
-    inputs[1].ki.wVk = VK_V
-    
-    inputs[2].type = INPUT_KEYBOARD
-    inputs[2].ki.wVk = VK_V
-    inputs[2].ki.dwFlags = KEYEVENTF_KEYUP
-    
-    inputs[3].type = INPUT_KEYBOARD
-    inputs[3].ki.wVk = VK_CONTROL
-    inputs[3].ki.dwFlags = KEYEVENTF_KEYUP
-    
-    user32.SendInput(4, ctypes.byref(inputs), ctypes.sizeof(INPUT))
+    """Sends Ctrl+V using the win32api for safe execution."""
+    win32api.keybd_event(VK_CONTROL, 0, 0, 0)
+    win32api.keybd_event(VK_V, 0, 0, 0)
+    win32api.keybd_event(VK_V, 0, win32con.KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 def make_cf_html(fragment: str) -> bytes:
     MARKER_START = "<!--StartFragment-->"

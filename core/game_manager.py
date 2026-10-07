@@ -315,8 +315,6 @@ class GameManager:
         if sys.platform != "win32":
             return None
         try:
-            from core.screen_stream import ensure_thread_desktop
-            ensure_thread_desktop()
             import win32gui
             import win32process
             import psutil
@@ -406,8 +404,12 @@ class GameManager:
         3. Dispatches _notify_mode_changed() so the overlay updates immediately.
         """
         detected_id = self.detect_foreground_game()
-        if not detected_id:
-            detected_id = self.detect_running_game()
+        # Avoid hammering psutil.process_iter() across the whole OS every 2 seconds.
+        # Only check background running process if game mode was already active to verify it didn't close.
+        if not detected_id and self.game_mode_enabled:
+            active_id = self.data.get("active_profile")
+            if active_id and self.is_game_running(active_id):
+                detected_id = active_id
 
         active_id = self.data.get("active_profile")
 

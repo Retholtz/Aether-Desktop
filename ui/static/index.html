@@ -321,7 +321,8 @@
           <div class="settings-card hud-card">
             <div class="settings-card-header card-header">
               <h3 class="card-title">ASSISTANT IDENTITY & AI VOICE</h3>
-              <div class="header-actions card-header-actions">
+              <div class="header-actions card-header-actions" style="display: flex; align-items: center; gap: 8px;">
+                <span id="topSaveStatusMsg" class="save-status-text" style="font-size: 0.82rem; color: #34d399; font-weight: 500;"></span>
                 <button type="button" id="btn-save-settings" class="btn-primary hud-btn-primary sm" title="Save all settings and agent name">SAVE SETTINGS</button>
                 <span class="badge-secure card-tag dpapi"><i class="icon-lock"></i> 🔒 WINDOWS DPAPI SECURE</span>
               </div>
@@ -535,7 +536,7 @@
                   <label>Audio Input Mode</label>
                   <div class="radio-row">
                     <label class="hud-radio">
-                      <input type="radio" name="audioMode" value="always_on" id="modeAlwaysOn" checked>
+                      <input type="radio" name="audioMode" value="always_on" id="modeAlwaysOn">
                       <span>Always-On (Hands-Free)</span>
                     </label>
                     <label class="hud-radio">
@@ -555,7 +556,7 @@
                       <span>1) Always On (Continuous Open Mic — Listen all the time without Wake Phrase)</span>
                     </label>
                     <label class="hud-radio">
-                      <input type="radio" name="alwaysOnMode" value="wake_word" id="alwaysOnModeWakeWord" checked>
+                      <input type="radio" name="alwaysOnMode" value="wake_word" id="alwaysOnModeWakeWord">
                       <span>2) Listen only with Wake Phrase (Wakes on Wake Phrase, auto-sleeps after silence)</span>
                     </label>
                     <label class="hud-radio">
@@ -583,7 +584,7 @@
                   <label>Push-To-Talk Behavior</label>
                   <div class="radio-row">
                     <label class="hud-radio">
-                      <input type="radio" name="pttType" value="hold" id="pttTypeHold" checked>
+                      <input type="radio" name="pttType" value="hold" id="pttTypeHold">
                       <span>Push to Talk - Hold (Microphone is on while Keybind is held down)</span>
                     </label>
                     <label class="hud-radio">
@@ -852,7 +853,7 @@
 
                 <div class="form-group">
                   <label class="hud-checkbox" style="margin-top: 26px;">
-                    <input type="checkbox" id="minimizeToTrayCheck" checked>
+                    <input type="checkbox" id="minimizeToTrayCheck">
                     <span>Minimize To System Tray</span>
                   </label>
                   <span class="input-hint">Keeps Aether running in the background notification area when minimized.</span>

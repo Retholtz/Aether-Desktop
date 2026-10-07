@@ -1,5 +1,5 @@
 import time
-import ctypes
+import win32api
 import win32gui
 import win32clipboard
 import win32con
@@ -11,8 +11,6 @@ VK_BACK = 0x08
 VK_A = 0x41
 VK_V = 0x56
 KEYEVENTF_KEYUP = 0x0002
-
-USER32 = ctypes.windll.user32
 
 DEFAULT_HTML_CONTENT = """
 <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #202124;">
@@ -50,7 +48,7 @@ DEFAULT_HTML_CONTENT = """
 def send_key(vk_code, down=True):
     """Sends a low-level keyboard event."""
     flags = 0 if down else KEYEVENTF_KEYUP
-    USER32.keybd_event(vk_code, 0, flags, 0)
+    win32api.keybd_event(vk_code, 0, flags, 0)
 
 def send_hotkey(vk_modifier, vk_key, delay=0.02):
     """Executes a modifier+key hotkey with minimal deterministic delays."""

@@ -64,16 +64,19 @@ window.aetherUI = {
   edgeCatalog: null,
   storedSessions: [],
   selectedStoredSessionId: null,
+  _isConfigLoaded: false,
+  _isConfigLoading: false,
 
   init: async function() {
     this._isConfigLoading = true;
+    this._isConfigLoaded = false;
     try {
       this.setupTabs();
       await this.applyWindowsTheme();
+      await this.loadConfig();
       await this.loadAccents();
       await this.loadAudioDevices();
       await this.loadMonitors();
-      await this.loadConfig();
       await this.loadVoiceProfileStatus();
       await this.loadUserName();
       await this.loadUserPreferences();
@@ -85,6 +88,7 @@ window.aetherUI = {
       this.log("Aether Desktop initialized and ready.");
     } finally {
       this._isConfigLoading = false;
+      this._isConfigLoaded = true;
     }
   },
 
@@ -131,6 +135,7 @@ window.aetherUI = {
             if (typeof loadSettingsUI === "function") {
               loadSettingsUI();
             }
+            this.loadConfig();
           } else if (tabKey === "preferences") {
             targetPane.focus();
             this.loadUserName();
@@ -191,11 +196,14 @@ window.aetherUI = {
     // Temperature slider display sync
     const tempSlider = document.getElementById("temperatureSlider");
     const tempDisplay = document.getElementById("tempValDisplay");
-    tempSlider.addEventListener("input", (e) => {
-      const val = parseFloat(e.target.value).toFixed(2);
-      tempDisplay.innerText = val;
-      document.getElementById("telTemp").innerText = val;
-    });
+    if (tempSlider) {
+      tempSlider.addEventListener("input", (e) => {
+        const val = parseFloat(e.target.value).toFixed(2);
+        if (tempDisplay) tempDisplay.innerText = val;
+        const tel = document.getElementById("telTemp");
+        if (tel) tel.innerText = val;
+      });
+    }
 
     // Agent name real-time sync
     const nameInput = document.getElementById("input-agent-name");
@@ -231,20 +239,11 @@ window.aetherUI = {
       });
     }
 
-    // Auto-save Wake Phrase, Stop Listening Phrase, and Kill Phrase when edited under Hands-Free controls
-    ["input-wake-phrase", "input-sleep-phrase", "input-kill-phrase"].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.addEventListener("change", () => this.saveSettings(true));
-      }
-    });
-
     // Always-On sub-mode radio buttons (1: always_on, 2: wake_word, 3: wake_sleep_toggle)
     document.querySelectorAll("input[name='alwaysOnMode']").forEach(radio => {
       radio.addEventListener("change", () => {
         const curAudioMode = document.querySelector("input[name='audioMode']:checked")?.value || "always_on";
         this.updateAudioModeUI(curAudioMode);
-        this.saveSettings(true);
       });
     });
 
@@ -289,11 +288,15 @@ window.aetherUI = {
     }
 
     // Save Settings buttons (both top and bottom)
-    document.getElementById("saveSettingsBtn").addEventListener("click", () => this.saveSettings());
-    const topSaveBtn = document.getElementById("topSaveSettingsBtn");
+    const btmSaveBtn = document.getElementById("saveSettingsBtn");
+    if (btmSaveBtn) {
+      btmSaveBtn.addEventListener("click", () => this.saveSettings());
+    }
+    const topSaveBtn = document.getElementById("topSaveSettingsBtn") || document.getElementById("btn-save-settings");
     if (topSaveBtn) {
       topSaveBtn.addEventListener("click", () => this.saveSettings());
     }
+
 
     // Refresh Audio Hardware
     const handleRefreshHardware = async () => {
@@ -390,7 +393,6 @@ window.aetherUI = {
     document.querySelectorAll("input[name='audioMode']").forEach(radio => {
       radio.addEventListener("change", (e) => {
         this.updateAudioModeUI(e.target.value);
-        this.saveSettings(true);
       });
     });
 
@@ -399,7 +401,6 @@ window.aetherUI = {
       radio.addEventListener("change", (e) => {
         this.pttType = e.target.value;
         this.updatePttButtonUI();
-        this.saveSettings(true);
         this.log(`PTT Behavior set to: ${this.pttType === "hold" ? "Hold to Speak" : "Toggle on/off"}`);
       });
     });
@@ -485,11 +486,10 @@ window.aetherUI = {
 
     const defaultHudModeSel = document.getElementById("defaultHudModeSelect");
     if (defaultHudModeSel) {
-      defaultHudModeSel.addEventListener("change", (e) => {
+      defaultHudModeSel.addEventListener("change", async (e) => {
         this.hudMode = e.target.value;
-        this.saveSettings(true);
         if (window.pywebview && window.pywebview.api && window.pywebview.api.set_mode) {
-          window.pywebview.api.set_mode(e.target.value);
+          await window.pywebview.api.set_mode(e.target.value);
         }
       });
     }
@@ -569,27 +569,23 @@ window.aetherUI = {
           return;
         }
         if (this.matchesPttKey(e)) {
+          // Suppress browser default behaviors (e.g. space scrolling or character input)
+          // Global hotkey processing is handled directly by Windows WH_KEYBOARD_LL hook.
           e.preventDefault();
-          if (this.pttType === "hold") {
-            if (!this.isPttActive && window.pywebview?.api?.set_ptt) {
-              window.pywebview.api.set_ptt(true);
-            }
-          } else if (this.pttType === "toggle") {
-            if (!e.repeat && window.pywebview?.api?.toggle_ptt) {
-              window.pywebview.api.toggle_ptt();
-            }
-          }
         }
       }
     });
 
     window.addEventListener("keyup", (e) => {
       if (this.isRecordingKeybind) return;
-      if (this.currentConfig?.audio?.mode === "ptt" && this.pttType === "hold") {
+      if (this.currentConfig?.audio?.mode === "ptt") {
+        const activeTag = document.activeElement ? document.activeElement.tagName : "";
+        const isTyping = (activeTag === "INPUT" || activeTag === "TEXTAREA");
+        if (isTyping && (!this.pttModifiers || this.pttModifiers.length === 0)) {
+          return;
+        }
         if (this.matchesPttKey(e)) {
-          if (window.pywebview?.api?.set_ptt) {
-            window.pywebview.api.set_ptt(false);
-          }
+          e.preventDefault();
         }
       }
     });
@@ -775,10 +771,13 @@ window.aetherUI = {
   },
 
   updateAgentNameUI: function(name) {
-    document.getElementById("hudAgentTitle").innerText = `${name.toUpperCase()} DESKTOP`;
-    document.getElementById("telAgentName").innerText = name;
+    const title = document.getElementById("hudAgentTitle");
+    if (title) title.innerText = `${name.toUpperCase()} DESKTOP`;
+    const tel = document.getElementById("telAgentName");
+    if (tel) tel.innerText = name;
     if (!this.isAssistantRunning) {
-      document.getElementById("fabButtonText").innerText = `START ${name.toUpperCase()}`;
+      const fab = document.getElementById("fabButtonText");
+      if (fab) fab.innerText = `START ${name.toUpperCase()}`;
     }
   },
 
@@ -1007,9 +1006,9 @@ window.aetherUI = {
     if (!window.pywebview || !window.pywebview.api) return;
     try {
       const accents = await window.pywebview.api.get_available_accents();
-      const select = document.getElementById("voiceAccentSelect");
+      const select = document.getElementById("select-voice-accent") || document.getElementById("voiceAccentSelect");
       if (!select) return;
-      const prevVal = select.value || "default";
+      const prevVal = this.currentConfig?.voice_accent || this.currentConfig?.api?.voice_accent || select.value || "default";
       select.innerHTML = "";
       accents.forEach(a => {
         const opt = document.createElement("option");
@@ -1324,13 +1323,22 @@ window.aetherUI = {
       const monitors = await window.pywebview.api.get_monitors();
       const select = document.getElementById("monitorSelect");
       if (!select || !monitors) return;
-      select.innerHTML = "";
+      const curVal = this.currentConfig?.vision?.monitor || select.value || "auto";
+      select.innerHTML = `
+        <option value="auto">Auto (Follow Active / Focused Window)</option>
+        <option value="all">All Displays Combined (Virtual Desktop)</option>
+      `;
       monitors.forEach(m => {
-        const opt = document.createElement("option");
-        opt.value = m.id;
-        opt.innerText = `${m.name} (${m.details})`;
-        select.appendChild(opt);
+        if (m.id !== "auto" && m.id !== "all") {
+          const opt = document.createElement("option");
+          opt.value = String(m.id);
+          opt.innerText = `${m.name} (${m.details})`;
+          select.appendChild(opt);
+        }
       });
+      if (Array.from(select.options).some(o => String(o.value) === String(curVal))) {
+        select.value = String(curVal);
+      }
     } catch (e) {
       console.error("Failed to load monitors:", e);
     }
@@ -1456,35 +1464,57 @@ window.aetherUI = {
       }
       if (api.temperature !== undefined) {
         const tempVal = parseFloat(api.temperature).toFixed(2);
-        document.getElementById("temperatureSlider").value = api.temperature;
-        document.getElementById("tempValDisplay").innerText = tempVal;
-        document.getElementById("telTemp").innerText = tempVal;
+        const tempSlider = document.getElementById("temperatureSlider");
+        if (tempSlider) tempSlider.value = api.temperature;
+        const tempDisp = document.getElementById("tempValDisplay");
+        if (tempDisp) tempDisp.innerText = tempVal;
+        const telTempEl = document.getElementById("telTemp");
+        if (telTempEl) telTempEl.innerText = tempVal;
       }
-      if (api.system_instruction) {
+      if (api.system_instruction && document.getElementById("systemPromptInput")) {
         document.getElementById("systemPromptInput").value = api.system_instruction;
       }
 
       // Audio & Mode
-      const activeAudioMode = audio.mode || cfg.mode || "always_on";
-      const radio = document.querySelector(`input[name='audioMode'][value='${activeAudioMode}']`);
-      if (radio) radio.checked = true;
+      const activeAudioMode = (audio.mode || cfg.mode || "always_on").toLowerCase();
+      const pttRadioEl = document.getElementById("modePTT") || document.querySelector("input[name='audioMode'][value='ptt']");
+      const aoRadioEl = document.getElementById("modeAlwaysOn") || document.querySelector("input[name='audioMode'][value='always_on']");
+      if (activeAudioMode === "ptt") {
+        if (pttRadioEl) pttRadioEl.checked = true;
+        if (aoRadioEl) aoRadioEl.checked = false;
+      } else {
+        if (aoRadioEl) aoRadioEl.checked = true;
+        if (pttRadioEl) pttRadioEl.checked = false;
+      }
+
       const resolvedAlwaysOnMode = cfg.always_on_mode || audio.always_on_mode || api.always_on_mode || (cfg.wake_word_enabled === false ? "always_on" : "wake_word");
-      const aoRadio = document.querySelector(`input[name='alwaysOnMode'][value='${resolvedAlwaysOnMode}']`);
+      const aoRadio = document.querySelector(`input[name='alwaysOnMode'][value='${resolvedAlwaysOnMode}']`) || document.getElementById("alwaysOnModeWakeWord");
       if (aoRadio) aoRadio.checked = true;
 
-      if (audio.ptt_type) {
-        this.pttType = audio.ptt_type;
-        const pttRadio = document.querySelector(`input[name='pttType'][value='${audio.ptt_type}']`);
-        if (pttRadio) pttRadio.checked = true;
+      const resolvedPttType = audio.ptt_type || cfg.ptt_type || this.pttType || "hold";
+      this.pttType = resolvedPttType;
+      const pttRadio = document.querySelector(`input[name='pttType'][value='${resolvedPttType}']`) || document.getElementById("pttTypeHold");
+      if (pttRadio) pttRadio.checked = true;
+
+      const resolvedPttKey = audio.ptt_key || cfg.ptt_key || this.pttKey || "Space";
+      this.pttKey = resolvedPttKey;
+
+      const resolvedPttDisplay = audio.ptt_key_display || cfg.ptt_key_display || this.pttKeyDisplay || resolvedPttKey;
+      this.pttKeyDisplay = resolvedPttDisplay;
+      const disp = document.getElementById("pttKeybindDisplay");
+      if (disp) disp.innerText = resolvedPttDisplay;
+
+      if (audio.ptt_vk !== undefined) {
+        this.pttVk = audio.ptt_vk;
+      } else if (cfg.ptt_vk !== undefined) {
+        this.pttVk = cfg.ptt_vk;
       }
-      if (audio.ptt_key) this.pttKey = audio.ptt_key;
-      if (audio.ptt_key_display) {
-        this.pttKeyDisplay = audio.ptt_key_display;
-        const disp = document.getElementById("pttKeybindDisplay");
-        if (disp) disp.innerText = audio.ptt_key_display;
+
+      if (audio.ptt_modifiers !== undefined) {
+        this.pttModifiers = audio.ptt_modifiers;
+      } else if (cfg.ptt_modifiers !== undefined) {
+        this.pttModifiers = cfg.ptt_modifiers;
       }
-      if (audio.ptt_vk !== undefined) this.pttVk = audio.ptt_vk;
-      if (audio.ptt_modifiers) this.pttModifiers = audio.ptt_modifiers;
       this.updateAudioModeUI(activeAudioMode);
       const resolvedKillPhrase = cfg.kill_phrase || audio.safe_phrase || audio.kill_phrase || api.kill_phrase || `${this.agentName} stop`;
       const killInput = document.getElementById("input-kill-phrase");
@@ -1495,8 +1525,10 @@ window.aetherUI = {
       if (audio.preferred_language && document.getElementById("preferredLanguageSelect")) {
         document.getElementById("preferredLanguageSelect").value = audio.preferred_language;
       }
-      if (audio.software_gate !== undefined) {
-        document.getElementById("softwareGateCheck").checked = audio.software_gate;
+      const resolvedSoftwareGate = audio.software_gate !== undefined ? audio.software_gate : (cfg.software_gate !== undefined ? cfg.software_gate : false);
+      const swGateEl = document.getElementById("softwareGateCheck");
+      if (swGateEl) {
+        swGateEl.checked = Boolean(resolvedSoftwareGate);
       }
 
       // Trailing Silence Pause Duration (VAD)
@@ -1527,20 +1559,25 @@ window.aetherUI = {
         this.selectAudioDeviceOption(outSel, audio.output_device_index, audio.output_device_name);
       }
 
-
       // Vision
-      if (vision.enabled !== undefined) {
-        document.getElementById("visionEnabledCheck").checked = vision.enabled;
+      const resolvedVisionEnabled = vision.enabled !== undefined ? vision.enabled : (cfg.vision_enabled !== undefined ? cfg.vision_enabled : true);
+      const visEnabledEl = document.getElementById("visionEnabledCheck");
+      if (visEnabledEl) {
+        visEnabledEl.checked = Boolean(resolvedVisionEnabled);
       }
       if (vision.fps !== undefined && vision.fps !== null) {
-        document.getElementById("visionFps").value = parseFloat(vision.fps).toFixed(1);
+        const fpsEl = document.getElementById("visionFps");
+        if (fpsEl) fpsEl.value = parseFloat(vision.fps).toFixed(1);
       }
       if (vision.monitor && document.getElementById("monitorSelect")) {
         document.getElementById("monitorSelect").value = vision.monitor;
       }
+      if (vision.endpoint && document.getElementById("visionEndpointSelect")) {
+        document.getElementById("visionEndpointSelect").value = vision.endpoint;
+      }
 
       // Security
-      if (security.app_whitelist) {
+      if (security.app_whitelist && document.getElementById("whitelistInput")) {
         document.getElementById("whitelistInput").value = security.app_whitelist.join(", ");
       }
 
@@ -1553,24 +1590,29 @@ window.aetherUI = {
         const trayCheck = document.getElementById("minimizeToTrayCheck");
         if (trayCheck) trayCheck.checked = (cfg.ui.minimize_to_tray !== false);
 
-        if (cfg.ui.hud_mode) {
-          this.hudMode = cfg.ui.hud_mode;
-          const hudModeSel = document.getElementById("defaultHudModeSelect");
-          if (hudModeSel) hudModeSel.value = cfg.ui.hud_mode;
-        }
-        if (cfg.ui.hud_mode_hotkey) {
-          this.hudModeKey = cfg.ui.hud_mode_hotkey;
-        }
-        if (cfg.ui.hud_mode_key_display) {
-          this.hudModeKeyDisplay = cfg.ui.hud_mode_key_display;
-          const disp = document.getElementById("hudModeKeybindDisplay");
-          if (disp) disp.innerText = cfg.ui.hud_mode_key_display;
-        }
-        if (cfg.ui.hud_mode_vk !== undefined) {
+        const resolvedHudMode = cfg.ui?.hud_mode || cfg.hud_mode || this.hudMode || "normal";
+        this.hudMode = resolvedHudMode;
+        const hudModeSel = document.getElementById("defaultHudModeSelect");
+        if (hudModeSel) hudModeSel.value = resolvedHudMode;
+
+        const resolvedHudHotkey = cfg.ui?.hud_mode_hotkey || cfg.hud_mode_hotkey || this.hudModeKey || "Ctrl+Space";
+        this.hudModeKey = resolvedHudHotkey;
+
+        const resolvedHudDisplay = cfg.ui?.hud_mode_key_display || cfg.hud_mode_key_display || this.hudModeKeyDisplay || resolvedHudHotkey;
+        this.hudModeKeyDisplay = resolvedHudDisplay;
+        const disp = document.getElementById("hudModeKeybindDisplay");
+        if (disp) disp.innerText = resolvedHudDisplay;
+
+        if (cfg.ui?.hud_mode_vk !== undefined) {
           this.hudModeVk = cfg.ui.hud_mode_vk;
+        } else if (cfg.hud_mode_vk !== undefined) {
+          this.hudModeVk = cfg.hud_mode_vk;
         }
-        if (cfg.ui.hud_mode_modifiers) {
+
+        if (cfg.ui?.hud_mode_modifiers) {
           this.hudModeModifiers = cfg.ui.hud_mode_modifiers;
+        } else if (cfg.hud_mode_modifiers) {
+          this.hudModeModifiers = cfg.hud_mode_modifiers;
         }
         if (cfg.ui.game_mode_hotkey) {
           this.gameModeKey = cfg.ui.game_mode_hotkey;
@@ -1610,11 +1652,13 @@ window.aetherUI = {
   updateTelemetryDeviceLabels: function() {
     const inSel = document.getElementById("inputDeviceSelect");
     const outSel = document.getElementById("outputDeviceSelect");
-    if (inSel.selectedOptions.length > 0) {
-      document.getElementById("telMicName").innerText = inSel.selectedOptions[0].text;
+    if (inSel && inSel.selectedOptions && inSel.selectedOptions.length > 0) {
+      const telMic = document.getElementById("telMicName");
+      if (telMic) telMic.innerText = inSel.selectedOptions[0].text;
     }
-    if (outSel.selectedOptions.length > 0) {
-      document.getElementById("telSpeakerName").innerText = outSel.selectedOptions[0].text;
+    if (outSel && outSel.selectedOptions && outSel.selectedOptions.length > 0) {
+      const telSpk = document.getElementById("telSpeakerName");
+      if (telSpk) telSpk.innerText = outSel.selectedOptions[0].text;
     }
   },
 
@@ -1623,26 +1667,47 @@ window.aetherUI = {
   // =========================================================================
   saveSettings: async function(silent = false) {
     if (this._isConfigLoading) {
-      console.warn("Skipping saveSettings because config is currently loading.");
+      for (let i = 0; i < 20 && this._isConfigLoading; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+    if (!this._isConfigLoaded) {
+      console.warn("Skipping saveSettings because config is not fully loaded yet.");
       return false;
     }
-    if (!window.pywebview || !window.pywebview.api) return false;
+    if (this._isSaving) {
+      for (let i = 0; i < 20 && this._isSaving; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+    this._isSaving = true;
+    if (!window.pywebview || !window.pywebview.api) {
+      this._isSaving = false;
+      return false;
+    }
     const saveMsg = document.getElementById("saveStatusMsg");
-    if (!silent && saveMsg) saveMsg.innerText = "Encrypting & saving...";
+    const topSaveMsg = document.getElementById("topSaveStatusMsg");
+    const updateSaveStatus = (msg) => {
+      if (!silent) {
+        if (saveMsg) saveMsg.innerText = msg;
+        if (topSaveMsg) topSaveMsg.innerText = msg;
+      }
+    };
+    updateSaveStatus("Encrypting & saving...");
 
     try {
-      const mode = document.querySelector("input[name='audioMode']:checked")?.value || "always_on";
-      const alwaysOnMode = document.querySelector("input[name='alwaysOnMode']:checked")?.value || "wake_word";
+      const mode = document.querySelector("input[name='audioMode']:checked")?.value || this.currentConfig?.audio?.mode || this.currentConfig?.mode || "always_on";
+      const alwaysOnMode = document.querySelector("input[name='alwaysOnMode']:checked")?.value || this.currentConfig?.audio?.always_on_mode || this.currentConfig?.always_on_mode || "wake_word";
       const wakeWordEnabled = (alwaysOnMode !== "always_on");
       const inSel = document.getElementById("inputDeviceSelect");
       const outSel = document.getElementById("outputDeviceSelect");
 
-      const rawKey = document.getElementById("apiKeyInput").value.trim();
+      const rawKey = document.getElementById("apiKeyInput") ? document.getElementById("apiKeyInput").value.trim() : "";
       const newKey = (rawKey.includes("***") || rawKey.includes("••••")) ? "" : rawKey;
-      const agentName = document.getElementById("input-agent-name")?.value.trim() || "Aether";
-      const wakePhrase = (document.getElementById("input-wake-phrase")?.value || document.getElementById("audio-wake-phrase-input")?.value || "").trim() || `Hey ${agentName}`;
-      const sleepPhrase = (document.getElementById("input-sleep-phrase")?.value || document.getElementById("audio-sleep-phrase-input")?.value || "").trim() || `${agentName} stop listening`;
-      const killPhrase = document.getElementById("input-kill-phrase")?.value.trim() || `${agentName} stop`;
+      const agentName = document.getElementById("input-agent-name")?.value.trim() || this.agentName || this.currentConfig?.agent_name || "Aether";
+      const wakePhrase = (document.getElementById("input-wake-phrase")?.value || document.getElementById("audio-wake-phrase-input")?.value || "").trim() || this.currentConfig?.wake_phrase || `Hey ${agentName}`;
+      const sleepPhrase = (document.getElementById("input-sleep-phrase")?.value || document.getElementById("audio-sleep-phrase-input")?.value || "").trim() || this.currentConfig?.sleep_phrase || `${agentName} stop listening`;
+      const killPhrase = document.getElementById("input-kill-phrase")?.value.trim() || this.currentConfig?.kill_phrase || `${agentName} stop`;
 
       const whitelistRaw = document.getElementById("whitelistInput") ? document.getElementById("whitelistInput").value : "";
       let whitelist = whitelistRaw.split(",").map(s => s.trim()).filter(Boolean);
@@ -1650,23 +1715,34 @@ window.aetherUI = {
         whitelist = this.currentConfig.security.app_whitelist;
       }
 
-      const ttsVal = (document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint"))?.value || "gemini_live";
+      const ttsVal = (document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model"))?.value || this.currentConfig?.tts_endpoint || "gemini_live";
       const isLocal = ttsVal.toLowerCase().includes("local") && !ttsVal.toLowerCase().includes("windows");
       const voiceName = isLocal
         ? (document.getElementById("voiceTextInput")?.value.trim() || "")
-        : (document.getElementById("select-output-voice")?.value || "");
+        : (document.getElementById("select-output-voice")?.value || this.currentConfig?.tts_voice || "");
 
-      const vadSilenceMs = parseInt(document.getElementById("vadSilenceSlider")?.value || "1400", 10);
-      const voiceSpeedNum = parseFloat(document.getElementById("input-tts-speed")?.value || "1.00");
-      const voiceAccentVal = document.getElementById("select-voice-accent")?.value || "default";
+      const vadSilenceMs = parseInt(document.getElementById("vadSilenceSlider")?.value || (this.currentConfig?.vad_trailing_silence_ms || "1400"), 10);
+      const voiceSpeedNum = parseFloat(document.getElementById("input-tts-speed")?.value || (this.currentConfig?.tts_speed || "1.00"));
+      const voiceAccentVal = (document.getElementById("select-voice-accent") || document.getElementById("voiceAccentSelect"))?.value || this.currentConfig?.voice_accent || this.currentConfig?.api?.voice_accent || "default";
 
-      const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || "primary_flash_stt";
-      const ttsModelVal = (document.getElementById("tts_endpoint") || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model"))?.value || ttsVal;
-      const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || "gemini-3.8-flash";
-      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]'))?.value || "gemini-3.1-pro-preview";
+      const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || this.currentConfig?.stt_endpoint || "primary_flash_stt";
+      const ttsModelVal = ttsVal;
+      const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || this.currentConfig?.primary_model_endpoint || "gemini-3.8-flash";
+      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]'))?.value || this.currentConfig?.tier2_heavy_model || "gemini-3.1-pro-preview";
+
+      const inIdx = (inSel && inSel.value && inSel.value !== "-1" && !isNaN(parseInt(inSel.value, 10))) ? parseInt(inSel.value, 10) : (this.currentConfig?.audio?.input_device_index ?? null);
+      const inName = (inSel && inSel.selectedOptions[0]) ? inSel.selectedOptions[0].text : (this.currentConfig?.audio?.input_device_name || "");
+      const outIdx = (outSel && outSel.value && outSel.value !== "-1" && !isNaN(parseInt(outSel.value, 10))) ? parseInt(outSel.value, 10) : (this.currentConfig?.audio?.output_device_index ?? null);
+      const outName = (outSel && outSel.selectedOptions[0]) ? outSel.selectedOptions[0].text : (this.currentConfig?.audio?.output_device_name || "");
 
       const payload = {
         mode: mode,
+        ptt_type: document.querySelector("input[name='pttType']:checked")?.value || this.pttType || this.currentConfig?.audio?.ptt_type || "hold",
+        ptt_key: this.pttKey || this.currentConfig?.audio?.ptt_key || "Space",
+        ptt_key_display: this.pttKeyDisplay || this.currentConfig?.audio?.ptt_key_display || "Space",
+        ptt_vk: this.pttVk !== undefined ? this.pttVk : (this.currentConfig?.audio?.ptt_vk ?? 32),
+        ptt_modifiers: this.pttModifiers || this.currentConfig?.audio?.ptt_modifiers || [],
+        hud_mode: document.getElementById("defaultHudModeSelect")?.value || this.hudMode || this.currentConfig?.ui?.hud_mode || "normal",
         agent_name: agentName,
         wake_phrase: wakePhrase,
         sleep_phrase: sleepPhrase,
@@ -1686,6 +1762,7 @@ window.aetherUI = {
         wake_word_enabled: wakeWordEnabled,
         idle_timeout_seconds: this.currentConfig?.idle_timeout_seconds !== undefined ? this.currentConfig.idle_timeout_seconds : 8.0,
         vad_trailing_silence_ms: vadSilenceMs,
+        software_gate: document.getElementById("softwareGateCheck") ? document.getElementById("softwareGateCheck").checked : (this.currentConfig?.audio?.software_gate ?? false),
         api: {
           new_api_key: newKey,
           agent_name: agentName,
@@ -1696,7 +1773,7 @@ window.aetherUI = {
           voice_name: voiceName,
           voice_accent: voiceAccentVal,
           voice_speed: voiceSpeedNum,
-          local_tts_url: document.getElementById("localTtsUrlInput")?.value || "http://localhost:8880/v1/audio/speech",
+          local_tts_url: document.getElementById("localTtsUrlInput")?.value || this.currentConfig?.api?.local_tts_url || "http://localhost:8880/v1/audio/speech",
           model_id: primaryModelVal,
           pipeline_mode: primaryModelVal.includes("live") ? "live" : "modular",
           stt_model_id: sttModelVal,
@@ -1705,23 +1782,23 @@ window.aetherUI = {
           stt_endpoint: sttModelVal,
           tts_endpoint: ttsModelVal,
           pro_model_id: heavyModelVal,
-          temperature: parseFloat(document.getElementById("temperatureSlider").value),
-          system_instruction: document.getElementById("systemPromptInput").value
+          temperature: document.getElementById("temperatureSlider") ? parseFloat(document.getElementById("temperatureSlider").value) : (this.currentConfig?.api?.temperature ?? 0.7),
+          system_instruction: document.getElementById("systemPromptInput") ? document.getElementById("systemPromptInput").value : (this.currentConfig?.api?.system_instruction || "")
         },
         audio: {
           vad_trailing_silence_ms: vadSilenceMs,
-          preferred_language: document.getElementById("preferredLanguageSelect")?.value || "en-US",
+          preferred_language: document.getElementById("preferredLanguageSelect")?.value || this.currentConfig?.audio?.preferred_language || "en-US",
           voice_biometrics: {
-            enabled: document.getElementById("voiceBiometricsCheck")?.checked || false,
-            threshold: parseFloat(document.getElementById("bioThresholdSlider")?.value || "0.40")
+            enabled: document.getElementById("voiceBiometricsCheck") ? document.getElementById("voiceBiometricsCheck").checked : (this.currentConfig?.audio?.voice_biometrics?.enabled ?? false),
+            threshold: document.getElementById("bioThresholdSlider") ? parseFloat(document.getElementById("bioThresholdSlider").value || "0.40") : (this.currentConfig?.audio?.voice_biometrics?.threshold ?? 0.40)
           },
           mode: mode,
           always_on_mode: alwaysOnMode,
-          ptt_type: document.querySelector("input[name='pttType']:checked")?.value || this.pttType || "hold",
-          ptt_key: this.pttKey || "Space",
-          ptt_key_display: this.pttKeyDisplay || "Space",
-          ptt_vk: this.pttVk || 32,
-          ptt_modifiers: this.pttModifiers || [],
+          ptt_type: document.querySelector("input[name='pttType']:checked")?.value || this.pttType || this.currentConfig?.audio?.ptt_type || "hold",
+          ptt_key: this.pttKey || this.currentConfig?.audio?.ptt_key || "Space",
+          ptt_key_display: this.pttKeyDisplay || this.currentConfig?.audio?.ptt_key_display || "Space",
+          ptt_vk: this.pttVk !== undefined ? this.pttVk : (this.currentConfig?.audio?.ptt_vk ?? 32),
+          ptt_modifiers: this.pttModifiers || this.currentConfig?.audio?.ptt_modifiers || [],
           wake_phrase: wakePhrase,
           sleep_phrase: sleepPhrase,
           stop_listening_phrase: sleepPhrase,
@@ -1729,50 +1806,50 @@ window.aetherUI = {
           kill_phrase: killPhrase,
           wake_word_enabled: wakeWordEnabled,
           idle_timeout_seconds: this.currentConfig?.idle_timeout_seconds !== undefined ? this.currentConfig.idle_timeout_seconds : 8.0,
-          software_gate: document.getElementById("softwareGateCheck").checked,
-          input_device_index: parseInt(inSel.value, 10),
-          input_device_name: inSel.selectedOptions[0]?.text || "",
-          output_device_index: parseInt(outSel.value, 10),
-          output_device_name: outSel.selectedOptions[0]?.text || "",
+          software_gate: document.getElementById("softwareGateCheck") ? document.getElementById("softwareGateCheck").checked : (this.currentConfig?.audio?.software_gate ?? false),
+          input_device_index: inIdx,
+          input_device_name: inName,
+          output_device_index: outIdx,
+          output_device_name: outName,
           input_sample_rate: 16000,
           output_sample_rate: 24000
         },
         vision: {
-          enabled: document.getElementById("visionEnabledCheck").checked,
-          fps: parseFloat(document.getElementById("visionFps").value),
-          monitor: document.getElementById("monitorSelect")?.value || "auto",
-          endpoint: document.getElementById("visionEndpointSelect")?.value || "live-stream",
-          resolution: [768, 768],
-          jpeg_quality: 70
+          enabled: document.getElementById("visionEnabledCheck") ? document.getElementById("visionEnabledCheck").checked : (this.currentConfig?.vision?.enabled ?? true),
+          fps: document.getElementById("visionFps") ? (parseFloat(document.getElementById("visionFps").value) || 1.0) : (this.currentConfig?.vision?.fps ?? 1.0),
+          monitor: document.getElementById("monitorSelect")?.value || this.currentConfig?.vision?.monitor || "auto",
+          endpoint: document.getElementById("visionEndpointSelect")?.value || this.currentConfig?.vision?.endpoint || "gemini-3.8-flash-snapshot",
+          resolution: this.currentConfig?.vision?.resolution || [768, 768],
+          jpeg_quality: this.currentConfig?.vision?.jpeg_quality || 70
         },
         security: {
           app_whitelist: whitelist,
           require_verbal_confirmation: true
         },
         ui: {
-          floating_overlay: document.getElementById("floatingOverlayMode")?.value || "on_minimize",
-          minimize_to_tray: document.getElementById("minimizeToTrayCheck")?.checked !== false,
-          hud_mode: document.getElementById("defaultHudModeSelect")?.value || this.hudMode || "normal",
-          hud_mode_hotkey: this.hudModeKey || "Ctrl+Space",
-          hud_mode_key_display: this.hudModeKeyDisplay || "Ctrl+Space",
-          hud_mode_vk: this.hudModeVk !== undefined ? this.hudModeVk : 32,
-          hud_mode_modifiers: this.hudModeModifiers || ["Control"],
-          game_mode_hotkey: this.gameModeKey || "Ctrl+Shift+G",
-          game_mode_key_display: this.gameModeKeyDisplay || "Ctrl+Shift+G",
-          game_mode_vk: this.gameModeVk !== undefined ? this.gameModeVk : 71,
-          game_mode_modifiers: this.gameModeModifiers || ["Control", "Shift"]
+          floating_overlay: document.getElementById("floatingOverlayMode")?.value || this.currentConfig?.ui?.floating_overlay || "on_minimize",
+          minimize_to_tray: document.getElementById("minimizeToTrayCheck") ? document.getElementById("minimizeToTrayCheck").checked : (this.currentConfig?.ui?.minimize_to_tray ?? true),
+          hud_mode: document.getElementById("defaultHudModeSelect")?.value || this.hudMode || this.currentConfig?.ui?.hud_mode || "normal",
+          hud_mode_hotkey: this.hudModeKey || this.currentConfig?.ui?.hud_mode_hotkey || "Ctrl+Space",
+          hud_mode_key_display: this.hudModeKeyDisplay || this.currentConfig?.ui?.hud_mode_key_display || "Ctrl+Space",
+          hud_mode_vk: this.hudModeVk !== undefined ? this.hudModeVk : (this.currentConfig?.ui?.hud_mode_vk ?? 32),
+          hud_mode_modifiers: this.hudModeModifiers || this.currentConfig?.ui?.hud_mode_modifiers || ["Control"],
+          game_mode_hotkey: this.gameModeKey || this.currentConfig?.ui?.game_mode_hotkey || "Ctrl+Shift+G",
+          game_mode_key_display: this.gameModeKeyDisplay || this.currentConfig?.ui?.game_mode_key_display || "Ctrl+Shift+G",
+          game_mode_vk: this.gameModeVk !== undefined ? this.gameModeVk : (this.currentConfig?.ui?.game_mode_vk ?? 71),
+          game_mode_modifiers: this.gameModeModifiers || this.currentConfig?.ui?.game_mode_modifiers || ["Control", "Shift"]
         },
-        primary_model_endpoint: (document.getElementById("select-primary-model") || document.getElementById("modelSelect"))?.value || "gemini-3.8-flash",
-        tier2_heavy_model: (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect"))?.value || "gemini-3.1-pro-preview",
-        boot_on_startup: document.getElementById("toggle-boot-startup") ? document.getElementById("toggle-boot-startup").checked : false,
-        start_minimized: document.getElementById("toggle-start-minimized") ? document.getElementById("toggle-start-minimized").checked : false
+        primary_model_endpoint: primaryModelVal,
+        tier2_heavy_model: heavyModelVal,
+        boot_on_startup: document.getElementById("toggle-boot-startup") ? document.getElementById("toggle-boot-startup").checked : Boolean(this.currentConfig?.boot_on_startup),
+        start_minimized: document.getElementById("toggle-start-minimized") ? document.getElementById("toggle-start-minimized").checked : Boolean(this.currentConfig?.start_minimized)
       };
 
       const res = await window.pywebview.api.save_config(payload);
       if (res.success) {
-        if (!silent && saveMsg) {
-          saveMsg.innerText = "✓ Settings Saved (DPAPI Encrypted)";
-          setTimeout(() => { saveMsg.innerText = ""; }, 4000);
+        updateSaveStatus("✓ Settings Saved (DPAPI Encrypted)");
+        if (!silent) {
+          setTimeout(() => { updateSaveStatus(""); }, 4000);
         }
         const keyEl = document.getElementById("apiKeyInput");
         if (keyEl && (keyEl.dataset.stored === "true" || keyEl.dataset.hadKey === "true" || this.currentConfig?.api?.has_key)) {
@@ -1791,7 +1868,7 @@ window.aetherUI = {
 
         return true;
       } else {
-        if (!silent && saveMsg) saveMsg.innerText = "Error: " + res.error;
+        updateSaveStatus("Error: " + res.error);
         this.renderChatBubble({
           type: "error",
           content: `Settings Error: ${res.error}`
@@ -1799,12 +1876,14 @@ window.aetherUI = {
         return false;
       }
     } catch (e) {
-      if (!silent && saveMsg) saveMsg.innerText = "Failed to save: " + e;
+      updateSaveStatus("Failed to save: " + e);
       this.renderChatBubble({
         type: "error",
         content: `Failed to save settings: ${e}`
       });
       return false;
+    } finally {
+      this._isSaving = false;
     }
   },
 
@@ -1819,9 +1898,6 @@ window.aetherUI = {
     if (!this.isAssistantRunning) {
       btn.disabled = true;
       label.innerText = "STARTING...";
-
-      // Auto-save current form settings so any edits are immediately persisted!
-      await this.saveSettings(true);
 
       label.innerText = "CONNECTING...";
       this.log("Starting assistant...");
@@ -1921,6 +1997,16 @@ window.aetherUI = {
         }
         if (this.currentConfig && this.currentConfig.security) {
           this.currentConfig.security.app_whitelist = data.security.app_whitelist;
+        }
+      }
+    } else if (type === "hud_mode_changed") {
+      if (data && data.mode) {
+        this.hudMode = data.mode;
+        const sel = document.getElementById("defaultHudModeSelect");
+        if (sel) sel.value = data.mode;
+        if (this.currentConfig) {
+          if (!this.currentConfig.ui) this.currentConfig.ui = {};
+          this.currentConfig.ui.hud_mode = data.mode;
         }
       }
     } else if (type === "audio_devices_updated") {

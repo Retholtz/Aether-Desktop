@@ -1,5 +1,5 @@
 import time
-import ctypes
+import win32api
 import re
 import win32clipboard
 import win32con
@@ -80,9 +80,9 @@ def paste_to_window(hwnd: int, click_x: int, click_y: int, timeout: float = 2.0)
         time.sleep(0.05)
 
     # Mouse click
-    ctypes.windll.user32.SetCursorPos(click_x, click_y)
-    ctypes.windll.user32.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-    ctypes.windll.user32.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    win32api.SetCursorPos((click_x, click_y))
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     
     # Minimal deterministic wait for UI focus processing
     time.sleep(0.05)
@@ -90,12 +90,12 @@ def paste_to_window(hwnd: int, click_x: int, click_y: int, timeout: float = 2.0)
     # Send Ctrl+V
     VK_CONTROL = 0x11
     VK_V = 0x56
-    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_KEYUP = win32con.KEYEVENTF_KEYUP
 
-    ctypes.windll.user32.keybd_event(VK_CONTROL, 0, 0, 0)
-    ctypes.windll.user32.keybd_event(VK_V, 0, 0, 0)
-    ctypes.windll.user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
-    ctypes.windll.user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(VK_CONTROL, 0, 0, 0)
+    win32api.keybd_event(VK_V, 0, 0, 0)
+    win32api.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
     
     return True
 

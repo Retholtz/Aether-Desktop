@@ -1828,57 +1828,78 @@
       });
 
       // Query initial configuration & theme upon pywebview ready
-      window.addEventListener("pywebviewready", async function() {
-        if (window.pywebview && window.pywebview.api) {
-          try {
-            if (window.pywebview.api.get_windows_theme) {
-              const theme = await window.pywebview.api.get_windows_theme();
-              if (theme && theme.accent_color) {
-                document.documentElement.style.setProperty("--accent", theme.accent_color);
-              }
+      let _hasInitializedOverlay = false;
+      async function initOverlay() {
+        if (_hasInitializedOverlay) return;
+        if (!window.pywebview || !window.pywebview.api) return;
+        _hasInitializedOverlay = true;
+
+        try {
+          if (window.pywebview.api.get_windows_theme) {
+            const theme = await window.pywebview.api.get_windows_theme();
+            if (theme && theme.accent_color) {
+              document.documentElement.style.setProperty("--accent", theme.accent_color);
             }
-            if (window.pywebview.api.get_overlay_config) {
-              const oCfg = await window.pywebview.api.get_overlay_config();
-              if (oCfg && oCfg.state) {
-                setStatus(oCfg.state);
-              } else {
-                setStatus("standby");
-              }
-              if (oCfg && oCfg.agent_name) {
-                updateAgentName(oCfg.agent_name);
-              }
-              if (oCfg && oCfg.hud_mode) {
-                applyModeClasses(oCfg.hud_mode);
-              }
+          }
+          if (window.pywebview.api.get_overlay_config) {
+            const oCfg = await window.pywebview.api.get_overlay_config();
+            if (oCfg && oCfg.state) {
+              setStatus(oCfg.state);
             } else {
               setStatus("standby");
-              if (window.pywebview.api.get_hud_mode) {
-                const modeRes = await window.pywebview.api.get_hud_mode();
-                if (modeRes && modeRes.mode) {
-                  applyModeClasses(modeRes.mode);
-                }
+            }
+            if (oCfg && oCfg.agent_name) {
+              updateAgentName(oCfg.agent_name);
+            }
+            if (oCfg && oCfg.hud_mode) {
+              applyModeClasses(oCfg.hud_mode);
+            }
+          } else {
+            setStatus("standby");
+            if (window.pywebview.api.get_hud_mode) {
+              const modeRes = await window.pywebview.api.get_hud_mode();
+              if (modeRes && modeRes.mode) {
+                applyModeClasses(modeRes.mode);
               }
-              if (window.pywebview.api.get_agent_name) {
-                const nameRes = await window.pywebview.api.get_agent_name();
-                if (nameRes && nameRes.agent_name) {
-                  updateAgentName(nameRes.agent_name);
-                }
+            }
+            if (window.pywebview.api.get_agent_name) {
+              const nameRes = await window.pywebview.api.get_agent_name();
+              if (nameRes && nameRes.agent_name) {
+                updateAgentName(nameRes.agent_name);
               }
             }
-            if (window.pywebview.api.get_game_mode) {
-              try {
-                const gmRes = await window.pywebview.api.get_game_mode();
-                if (gmRes) {
-                  updateGameMode(gmRes);
-                }
-              } catch(ex) {}
-            }
-            if (window.pywebview.api.apply_shape) {
-              window.pywebview.api.apply_shape();
-            }
-          } catch(e) {}
+          }
+          if (window.pywebview.api.get_game_mode) {
+            try {
+              const gmRes = await window.pywebview.api.get_game_mode();
+              if (gmRes) {
+                updateGameMode(gmRes);
+              }
+            } catch(ex) {}
+          }
+          if (window.pywebview.api.apply_shape) {
+            window.pywebview.api.apply_shape();
+          }
+        } catch(e) {
+          console.warn("[OVERLAY INIT ERROR]", e);
         }
-      });
+      }
+
+      if (window.pywebview && window.pywebview.api) {
+        initOverlay();
+      } else {
+        window.addEventListener("pywebviewready", initOverlay);
+        let checkOverlayCount = 0;
+        const checkOverlayInterval = setInterval(() => {
+          checkOverlayCount++;
+          if (window.pywebview && window.pywebview.api) {
+            clearInterval(checkOverlayInterval);
+            initOverlay();
+          } else if (checkOverlayCount > 50) {
+            clearInterval(checkOverlayInterval);
+          }
+        }, 100);
+      }
     })();
   </script>
 </body>

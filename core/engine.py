@@ -169,6 +169,71 @@ GEMINI_TO_EDGE_VOICE = {
     "Zubenelgenubi": "en-US-GuyNeural",
 }
 
+
+def sanitize_speech_text(text: str) -> str:
+    """
+    Sanitizes markdown and structured text into clean, continuous conversational
+    prose suitable for vocal speech synthesis engines (e.g. Gemini Live, Edge-TTS).
+    Removes markdown bullet markers, bold/italic markers, header hashes, code blocks,
+    and converts lists into natural spoken flow to prevent speech engines from cutting out.
+    """
+    if not text:
+        return ""
+
+    # Remove code blocks fences but keep the code content
+    cleaned = re.sub(r'```[a-zA-Z0-9_-]*\n?(.*?)```', r'\1', text, flags=re.DOTALL)
+
+    # Remove inline backticks
+    cleaned = re.sub(r'`([^`]+)`', r'\1', cleaned)
+
+    # Remove markdown links: [text](url) -> text
+    cleaned = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', cleaned)
+
+    # Remove images: ![alt](url) -> empty
+    cleaned = re.sub(r'!\[[^\]]*\]\([^\)]+\)', '', cleaned)
+
+    # Remove horizontal rules
+    cleaned = re.sub(r'^[ \t]*[-*_]{3,}[ \t]*$', '', cleaned, flags=re.MULTILINE)
+
+    # Remove headers: # Header -> Header
+    cleaned = re.sub(r'^[ \t]*#+\s*', '', cleaned, flags=re.MULTILINE)
+
+    # Remove blockquotes: > quote -> quote
+    cleaned = re.sub(r'^[ \t]*>\s*', '', cleaned, flags=re.MULTILINE)
+
+    # Remove bullet symbols (*, -, +) at start of lines
+    cleaned = re.sub(r'^[ \t]*[\*\-\+]\s+', '', cleaned, flags=re.MULTILINE)
+
+    # Remove bold / italic markers: **text** or __text__ or *text* or _text_
+    cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', cleaned)
+    cleaned = re.sub(r'__([^_]+)__', r'\1', cleaned)
+    cleaned = re.sub(r'\*([^*]+)\*', r'\1', cleaned)
+    cleaned = re.sub(r'(?<!\w)_([^_]+)_(?!\w)', r'\1', cleaned)
+
+    # Clean any remaining stray asterisks
+    cleaned = re.sub(r'\*+', '', cleaned)
+
+    # Remove strikethrough: ~~text~~ -> text
+    cleaned = re.sub(r'~~([^~]+)~~', r'\1', cleaned)
+
+    # Clean up lines and sentence boundaries
+    raw_lines = [line.strip() for line in cleaned.splitlines()]
+    sentences = []
+    for line in raw_lines:
+        if not line:
+            continue
+        # If line doesn't end in punctuation, append a period for natural spoken prosody
+        if not line.endswith(('.', '!', '?', ':', ',', ';', '-')):
+            sentences.append(line + '.')
+        else:
+            sentences.append(line)
+
+    cleaned = " ".join(sentences)
+    # Collapse multiple spaces
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
 class AetherEngine:
     """
     Manages the Gemini Multimodal Live API session, Audio Pipeline,
@@ -176,6 +241,7 @@ class AetherEngine:
     Delegates all tool executions to the modular ToolDispatcher.
     """
     _serializable = False
+    sanitize_speech_text = staticmethod(sanitize_speech_text)
 
     def __init__(
         self,
@@ -193,6 +259,7 @@ class AetherEngine:
         self.audio_player = InterruptibleAudioPlayer()
         self.hud_window = None
         self._ptt_active: bool = False
+        self._last_ptt_toggle_time: float = 0.0
         self.session = None
         self.live_session = None
         self._main_task = None
@@ -979,6 +1046,9 @@ class AetherEngine:
             print(f"[WARN] [ENGINE] Failed to send upstream cancellation: {e}")
 
     def set_ptt(self, active: bool):
+        current = self.audio.ptt_active if self.audio else self._ptt_active
+        if current == active and self._ptt_active == active:
+            return
         self._ptt_active = active
         if active and not self.is_running and self._loop:
             logger.info("[PTT] Auto-starting engine from PTT press")
@@ -992,6 +1062,12 @@ class AetherEngine:
 
     def toggle_ptt(self) -> bool:
         """Toggles active Push-to-Talk microphone state (Push to Talk - Toggle mode)."""
+        now = time.monotonic()
+        last_time = getattr(self, "_last_ptt_toggle_time", 0.0)
+        if (now - last_time) < 0.25:
+            logger.info(f"[PTT] Debouncing duplicate toggle request ({now - last_time:.3f}s)")
+            return self.audio.ptt_active if self.audio else self._ptt_active
+        self._last_ptt_toggle_time = now
         current = self.audio.ptt_active if self.audio else self._ptt_active
         new_state = not current
         self.set_ptt(new_state)
@@ -1445,6 +1521,8 @@ class AetherEngine:
                             pass
 
                         # Wait for hardware buffer to drain
+                        if self.audio:
+                            self.audio.flush_output()
                         wait_count = 0
                         while self.audio and not self.audio.is_output_empty() and wait_count < 40 and self.is_running:
                             await asyncio.sleep(0.05)
@@ -1895,6 +1973,12 @@ class AetherEngine:
         # Multi-turn Cortex chat session factory with Google Search & Function Calling
         def create_fresh_chat():
             logger.info(f"[SESSION] Initializing fresh Cortex chat session ({cortex_model})")
+            tier1_thinking_budget = 0
+            try:
+                cfg = self.config_getter() if self.config_getter else {}
+                tier1_thinking_budget = int(cfg.get("tier1_thinking_budget", 0))
+            except Exception:
+                tier1_thinking_budget = 0
             return client.chats.create(
                 model=cortex_model,
                 config=types.GenerateContentConfig(
@@ -1908,7 +1992,8 @@ class AetherEngine:
                     ),
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                     safety_settings=get_permissive_safety_settings(),
-                    temperature=temperature
+                    temperature=temperature,
+                    thinking_config=types.ThinkingConfig(thinking_budget=tier1_thinking_budget)
                 )
             )
 
@@ -1957,6 +2042,8 @@ class AetherEngine:
                         voice_accent=voice_accent,
                         voice_speed=voice_speed
                     )
+                    if self.audio:
+                        self.audio.flush_output()
                     while self.audio and not self.audio.is_output_empty() and self.is_running:
                         if self._kill_playback_flag:
                             break
@@ -1984,6 +2071,24 @@ class AetherEngine:
                     chat = create_fresh_chat()
                     chat_game_mode_state = current_gm_active
                     logger.info(f"[SESSION] Conversational context reset to clean slate. Game Mode Active: {current_gm_active}")
+
+                # Dynamically refresh voice accent, speed, voice name, and TTS model from live config
+                if callable(self.config_getter):
+                    dyn_cfg = self.config_getter() or {}
+                    dyn_api = dyn_cfg.get("api", {}) or {}
+                    voice_accent = dyn_api.get("voice_accent") or dyn_cfg.get("voice_accent") or voice_accent or "default"
+                    dyn_speed = dyn_api.get("voice_speed") or dyn_cfg.get("tts_speed")
+                    if dyn_speed is not None:
+                        try:
+                            voice_speed = float(dyn_speed)
+                        except Exception:
+                            pass
+                    dyn_voice = dyn_api.get("voice_name") or dyn_cfg.get("tts_voice")
+                    if dyn_voice:
+                        voice_name = dyn_voice
+                    dyn_tts = dyn_api.get("tts_model_endpoint") or dyn_api.get("tts_endpoint") or dyn_cfg.get("tts_endpoint")
+                    if dyn_tts:
+                        tts_model = dyn_tts
 
                 # 1. Wait concurrently for either typed input or speech utterance from VAD
                 text_task = asyncio.create_task(self._text_queue.get())
@@ -2035,7 +2140,11 @@ class AetherEngine:
                     # Target Speaker Verification Gate (CAM++ Offline Biometrics)
                     live_audio_cfg = self.config_getter().get("audio", {})
                     live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
-                    is_ptt_mode = (live_audio_cfg.get("mode", "always_on") == "ptt" or cur_audio_mode == "ptt")
+                    is_ptt_mode = (
+                        live_audio_cfg.get("mode", "always_on") == "ptt"
+                        or cur_audio_mode == "ptt"
+                        or bool(self.audio and getattr(self.audio, "_last_utterance_was_ptt", False))
+                    )
                     if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled() and not is_ptt_mode:
                         thresh = float(live_bio_cfg.get("threshold", 0.40))
                         is_user, score = self.voice_verifier.verify(wav_bytes, threshold=thresh)
@@ -2091,7 +2200,8 @@ class AetherEngine:
                             config=types.GenerateContentConfig(
                                 temperature=0.0,
                                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                                safety_settings=get_permissive_safety_settings()
+                                safety_settings=get_permissive_safety_settings(),
+                                thinking_config=types.ThinkingConfig(thinking_budget=0)
                             )
                         )
                         stt_ms = (time.perf_counter() - t_stt_0) * 1000
@@ -2243,6 +2353,10 @@ class AetherEngine:
                             voice_accent=voice_accent,
                             voice_speed=voice_speed
                         )
+                        if self.audio:
+                            self.audio.flush_output()
+                            while not self.audio.is_output_empty() and self.is_running:
+                                await asyncio.sleep(0.04)
                     continue
 
                 # Leading reset phrase (e.g. "New task, open gmail" or "Shifting gears, open my email")
@@ -2308,9 +2422,24 @@ class AetherEngine:
                         self.notify("status", {"state": "speaking", "message": msg})
                         try:
                             api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-                            tts_model = api_cfg.get("tts_model_endpoint")
-                            if tts_model:
-                                await self._stream_synthesize_speech(text=msg)
+                            tts_m = api_cfg.get("tts_model_endpoint") or api_cfg.get("tts_endpoint") or tts_model
+                            if tts_m and client:
+                                def _on_gm_chunk(c: bytes):
+                                    if c and self.audio and self.is_running:
+                                        self.audio.write_output_chunk(c)
+                                await self._stream_synthesize_speech(
+                                    text=msg,
+                                    tts_engine=tts_m,
+                                    voice_name=voice_name,
+                                    client=client,
+                                    on_pcm_chunk=_on_gm_chunk,
+                                    voice_accent=voice_accent,
+                                    voice_speed=voice_speed
+                                )
+                                if self.audio:
+                                    self.audio.flush_output()
+                                    while not self.audio.is_output_empty() and self.is_running:
+                                        await asyncio.sleep(0.04)
                         except Exception as e:
                             logger.debug(f"[GAME_MODE] TTS feedback error: {e}")
                         if not is_wake_idle:
@@ -2335,9 +2464,24 @@ class AetherEngine:
                         self.notify("status", {"state": "speaking", "message": msg})
                         try:
                             api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-                            tts_model = api_cfg.get("tts_model_endpoint")
-                            if tts_model:
-                                await self._stream_synthesize_speech(text=msg)
+                            tts_m = api_cfg.get("tts_model_endpoint") or api_cfg.get("tts_endpoint") or tts_model
+                            if tts_m and client:
+                                def _on_gm_chunk2(c: bytes):
+                                    if c and self.audio and self.is_running:
+                                        self.audio.write_output_chunk(c)
+                                await self._stream_synthesize_speech(
+                                    text=msg,
+                                    tts_engine=tts_m,
+                                    voice_name=voice_name,
+                                    client=client,
+                                    on_pcm_chunk=_on_gm_chunk2,
+                                    voice_accent=voice_accent,
+                                    voice_speed=voice_speed
+                                )
+                                if self.audio:
+                                    self.audio.flush_output()
+                                    while not self.audio.is_output_empty() and self.is_running:
+                                        await asyncio.sleep(0.04)
                         except Exception as e:
                             logger.debug(f"[GAME_MODE] TTS feedback error: {e}")
                         if not is_wake_idle:
@@ -2552,9 +2696,15 @@ class AetherEngine:
                         queued_wav = self.audio.utterance_queue.get_nowait()
                         if queued_wav and len(queued_wav) >= 1000:
                             live_audio_cfg = self.config_getter().get("audio", {})
-                            live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
+                            live_bio_cfg = live_audio_cfg.get("audio", {}).get("voice_biometrics", {}) if "audio" in live_audio_cfg else live_audio_cfg.get("voice_biometrics", {})
+                            is_ptt_queued = (
+                                live_audio_cfg.get("mode", "always_on") == "ptt"
+                                or getattr(self.audio, "mode", "unknown") == "ptt"
+                                or getattr(self.audio, "ptt_active", False)
+                                or getattr(self.audio, "_last_utterance_was_ptt", False)
+                            )
                             is_auth = True
-                            if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
+                            if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled() and not is_ptt_queued:
                                 thresh = float(live_bio_cfg.get("threshold", 0.40))
                                 is_auth, _ = self.voice_verifier.verify(queued_wav, threshold=thresh)
                             if is_auth:
@@ -2566,7 +2716,11 @@ class AetherEngine:
                                             types.Part.from_bytes(data=queued_wav, mime_type="audio/wav"),
                                             stt_prompt
                                         ],
-                                        config=types.GenerateContentConfig(temperature=0.0)
+                                        config=types.GenerateContentConfig(
+                                            temperature=0.0,
+                                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                                            thinking_config=types.ThinkingConfig(thinking_budget=0)
+                                        )
                                     )
                                     q_text = ""
                                     if q_resp.candidates and q_resp.candidates[0].content and q_resp.candidates[0].content.parts:
@@ -2645,6 +2799,9 @@ class AetherEngine:
                                 voice_accent=voice_accent,
                                 voice_speed=voice_speed
                             )
+                            # When synthesis finishes, flush the output buffer so prebuffered audio plays immediately
+                            if self.audio:
+                                self.audio.flush_output()
                             # Drain output buffer while listening for interruptions
                             while self.audio and not self.audio.is_output_empty() and self.is_running:
                                 if self._kill_playback_flag or stop_playback_event.is_set():
@@ -2690,7 +2847,11 @@ class AetherEngine:
                                             types.Part.from_bytes(data=raw_wav, mime_type="audio/wav"),
                                             stt_prompt
                                         ],
-                                        config=types.GenerateContentConfig(temperature=0.0)
+                                        config=types.GenerateContentConfig(
+                                            temperature=0.0,
+                                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                                            thinking_config=types.ThinkingConfig(thinking_budget=0)
+                                        )
                                     )
                                     int_text = ""
                                     if stt_resp.candidates and stt_resp.candidates[0].content and stt_resp.candidates[0].content.parts:
@@ -2736,9 +2897,15 @@ class AetherEngine:
                                         # 5. Open-Mic User Barge-In - verify user biometrics and require >=2 words
                                         else:
                                             live_audio_cfg = self.config_getter().get("audio", {})
-                                            live_bio_cfg = live_audio_cfg.get("voice_biometrics", {})
+                                            live_bio_cfg = live_audio_cfg.get("audio", {}).get("voice_biometrics", {}) if "audio" in live_audio_cfg else live_audio_cfg.get("voice_biometrics", {})
+                                            is_ptt_barge = (
+                                                live_audio_cfg.get("mode", "always_on") == "ptt"
+                                                or getattr(self.audio, "mode", "unknown") == "ptt"
+                                                or getattr(self.audio, "ptt_active", False)
+                                                or getattr(self.audio, "_last_utterance_was_ptt", False)
+                                            )
                                             is_authorized = True
-                                            if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled():
+                                            if live_bio_cfg.get("enabled", False) and self.voice_verifier.is_enrolled() and not is_ptt_barge:
                                                 thresh = float(live_bio_cfg.get("threshold", 0.40))
                                                 is_user, score = self.voice_verifier.verify(raw_wav, threshold=thresh)
                                                 if not is_user:
@@ -2776,19 +2943,21 @@ class AetherEngine:
                     except Exception as tts_err:
                         logger.error(f"[TTS SYNTHESIS ERROR] {tts_err}")
 
-                    tts_ms = (time.perf_counter() - t_tts_0) * 1000
-                    ttfb_str = f" | First sound: {first_audio_ms:.0f}ms" if first_audio_ms is not None else ""
-                    logger.info(f"[LATENCY] TTS ({tts_model}): {tts_ms:.1f}ms{ttfb_str}")
+                    playback_duration_ms = (time.perf_counter() - t_tts_0) * 1000
+                    ttfb_str = f"First sound in {first_audio_ms:.0f}ms | " if first_audio_ms is not None else ""
+                    logger.info(f"[LATENCY] TTS ({tts_model}): {ttfb_str}Playback finished in {playback_duration_ms:.0f}ms")
 
                     # If barge-in captured a new prompt, queue it so the next turn starts immediately
                     if barge_in_prompt:
                         await self._text_queue.put(barge_in_prompt)
 
                 # Calculate total end-to-end turnaround latency
+                first_sound_latency = (stt_ms + llm_ms + tools_ms + (first_audio_ms or 0))
                 total_turn_ms = (time.perf_counter() - t_turn_start) * 1000
                 logger.info(
                     f"[LATENCY SUMMARY] Turn #{turn_counter} Completed in {total_turn_ms:.0f}ms | "
-                    f"STT: {stt_ms:.0f}ms | LLM: {llm_ms:.0f}ms | Tools: {tools_ms:.0f}ms | TTS: {tts_ms:.0f}ms"
+                    f"TimeToFirstSound: {first_sound_latency:.0f}ms (STT: {stt_ms:.0f}ms, LLM: {llm_ms:.0f}ms, Tools: {tools_ms:.0f}ms, TTS_TTFB: {first_audio_ms or 0:.0f}ms) | "
+                    f"SpokenAudioDuration: {playback_duration_ms:.0f}ms"
                 )
 
                 # Record turn in lifecycle telemetry
@@ -2915,6 +3084,20 @@ class AetherEngine:
         if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
             base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"
 
+        cfg = self.config_getter() if self.config_getter else {}
+        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+        accent = api_cfg.get("voice_accent") or cfg.get("voice_accent") or "default"
+        if accent and str(accent).strip().lower() not in ("default", "none", "neutral", ""):
+            accent_marker = "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:"
+            if accent_marker not in base_inst:
+                accent_directive = (
+                    f"SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+                    f"- You must speak with a natural, distinct {accent} accent in all spoken responses.\n"
+                    f"- Consistently articulate all words with {accent} pronunciation, cadence, and intonation.\n"
+                    f"- Maintain standard English vocabulary and phrasing unless asked otherwise, but always express speech with your {accent} accent.\n\n"
+                )
+                base_inst = accent_directive + base_inst
+
         return base_inst
 
     def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
@@ -2952,6 +3135,13 @@ class AetherEngine:
             except Exception:
                 temperature = 1.0
 
+        tier1_thinking_budget = 0
+        try:
+            cfg = self.config_getter() if self.config_getter else {}
+            tier1_thinking_budget = int(cfg.get("tier1_thinking_budget", 0))
+        except Exception:
+            tier1_thinking_budget = 0
+
         # 2. Build GenerationConfig with filtered tool set
         config = types.GenerateContentConfig(
             tools=[
@@ -2964,7 +3154,8 @@ class AetherEngine:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             safety_settings=get_permissive_safety_settings(),
             system_instruction=self._build_system_instruction(),
-            temperature=temperature
+            temperature=temperature,
+            thinking_config=types.ThinkingConfig(thinking_budget=tier1_thinking_budget)
         )
 
         return config
@@ -3126,6 +3317,11 @@ class AetherEngine:
         if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
             return
 
+        if not text or not str(text).strip():
+            return
+
+        text = sanitize_speech_text(text) or str(text).strip()
+
         if voice_speed is None:
             try:
                 voice_speed = float(self.config_getter().get("api", {}).get("voice_speed", 1.0))
@@ -3143,7 +3339,12 @@ class AetherEngine:
                 if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
                     accent_phrase = f" with a natural, distinct {voice_accent} accent"
 
-                tts_text = f"You are a vocal speech synthesis engine. Read the user input aloud directly{accent_phrase} with natural, pleasant expression. Do not add any commentary, greetings, or conversational filler. Only vocalize the exact text provided."
+                tts_text = (
+                    f"You are a vocal speech synthesis engine. Read the user input aloud directly{accent_phrase} "
+                    f"with natural, pleasant expression. Vocalize the entire provided text completely from beginning to end "
+                    f"without stopping, skipping, summarizing, or cutting short. Do not add any commentary, greetings, or conversational filler. "
+                    f"Only vocalize the exact text provided."
+                )
                 tts_lexicon = self.user_memory.build_lexicon_instruction()
                 if tts_lexicon:
                     tts_text += f"\n{tts_lexicon}"

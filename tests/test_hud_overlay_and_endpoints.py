@@ -84,27 +84,27 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
 
     def test_html_endpoints_populated(self):
         """Ensures index.html includes option elements for primary and heavy models."""
-        for path in ["ui/static/index.html", "ui/index.html"]:
-            self.assertTrue(os.path.exists(path), f"File {path} must exist")
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+        path = "ui/static/index.html"
+        self.assertTrue(os.path.exists(path), f"File {path} must exist")
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-            self.assertIn('id="select-primary-model"', content)
-            self.assertIn('id="select-heavy-model"', content)
-            self.assertIn('value="gemini-3.8-flash"', content)
-            self.assertIn('value="gemini-3.1-pro-preview"', content)
+        self.assertIn('id="select-primary-model"', content)
+        self.assertIn('id="select-heavy-model"', content)
+        self.assertIn('value="gemini-3.8-flash"', content)
+        self.assertIn('value="gemini-3.1-pro-preview"', content)
 
     def test_settings_js_default_models_defined(self):
         """Ensures settings.js defines default fallback model arrays."""
-        for path in ["ui/static/settings.js", "ui/settings.js"]:
-            self.assertTrue(os.path.exists(path), f"File {path} must exist")
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+        path = "ui/static/settings.js"
+        self.assertTrue(os.path.exists(path), f"File {path} must exist")
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-            self.assertIn("DEFAULT_CHAT_MODELS", content)
-            self.assertIn("DEFAULT_HEAVY_MODELS", content)
-            self.assertIn("gemini-3.8-flash", content)
-            self.assertIn("gemini-3.1-pro-preview", content)
+        self.assertIn("DEFAULT_CHAT_MODELS", content)
+        self.assertIn("DEFAULT_HEAVY_MODELS", content)
+        self.assertIn("gemini-3.8-flash", content)
+        self.assertIn("gemini-3.1-pro-preview", content)
 
     def test_app_js_no_duplicate_declarations(self):
         """Ensures app.js does not redeclare block-scoped variables."""

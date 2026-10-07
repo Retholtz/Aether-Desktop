@@ -10,7 +10,7 @@ import os
 import tempfile
 from typing import Any, Dict, Optional
 
-from core.security import protect_secret, unprotect_secret
+from security.crypto import protect_secret, unprotect_secret
 from core.startup_manager import set_boot_on_startup
 
 
@@ -56,7 +56,7 @@ DEFAULT_VOICE_CONFIG: Dict[str, Any] = {
     "tts_endpoint": "gemini_live",
     "tts_voice": "Achernar",
     "tts_speed": 1.0,
-    "voice_accent": "Default (Native / Standard)",
+    "voice_accent": "default",
     "wake_word_enabled": True,
     "idle_timeout_seconds": 8.0,
 }
@@ -120,12 +120,69 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     # Audio Mode: "always_on" vs "ptt"
     mode = (
-        cfg.get("mode")
-        or audio_cfg.get("mode")
+        audio_cfg.get("mode")
+        or cfg.get("mode")
         or "always_on"
     )
     cfg["mode"] = mode
     audio_cfg["mode"] = mode
+
+    # Push-To-Talk settings
+    ptt_type = (
+        audio_cfg.get("ptt_type")
+        or cfg.get("ptt_type")
+        or "hold"
+    )
+    cfg["ptt_type"] = ptt_type
+    audio_cfg["ptt_type"] = ptt_type
+
+    ptt_key = (
+        audio_cfg.get("ptt_key")
+        or cfg.get("ptt_key")
+        or "Space"
+    )
+    cfg["ptt_key"] = ptt_key
+    audio_cfg["ptt_key"] = ptt_key
+
+    ptt_key_display = (
+        audio_cfg.get("ptt_key_display")
+        or cfg.get("ptt_key_display")
+        or ptt_key
+    )
+    cfg["ptt_key_display"] = ptt_key_display
+    audio_cfg["ptt_key_display"] = ptt_key_display
+
+    ptt_vk = audio_cfg.get("ptt_vk") if "ptt_vk" in audio_cfg else cfg.get("ptt_vk", 32)
+    cfg["ptt_vk"] = ptt_vk
+    audio_cfg["ptt_vk"] = ptt_vk
+
+    ptt_modifiers = audio_cfg.get("ptt_modifiers") if "ptt_modifiers" in audio_cfg else cfg.get("ptt_modifiers", [])
+    cfg["ptt_modifiers"] = list(ptt_modifiers or [])
+    audio_cfg["ptt_modifiers"] = list(ptt_modifiers or [])
+
+    # UI settings
+    ui_cfg = cfg.setdefault("ui", {})
+    ui_cfg.setdefault("floating_overlay", "on_minimize")
+    ui_cfg.setdefault("minimize_to_tray", True)
+    hud_mode = ui_cfg.get("hud_mode") or cfg.get("hud_mode") or "normal"
+    ui_cfg["hud_mode"] = hud_mode
+    cfg["hud_mode"] = hud_mode
+
+    hud_mode_hotkey = ui_cfg.get("hud_mode_hotkey") or cfg.get("hud_mode_hotkey") or "Ctrl+Space"
+    ui_cfg["hud_mode_hotkey"] = hud_mode_hotkey
+    cfg["hud_mode_hotkey"] = hud_mode_hotkey
+
+    hud_mode_display = ui_cfg.get("hud_mode_key_display") or cfg.get("hud_mode_key_display") or hud_mode_hotkey
+    ui_cfg["hud_mode_key_display"] = hud_mode_display
+    cfg["hud_mode_key_display"] = hud_mode_display
+
+    hud_mode_vk = ui_cfg.get("hud_mode_vk") if "hud_mode_vk" in ui_cfg else cfg.get("hud_mode_vk", 32)
+    ui_cfg["hud_mode_vk"] = hud_mode_vk
+    cfg["hud_mode_vk"] = hud_mode_vk
+
+    hud_mode_mods = ui_cfg.get("hud_mode_modifiers") if "hud_mode_modifiers" in ui_cfg else cfg.get("hud_mode_modifiers", ["Control"])
+    ui_cfg["hud_mode_modifiers"] = list(hud_mode_mods or [])
+    cfg["hud_mode_modifiers"] = list(hud_mode_mods or [])
 
     # Always-On Listening Sub-Mode:
     # 1) "always_on" -> Continuous Open Mic (wake_word_enabled=False)
@@ -211,6 +268,8 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         or cfg.get("voice_accent")
         or "default"
     )
+    if str(voice_accent).strip().lower() in ("default (native / standard)", "default", "none", "neutral"):
+        voice_accent = "default"
     cfg["voice_accent"] = voice_accent
     api_cfg["voice_accent"] = voice_accent
 
@@ -246,6 +305,21 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     cfg.setdefault("boot_on_startup", False)
     cfg.setdefault("start_minimized", False)
+
+    # Desktop Vision schema defaults
+    vision_cfg = cfg.setdefault("vision", {})
+    vision_cfg.setdefault("enabled", True)
+    vision_cfg.setdefault("fps", 1.0)
+    vision_cfg.setdefault("monitor", "auto")
+    vision_cfg.setdefault("endpoint", "gemini-3.8-flash-snapshot")
+    vision_cfg.setdefault("resolution", [768, 768])
+    vision_cfg.setdefault("jpeg_quality", 70)
+
+    # Audio Software Gate & Language defaults
+    software_gate = audio_cfg.get("software_gate") if "software_gate" in audio_cfg else cfg.get("software_gate", False)
+    cfg["software_gate"] = bool(software_gate)
+    audio_cfg["software_gate"] = bool(software_gate)
+    audio_cfg.setdefault("preferred_language", "en-US")
 
     return cfg
 
@@ -300,6 +374,13 @@ class ConfigManager:
                 "tier1_fast_model",
                 "tier2_heavy_model",
                 "mode",
+                "ptt_type",
+                "ptt_key",
+                "ptt_key_display",
+                "ptt_vk",
+                "ptt_modifiers",
+                "hud_mode",
+                "software_gate",
             ):
                 if key in updates:
                     self.config[key] = updates[key]
@@ -360,6 +441,18 @@ class ConfigManager:
                         self.config.setdefault("api", {})["tts_model_id"] = sec_copy["tts_model_endpoint"]
                     if "mode" in sec_copy:
                         self.config["mode"] = sec_copy["mode"]
+                    if "ptt_type" in sec_copy:
+                        self.config["ptt_type"] = sec_copy["ptt_type"]
+                    if "ptt_key" in sec_copy:
+                        self.config["ptt_key"] = sec_copy["ptt_key"]
+                    if "ptt_key_display" in sec_copy:
+                        self.config["ptt_key_display"] = sec_copy["ptt_key_display"]
+                    if "ptt_vk" in sec_copy:
+                        self.config["ptt_vk"] = sec_copy["ptt_vk"]
+                    if "ptt_modifiers" in sec_copy:
+                        self.config["ptt_modifiers"] = sec_copy["ptt_modifiers"]
+                    if "hud_mode" in sec_copy:
+                        self.config["hud_mode"] = sec_copy["hud_mode"]
                     if "stt_endpoint" in sec_copy:
                         self.config["stt_endpoint"] = sec_copy["stt_endpoint"]
                         self.config["stt_model_endpoint"] = sec_copy["stt_endpoint"]

@@ -278,6 +278,14 @@ class HUDBridge:
 
             threading.Thread(target=_delayed_shape, daemon=True).start()
 
+            # Ensure overlay JavaScript switches CSS classes and DOM layout immediately
+            try:
+                self._window.evaluate_js(
+                    f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
+                )
+            except Exception:
+                pass
+
         if hasattr(self._bridge, "on_hud_mode_changed"):
             self._bridge.on_hud_mode_changed(mode)
         return {"success": True, "mode": mode}

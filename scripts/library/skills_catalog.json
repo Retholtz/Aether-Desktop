@@ -174,10 +174,20 @@
     "updated_at": "2026-09-26T10:31:11.885337"
   },
   "clear_google_docs_canvas_and": {
-    "description": "Clear Google Docs canvas and paste comprehensive formatted HTML comparison via ctypes",
+    "description": "Clear Google Docs canvas and paste comprehensive formatted HTML comparison",
     "parameters": {},
     "file": "clear_google_docs_canvas_and.py",
     "created_at": "2026-09-26T14:54:01.747588",
-    "updated_at": "2026-09-26T14:54:01.747588"
+    "updated_at": "2026-10-07T13:30:00.000000"
+  },
+  "google_docs_writer": {
+    "description": "Safely focuses Google Docs canvas in Chrome, stages formatted content to Windows clipboard, performs focus handshake, dispatches paste, and verifies visual outcome.",
+    "parameters": {
+      "text": "The text or document content to write into Google Docs",
+      "app_name": "Target application name (default 'chrome')"
+    },
+    "file": "google_docs_writer.py",
+    "created_at": "2026-10-07T13:25:00.000000",
+    "updated_at": "2026-10-07T13:25:00.000000"
   }
 }

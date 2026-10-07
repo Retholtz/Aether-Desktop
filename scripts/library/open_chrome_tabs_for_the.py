@@ -1,5 +1,6 @@
+import os
+import shutil
 from typing import Sequence
-import winreg
 import win32api
 import win32event
 import win32process
@@ -12,19 +13,17 @@ DEFAULT_URLS = (
 
 
 def get_chrome_executable() -> str:
-    """Resolve the Chrome binary path deterministically from Windows App Paths."""
-    registry_keys = [
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
-        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+    """Resolve the Chrome binary path deterministically without registry access."""
+    candidates = [
+        shutil.which("chrome"),
+        shutil.which("chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
     ]
-    for root, subkey in registry_keys:
-        try:
-            with winreg.OpenKey(root, subkey) as key:
-                path, _ = winreg.QueryValueEx(key, "")
-                if path:
-                    return path
-        except OSError:
-            continue
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
     return "chrome.exe"
 
 

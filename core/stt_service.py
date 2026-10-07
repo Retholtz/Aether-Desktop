@@ -8,6 +8,7 @@ import os
 import logging
 from typing import Optional, Any
 from google import genai
+from google.genai import types
 from core.config_manager import load_config, unprotect_secret
 
 logger = logging.getLogger("Aether.STTService")
@@ -137,7 +138,11 @@ def transcribe_audio_buffer(audio_bytes: bytes, mime_type: str = "audio/wav", st
                         {"text": "Transcribe the spoken audio verbatim. Output only the transcribed text with no extra commentary."}
                     ]
                 }
-            ]
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                thinking_config=types.ThinkingConfig(thinking_budget=0)
+            )
         )
         return response.text.strip() if response and response.text else ""
     except Exception as e:

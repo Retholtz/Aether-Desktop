@@ -1,9 +1,9 @@
-import ctypes
-from ctypes import wintypes
 import time
+import win32api
 import win32clipboard
 import win32con
 import win32gui
+from tools.os_controls import bring_hwnd_to_foreground
 
 MANUAL_TITLE = "Vodel Rhino Heavy SRV: Complete Operations & Field Instruction Manual"
 TARGET_WINDOW_KEYWORDS = ("Chrome", "Docs")
@@ -136,25 +136,7 @@ MANUAL_HTML = """
 """
 
 
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.c_size_t),
-    ]
 
-
-class INPUT(ctypes.Structure):
-    class _INPUT_UNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
-
-    _anonymous_ = ("_union",)
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("_union", _INPUT_UNION),
-    ]
 
 
 def build_cf_html_payload(html_fragment: str) -> bytes:
@@ -219,29 +201,7 @@ def focus_window_by_keywords(keywords: tuple[str, ...], timeout: float = 1.0) ->
     if not target_hwnd:
         raise RuntimeError(f"No active window matched criteria: {keywords}")
 
-    current_foreground = win32gui.GetForegroundWindow()
-    if current_foreground == target_hwnd:
-        return target_hwnd
-
-    foreground_thread = ctypes.windll.user32.GetWindowThreadProcessId(current_foreground, None)
-    target_thread = ctypes.windll.kernel32.GetCurrentThreadId()
-
-    attached = False
-    if foreground_thread and foreground_thread != target_thread:
-        attached = bool(ctypes.windll.user32.AttachThreadInput(target_thread, foreground_thread, True))
-
-    try:
-        if win32gui.IsIconic(target_hwnd):
-            win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
-        else:
-            win32gui.ShowWindow(target_hwnd, win32con.SW_SHOW)
-
-        win32gui.BringWindowToTop(target_hwnd)
-        win32gui.SetForegroundWindow(target_hwnd)
-    finally:
-        if attached:
-            ctypes.windll.user32.AttachThreadInput(target_thread, foreground_thread, False)
-
+    bring_hwnd_to_foreground(target_hwnd)
     start_time = time.perf_counter()
     while time.perf_counter() - start_time < timeout:
         if win32gui.GetForegroundWindow() == target_hwnd:
@@ -252,21 +212,14 @@ def focus_window_by_keywords(keywords: tuple[str, ...], timeout: float = 1.0) ->
 
 
 def send_paste_input() -> None:
-    """Dispatches atomic Ctrl+V key combination via SendInput."""
+    """Dispatches atomic Ctrl+V key combination via win32api."""
     vk_control = 0x11
     vk_v = 0x56
-    input_type_keyboard = 1
-    flag_keyup = 0x0002
 
-    inputs = (INPUT * 4)(
-        INPUT(type=input_type_keyboard, ki=KEYBDINPUT(wVk=vk_control)),
-        INPUT(type=input_type_keyboard, ki=KEYBDINPUT(wVk=vk_v)),
-        INPUT(type=input_type_keyboard, ki=KEYBDINPUT(wVk=vk_v, dwFlags=flag_keyup)),
-        INPUT(type=input_type_keyboard, ki=KEYBDINPUT(wVk=vk_control, dwFlags=flag_keyup)),
-    )
-    sent = ctypes.windll.user32.SendInput(4, ctypes.byref(inputs), ctypes.sizeof(INPUT))
-    if sent != 4:
-        raise RuntimeError(f"SendInput failed: sent {sent} of 4 events.")
+    win32api.keybd_event(vk_control, 0, 0, 0)
+    win32api.keybd_event(vk_v, 0, 0, 0)
+    win32api.keybd_event(vk_v, 0, win32con.KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(vk_control, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def main() -> None:

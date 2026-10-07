@@ -1,62 +1,28 @@
-import ctypes
-from ctypes import wintypes
 import io
 import time
 import urllib.request
 from PIL import Image
+import win32api
 import win32clipboard
 import win32con
 import win32gui
 
-# --- CTYPES STRUCTURES FOR DETERMINISTIC INPUT DISPATCH ---
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = (
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.c_size_t),
-    )
-
-class INPUT(ctypes.Structure):
-    class _INPUT(ctypes.Union):
-        _fields_ = (("ki", KEYBDINPUT),)
-    _anonymous_ = ("_input",)
-    _fields_ = (
-        ("type", wintypes.DWORD),
-        ("_input", _INPUT),
-    )
-
-LPINPUT = ctypes.POINTER(INPUT)
-SendInput = ctypes.windll.user32.SendInput
-SendInput.argtypes = (wintypes.UINT, LPINPUT, ctypes.c_int)
-SendInput.restype = wintypes.UINT
-
 
 def send_combo(modifiers: list[int], key: int) -> None:
-    """Dispatches key combos (e.g., Ctrl+V) atomically in a single SendInput call."""
-    inputs = [INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=mod)) for mod in modifiers]
-    inputs.append(INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=key)))
-    inputs.append(INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=key, dwFlags=KEYEVENTF_KEYUP)))
-    inputs.extend(INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=mod, dwFlags=KEYEVENTF_KEYUP)) for mod in reversed(modifiers))
-    
-    count = len(inputs)
-    arr = (INPUT * count)(*inputs)
-    SendInput(count, arr, ctypes.sizeof(INPUT))
+    """Dispatches key combos (e.g., Ctrl+V) via win32api."""
+    for mod in modifiers:
+        win32api.keybd_event(mod, 0, 0, 0)
+    win32api.keybd_event(key, 0, 0, 0)
+    win32api.keybd_event(key, 0, win32con.KEYEVENTF_KEYUP, 0)
+    for mod in reversed(modifiers):
+        win32api.keybd_event(mod, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def send_keys(*keys: int) -> None:
-    """Dispatches sequential individual keypresses atomically."""
-    inputs = []
+    """Dispatches sequential individual keypresses via win32api."""
     for k in keys:
-        inputs.append(INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=k)))
-        inputs.append(INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=k, dwFlags=KEYEVENTF_KEYUP)))
-    count = len(inputs)
-    arr = (INPUT * count)(*inputs)
-    SendInput(count, arr, ctypes.sizeof(INPUT))
+        win32api.keybd_event(k, 0, 0, 0)
+        win32api.keybd_event(k, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def open_clipboard_with_retry(hwnd: int = 0, max_retries: int = 10, delay: float = 0.02) -> None:

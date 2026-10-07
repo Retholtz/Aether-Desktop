@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from typing import Callable, List, Optional, Set
 
 try:
@@ -310,14 +311,20 @@ class HotkeyManager:
             current_pid = os.getpid()
             if pid.value == current_pid:
                 return True
-            if psutil is not None:
-                try:
-                    proc = psutil.Process(pid.value)
-                    if proc.ppid() == current_pid:
-                        return True
-                except Exception:
-                    pass
-            return False
+            # Check cached child PIDs to prevent blocking the low-level hook with psutil process inspection
+            now = time.monotonic()
+            if not hasattr(self, "_cached_child_pids") or (now - getattr(self, "_last_pid_cache_time", 0.0)) > 5.0:
+                self._last_pid_cache_time = now
+                cached_set = set()
+                if psutil is not None:
+                    try:
+                        cur_proc = psutil.Process(current_pid)
+                        for child in cur_proc.children(recursive=True):
+                            cached_set.add(child.pid)
+                    except Exception:
+                        pass
+                self._cached_child_pids = cached_set
+            return pid.value in getattr(self, "_cached_child_pids", set())
         except Exception:
             return False
 

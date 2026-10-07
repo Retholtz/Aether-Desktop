@@ -196,7 +196,7 @@ def resolve_gemini_client(explicit_client: Optional[Any] = None) -> Optional[Any
                     cfg = json.load(f)
                 enc_key = cfg.get("api", {}).get("api_key_encrypted", "")
                 if enc_key:
-                    from core.security import unprotect_secret
+                    from security.crypto import unprotect_secret
                     api_key = unprotect_secret(enc_key)
         except Exception as e:
             logger.debug(f"[MANIFEST] Could not decrypt API key from config.json: {e}")

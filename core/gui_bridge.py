@@ -23,7 +23,7 @@ from core.logger import (
     clear_memory_logs,
     open_logs_folder,
 )
-from core.security import protect_secret, unprotect_secret
+from security.crypto import protect_secret, unprotect_secret
 from core.config_manager import sync_config_schema, save_config_atomic
 from core.model_discovery import (
     load_cached_categorized_models,
@@ -571,13 +571,35 @@ class GuiBridge:
                     self._engine.audio.set_vad_trailing_silence(silence_ms)
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
-            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode"):
+            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
                 if top_key in new_config:
                     self._config[top_key] = new_config[top_key]
 
             if "mode" in new_config:
                 self._config["mode"] = new_config["mode"]
                 self._config.setdefault("audio", {})["mode"] = new_config["mode"]
+            if "ptt_type" in new_config:
+                self._config["ptt_type"] = new_config["ptt_type"]
+                self._config.setdefault("audio", {})["ptt_type"] = new_config["ptt_type"]
+            if "ptt_key" in new_config:
+                self._config["ptt_key"] = new_config["ptt_key"]
+                self._config.setdefault("audio", {})["ptt_key"] = new_config["ptt_key"]
+            if "ptt_key_display" in new_config:
+                self._config["ptt_key_display"] = new_config["ptt_key_display"]
+                self._config.setdefault("audio", {})["ptt_key_display"] = new_config["ptt_key_display"]
+            if "ptt_vk" in new_config:
+                self._config["ptt_vk"] = new_config["ptt_vk"]
+                self._config.setdefault("audio", {})["ptt_vk"] = new_config["ptt_vk"]
+            if "ptt_modifiers" in new_config:
+                self._config["ptt_modifiers"] = new_config["ptt_modifiers"]
+                self._config.setdefault("audio", {})["ptt_modifiers"] = new_config["ptt_modifiers"]
+            if "hud_mode" in new_config:
+                self._config["hud_mode"] = new_config["hud_mode"]
+                self._config.setdefault("ui", {})["hud_mode"] = new_config["hud_mode"]
+                self._current_hud_mode = new_config["hud_mode"]
+            if "software_gate" in new_config:
+                self._config["software_gate"] = bool(new_config["software_gate"])
+                self._config.setdefault("audio", {})["software_gate"] = bool(new_config["software_gate"])
 
             if "primary_model_endpoint" in new_config:
                 self._config["primary_model_endpoint"] = new_config["primary_model_endpoint"]
@@ -680,6 +702,16 @@ class GuiBridge:
                     aud_cfg["sleep_phrase"] = self._config["sleep_phrase"]
                 if "mode" in aud_cfg and aud_cfg["mode"]:
                     self._config["mode"] = aud_cfg["mode"]
+                if "ptt_type" in aud_cfg and aud_cfg["ptt_type"]:
+                    self._config["ptt_type"] = aud_cfg["ptt_type"]
+                if "ptt_key" in aud_cfg and aud_cfg["ptt_key"]:
+                    self._config["ptt_key"] = aud_cfg["ptt_key"]
+                if "ptt_key_display" in aud_cfg and aud_cfg["ptt_key_display"]:
+                    self._config["ptt_key_display"] = aud_cfg["ptt_key_display"]
+                if "ptt_vk" in aud_cfg:
+                    self._config["ptt_vk"] = aud_cfg["ptt_vk"]
+                if "ptt_modifiers" in aud_cfg:
+                    self._config["ptt_modifiers"] = aud_cfg["ptt_modifiers"]
                 if "always_on_mode" in aud_cfg and aud_cfg["always_on_mode"]:
                     self._config["always_on_mode"] = aud_cfg["always_on_mode"].strip()
                     self._config["wake_word_enabled"] = (self._config["always_on_mode"] != "always_on")
@@ -751,10 +783,13 @@ class GuiBridge:
                 self._config["security"] = new_config["security"]
             if "ui" in new_config:
                 self._config.setdefault("ui", {}).update(new_config["ui"])
+                if "hud_mode" in new_config["ui"]:
+                    target_mode = str(new_config["ui"]["hud_mode"]).lower()
+                    if target_mode in ("mini", "normal", "max"):
+                        self._current_hud_mode = target_mode
+                        self._config["hud_mode"] = target_mode
                 if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
                     self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
-                # Note: HUD mode view is changed via explicit set_mode() calls or hotkey,
-                # NOT during general background save_config calls to prevent unwanted resizing.
 
             sync_config_schema(self._config)
             save_config_atomic(self._config, self._config_path)
@@ -1228,7 +1263,11 @@ class GuiBridge:
         if mode not in ("mini", "normal", "max"):
             mode = "normal"
         self._current_hud_mode = mode
-        self._config.setdefault("ui", {})["hud_mode"] = mode
+        with self._config_lock:
+            self._config.setdefault("ui", {})["hud_mode"] = mode
+            self._config["hud_mode"] = mode
+            sync_config_schema(self._config)
+            save_config_atomic(self._config, self._config_path)
 
         # Delegate resize to hud_bridge if registered, or direct to overlay_window
         if self._hud_bridge:
@@ -1250,6 +1289,8 @@ class GuiBridge:
                 logger.warning(f"[OVERLAY RESIZE ERROR] {ex}")
             self.on_hud_mode_changed(mode)
 
+        self.on_hud_mode_changed(mode)
+        self._on_engine_event("hud_mode_changed", {"mode": mode})
         return {"success": True, "mode": mode}
 
     def cycle_hud_mode(self) -> str:
@@ -1271,7 +1312,7 @@ class GuiBridge:
     def on_hud_mode_changed(self, mode: str):
         """Notifies JavaScript in the floating overlay window of mode change."""
         self._current_hud_mode = mode
-        if getattr(self, "_overlay_window", None) and getattr(self, "_overlay_visible", False):
+        if getattr(self, "_overlay_window", None):
             try:
                 js_code = f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
                 self._overlay_window.evaluate_js(js_code)

@@ -1,0 +1,86 @@
+﻿[2026-10-06 16:35:09.547] [INFO] [Aether.Engine] [LATENCY] TTS (gemini_live): 16212.4ms | First sound: 2225ms
+[2026-10-06 16:35:09.551] [INFO] [Aether.Engine] [LATENCY SUMMARY] Turn #2 Completed in 22652ms | STT: 0ms | LLM: 6419ms | Tools: 0ms | TTS: 16212ms
+[2026-10-06 16:35:11.567] [INFO] [Aether.HotkeyManager] [PTT] Hotkey pressed -> Hold Speak ON
+[2026-10-06 16:35:11.569] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> True (mode=ptt)
+[2026-10-06 16:35:15.635] [INFO] [Aether.HotkeyManager] [PTT] Hotkey released -> Hold Speak OFF
+[2026-10-06 16:35:15.637] [INFO] [Aether.Audio] [AUDIO] PTT state transition: True -> False (mode=ptt)
+[2026-10-06 16:35:15.638] [INFO] [Aether.Audio] [AUDIO] PTT released -> finalizing speech (110 speech frames collected)
+[2026-10-06 16:35:15.641] [INFO] [Aether.Audio] [AUDIO] Emitted 176044 bytes WAV to utterance queue (110 frames, ~5.50s, peak RMS: 0.2861, PTT: True)
+[2026-10-06 16:35:15.642] [INFO] [Aether.Engine] [ENGINE] Received speech utterance: 176044 bytes from queue (audio_mode=ptt)
+[2026-10-06 16:35:15.648] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> False (mode=ptt)
+[2026-10-06 16:35:20.734] [INFO] [Aether.Engine] [LATENCY] STT (gemini-3.8-flash): 5084.5ms
+[2026-10-06 16:35:20.736] [INFO] [Aether.Engine] [STT RESULT] Raw transcribed text: 'Is there anything good going on in Slovenia this weekend?'
+[2026-10-06 16:35:20.762] [INFO] [Aether.Engine] [TURN START #3] Prompt (voice): Is there anything good going on in Slovenia this weekend?
+[2026-10-06 16:35:31.593] [INFO] [Aether.Engine] [LATENCY] Cortex LLM (gemini-3.8-flash): 10826.5ms
+[2026-10-06 16:35:31.597] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: events in Slovenia October 10 11 2026
+[2026-10-06 16:35:31.600] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: Ljubljana events October weekend food festival
+[2026-10-06 16:35:36.666] [INFO] [Aether.Engine] [LATENCY] TTS (gemini_live): 5051.2ms | First sound: 1793ms
+[2026-10-06 16:35:36.668] [INFO] [Aether.Engine] [LATENCY SUMMARY] Turn #3 Completed in 21019ms | STT: 5084ms | LLM: 10827ms | Tools: 0ms | TTS: 5051ms
+[2026-10-06 16:35:46.272] [INFO] [Aether.HotkeyManager] [HOTKEY] Global keyboard hook removed cleanly.
+[2026-10-06 16:35:46.761] [INFO] [Aether.SessionLifecycle] [SESSION] Persisted raw session transcript to C:\Users\retho\Projects\Aether-Desktop\data\chats\session_20261006_163351.json
+[2026-10-06 16:35:48.820] [INFO] [Aether.HotkeyManager] [HOTKEY] Config updated: PTT(mode=ptt, ptt_type=hold, key=BACKSLASH, VK=0xdc, mods=[]) | HUD(key=Ctrl+Space, VK=0x20, mods=['Control']) | GameMode(key=Ctrl+Shift+G, VK=0x47, mods=['Control', 'Shift'])
+[2026-10-06 16:35:48.824] [INFO] [Aether.HotkeyManager] [HOTKEY] Config updated: PTT(mode=ptt, ptt_type=hold, key=BACKSLASH, VK=0xdc, mods=[]) | HUD(key=Ctrl+Space, VK=0x20, mods=['Control']) | GameMode(key=Ctrl+Shift+G, VK=0x47, mods=['Control', 'Shift'])
+[2026-10-06 16:35:49.900] [INFO] [Aether.HotkeyManager] [HOTKEY] Config updated: PTT(mode=ptt, ptt_type=hold, key=BACKSLASH, VK=0xdc, mods=[]) | HUD(key=Ctrl+Space, VK=0x20, mods=['Control']) | GameMode(key=Ctrl+Shift+G, VK=0x47, mods=['Control', 'Shift'])
+[2026-10-06 16:35:49.904] [INFO] [Aether.HotkeyManager] [HOTKEY] Config updated: PTT(mode=ptt, ptt_type=hold, key=BACKSLASH, VK=0xdc, mods=[]) | HUD(key=Ctrl+Space, VK=0x20, mods=['Control']) | GameMode(key=Ctrl+Shift+G, VK=0x47, mods=['Control', 'Shift'])
+[2026-10-06 16:35:49.918] [INFO] [Aether.HotkeyManager] [HOTKEY] Global keyboard hook active (Handle: 10946725)
+[2026-10-06 16:35:49.921] [INFO] [Aether.Reflexion] [REFLEXION] Tier 2 Engine started using gemini-3.1-pro-preview.
+[2026-10-06 16:35:49.931] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> False (mode=ptt)
+[2026-10-06 16:35:50.479] [INFO] [Aether.Engine] [SESSION] Initializing fresh Cortex chat session (gemini-3.8-flash)
+[2026-10-06 16:35:51.091] [INFO] [Aether.ManifestIndexer] [MANIFEST] Indexed session card for 'session_20261006_155114' (date: 2026-10-06)
+[2026-10-06 16:35:51.103] [INFO] [Aether.ManifestIndexer] [MANIFEST] Indexed session card for 'session_20261006_160436' (date: 2026-10-06)
+[2026-10-06 16:35:52.347] [INFO] [Aether.HotkeyManager] [PTT] Hotkey pressed -> Hold Speak ON
+[2026-10-06 16:35:52.349] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> True (mode=ptt)
+[2026-10-06 16:35:57.720] [INFO] [Aether.Reflexion] [REFLEXION] Engine became active during processing of session_20261006_155114; yielding immediately.
+[2026-10-06 16:35:59.523] [INFO] [Aether.HotkeyManager] [PTT] Hotkey released -> Hold Speak OFF
+[2026-10-06 16:35:59.524] [INFO] [Aether.Audio] [AUDIO] PTT state transition: True -> False (mode=ptt)
+[2026-10-06 16:35:59.526] [INFO] [Aether.Audio] [AUDIO] PTT released -> finalizing speech (172 speech frames collected)
+[2026-10-06 16:35:59.529] [INFO] [Aether.Audio] [AUDIO] Emitted 275244 bytes WAV to utterance queue (172 frames, ~8.60s, peak RMS: 0.2315, PTT: True)
+[2026-10-06 16:35:59.531] [INFO] [Aether.Engine] [ENGINE] Received speech utterance: 275244 bytes from queue (audio_mode=ptt)
+[2026-10-06 16:35:59.533] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> False (mode=ptt)
+[2026-10-06 16:36:02.832] [INFO] [Aether.Engine] [LATENCY] STT (gemini-3.8-flash): 3296.9ms
+[2026-10-06 16:36:02.835] [INFO] [Aether.Engine] [STT RESULT] Raw transcribed text: 'Let's try this again. I did not say Slovenia, I said Sylvania. Is there anything good going on in Sylvania, Ohio?'
+[2026-10-06 16:36:02.868] [INFO] [Aether.Engine] [TURN START #1] Prompt (voice): Let's try this again. I did not say Slovenia, I said Sylvania. Is there anything good going on in Sylvania, Ohio?
+[2026-10-06 16:36:02.874] [INFO] [Aether.Dispatcher] [INFO] [TOOL_DISPATCHER] Dynamically injected skill declaration: paste_ina_garten_s_perfect
+[2026-10-06 16:36:02.875] [INFO] [Aether.Dispatcher] [INFO] [TOOL_DISPATCHER] Dynamically injected skill declaration: replace_document_contents_with_a
+[2026-10-06 16:36:10.509] [INFO] [Aether.Engine] [LATENCY] Cortex LLM (gemini-3.8-flash): 7635.6ms
+[2026-10-06 16:36:10.511] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: upcoming events Sylvania OH
+[2026-10-06 16:36:10.515] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: Sylvania Ohio events things to do
+[2026-10-06 16:36:35.137] [INFO] [Aether.Engine] [LATENCY] TTS (gemini_live): 24613.9ms | First sound: 1591ms
+[2026-10-06 16:36:35.139] [INFO] [Aether.Engine] [LATENCY SUMMARY] Turn #1 Completed in 35605ms | STT: 3297ms | LLM: 7636ms | Tools: 0ms | TTS: 24614ms
+[2026-10-06 16:36:36.299] [INFO] [Aether.HotkeyManager] [PTT] Hotkey pressed -> Hold Speak ON
+[2026-10-06 16:36:36.301] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> True (mode=ptt)
+[2026-10-06 16:36:38.919] [INFO] [Aether.HotkeyManager] [PTT] Hotkey released -> Hold Speak OFF
+[2026-10-06 16:36:38.921] [INFO] [Aether.Audio] [AUDIO] PTT state transition: True -> False (mode=ptt)
+[2026-10-06 16:36:38.923] [INFO] [Aether.Audio] [AUDIO] PTT released -> finalizing speech (80 speech frames collected)
+[2026-10-06 16:36:38.927] [INFO] [Aether.Audio] [AUDIO] Emitted 128044 bytes WAV to utterance queue (80 frames, ~4.00s, peak RMS: 0.2713, PTT: True)
+[2026-10-06 16:36:38.932] [INFO] [Aether.Engine] [ENGINE] Received speech utterance: 128044 bytes from queue (audio_mode=ptt)
+[2026-10-06 16:36:38.935] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> False (mode=ptt)
+[2026-10-06 16:36:42.957] [INFO] [Aether.Engine] [LATENCY] STT (gemini-3.8-flash): 4020.8ms
+[2026-10-06 16:36:42.959] [INFO] [Aether.Engine] [STT RESULT] Raw transcribed text: 'Any events in Perrysburg'
+[2026-10-06 16:36:42.990] [INFO] [Aether.Engine] [TURN START #2] Prompt (voice): Any events in Perrysburg
+[2026-10-06 16:36:42.996] [INFO] [Aether.Dispatcher] [INFO] [TOOL_DISPATCHER] Dynamically injected skill declaration: open_chrome_tabs_for_the
+[2026-10-06 16:36:51.367] [INFO] [Aether.Engine] [LATENCY] Cortex LLM (gemini-3.8-flash): 8371.0ms
+[2026-10-06 16:36:51.369] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: things to do Perrysburg Ohio events
+[2026-10-06 16:36:51.373] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: Perrysburg Ohio events October
+[2026-10-06 16:37:24.862] [INFO] [Aether.Engine] [LATENCY] TTS (gemini_live): 33480.3ms | First sound: 1996ms
+[2026-10-06 16:37:24.864] [INFO] [Aether.Engine] [LATENCY SUMMARY] Turn #2 Completed in 45929ms | STT: 4021ms | LLM: 8371ms | Tools: 0ms | TTS: 33480ms
+[2026-10-06 16:37:25.367] [INFO] [Aether.HotkeyManager] [PTT] Hotkey pressed -> Hold Speak ON
+[2026-10-06 16:37:25.369] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> True (mode=ptt)
+[2026-10-06 16:37:28.631] [INFO] [Aether.HotkeyManager] [PTT] Hotkey released -> Hold Speak OFF
+[2026-10-06 16:37:28.632] [INFO] [Aether.Audio] [AUDIO] PTT state transition: True -> False (mode=ptt)
+[2026-10-06 16:37:28.633] [INFO] [Aether.Audio] [AUDIO] PTT released -> finalizing speech (93 speech frames collected)
+[2026-10-06 16:37:28.636] [INFO] [Aether.Audio] [AUDIO] Emitted 148844 bytes WAV to utterance queue (93 frames, ~4.65s, peak RMS: 0.2756, PTT: True)
+[2026-10-06 16:37:28.637] [INFO] [Aether.Engine] [ENGINE] Received speech utterance: 148844 bytes from queue (audio_mode=ptt)
+[2026-10-06 16:37:28.639] [INFO] [Aether.Audio] [AUDIO] PTT state transition: False -> False (mode=ptt)
+[2026-10-06 16:37:34.765] [INFO] [Aether.Engine] [LATENCY] STT (gemini-3.8-flash): 6123.7ms
+[2026-10-06 16:37:34.767] [INFO] [Aether.Engine] [STT RESULT] Raw transcribed text: 'Tell me more about the Halloween party at Third Street.'
+[2026-10-06 16:37:34.796] [INFO] [Aether.Engine] [TURN START #3] Prompt (voice): Tell me more about the Halloween party at Third Street.
+[2026-10-06 16:37:43.965] [INFO] [Aether.Engine] [LATENCY] Cortex LLM (gemini-3.8-flash): 9163.9ms
+[2026-10-06 16:37:43.967] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: Third Street Market Perrysburg Halloween party
+[2026-10-06 16:37:43.972] [INFO] [Aether.Engine] [SEARCH GROUNDING] Query: Festival of Fears Third Street Market Perrysburg
+[2026-10-06 16:37:56.538] [INFO] [Aether.Engine] [LATENCY] TTS (gemini_live): 12556.3ms | First sound: 2049ms
+[2026-10-06 16:37:56.541] [INFO] [Aether.Engine] [LATENCY SUMMARY] Turn #3 Completed in 27901ms | STT: 6124ms | LLM: 9164ms | Tools: 0ms | TTS: 12556ms
+[2026-10-06 16:37:57.741] [INFO] [Aether.ManifestIndexer] [MANIFEST] Indexed session card for 'session_20261006_163203' (date: 2026-10-06)
+[2026-10-06 16:38:02.940] [INFO] [Aether.HotkeyManager] [HOTKEY] Global keyboard hook removed cleanly.
+[2026-10-06 16:38:03.441] [INFO] [Aether.SessionLifecycle] [SESSION] Persisted raw session transcript to C:\Users\retho\Projects\Aether-Desktop\data\chats\session_20261006_163546.json
+[2026-10-06 16:38:04.121] [INFO] [Aether.ManifestIndexer] [MANIFEST] Indexed session card for 'session_20261006_163351' (date: 2026-10-06)

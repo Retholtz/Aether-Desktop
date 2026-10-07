@@ -1,67 +1,35 @@
 import concurrent.futures
-import ctypes
-from ctypes import wintypes
 import io
 import time
 import urllib.request
 from PIL import Image
+import win32api
 import win32clipboard
 import win32con
 import win32gui
 
 # ==============================================================================
-# Native Windows SendInput Structures & Constants
+# Windows Input Constants & Safe Win32 Primitives
 # ==============================================================================
 
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
-
-wintypes.ULONG_PTR = wintypes.WPARAM
-
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", wintypes.ULONG_PTR),
-    ]
-
-
-class INPUT(ctypes.Structure):
-    class _INPUT_UNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
-
-    _anonymous_ = ("_input",)
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("_input", _INPUT_UNION),
-    ]
-
-
-def _send_inputs(inputs: list[INPUT]) -> None:
-    n_inputs = len(inputs)
-    arr = (INPUT * n_inputs)(*inputs)
-    ctypes.windll.user32.SendInput(n_inputs, ctypes.byref(arr), ctypes.sizeof(INPUT))
+VK_CONTROL = 0x11
+VK_END = 0x23
+VK_RETURN = 0x0D
+VK_V = 0x56
 
 
 def send_key(vk: int) -> None:
-    """Dispatches key-down and key-up atomically via SendInput."""
-    _send_inputs([
-        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=vk, wScan=0, dwFlags=0, time=0, dwExtraInfo=0)),
-        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=vk, wScan=0, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
-    ])
+    """Dispatches key-down and key-up via win32api."""
+    win32api.keybd_event(vk, 0, 0, 0)
+    win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def send_hotkey(mod: int, key: int) -> None:
-    """Dispatches modifier + key press combination atomically via SendInput."""
-    _send_inputs([
-        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=mod, wScan=0, dwFlags=0, time=0, dwExtraInfo=0)),
-        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=key, wScan=0, dwFlags=0, time=0, dwExtraInfo=0)),
-        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=key, wScan=0, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
-        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=mod, wScan=0, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)),
-    ])
+    """Dispatches modifier + key press combination via win32api."""
+    win32api.keybd_event(mod, 0, 0, 0)
+    win32api.keybd_event(key, 0, 0, 0)
+    win32api.keybd_event(key, 0, win32con.KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(mod, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 # ==============================================================================

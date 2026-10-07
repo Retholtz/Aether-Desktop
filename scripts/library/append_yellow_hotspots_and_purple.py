@@ -1,18 +1,11 @@
-import ctypes
-from ctypes import wintypes
 import io
 import time
 import urllib.request
+import win32api
 import win32clipboard
 import win32con
 import win32gui
 from PIL import Image
-
-# Setup Win32 SendInput Structures
-user32 = ctypes.windll.user32
-
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
 
 VK_CONTROL = 0x11
 VK_END = 0x23
@@ -20,51 +13,19 @@ VK_RETURN = 0x0D
 VK_V = 0x56
 
 
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-    ]
-
-
-class INPUT(ctypes.Structure):
-    class _INPUT(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
-
-    _anonymous_ = ("_input",)
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("_input", _INPUT),
-    ]
-
-
-def _make_key_input(vk: int, flags: int = 0) -> INPUT:
-    inp = INPUT(type=INPUT_KEYBOARD)
-    inp.ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=flags, time=0, dwExtraInfo=None)
-    return inp
-
-
 def send_combo(modifiers: list[int], key: int) -> None:
-    events = [_make_key_input(mod, 0) for mod in modifiers]
-    events.append(_make_key_input(key, 0))
-    events.append(_make_key_input(key, KEYEVENTF_KEYUP))
-    events.extend([_make_key_input(mod, KEYEVENTF_KEYUP) for mod in reversed(modifiers)])
-
-    arr = (INPUT * len(events))(*events)
-    user32.SendInput(len(events), ctypes.byref(arr), ctypes.sizeof(INPUT))
+    for mod in modifiers:
+        win32api.keybd_event(mod, 0, 0, 0)
+    win32api.keybd_event(key, 0, 0, 0)
+    win32api.keybd_event(key, 0, win32con.KEYEVENTF_KEYUP, 0)
+    for mod in reversed(modifiers):
+        win32api.keybd_event(mod, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def send_keys(*vks: int) -> None:
-    events = []
     for vk in vks:
-        events.append(_make_key_input(vk, 0))
-        events.append(_make_key_input(vk, KEYEVENTF_KEYUP))
-
-    arr = (INPUT * len(events))(*events)
-    user32.SendInput(len(events), ctypes.byref(arr), ctypes.sizeof(INPUT))
+        win32api.keybd_event(vk, 0, 0, 0)
+        win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def focus_window_by_titles(titles: tuple[str, ...]) -> bool:

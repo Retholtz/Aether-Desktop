@@ -1,91 +1,29 @@
-import ctypes
-from ctypes import wintypes
 import time
+import win32api
 import win32clipboard
+import win32con
 import win32gui
 from tools.os_controls import bring_hwnd_to_foreground
 
-# --- Win32 Structures (64-bit aligned) ---
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
+# --- Win32 Constants ---
 VK_CONTROL = 0x11
 VK_A = 0x41
 VK_BACK = 0x08
 VK_V = 0x56
 
-ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ULONG_PTR),
-    ]
-
-class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [
-        ("dx", wintypes.LONG),
-        ("dy", wintypes.LONG),
-        ("mouseData", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ULONG_PTR),
-    ]
-
-class HARDWAREINPUT(ctypes.Structure):
-    _fields_ = [
-        ("uMsg", wintypes.DWORD),
-        ("wParamL", wintypes.WORD),
-        ("wParamH", wintypes.WORD),
-    ]
-
-class INPUT(ctypes.Structure):
-    class _INPUT_UNION(ctypes.Union):
-        _fields_ = [
-            ("ki", KEYBDINPUT),
-            ("mi", MOUSEINPUT),
-            ("hi", HARDWAREINPUT),
-        ]
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("union", _INPUT_UNION),
-    ]
-
-
-def send_inputs(input_list: list[INPUT]) -> None:
-    n_inputs = len(input_list)
-    array_type = INPUT * n_inputs
-    input_array = array_type(*input_list)
-    ctypes.windll.user32.SendInput(n_inputs, ctypes.byref(input_array), ctypes.sizeof(INPUT))
-
-
-def make_key_input(vk: int, flags: int = 0) -> INPUT:
-    inp = INPUT()
-    inp.type = INPUT_KEYBOARD
-    inp.union.ki.wVk = vk
-    inp.union.ki.wScan = 0
-    inp.union.ki.dwFlags = flags
-    inp.union.ki.time = 0
-    inp.union.ki.dwExtraInfo = 0
-    return inp
-
 
 def send_key_combo(vk_mod: int, vk_key: int) -> None:
-    send_inputs([
-        make_key_input(vk_mod),
-        make_key_input(vk_key),
-        make_key_input(vk_key, KEYEVENTF_KEYUP),
-        make_key_input(vk_mod, KEYEVENTF_KEYUP),
-    ])
+    """Dispatches key combo via win32api."""
+    win32api.keybd_event(vk_mod, 0, 0, 0)
+    win32api.keybd_event(vk_key, 0, 0, 0)
+    win32api.keybd_event(vk_key, 0, win32con.KEYEVENTF_KEYUP, 0)
+    win32api.keybd_event(vk_mod, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def send_single_key(vk_key: int) -> None:
-    send_inputs([
-        make_key_input(vk_key),
-        make_key_input(vk_key, KEYEVENTF_KEYUP),
-    ])
+    """Dispatches single key via win32api."""
+    win32api.keybd_event(vk_key, 0, 0, 0)
+    win32api.keybd_event(vk_key, 0, win32con.KEYEVENTF_KEYUP, 0)
 
 
 def make_cf_html(fragment: str) -> bytes:
