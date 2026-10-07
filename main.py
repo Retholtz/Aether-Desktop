@@ -99,19 +99,44 @@ def run_asyncio_loop(loop: asyncio.AbstractEventLoop):
 
 
 def main():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
     # Check for elevation argument (--elevate or --admin)
     if "--elevate" in sys.argv or "--admin" in sys.argv:
         from tools.os_controls import is_running_as_admin
         if not is_running_as_admin():
             import ctypes
+            main_script = os.path.abspath(__file__)
             print("[INFO] [ELEVATE] Elevating to Administrator privileges via Windows UAC...")
             clean_args = [a for a in sys.argv if a not in ("--elevate", "--admin")]
-            params = " ".join([f'"{a}"' if " " in a else a for a in clean_args])
-            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+            target_args = [f'"{main_script}"']
+            for a in clean_args:
+                if a != sys.argv[0] and not a.endswith("main.py"):
+                    target_args.append(f'"{a}"' if " " in a else a)
+            params = " ".join(target_args)
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, base_dir, 1)
             if ret > 32:
                 sys.exit(0)
             else:
                 print(f"[WARN] [ELEVATE] User declined UAC prompt or elevation failed (code: {ret}). Continuing normal startup.")
+
+    # Enforce Single-Instance application lock on Windows to prevent duplicate engines/voices
+    _single_instance_mutex = None
+    if sys.platform == "win32":
+        import ctypes
+        ERROR_ALREADY_EXISTS = 183
+        mutex_name = "Local\\AetherDesktop_SingleInstance_Mutex"
+        _single_instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+        if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            print("[INFO] [SINGLE_INSTANCE] Aether Desktop is already running. Focusing existing window...")
+            try:
+                hwnd = ctypes.windll.user32.FindWindowW(None, "Aether Desktop")
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            sys.exit(0)
 
     print("=" * 60)
     print("           AETHER DESKTOP - MODULAR ARCHITECTURE")
@@ -126,7 +151,6 @@ def main():
     bg_thread.start()
 
     # 2. Initialize JSON-RPC GUI bridge
-    base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(base_dir, "config.json")
     bridge = GuiBridge(config_path=config_path, loop=loop)
     if hasattr(bridge._engine, "hotkey_manager") and bridge._engine.hotkey_manager:
@@ -175,6 +199,13 @@ def main():
             except Exception:
                 pass
             loop.call_soon_threadsafe(loop.stop)
+
+        if _single_instance_mutex and sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.kernel32.CloseHandle(_single_instance_mutex)
+            except Exception:
+                pass
         print("[SHUTDOWN] Clean exit.")
 
 

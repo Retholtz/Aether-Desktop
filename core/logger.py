@@ -79,9 +79,9 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
         logging.getLogger("google_genai.models").setLevel(logging.ERROR)
         logging.getLogger("google_genai.types").setLevel(logging.ERROR)
 
-        # Formatter with millisecond timestamp, level, module and message
+        # Formatter with millisecond timestamp, process ID, level, module and message
         formatter = logging.Formatter(
-            fmt="[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(name)s] %(message)s",
+            fmt="[%(asctime)s.%(msecs)03d] [PID:%(process)d] [%(levelname)s] [%(name)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
         )
 
