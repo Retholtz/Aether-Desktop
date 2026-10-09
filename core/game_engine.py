@@ -283,7 +283,10 @@ class GameEngine:
     def _on_game_mode_changed(self, enabled: bool, game_id: str, game_name: str, is_running: bool = False):
         if callable(self.on_notify):
             self.on_notify("game_mode_changed", {
+                "enabled": enabled,
                 "game_mode_enabled": enabled,
+                "is_active": enabled,
+                "is_running": is_running,
                 "active_profile": game_id,
                 "game_id": game_id,
                 "display_name": game_name,
