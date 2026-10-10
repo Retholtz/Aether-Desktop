@@ -8,8 +8,8 @@
   "voice_accent": "Default (Native / Standard)",
   "api_key_encrypted": "",
   "primary_model_endpoint": "gemini-3.8-flash",
-  "tier2_heavy_model": "gemini-3.1-pro-preview",
-  "stt_model_endpoint": "gemini-3.8-transcribe",
+  "tier2_heavy_model": "gemini-3.8-flash-extended",
+  "stt_model_endpoint": "gemini_live_audio",
   "tts_model_endpoint": "gemini-live-voice-stream",
   "creativity_temperature": 0.7,
   "wake_word_enabled": true,
@@ -18,21 +18,20 @@
   "start_minimized": false,
   "models": {
     "tier1_options": [
-      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)" },
-      { "id": "gemini-3.8-live", "label": "Gemini 3.8 Live (gemini-3.8-live)" },
-      { "id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)" },
-      { "id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash (gemini-3.5-flash)" },
-      { "id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite (gemini-3.5-flash-lite)" }
+      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (High Speed)" },
+      { "id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash" },
+      { "id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash" },
+      { "id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash" },
+      { "id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite" }
     ],
     "tier2_options": [
-      { "id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview (gemini-3.1-pro-preview)" },
-      { "id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)" },
-      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)" }
+      { "id": "gemini-3.8-flash-extended", "label": "Gemini 3.8 Extended (Deep Reasoning)" },
+      { "id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking" },
+      { "id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview" }
     ],
     "stt_options": [
-      { "id": "gemini-3.8-transcribe", "label": "gemini-3.8-transcribe (High Accuracy Cloud STT - Recommended)" },
-      { "id": "gemini-3.8-transcribe-live", "label": "gemini-3.8-transcribe-live (Streaming Cloud STT)" },
-      { "id": "gemini-live-native-audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional)" }
+      { "id": "gemini_live_audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)" },
+      { "id": "primary_flash_stt", "label": "Gemini Flash Multimodal Audio (REST One-Shot Fallback)" }
     ],
     "tts_options": [
       { "id": "gemini-live-voice-stream", "label": "Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)" },

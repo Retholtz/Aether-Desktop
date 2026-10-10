@@ -571,9 +571,13 @@ class GuiBridge:
                     self._engine.audio.set_vad_trailing_silence(silence_ms)
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
-            for top_key in ("agent_name", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
+            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
                 if top_key in new_config:
                     self._config[top_key] = new_config[top_key]
+
+            if "pipeline_mode" in new_config:
+                self._config["pipeline_mode"] = str(new_config["pipeline_mode"]).lower()
+                self._config.setdefault("api", {})["pipeline_mode"] = str(new_config["pipeline_mode"]).lower()
 
             if "mode" in new_config:
                 self._config["mode"] = new_config["mode"]

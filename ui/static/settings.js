@@ -86,12 +86,13 @@ const DEFAULT_CHAT_MODELS = [
   { id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash" },
   { id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash" },
   { id: "gemini-3.5-flash-lite", display_name: "Gemini 3.5 Flash Lite" },
-  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview (Heavy Reasoning)" }
+  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview" }
 ];
 
 const DEFAULT_HEAVY_MODELS = [
-  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview (Heavy Reasoning)" },
-  { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (High Speed)" },
+  { id: "gemini-3.8-flash-extended", display_name: "Gemini 3.8 Extended (Deep Reasoning)" },
+  { id: "gemini-3.8-live-extended-thinking", display_name: "Gemini 3.8 Live Extended Thinking" },
+  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview" },
   { id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash" },
   { id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash" },
   { id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash" }
@@ -109,11 +110,11 @@ const STATIC_TTS_ENGINES = [
 const STATIC_STT_ENGINES = [
   { 
     id: "gemini_live_audio", 
-    display_name: "Gemini Live Native Audio Stream (Real-Time Bidirectional)" 
+    display_name: "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)" 
   },
   { 
     id: "primary_flash_stt", 
-    display_name: "Gemini Flash Multimodal Audio (One-Shot REST Transcription)" 
+    display_name: "Gemini Flash Multimodal Audio (REST One-Shot Fallback)" 
   }
 ];
 
@@ -158,7 +159,7 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
         ? currentConfig.models.tier1_options
         : DEFAULT_CHAT_MODELS);
 
-  const rawHeavy = categorizedData.tier2_options || categorizedData.chat_models;
+  const rawHeavy = categorizedData.heavy_models || categorizedData.tier2_options;
   const heavyModels = (Array.isArray(rawHeavy) && rawHeavy.length > 0)
     ? rawHeavy
     : ((currentConfig.models && Array.isArray(currentConfig.models.tier2_options) && currentConfig.models.tier2_options.length > 0)
@@ -176,7 +177,7 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
     populateDropdown(
       heavyEl, 
       heavyModels, 
-      currentConfig.tier2_heavy_model || (currentConfig.api && currentConfig.api.pro_model_id) || 'gemini-3.1-pro-preview'
+      currentConfig.tier2_heavy_model || (currentConfig.api && currentConfig.api.pro_model_id) || 'gemini-3.8-flash-extended'
     );
   }
 
@@ -208,16 +209,14 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
                 document.getElementById('select-stt-model');
 
   if (sttEl) {
-    // Merge discovered cloud transcribe models + native stream
-    const cloudStt = categorizedData.stt_models || categorizedData.stt_options || [];
-    const combinedSTT = [
-      ...cloudStt,
-      ...STATIC_STT_ENGINES
-    ];
+    let rawStt = currentConfig.stt_endpoint || currentConfig.stt_model_endpoint || (currentConfig.api && (currentConfig.api.stt_model_id || currentConfig.api.stt_endpoint)) || 'gemini_live_audio';
+    if (!['gemini_live_audio', 'primary_flash_stt'].includes(rawStt)) {
+      rawStt = 'gemini_live_audio';
+    }
     populateDropdown(
       sttEl, 
-      combinedSTT, 
-      currentConfig.stt_endpoint || currentConfig.stt_model_endpoint || (currentConfig.api && (currentConfig.api.stt_model_id || currentConfig.api.stt_endpoint)) || 'primary_flash_stt'
+      STATIC_STT_ENGINES, 
+      rawStt
     );
   }
 }
@@ -371,9 +370,9 @@ function collectSettingsPayload() {
     start_minimized: minEl ? minEl.checked : false,
     primary_model_endpoint: primaryEl ? primaryEl.value : 'gemini-3.8-flash',
     tier1_fast_model: primaryEl ? primaryEl.value : 'gemini-3.8-flash',
-    tier2_heavy_model: heavyEl ? heavyEl.value : 'gemini-3.1-pro-preview',
-    stt_model_endpoint: sttEl ? sttEl.value : 'primary_flash_stt',
-    stt_endpoint: sttEl ? sttEl.value : 'primary_flash_stt',
+    tier2_heavy_model: heavyEl ? heavyEl.value : 'gemini-3.8-flash-extended',
+    stt_model_endpoint: sttEl ? sttEl.value : 'gemini_live_audio',
+    stt_endpoint: sttEl ? sttEl.value : 'gemini_live_audio',
     tts_model_endpoint: ttsEl ? ttsEl.value : 'gemini_live',
     tts_endpoint: ttsEl ? ttsEl.value : 'gemini_live'
   };

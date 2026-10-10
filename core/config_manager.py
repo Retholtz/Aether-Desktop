@@ -22,21 +22,23 @@ def apply_startup_configuration(cfg: dict):
 
 DEFAULT_CURATED_MODELS: Dict[str, List[Dict[str, str]]] = {
     "tier1_options": [
-        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)"},
-        {"id": "gemini-3.8-live", "label": "Gemini 3.8 Live (gemini-3.8-live)"},
-        {"id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)"},
-        {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash (gemini-3.5-flash)"},
-        {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite (gemini-3.5-flash-lite)"}
+        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (High Speed)"},
+        {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash"},
+        {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
+        {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
+        {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite"}
     ],
     "tier2_options": [
-        {"id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview (gemini-3.1-pro-preview)"},
-        {"id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking (gemini-3.8-live-extended-thinking)"},
-        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (gemini-3.8-flash)"}
+        {"id": "gemini-3.8-flash-extended", "label": "Gemini 3.8 Extended (Deep Reasoning)"},
+        {"id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking"},
+        {"id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview"},
+        {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash"},
+        {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
+        {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"}
     ],
     "stt_options": [
-        {"id": "gemini-3.8-transcribe", "label": "gemini-3.8-transcribe (High Accuracy Cloud STT - Recommended)"},
-        {"id": "gemini-3.8-transcribe-live", "label": "gemini-3.8-transcribe-live (Streaming Cloud STT)"},
-        {"id": "gemini-live-native-audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional)"}
+        {"id": "gemini_live_audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)"},
+        {"id": "primary_flash_stt", "label": "Gemini Flash Multimodal Audio (REST One-Shot Fallback)"}
     ],
     "tts_options": [
         {"id": "gemini-live-voice-stream", "label": "Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)"},
@@ -239,12 +241,14 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         or api_cfg.get("stt_model_id")
         or cfg.get("stt_model_endpoint")
         or cfg.get("stt_endpoint")
-        or "primary_flash_stt"
+        or "gemini_live_audio"
     )
+    if stt_endpoint in ("gemini-3.8-flash", "gemini-3.5-transcribe", "gemini-3.5-transcribe-live", "gemini-live-native-audio"):
+        stt_endpoint = "gemini_live_audio"
     cfg["stt_model_endpoint"] = stt_endpoint
     cfg["stt_endpoint"] = stt_endpoint
-    api_cfg.setdefault("stt_endpoint", stt_endpoint)
-    api_cfg.setdefault("stt_model_id", stt_endpoint)
+    api_cfg["stt_endpoint"] = stt_endpoint
+    api_cfg["stt_model_id"] = stt_endpoint
 
     tts_voice = (
         api_cfg.get("voice_name")
@@ -273,8 +277,17 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg["voice_accent"] = voice_accent
     api_cfg["voice_accent"] = voice_accent
 
-    if "vad_trailing_silence_ms" not in cfg:
-        cfg["vad_trailing_silence_ms"] = audio_cfg.get("vad_trailing_silence_ms", 1400)
+    pipeline_mode = (
+        cfg.get("pipeline_mode")
+        or api_cfg.get("pipeline_mode")
+        or "live"
+    ).lower()
+    cfg["pipeline_mode"] = pipeline_mode
+    api_cfg["pipeline_mode"] = pipeline_mode
+
+    vad_silence = int(cfg.get("vad_trailing_silence_ms") or audio_cfg.get("vad_trailing_silence_ms") or 800)
+    cfg["vad_trailing_silence_ms"] = vad_silence
+    audio_cfg["vad_trailing_silence_ms"] = vad_silence
 
     # Curated Models Configuration Store
     if "models" not in cfg or not isinstance(cfg["models"], dict):
@@ -298,7 +311,7 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     heavy_model = (
         cfg.get("tier2_heavy_model")
         or api_cfg.get("pro_model_id")
-        or "gemini-3.1-pro-preview"
+        or "gemini-3.8-flash-extended"
     )
     cfg["tier2_heavy_model"] = heavy_model
     api_cfg["pro_model_id"] = heavy_model
@@ -353,6 +366,7 @@ class ConfigManager:
             # Apply top-level scalar updates
             for key in (
                 "agent_name",
+                "pipeline_mode",
                 "wake_phrase",
                 "sleep_phrase",
                 "stop_listening_phrase",
@@ -404,6 +418,10 @@ class ConfigManager:
                 self.config["tts_endpoint"] = tts_val
                 self.config.setdefault("api", {})["tts_model_id"] = tts_val
                 self.config.setdefault("api", {})["tts_endpoint"] = tts_val
+            if "pipeline_mode" in updates:
+                pipe_val = str(updates["pipeline_mode"]).lower()
+                self.config["pipeline_mode"] = pipe_val
+                self.config.setdefault("api", {})["pipeline_mode"] = pipe_val
 
             # Apply nested dictionary updates
             for section in ("api", "audio", "vision", "security", "ui", "user", "models"):
@@ -411,6 +429,8 @@ class ConfigManager:
                     sec_copy = dict(updates[section])
                     sec_copy.pop("new_api_key", None)
                     self.config.setdefault(section, {}).update(sec_copy)
+                    if "pipeline_mode" in sec_copy:
+                        self.config["pipeline_mode"] = str(sec_copy["pipeline_mode"]).lower()
                     # Promote wake_phrase / sleep_phrase / kill_phrase / always_on_mode to top-level before sync
                     if "wake_phrase" in sec_copy:
                         self.config["wake_phrase"] = sec_copy["wake_phrase"]

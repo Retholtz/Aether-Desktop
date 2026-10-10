@@ -79,12 +79,12 @@ def resolve_stt_model_endpoint(stt_endpoint: Optional[str] = None, fallback: Opt
         "primary_flash_stt",
         "primary_flash",
     ):
-        return fallback or cfg.get("primary_model_endpoint") or cfg.get("tier1_fast_model") or "gemini-2.5-flash"
+        return fallback or cfg.get("primary_model_endpoint") or cfg.get("tier1_fast_model") or "gemini-3.8-flash"
 
     if endpoint.startswith("models/"):
         endpoint = endpoint.replace("models/", "")
 
-    return endpoint or fallback or "gemini-2.5-flash"
+    return endpoint or fallback or "gemini-3.8-flash"
 
 
 def transcribe_audio_buffer(audio_bytes: bytes, mime_type: str = "audio/wav", stt_endpoint: Optional[str] = None) -> str:
@@ -106,7 +106,7 @@ def transcribe_audio_buffer(audio_bytes: bytes, mime_type: str = "audio/wav", st
             if res:
                 return res
         # Fallback to flash if live socket is unavailable:
-        endpoint = cfg.get("primary_model_endpoint", "gemini-2.5-flash")
+        endpoint = cfg.get("primary_model_endpoint", "gemini-3.8-flash")
 
     # 2. Sanitize model endpoint: ensure we don't pass fake or non-existent endpoints
     # Standard multimodal Flash models perform native audio transcription via generate_content
@@ -120,7 +120,7 @@ def transcribe_audio_buffer(audio_bytes: bytes, mime_type: str = "audio/wav", st
         "primary_flash",
     ):
         # Resolve to a valid multimodal Gemini Flash model
-        endpoint = cfg.get("primary_model_endpoint", "gemini-2.5-flash")
+        endpoint = cfg.get("primary_model_endpoint", "gemini-3.8-flash")
 
     if endpoint.startswith("models/"):
         endpoint = endpoint.replace("models/", "")

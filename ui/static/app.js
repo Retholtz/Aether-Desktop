@@ -1420,10 +1420,10 @@ window.aetherUI = {
       const primSel = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
       if (primSel) primSel.value = activePrimary;
 
-      const activeHeavy = cfg.tier2_heavy_model || api.pro_model_id || "gemini-3.1-pro-preview";
+      const activeHeavy = cfg.tier2_heavy_model || api.pro_model_id || "gemini-3.8-flash-extended";
       const heavySel = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]');
       if (heavySel) heavySel.value = activeHeavy;
-      const currentStt = cfg.stt_endpoint || cfg.stt_model_endpoint || api.stt_model_id || api.stt_endpoint || "primary_flash_stt";
+      const currentStt = cfg.stt_endpoint || cfg.stt_model_endpoint || api.stt_model_id || api.stt_endpoint || "gemini_live_audio";
       const sttEl = document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
       if (sttEl) {
         sttEl.value = currentStt;
@@ -1725,10 +1725,10 @@ window.aetherUI = {
       const voiceSpeedNum = parseFloat(document.getElementById("input-tts-speed")?.value || (this.currentConfig?.tts_speed || "1.00"));
       const voiceAccentVal = (document.getElementById("select-voice-accent") || document.getElementById("voiceAccentSelect"))?.value || this.currentConfig?.voice_accent || this.currentConfig?.api?.voice_accent || "default";
 
-      const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || this.currentConfig?.stt_endpoint || "primary_flash_stt";
+      const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || this.currentConfig?.stt_endpoint || "gemini_live_audio";
       const ttsModelVal = ttsVal;
       const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || this.currentConfig?.primary_model_endpoint || "gemini-3.8-flash";
-      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]'))?.value || this.currentConfig?.tier2_heavy_model || "gemini-3.1-pro-preview";
+      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]'))?.value || this.currentConfig?.tier2_heavy_model || "gemini-3.8-flash-extended";
 
       const inIdx = (inSel && inSel.value && inSel.value !== "-1" && !isNaN(parseInt(inSel.value, 10))) ? parseInt(inSel.value, 10) : (this.currentConfig?.audio?.input_device_index ?? null);
       const inName = (inSel && inSel.selectedOptions[0]) ? inSel.selectedOptions[0].text : (this.currentConfig?.audio?.input_device_name || "");
@@ -3448,9 +3448,9 @@ function collectSettingsPayload() {
     start_minimized: minEl ? minEl.checked : false,
     primary_model_endpoint: primaryEl ? primaryEl.value : "gemini-3.8-flash",
     tier1_fast_model: primaryEl ? primaryEl.value : "gemini-3.8-flash",
-    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-3.1-pro-preview",
-    stt_model_endpoint: sttEl ? sttEl.value : "primary_flash_stt",
-    stt_endpoint: sttEl ? sttEl.value : "primary_flash_stt",
+    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-3.8-flash-extended",
+    stt_model_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
+    stt_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
     tts_model_endpoint: ttsEl ? ttsEl.value : "gemini_live",
     tts_endpoint: ttsEl ? ttsEl.value : "gemini_live"
   };

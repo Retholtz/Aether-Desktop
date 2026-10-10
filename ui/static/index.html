@@ -463,10 +463,8 @@
                 <div class="form-group full">
                   <label for="stt_endpoint">Speech to Text (STT) Endpoint</label>
                   <select id="stt_endpoint" name="stt_endpoint" class="hud-select" data-alias="sttSelect">
-                    <option value="primary_flash_stt" selected>Gemini Flash Multimodal Audio (One-Shot REST Transcription)</option>
-                    <option value="gemini_live_audio">Gemini Live Native Audio Stream (Real-Time Bidirectional)</option>
-                    <option value="gemini-3.5-transcribe">Gemini 3.5 Transcribe (High Accuracy Cloud STT)</option>
-                    <option value="gemini-3.5-transcribe-live">Gemini 3.5 Transcribe Live (Streaming Cloud STT)</option>
+                    <option value="gemini_live_audio" selected>Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)</option>
+                    <option value="primary_flash_stt">Gemini Flash Multimodal Audio (REST One-Shot Fallback)</option>
                   </select>
                   <span class="input-hint">Microphone speech recognition pipeline.</span>
                 </div>
@@ -501,7 +499,7 @@
                     <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
                     <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
                     <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash Lite</option>
-                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Heavy Reasoning)</option>
+                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
                   </select>
                   <span class="field-hint input-hint">Primary model used for core chat, live tools, and fast multimodal response.</span>
                 </div>
@@ -510,8 +508,9 @@
                 <div class="form-group">
                   <label for="select-heavy-model">Tier 2 Heavy Model Endpoint</label>
                   <select id="select-heavy-model" class="form-control hud-select">
-                    <option value="gemini-3.1-pro-preview" selected>Gemini 3.1 Pro Preview (Heavy Reasoning)</option>
-                    <option value="gemini-3.8-flash">Gemini 3.8 Flash (High Speed)</option>
+                    <option value="gemini-3.8-flash-extended" selected>Gemini 3.8 Extended (Deep Reasoning)</option>
+                    <option value="gemini-3.8-live-extended-thinking">Gemini 3.8 Live Extended Thinking</option>
+                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
                     <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
                     <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
                     <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>

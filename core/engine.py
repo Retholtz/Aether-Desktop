@@ -592,7 +592,7 @@ class AetherEngine:
         cfg = self.config_getter()
         defaults = {
             "tier1_fast_model": "gemini-3.8-flash",
-            "tier2_heavy_model": "gemini-3.1-pro-preview",
+            "tier2_heavy_model": "gemini-3.8-flash-extended",
             "tier2_thinking_budget": 2048,
             "reflexion_idle_delay_seconds": 15,
             "reflexion_poll_interval_seconds": 30
@@ -601,7 +601,7 @@ class AetherEngine:
             if k not in cfg:
                 cfg[k] = v
         if "vad_trailing_silence_ms" not in cfg:
-            cfg["vad_trailing_silence_ms"] = cfg.get("audio", {}).get("vad_trailing_silence_ms", 1400)
+            cfg["vad_trailing_silence_ms"] = cfg.get("audio", {}).get("vad_trailing_silence_ms", 800)
         return cfg
 
     @property
@@ -1232,16 +1232,25 @@ class AetherEngine:
                     await active_session.send_client_content(turns=[content], turn_complete=True)
 
                 # 2. Check for microphone audio
-                try:
-                    pcm_data = await asyncio.wait_for(self.audio.input_queue.get(), timeout=0.02)
-                    await active_session.send_realtime_input(
-                        audio=types.Blob(
-                            data=pcm_data,
-                            mime_type="audio/pcm;rate=16000"
-                        )
-                    )
-                except asyncio.TimeoutError:
-                    pass
+                if self.audio and self.audio.input_queue:
+                    while not self.audio.input_queue.empty():
+                        try:
+                            pcm_data = self.audio.input_queue.get_nowait()
+                        except Exception:
+                            break
+                        if pcm_data == b"__END_OF_TURN__":
+                            try:
+                                await active_session.send_realtime_input(audio_stream_end=True)
+                                logger.info("[SEND_LOOP] Sent audio_stream_end=True to Live session.")
+                            except Exception as end_err:
+                                logger.debug(f"[SEND_LOOP] audio_stream_end send: {end_err}")
+                        elif pcm_data and len(pcm_data) > 0:
+                            await active_session.send_realtime_input(
+                                audio=types.Blob(
+                                    data=pcm_data,
+                                    mime_type="audio/pcm;rate=16000"
+                                )
+                            )
 
                 # 3. Stream real-time desktop vision frames if enabled
                 vision_cfg = current_cfg.get("vision", {})
@@ -1807,7 +1816,7 @@ class AetherEngine:
         self.notify("status", {"state": "connecting", "message": f"Opening audio devices ({in_idx}, {out_idx})..."})
 
         try:
-            vad_silence_ms = config.get("vad_trailing_silence_ms", audio_cfg.get("vad_trailing_silence_ms", 1400))
+            vad_silence_ms = config.get("vad_trailing_silence_ms", audio_cfg.get("vad_trailing_silence_ms", 800))
             wake_phrase_cfg = (
                 config.get("wake_phrase")
                 or audio_cfg.get("wake_phrase")
@@ -1868,7 +1877,12 @@ class AetherEngine:
         if kill_phrase:
             system_instruction_text += f"\nImportant: If the user says '{kill_phrase}' or 'stop', halt speaking immediately."
 
-        pipeline_mode = api_cfg.get("pipeline_mode", "modular").lower()
+        pipeline_mode = (
+            api_cfg.get("pipeline_mode")
+            or config.get("pipeline_mode")
+            or self.config_getter().get("pipeline_mode")
+            or "live"
+        ).lower()
 
         try:
             if pipeline_mode == "modular":
@@ -1932,7 +1946,7 @@ class AetherEngine:
             or api_cfg.get("stt_model_id")
             or self.config_getter().get("stt_endpoint")
             or self.config_getter().get("stt_model_endpoint")
-            or "primary_flash_stt"
+            or "gemini_live_audio"
         )
         cortex_model = api_cfg.get("model_id", "gemini-3.8-flash")
         from core.stt_service import resolve_stt_model_endpoint
@@ -3608,7 +3622,6 @@ class AetherEngine:
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             temperature=temperature,
-            safety_settings=get_permissive_safety_settings(),
             tools=[
                 types.Tool(google_search=types.GoogleSearch()),
                 types.Tool(function_declarations=live_tools)
@@ -3803,6 +3816,7 @@ class AetherEngine:
                         except Exception as e:
                             if self.is_running and "1000" not in str(e):
                                 print(f"[TASK FINISHED WITH ERROR] {e}")
+                                logger.error(f"[LIVE RECEIVE TASK ERROR] {e}")
                             break
 
                 # Teardown current connection
@@ -3832,6 +3846,7 @@ class AetherEngine:
                     break
                 reconnect_delay = self.conn_mgr.compute_next_backoff()
                 print(f"\n[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
+                logger.error(f"[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
                 self.notify("status", {"state": "reconnecting", "message": f"Connection lost ({e}). Reconnecting in {reconnect_delay:.1f}s..."})
                 self.notify("chat_event", {
                     "type": "system",

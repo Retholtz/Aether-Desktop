@@ -40,7 +40,15 @@ DEFAULT_CATEGORIZED_MODELS: Dict[str, List[Dict[str, Any]]] = {
         {"id": "gemini-3.6-flash", "display_name": "Gemini 3.6 Flash"},
         {"id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash"},
         {"id": "gemini-3.5-flash-lite", "display_name": "Gemini 3.5 Flash Lite"},
-        {"id": "gemini-3.1-pro-preview", "display_name": "Gemini 3.1 Pro Preview (Heavy Reasoning)"}
+        {"id": "gemini-3.1-pro-preview", "display_name": "Gemini 3.1 Pro Preview"}
+    ],
+    "heavy_models": [
+        {"id": "gemini-3.8-flash-extended", "display_name": "Gemini 3.8 Extended (Deep Reasoning)"},
+        {"id": "gemini-3.8-live-extended-thinking", "display_name": "Gemini 3.8 Live Extended Thinking"},
+        {"id": "gemini-3.1-pro-preview", "display_name": "Gemini 3.1 Pro Preview"},
+        {"id": "gemini-3.7-flash", "display_name": "Gemini 3.7 Flash"},
+        {"id": "gemini-3.6-flash", "display_name": "Gemini 3.6 Flash"},
+        {"id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash"}
     ],
     "tts_models": [
         {"id": "gemini-3.8-flash-tts", "display_name": "Gemini 3.8 Flash TTS (Cloud)"},
@@ -48,10 +56,13 @@ DEFAULT_CATEGORIZED_MODELS: Dict[str, List[Dict[str, Any]]] = {
         {"id": "gemini-3.1-flash-tts-preview", "display_name": "Gemini 3.1 Flash TTS Preview (Cloud)"}
     ],
     "stt_models": [
-        {"id": "gemini-3.5-transcribe", "display_name": "Gemini 3.5 Transcribe (High Accuracy Cloud STT)"},
-        {"id": "gemini-3.5-transcribe-live", "display_name": "Gemini 3.5 Transcribe Live (Streaming Cloud STT)"}
+        {"id": "gemini_live_audio", "display_name": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)"},
+        {"id": "primary_flash_stt", "display_name": "Gemini Flash Multimodal Audio (REST One-Shot Fallback)"}
     ]
 }
+
+DEFAULT_CATEGORIZED_MODELS["tier1_options"] = DEFAULT_CATEGORIZED_MODELS["chat_models"]
+DEFAULT_CATEGORIZED_MODELS["tier2_options"] = DEFAULT_CATEGORIZED_MODELS["heavy_models"]
 
 DEFAULT_FALLBACK_MODELS = DEFAULT_CATEGORIZED_MODELS["chat_models"]
 
@@ -173,12 +184,19 @@ def load_cached_categorized_models() -> Dict[str, List[Dict[str, Any]]]:
             with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict) and "chat_models" in data:
+                    if "heavy_models" not in data:
+                        data["heavy_models"] = DEFAULT_CATEGORIZED_MODELS["heavy_models"]
+                    if "tier2_options" not in data:
+                        data["tier2_options"] = data.get("heavy_models", DEFAULT_CATEGORIZED_MODELS["heavy_models"])
                     return data
                 elif isinstance(data, dict) and "tier1_options" in data:
                     return {
                         "chat_models": data.get("tier1_options", DEFAULT_CATEGORIZED_MODELS["chat_models"]),
+                        "heavy_models": data.get("tier2_options", DEFAULT_CATEGORIZED_MODELS["heavy_models"]),
                         "tts_models": data.get("tts_options", DEFAULT_CATEGORIZED_MODELS["tts_models"]),
                         "stt_models": data.get("stt_options", DEFAULT_CATEGORIZED_MODELS["stt_models"]),
+                        "tier1_options": data.get("tier1_options", DEFAULT_CATEGORIZED_MODELS["chat_models"]),
+                        "tier2_options": data.get("tier2_options", DEFAULT_CATEGORIZED_MODELS["heavy_models"]),
                     }
         except Exception as e:
             print(f"[WARN] [MODEL_DISCOVERY] Error loading manifest: {e}")
@@ -253,7 +271,10 @@ def fetch_available_gemini_models(client, probe_endpoints: bool = True) -> Dict[
         "updated_at": time.time(),
         "chat_models": verified_chat or DEFAULT_CATEGORIZED_MODELS["chat_models"],
         "tts_models": verified_tts or DEFAULT_CATEGORIZED_MODELS["tts_models"],
-        "stt_models": verified_stt or DEFAULT_CATEGORIZED_MODELS["stt_models"]
+        "stt_models": verified_stt or DEFAULT_CATEGORIZED_MODELS["stt_models"],
+        "heavy_models": DEFAULT_CATEGORIZED_MODELS["heavy_models"],
+        "tier1_options": verified_chat or DEFAULT_CATEGORIZED_MODELS["chat_models"],
+        "tier2_options": DEFAULT_CATEGORIZED_MODELS["heavy_models"],
     }
 
     try:

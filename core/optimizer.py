@@ -109,8 +109,10 @@ class ReflexionEngine:
         if not isinstance(self.config, dict):
             self.config = {}
 
-        self.heavy_model = self.config.get("tier2_heavy_model", "gemini-3.8-pro")
-        self.heavy_model = self.config.get("tier2_heavy_model", "gemini-3.1-pro-preview")
+        configured_heavy = self.config.get("tier2_heavy_model", "gemini-3.8-flash-extended")
+        if configured_heavy in ("gemini-3.8-pro", "gemini-3.8-flash-extended"):
+            configured_heavy = "gemini-3.8-flash"
+        self.heavy_model = configured_heavy
         self.thinking_budget = self.config.get("tier2_thinking_budget", 2048)
 
         # Gemini Client Resolution: env var -> engine client -> decrypted config
