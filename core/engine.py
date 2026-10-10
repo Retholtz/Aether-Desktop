@@ -336,6 +336,8 @@ class AetherEngine:
         self._active_recv_task: Optional[asyncio.Task] = None
         self._base_system_instruction: str = ""
         self._session_resumption_handle: Optional[str] = None
+        self._is_transcribing: bool = False
+        self._transcribing_start_time: float = 0.0
 
         def _handle_game_mode_hotkey_toggle():
             if hasattr(self, "game_engine") and self.game_engine:
@@ -450,6 +452,14 @@ class AetherEngine:
 
             # Check for silent timeouts, session duration limits, or disconnects
             now = time.time()
+            # Watchdog safeguard against orphaned "transcribing" state (>10s)
+            if getattr(self, "_is_transcribing", False):
+                if now - getattr(self, "_transcribing_start_time", 0.0) > 10.0:
+                    logger.warning("[WATCHDOG] Transcribing state timed out (>10s) without server response. Reverting to listening state.")
+                    self._is_transcribing = False
+                    agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether")
+                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+
             if self.conn_mgr.state == ConnectionState.CONNECTED:
                 # 1. Proactive session rotation when elapsed duration or metrics exceed threshold during idle
                 if (
@@ -482,8 +492,8 @@ class AetherEngine:
                             ),
                             loop
                         )
-                # 2. If idle for > 9 minutes without traffic, ping or transparently re-open before user turn
-                elif now - self.conn_mgr.last_heartbeat_ts > 540:  # 9 minutes
+                # 2. If idle for > 7 minutes without traffic, ping or transparently re-open before user turn
+                elif now - self.conn_mgr.last_heartbeat_ts > 420:  # 7 minutes (safely below 9m server limit)
                     print("[INFO] [ENGINE] Preemptive idle refresh triggered on stale Live WebSocket.")
                     self.reconnect_live_session(reason="Idle Timeout Prevention")
             elif self.conn_mgr.state in (ConnectionState.DISCONNECTED, ConnectionState.RECONNECTING):
@@ -1010,6 +1020,7 @@ class AetherEngine:
         if self.audio:
             self.audio.kill_output()
         self.is_speaking = False
+        self._is_transcribing = False
         self.notify("status", {"state": "listening", "message": "Playback killed."})
         self.notify("chat_event", {
             "type": "system",
@@ -1150,9 +1161,12 @@ class AetherEngine:
             self.last_user_turn_timestamp = time.time()
             self.last_user_turn_time = time.perf_counter()
             if not self.is_speaking:
+                self._is_transcribing = True
+                self._transcribing_start_time = time.time()
                 self.notify("status", {"state": "transcribing", "message": "Transcribing speech..."})
         elif state in ("speech_idle", "speech_discarded"):
             self.is_audio_streaming = False
+            self._is_transcribing = False
             if self.is_speaking:
                 return
             agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
@@ -1277,12 +1291,15 @@ class AetherEngine:
                             except Exception as end_err:
                                 logger.debug(f"[SEND_LOOP] audio_stream_end send: {end_err}")
                         elif pcm_data and len(pcm_data) > 0:
-                            await active_session.send_realtime_input(
-                                audio=types.Blob(
-                                    data=pcm_data,
-                                    mime_type="audio/pcm;rate=16000"
+                            try:
+                                await active_session.send_realtime_input(
+                                    audio=types.Blob(
+                                        data=pcm_data,
+                                        mime_type="audio/pcm;rate=16000"
+                                    )
                                 )
-                            )
+                            except Exception as audio_err:
+                                logger.debug(f"[SEND_LOOP] audio send exception: {audio_err}")
 
                 # 3. Stream real-time desktop vision frames if enabled
                 vision_cfg = current_cfg.get("vision", {})
@@ -1499,6 +1516,7 @@ class AetherEngine:
                     # 2. Model Audio Generation
                     model_turn = getattr(server_content, "model_turn", None)
                     if model_turn is not None:
+                        self._is_transcribing = False
                         # Finalize user speech turn when model starts responding
                         if self.current_user_speech.strip():
                             self._kill_playback_flag = False
@@ -3772,8 +3790,8 @@ class AetherEngine:
         logger.info("[ROTATION] Commencing silent session rotation & context compaction...")
 
         try:
-            # 1. Wait until audio pipeline is idle (max 5 seconds)
-            for _ in range(50):
+            # 1. Wait until audio pipeline is idle (max 30 seconds to allow active user speech & response to finish)
+            for _ in range(300):
                 if self._is_audio_idle_for_rotation():
                     break
                 await asyncio.sleep(0.1)
@@ -3858,16 +3876,20 @@ class AetherEngine:
             self.session_lifecycle.flush_session_to_disk()
             self.session_lifecycle.reset_metrics()
             self._session_resumption_handle = None
+            self._is_transcribing = False
 
             self.notify("chat_event", {
                 "type": "system",
                 "content": "🔄 Context compacted seamlessly. Active session re-anchored with zero audio disruption."
             })
+            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
             logger.info("[ROTATION] Silent live session rotation completed successfully!")
             return True
         except Exception as rot_err:
             logger.error(f"[ROTATION ERROR] Failed silent reconnect: {rot_err}", exc_info=True)
             self.session_lifecycle.rotation_in_progress = False
+            self._is_transcribing = False
+            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
             return False
 
     async def _run_live_pipeline(
