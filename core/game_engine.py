@@ -42,6 +42,8 @@ class GameEngine:
         "toggle_game_mode",
         "record_copilot_observation",
         "update_game_scratchpad",
+        "get_game_scratchpad",
+        "search_copilot_log",
         "pan_and_mark_map_location",
         "assist_game_navigation",
         "inspect_screen_context",
@@ -247,8 +249,11 @@ class GameEngine:
             f"   - You MUST NEVER break character to discuss out-of-game matters, real-world events, politics, science, personal tasks, Python code, software architecture, system bugs, or application development.\n"
             f"   - If the user asks about real-world topics or system bugs, stay in-character and deflect in-universe:\n"
             f"     'My focus is entirely on our journey in {game_title}. If you wish to discuss real-world matters or inspect code, please tell me to \"disable Game Mode\" (or press {hotkey_display}).'\n"
-            f"3. IN-GAME ACTIONS:\n"
-            f"   You can execute game actions via `trigger_game_action` and check telemetry via `get_current_game_telemetry` / `get_current_game_status`.\n"
+            f"3. IN-GAME ACTIONS & TWO-TIER MEMORY:\n"
+            f"   - You can execute game actions via `trigger_game_action` and check telemetry via `get_current_game_telemetry` / `get_current_game_status`.\n"
+            f"   - Live Working Memory: Your system prompt maintains active immediate objectives, location, and sub-tasks across 10-minute session rotations.\n"
+            f"   - Deep Storage & Intel: Use `get_game_scratchpad` to view personal notes/quests, and `search_copilot_log` to query historical landmarks/intel.\n"
+            f"   - Record discoveries with `record_copilot_observation` and update player notes with `update_game_scratchpad`.\n"
             f"================================================================================\n"
         )
         game_context = self.manager.get_active_game_context()

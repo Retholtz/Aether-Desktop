@@ -20,7 +20,7 @@ logger = get_logger("SessionLifecycle")
 
 # Default rotation trigger thresholds
 DEFAULT_MAX_TURNS = 25
-DEFAULT_MAX_DURATION_SECONDS = 1800.0  # 30 minutes
+DEFAULT_MAX_DURATION_SECONDS = 600.0   # 10 minutes (preempts 15m Gemini Live server cutoff)
 DEFAULT_MAX_TOOL_CHARS = 50000         # 50k characters of tool stdout/tracebacks
 
 COMPACTOR_PROMPT = """Summarize the active desktop context and conversation state into exactly 4-6 concise bullet points:
@@ -28,6 +28,16 @@ COMPACTOR_PROMPT = """Summarize the active desktop context and conversation stat
 - Key facts established in this session.
 - Any active window states or working files currently in focus.
 Omit greetings and small talk. Keep it purely operational."""
+
+GAME_COMPACTOR_PROMPT = """Summarize the active in-game co-pilot context and tactical conversation state into the following structured facets (keep each concise and under 25 words):
+- ACTIVE GAME & UNIVERSE: Current game title, universe setting, and player role.
+- PRIMARY OBJECTIVE: Current quest, mission, or high-level player goal.
+- IMMEDIATE SUB-TASK: The exact action or sub-goal being tackled right now.
+- LOCATION & VESSEL/STATUS: Current coordinates, star system, zone, ship/character health, or vehicle condition.
+- KEY RECENT DECISIONS & TACTICAL DIRECTIVES: Critical rules, navigation choices, or commands given in the last 10 minutes.
+- NOTABLE DISCOVERIES/INTEL: Landmarks, items, or clues mentioned recently.
+
+Omit conversational pleasantries, greetings, and system metadata. Output only the structured facets above."""
 
 
 class SessionLifecycleManager:
@@ -179,14 +189,28 @@ class SessionLifecycleManager:
     async def generate_session_summary(
         self,
         client: Optional[genai.Client],
-        model: str = "gemini-3.8-flash"
+        model: str = "gemini-3.8-flash",
+        is_game_mode: bool = False,
+        game_title: str = "",
+        active_game_context: str = ""
     ) -> str:
         """
-        Asynchronously compacts the active conversation history into 4-6 operational bullet points
-        using a fast, non-blocking call to gemini-3.8-flash.
+        Asynchronously compacts the active conversation history using a fast, non-blocking call to gemini-3.8-flash.
+        When is_game_mode is True, uses the structured Two-Tier Game Compactor schema with game facets.
+        When is_game_mode is False, compacts into 4-6 operational desktop bullet points.
         """
         active_turns = self.get_active_context_turns()
         if not active_turns:
+            if is_game_mode:
+                game_label = game_title or "Active Game"
+                return (
+                    f"- ACTIVE GAME & UNIVERSE: {game_label}\n"
+                    f"- PRIMARY OBJECTIVE: Standing by for player orders.\n"
+                    f"- IMMEDIATE SUB-TASK: In-game co-pilot initialized.\n"
+                    f"- LOCATION & VESSEL/STATUS: Operational.\n"
+                    f"- KEY RECENT DECISIONS & TACTICAL DIRECTIVES: Follow player direct instructions.\n"
+                    f"- NOTABLE DISCOVERIES/INTEL: None logged yet."
+                )
             return "- Session newly initialized; no prior actions."
 
         # Format transcript lines for the compactor
@@ -196,15 +220,28 @@ class SessionLifecycleManager:
             transcript_lines.append(f"{role_label}: {t['content']}")
         transcript_text = "\n".join(transcript_lines)
 
-        full_prompt = (
-            f"Below is the recent conversation and desktop task history:\n"
-            f"---\n"
-            f"{transcript_text}\n"
-            f"---\n\n"
-            f"{COMPACTOR_PROMPT}"
-        )
+        if is_game_mode:
+            game_header = f"Active Game: {game_title}\n" if game_title else ""
+            if active_game_context:
+                game_header += f"Current In-Game Context:\n{active_game_context}\n"
+            full_prompt = (
+                f"Below is the recent in-game dialogue and tactical action history:\n"
+                f"---\n"
+                f"{game_header}"
+                f"{transcript_text}\n"
+                f"---\n\n"
+                f"{GAME_COMPACTOR_PROMPT}"
+            )
+        else:
+            full_prompt = (
+                f"Below is the recent conversation and desktop task history:\n"
+                f"---\n"
+                f"{transcript_text}\n"
+                f"---\n\n"
+                f"{COMPACTOR_PROMPT}"
+            )
 
-        logger.info(f"[LIFECYCLE COMPACTOR] Generating state summary via {model} ({len(active_turns)} turns)...")
+        logger.info(f"[LIFECYCLE COMPACTOR] Generating state summary via {model} (is_game_mode={is_game_mode}, {len(active_turns)} turns)...")
 
         summary_text = ""
         if client:
@@ -239,32 +276,62 @@ class SessionLifecycleManager:
 
         # If LLM generation failed or client was None, construct deterministic operational summary
         if not summary_text:
-            recent_turns = active_turns[-6:]
-            bullets = []
-            for t in recent_turns:
-                r = "User asked" if t["role"] == "user" else "Assistant performed"
-                snippet = t["content"].replace("\n", " ")[:120]
-                bullets.append(f"- {r}: {snippet}")
-            summary_text = "\n".join(bullets[:5]) if bullets else "- Ongoing user session continuing without prior tasks."
+            if is_game_mode:
+                game_label = game_title or "Active Game"
+                recent_user = [t["content"] for t in active_turns if t["role"] == "user"]
+                last_order = recent_user[-1].replace("\n", " ")[:100] if recent_user else "Standing by for player orders."
+                summary_text = (
+                    f"- ACTIVE GAME & UNIVERSE: {game_label}\n"
+                    f"- PRIMARY OBJECTIVE: In-game co-pilot support for {game_label}.\n"
+                    f"- IMMEDIATE SUB-TASK: {last_order}\n"
+                    f"- LOCATION & VESSEL/STATUS: Operational.\n"
+                    f"- KEY RECENT DECISIONS & TACTICAL DIRECTIVES: Seamlessly continuing gameplay.\n"
+                    f"- NOTABLE DISCOVERIES/INTEL: Retrieved from active telemetry."
+                )
+            else:
+                recent_turns = active_turns[-6:]
+                bullets = []
+                for t in recent_turns:
+                    r = "User asked" if t["role"] == "user" else "Assistant performed"
+                    snippet = t["content"].replace("\n", " ")[:120]
+                    bullets.append(f"- {r}: {snippet}")
+                summary_text = "\n".join(bullets[:5]) if bullets else "- Ongoing user session continuing without prior tasks."
 
         self.last_summary = summary_text
         logger.info(f"[LIFECYCLE COMPACTOR] State summary produced ({len(summary_text)} chars):\n{summary_text}")
         return summary_text
 
-    def build_compacted_instruction(self, base_instruction: str, summary: Optional[str] = None) -> str:
+    def build_compacted_instruction(
+        self,
+        base_instruction: str,
+        summary: Optional[str] = None,
+        is_game_mode: bool = False
+    ) -> str:
         """
-        Appends the 4-6 bullet state summary into the system instruction for the newly rotated session.
+        Appends the state summary into the system instruction for the newly rotated session.
+        In Game Mode, applies co-pilot continuous immersion framing.
+        In Desktop Mode, applies desktop operational continuity framing.
         """
         active_summary = summary or self.last_summary
         if not active_summary:
             return base_instruction
 
-        compacted_block = (
-            "\n\nACTIVE DESKTOP CONTEXT & CONVERSATION STATE (ROLLING CONTEXT COMPACTOR):\n"
-            "The following bullet points summarize the active state and pending workflows from the previous session turns:\n"
-            f"{active_summary}\n\n"
-            "DIRECTIVE: Seamlessly continue assisting the user without re-introducing yourself, greeting them again, or losing context of the above state."
-        )
+        if is_game_mode:
+            compacted_block = (
+                "\n\n================================================================================\n"
+                "ACTIVE IN-GAME TACTICAL STATE & CO-PILOT WORKING MEMORY (TWO-TIER ROTATION):\n"
+                "The following structured facets represent the continuous state of our gameplay from previous session turns:\n"
+                f"{active_summary}\n\n"
+                "DIRECTIVE: Stay in-character as the dedicated co-pilot. Seamlessly continue assisting without greeting the player again or dropping active mission context.\n"
+                "================================================================================\n"
+            )
+        else:
+            compacted_block = (
+                "\n\nACTIVE DESKTOP CONTEXT & CONVERSATION STATE (ROLLING CONTEXT COMPACTOR):\n"
+                "The following bullet points summarize the active state and pending workflows from the previous session turns:\n"
+                f"{active_summary}\n\n"
+                "DIRECTIVE: Seamlessly continue assisting the user without re-introducing yourself, greeting them again, or losing context of the above state."
+            )
 
         return base_instruction + compacted_block
 

@@ -335,6 +335,7 @@ class AetherEngine:
         self._active_cm = None
         self._active_recv_task: Optional[asyncio.Task] = None
         self._base_system_instruction: str = ""
+        self._session_resumption_handle: Optional[str] = None
 
         def _handle_game_mode_hotkey_toggle():
             if hasattr(self, "game_engine") and self.game_engine:
@@ -447,11 +448,42 @@ class AetherEngine:
             if self._stop_watchdog.is_set():
                 break
 
-            # Check for silent timeouts or disconnects
+            # Check for silent timeouts, session duration limits, or disconnects
             now = time.time()
             if self.conn_mgr.state == ConnectionState.CONNECTED:
-                # If idle for > 9 minutes without traffic, ping or transparently re-open before user turn
-                if now - self.conn_mgr.last_heartbeat_ts > 540:  # 9 minutes
+                # 1. Proactive session rotation when elapsed duration or metrics exceed threshold during idle
+                if (
+                    self.is_running
+                    and hasattr(self, "session_lifecycle")
+                    and self.session_lifecycle.needs_rotation()
+                    and not self.session_lifecycle.rotation_in_progress
+                    and self._is_audio_idle_for_rotation()
+                ):
+                    loop = getattr(self, "_loop", None)
+                    client = getattr(self, "client", None) or getattr(self, "genai_client", None)
+                    if loop and loop.is_running() and client:
+                        api_cfg = self.config_getter().get("api", {})
+                        model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
+                        voice_name = api_cfg.get("voice_name", "Aoede")
+                        temperature = float(api_cfg.get("temperature", 0.7))
+                        voice_accent = api_cfg.get("voice_accent", "default")
+                        agent_name = api_cfg.get("agent_name", "Aether")
+                        kill_phrase = api_cfg.get("kill_phrase", "")
+                        logger.info("[WATCHDOG] Session exceeded lifecycle duration threshold during idle. Triggering silent rotation...")
+                        asyncio.run_coroutine_threadsafe(
+                            self.rotate_live_session(
+                                client=client,
+                                model_id=model_id,
+                                kill_phrase=kill_phrase,
+                                agent_name=agent_name,
+                                voice_name=voice_name,
+                                temperature=temperature,
+                                voice_accent=voice_accent
+                            ),
+                            loop
+                        )
+                # 2. If idle for > 9 minutes without traffic, ping or transparently re-open before user turn
+                elif now - self.conn_mgr.last_heartbeat_ts > 540:  # 9 minutes
                     print("[INFO] [ENGINE] Preemptive idle refresh triggered on stale Live WebSocket.")
                     self.reconnect_live_session(reason="Idle Timeout Prevention")
             elif self.conn_mgr.state in (ConnectionState.DISCONNECTED, ConnectionState.RECONNECTING):
@@ -1410,6 +1442,34 @@ class AetherEngine:
                         finally:
                             self.is_tool_executing = False
 
+                    # Track Session Resumption Token from Gemini Live
+                    resump_update = getattr(response, "session_resumption_update", None)
+                    if resump_update and getattr(resump_update, "new_handle", None):
+                        self._session_resumption_handle = resump_update.new_handle
+
+                    # Handle Server GoAway (Gemini Live session duration limit approaching)
+                    go_away = getattr(response, "go_away", None)
+                    if go_away is not None:
+                        time_left = getattr(go_away, "time_left", "unknown")
+                        logger.warning(f"[LIVE GOAWAY] Received GoAway signal from Gemini Live (time_left={time_left}). Triggering proactive session rotation...")
+                        if (
+                            not self.session_lifecycle.rotation_in_progress
+                            and client is not None
+                            and model_id is not None
+                        ):
+                            asyncio.create_task(
+                                self.rotate_live_session(
+                                    client=client,
+                                    model_id=model_id,
+                                    kill_phrase=kill_phrase,
+                                    agent_name=agent_name,
+                                    voice_name=voice_name or "Aoede",
+                                    temperature=temperature if temperature is not None else 0.7,
+                                    voice_accent=voice_accent or "default"
+                                )
+                            )
+                        continue
+
                     server_content = getattr(response, "server_content", None)
                     if server_content is None:
                         continue
@@ -1577,13 +1637,26 @@ class AetherEngine:
         except Exception as e:
             err_str = str(e)
             err_lower = err_str.lower()
-            if "1000" in err_lower or "1006" in err_lower or "closed" in err_lower or "normal" in err_lower:
-                print(f"[INFO] [RECEIVE_LOOP] Live WebSocket closed by gateway: {e}")
-                self.conn_mgr.set_disconnected(reason="Gateway closure")
+            is_session_expiration = (
+                "1008" in err_lower
+                or "goaway" in err_lower
+                or "session duration" in err_lower
+                or "duration limit" in err_lower
+            )
+            if "1000" in err_lower or "1006" in err_lower or "closed" in err_lower or "normal" in err_lower or is_session_expiration:
+                if is_session_expiration:
+                    print(f"[INFO] [RECEIVE_LOOP] Live session reached server duration limit: {e}. Auto-refreshing...")
+                    logger.info(f"[RECEIVE_LOOP] Live session reached server duration limit: {e}. Auto-refreshing...")
+                    self.conn_mgr.set_disconnected(reason="Session duration expiration")
+                    self.notify("status", {"state": "reconnecting", "message": "Refreshing live session..."})
+                else:
+                    print(f"[INFO] [RECEIVE_LOOP] Live WebSocket closed by gateway: {e}")
+                    self.conn_mgr.set_disconnected(reason="Gateway closure")
             elif not self.is_running:
                 pass
             else:
                 print(f"[ERROR] [RECEIVE_LOOP] Unexpected stream error: {e}")
+                logger.error(f"[RECEIVE_LOOP] Unexpected stream error: {e}")
                 self.conn_mgr.set_disconnected(reason=f"Exception: {e}")
                 if self.audio:
                     self.audio.kill_output()
@@ -2937,10 +3010,30 @@ class AetherEngine:
                 if self.session_lifecycle.needs_rotation():
                     logger.info("[LIFECYCLE] Modular rotation threshold reached. Compacting context via background compactor...")
                     self.session_lifecycle.flush_session_to_disk()
-                    summary = await self.session_lifecycle.generate_session_summary(client)
+                    is_gm = bool(
+                        getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active()
+                        or getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active()
+                    )
+                    gm_title = ""
+                    gm_ctx = ""
+                    if is_gm and hasattr(self, "game_mgr") and self.game_mgr:
+                        active_id = self.game_mgr.data.get("active_profile", "")
+                        prof = self.game_mgr.get_profile(active_id) if active_id else None
+                        gm_title = prof.get("display_name", active_id) if prof else ""
+                        if hasattr(self.game_mgr, "get_active_game_context"):
+                            gm_ctx = self.game_mgr.get_active_game_context()
+
+                    summary = await self.session_lifecycle.generate_session_summary(
+                        client,
+                        is_game_mode=is_gm,
+                        game_title=gm_title,
+                        active_game_context=gm_ctx
+                    )
+                    base_inst = self._build_system_instruction() if is_gm else self._base_system_instruction
                     updated_instruction = self.session_lifecycle.build_compacted_instruction(
-                        self._base_system_instruction,
-                        summary=summary
+                        base_inst,
+                        summary=summary,
+                        is_game_mode=is_gm
                     )
                     chat = client.chats.create(
                         model=cortex_model,
@@ -3595,9 +3688,10 @@ class AetherEngine:
         self,
         system_instruction_text: Optional[str] = None,
         voice_name: Optional[str] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        use_resumption: bool = True
     ) -> types.LiveConnectConfig:
-        """Constructs types.LiveConnectConfig with Google Search, tool declarations, and voice."""
+        """Constructs types.LiveConnectConfig with Google Search, tool declarations, voice, and session resumption."""
         api_cfg = self.config_getter().get("api", {})
         if system_instruction_text is None:
             system_instruction_text = self._build_system_instruction()
@@ -3619,9 +3713,19 @@ class AetherEngine:
         if temperature is None:
             temperature = float(api_cfg.get("temperature", 1.0))
 
+        resumption_config = None
+        if use_resumption:
+            handle = getattr(self, "_session_resumption_handle", None)
+            resumption_config = (
+                types.SessionResumptionConfig(handle=handle)
+                if handle
+                else types.SessionResumptionConfig()
+            )
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             temperature=temperature,
+            session_resumption=resumption_config,
             tools=[
                 types.Tool(google_search=types.GoogleSearch()),
                 types.Tool(function_declarations=live_tools)
@@ -3674,15 +3778,35 @@ class AetherEngine:
                     break
                 await asyncio.sleep(0.1)
 
-            # 2. Asynchronous background summarization via gemini-3.8-flash
-            summary = await self.session_lifecycle.generate_session_summary(client)
-
-            # 3. Pre-seed new connection system instruction with the 4-6 bullet state summary
-            new_instruction = self.session_lifecycle.build_compacted_instruction(
-                self._base_system_instruction,
-                summary=summary
+            # 2. Asynchronous background summarization via gemini-3.8-flash (Two-Tier Game or Desktop)
+            is_gm = bool(
+                getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active()
+                or getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active()
             )
-            new_config = self._build_live_config(new_instruction, voice_name, temperature)
+            gm_title = ""
+            gm_ctx = ""
+            if is_gm and hasattr(self, "game_mgr") and self.game_mgr:
+                active_id = self.game_mgr.data.get("active_profile", "")
+                prof = self.game_mgr.get_profile(active_id) if active_id else None
+                gm_title = prof.get("display_name", active_id) if prof else ""
+                if hasattr(self.game_mgr, "get_active_game_context"):
+                    gm_ctx = self.game_mgr.get_active_game_context()
+
+            summary = await self.session_lifecycle.generate_session_summary(
+                client,
+                is_game_mode=is_gm,
+                game_title=gm_title,
+                active_game_context=gm_ctx
+            )
+
+            # 3. Pre-seed new connection system instruction with the state summary
+            base_inst = self._build_system_instruction() if is_gm else self._base_system_instruction
+            new_instruction = self.session_lifecycle.build_compacted_instruction(
+                base_inst,
+                summary=summary,
+                is_game_mode=is_gm
+            )
+            new_config = self._build_live_config(new_instruction, voice_name, temperature, use_resumption=False)
 
             # 4. Open new WebSocket connection
             logger.info(f"[ROTATION] Connecting new live session ({model_id})...")
@@ -3733,6 +3857,7 @@ class AetherEngine:
             # 8. Flush raw session transcript and reset lifecycle metrics
             self.session_lifecycle.flush_session_to_disk()
             self.session_lifecycle.reset_metrics()
+            self._session_resumption_handle = None
 
             self.notify("chat_event", {
                 "type": "system",
@@ -3774,8 +3899,18 @@ class AetherEngine:
                 self.dispatcher.genai_client = client
 
                 live_config = self._build_live_config(system_instruction_text, voice_name, temperature)
-                self._active_cm = client.aio.live.connect(model=model_id, config=live_config)
-                session = await self._active_cm.__aenter__()
+                try:
+                    self._active_cm = client.aio.live.connect(model=model_id, config=live_config)
+                    session = await self._active_cm.__aenter__()
+                except Exception as conn_err:
+                    if getattr(self, "_session_resumption_handle", None) and any(kw in str(conn_err).lower() for kw in ("handle", "resumption", "expired")):
+                        logger.warning(f"[LIVE CONNECT] Resumption handle rejected ({conn_err}). Retrying fresh connection...")
+                        self._session_resumption_handle = None
+                        live_config = self._build_live_config(system_instruction_text, voice_name, temperature, use_resumption=False)
+                        self._active_cm = client.aio.live.connect(model=model_id, config=live_config)
+                        session = await self._active_cm.__aenter__()
+                    else:
+                        raise
                 self.session = session
                 self.live_session = session
                 self.conn_mgr.set_connected()
@@ -3814,7 +3949,17 @@ class AetherEngine:
                             # Old receive loop was cancelled during rotation; wait for new active_recv_task
                             continue
                         except Exception as e:
-                            if self.is_running and "1000" not in str(e):
+                            err_str = str(e)
+                            err_lower = err_str.lower()
+                            is_session_expiration = (
+                                "1008" in err_lower
+                                or "goaway" in err_lower
+                                or "session duration" in err_lower
+                                or "duration limit" in err_lower
+                            )
+                            if is_session_expiration:
+                                logger.info(f"[LIVE SESSION EXPIRATION] {e}")
+                            elif self.is_running and "1000" not in err_str:
                                 print(f"[TASK FINISHED WITH ERROR] {e}")
                                 logger.error(f"[LIVE RECEIVE TASK ERROR] {e}")
                             break
@@ -3839,19 +3984,32 @@ class AetherEngine:
                 break
             except Exception as e:
                 err_str = str(e)
+                err_lower = err_str.lower()
                 self.conn_mgr.set_disconnected(reason=err_str)
-                if not self.is_running or "1000" in err_str or "normal" in err_str.lower():
+                if not self.is_running or "1000" in err_str or "normal" in err_lower:
                     break
                 if not self.conn_mgr.should_attempt_reconnect():
                     break
-                reconnect_delay = self.conn_mgr.compute_next_backoff()
-                print(f"\n[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
-                logger.error(f"[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
-                self.notify("status", {"state": "reconnecting", "message": f"Connection lost ({e}). Reconnecting in {reconnect_delay:.1f}s..."})
-                self.notify("chat_event", {
-                    "type": "system",
-                    "content": f"⚠️ Connection interrupted ({e}). Reconnecting in {reconnect_delay:.1f}s..."
-                })
+
+                is_session_expiration = (
+                    "1008" in err_lower
+                    or "goaway" in err_lower
+                    or "session duration" in err_lower
+                    or "duration limit" in err_lower
+                )
+                if is_session_expiration:
+                    reconnect_delay = 0.5
+                    logger.info(f"[LIVE SESSION EXPIRATION: {e}] -> Auto-refreshing session in {reconnect_delay}s...")
+                    self.notify("status", {"state": "reconnecting", "message": "Refreshing live session..."})
+                else:
+                    reconnect_delay = self.conn_mgr.compute_next_backoff()
+                    print(f"\n[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
+                    logger.error(f"[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
+                    self.notify("status", {"state": "reconnecting", "message": f"Connection lost ({e}). Reconnecting in {reconnect_delay:.1f}s..."})
+                    self.notify("chat_event", {
+                        "type": "system",
+                        "content": f"⚠️ Connection interrupted ({e}). Reconnecting in {reconnect_delay:.1f}s..."
+                    })
                 await asyncio.sleep(reconnect_delay)
 
     def start(self, loop: asyncio.AbstractEventLoop):

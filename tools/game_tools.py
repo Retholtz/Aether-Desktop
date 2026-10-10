@@ -29,12 +29,18 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         is_active = game_manager.is_game_mode_active()
         enabled = game_manager.game_mode_enabled
         is_running = game_manager.is_game_running(active_id) if active_id else False
+        copilot_entries = game_manager.get_copilot_log(active_id) if active_id else []
+        recent_obs = copilot_entries[-5:] if copilot_entries else []
+
         if active_id == "elite_dangerous" and game_manager.ed_watcher:
             res = dict(game_manager.ed_watcher.state)
             res["active_profile"] = active_id
             res["game_mode_enabled"] = enabled
             res["is_game_mode_active"] = is_active
             res["is_game_running"] = is_running
+            prof = game_manager.get_profile(active_id) if active_id else None
+            res["scratchpad"] = prof.get("scratchpad_raw", "") if prof else ""
+            res["recent_copilot_observations"] = recent_obs
             return res
         profile = game_manager.get_profile(active_id) if active_id else None
         return {
@@ -43,7 +49,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             "game_mode_enabled": enabled,
             "is_game_mode_active": is_active,
             "is_game_running": is_running,
-            "scratchpad": profile.get("scratchpad_raw", "") if profile else ""
+            "scratchpad": profile.get("scratchpad_raw", "") if profile else "",
+            "recent_copilot_observations": recent_obs
         }
 
     @dispatcher.register(
@@ -212,6 +219,93 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
 
     @dispatcher.register(
+        name="get_game_scratchpad",
+        description="Reads the active game profile's scratchpad notes, active quest lists, crafting materials, and personal game notes.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "enum": ["all", "active_quests", "crafting_materials", "general_notes", "raw"],
+                    "description": "Optional category of scratchpad notes to retrieve (default: 'all')."
+                }
+            }
+        }
+    )
+    def get_game_scratchpad(category: str = "all") -> dict:
+        active_id = game_manager.data.get("active_profile")
+        if not active_id:
+            return {"success": False, "error": "No active game profile selected."}
+        profile = game_manager.get_profile(active_id)
+        if not profile:
+            return {"success": False, "error": "Profile not found."}
+
+        raw = profile.get("scratchpad_raw", "")
+        structured = profile.get("scratchpad", {})
+        cat = (category or "all").lower().strip()
+        if cat == "raw":
+            return {"game": profile.get("display_name", active_id), "scratchpad_raw": raw}
+        elif cat in structured:
+            return {"game": profile.get("display_name", active_id), category: structured[cat]}
+        return {
+            "game": profile.get("display_name", active_id),
+            "scratchpad_raw": raw,
+            "structured_notes": structured
+        }
+
+    @dispatcher.register(
+        name="search_copilot_log",
+        description="Searches historical co-pilot observations, landmarks, rumors, and tactical milestones logged for the active game.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keyword or text to filter observations (optional)."
+                },
+                "category": {
+                    "type": "string",
+                    "enum": ["all", "landmark", "mission", "clue", "discovery", "intel", "warning"],
+                    "description": "Optional category filter (e.g. landmark, clue, mission, intel, warning)."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of recent matching entries to return (default: 10)."
+                }
+            }
+        }
+    )
+    def search_copilot_log(query: Optional[str] = None, category: str = "all", limit: int = 10) -> dict:
+        active_id = game_manager.data.get("active_profile")
+        if not active_id:
+            return {"success": False, "error": "No active game profile selected."}
+        entries = game_manager.get_copilot_log(active_id)
+        if not entries:
+            return {"game": active_id, "entries": [], "count": 0, "message": "No co-pilot observations recorded yet."}
+
+        filtered = entries
+        cat = (category or "all").lower().strip()
+        if cat != "all":
+            filtered = [e for e in filtered if e.get("category", "").lower() == cat]
+
+        if query:
+            q = query.lower().strip()
+            filtered = [
+                e for e in filtered
+                if q in str(e.get("summary", "")).lower()
+                or q in str(e.get("location", "")).lower()
+                or q in str(e.get("details", "")).lower()
+            ]
+
+        capped = filtered[-max(1, int(limit)):] if limit else filtered
+        return {
+            "game": active_id,
+            "entries": capped,
+            "total_matches": len(filtered),
+            "returned_count": len(capped)
+        }
+
+    @dispatcher.register(
         name="pan_and_mark_map_location",
         description="Opens the in-game world map, pans the canvas if necessary, locates a landmark/boss visually, and sets a destination waypoint.",
         parameters={
@@ -290,6 +384,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "lookup_inara_market": lookup_inara_market,
         "record_copilot_observation": record_copilot_observation,
         "update_game_scratchpad": update_game_scratchpad,
+        "get_game_scratchpad": get_game_scratchpad,
+        "search_copilot_log": search_copilot_log,
         "pan_and_mark_map_location": pan_and_mark_map_location,
         "assist_game_navigation": assist_game_navigation,
     }
