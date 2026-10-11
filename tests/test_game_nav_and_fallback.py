@@ -432,9 +432,9 @@ class TestGameNavAndFallback(unittest.TestCase):
         tool_names = [fn.name for t in cfg.tools if t.function_declarations for fn in t.function_declarations]
         self.assertIn("trigger_game_action", tool_names)
         self.assertIn("get_current_game_status", tool_names)
-        # Invariant OS tools should be filtered out
-        self.assertNotIn("navigate_browser", tool_names)
-        self.assertNotIn("launch_application", tool_names)
+        # Companion tools allowed, desktop automation scripts filtered out
+        self.assertIn("navigate_browser", tool_names)
+        self.assertIn("launch_application", tool_names)
         self.assertNotIn("run_saved_script", tool_names)
 
         # 3. When Game Mode is toggled off

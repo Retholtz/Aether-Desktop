@@ -531,6 +531,17 @@ class GameManager:
                 log_lines.append(f"- [{cat}]{loc}: {entry.get('summary', '')}")
             parts.append("CO-PILOT INTEL & OBSERVED LANDMARKS / CLUES (PAST DISCOVERIES):\n" + "\n".join(log_lines))
 
+        # Companion Flight-Deck Tools & MFD Consoles
+        companions = profile.get("companion_apps", {})
+        if companions:
+            comp_lines = []
+            for c_id, c_data in companions.items():
+                dname = c_data.get("display_name", c_id)
+                target = c_data.get("url") or c_data.get("executable", c_id)
+                def_mon = c_data.get("default_monitor", 2)
+                comp_lines.append(f'- "{dname}" ({c_id}) -> target: "{target}" (recommended display: Monitor {def_mon})')
+            parts.append("COMPANION FLIGHT-DECK TOOLS & MFD CONSOLES (Available to launch/navigate on any monitor):\n" + "\n".join(comp_lines))
+
         # 5. Co-Pilot Role Directive
         parts.append(
             "CO-PILOT ROLE DIRECTIVE:\n"
@@ -558,7 +569,12 @@ class GameManager:
             f"   - NEVER attempt to blindly click raw screen coordinates with generic `mouse_click` or send random `escape`, `Close`, or `t` keystrokes.\n"
             f"4. SCREEN-FIRST GROUNDING:\n"
             f"   - If web wiki information is incomplete, unreleased, or conflicting, call `inspect_screen_context` to read the active quest tracker, map labels, or HUD directly from the user's game screen.\n"
-            f"   - If a quest or location is ambiguous on screen, ask the player for visual clarification rather than guessing."
+            f"   - If a quest or location is ambiguous on screen, ask the player for visual clarification rather than guessing.\n"
+            f"5. AUXILIARY CONSOLES & COMPANION FLIGHT-DECK TOOLS:\n"
+            f"   - Auxiliary displays and companion apps (Inara market feeds, EDCoPilot, material trackers, tactical maps) are treated in-universe as auxiliary flight-deck terminals or cockpit MFDs.\n"
+            f"   - You can launch, position, or navigate them across connected monitors (1 to N) using `launch_application`, `navigate_browser`, and `move_window_to_monitor` without breaking character.\n"
+            f"   - Maintain player immersion while fulfilling display requests (e.g. 'Opening Inara market uplink on auxiliary console Monitor 2.').\n"
+            f"   - Game Shield: You are strictly prevented from closing the active game itself, but you may manage auxiliary windows and companion consoles."
         )
 
         return "\n\n".join(parts)

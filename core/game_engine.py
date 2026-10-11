@@ -47,6 +47,12 @@ class GameEngine:
         "pan_and_mark_map_location",
         "assist_game_navigation",
         "inspect_screen_context",
+        "launch_application",
+        "navigate_browser",
+        "move_window_to_monitor",
+        "focus_window",
+        "close_window",
+        "close_application",
     }
 
     def __init__(
@@ -254,6 +260,11 @@ class GameEngine:
             f"   - Live Working Memory: Your system prompt maintains active immediate objectives, location, and sub-tasks across 10-minute session rotations.\n"
             f"   - Deep Storage & Intel: Use `get_game_scratchpad` to view personal notes/quests, and `search_copilot_log` to query historical landmarks/intel.\n"
             f"   - Record discoveries with `record_copilot_observation` and update player notes with `update_game_scratchpad`.\n"
+            f"4. AUXILIARY CONSOLES & COMPANION FLIGHT-DECK TOOLS:\n"
+            f"   - You have direct access to auxiliary displays and companion utilities: `launch_application`, `navigate_browser`, `move_window_to_monitor`, `focus_window`, `close_window`.\n"
+            f"   - Treat companion apps (e.g. Inara market uplinks, EDCoPilot, material managers, interactive maps, database terminals) as in-universe auxiliary flight-deck consoles, cockpit MFDs, or tactical datalinks.\n"
+            f"   - If the player asks to open or move a companion tool or database to a secondary monitor (e.g., 'Open Inara in Chrome on Monitor 2'), do so immediately using `navigate_browser` or `launch_application` with the target `monitor` parameter, while keeping your voice and persona fully in-character.\n"
+            f"   - Game Shield: You are strictly prevented from closing the active game itself, but you may manage auxiliary windows and companion consoles.\n"
             f"================================================================================\n"
         )
         game_context = self.manager.get_active_game_context()

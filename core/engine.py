@@ -269,6 +269,7 @@ class AetherEngine:
         self.current_user_speech = ""
         self.is_tool_executing = False
         self._reset_context_flag = False
+        self._in_active_turn = False
         self._kill_playback_flag = False
         self._playback_cancel_event = asyncio.Event()
 
@@ -288,6 +289,8 @@ class AetherEngine:
         def _engine_on_game_mode_changed(event_name: str, payload: dict):
             self._reset_context_flag = True
             self.notify(event_name, payload)
+            mode_label = "Active" if payload.get("enabled") else "Disabled"
+            self.request_live_session_rotation(reason=f"Game Mode {mode_label}")
 
         self.game_engine = GameEngine(
             engine=self,
@@ -461,37 +464,16 @@ class AetherEngine:
                     self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
             if self.conn_mgr.state == ConnectionState.CONNECTED:
-                # 1. Proactive session rotation when elapsed duration or metrics exceed threshold during idle
+                # 1. Proactive session rotation when elapsed duration or metrics exceed threshold OR context reset flag is set during idle
                 if (
                     self.is_running
                     and hasattr(self, "session_lifecycle")
-                    and self.session_lifecycle.needs_rotation()
+                    and (self.session_lifecycle.needs_rotation() or self._reset_context_flag)
                     and not self.session_lifecycle.rotation_in_progress
                     and self._is_audio_idle_for_rotation()
                 ):
-                    loop = getattr(self, "_loop", None)
-                    client = getattr(self, "client", None) or getattr(self, "genai_client", None)
-                    if loop and loop.is_running() and client:
-                        api_cfg = self.config_getter().get("api", {})
-                        model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
-                        voice_name = api_cfg.get("voice_name", "Aoede")
-                        temperature = float(api_cfg.get("temperature", 0.7))
-                        voice_accent = api_cfg.get("voice_accent", "default")
-                        agent_name = api_cfg.get("agent_name", "Aether")
-                        kill_phrase = api_cfg.get("kill_phrase", "")
-                        logger.info("[WATCHDOG] Session exceeded lifecycle duration threshold during idle. Triggering silent rotation...")
-                        asyncio.run_coroutine_threadsafe(
-                            self.rotate_live_session(
-                                client=client,
-                                model_id=model_id,
-                                kill_phrase=kill_phrase,
-                                agent_name=agent_name,
-                                voice_name=voice_name,
-                                temperature=temperature,
-                                voice_accent=voice_accent
-                            ),
-                            loop
-                        )
+                    reason = "Session lifecycle threshold" if self.session_lifecycle.needs_rotation() else "Pending context reset"
+                    self.request_live_session_rotation(reason=reason)
                 # 2. If idle for > 7 minutes without traffic, ping or transparently re-open before user turn
                 elif now - self.conn_mgr.last_heartbeat_ts > 420:  # 7 minutes (safely below 9m server limit)
                     print("[INFO] [ENGINE] Preemptive idle refresh triggered on stale Live WebSocket.")
@@ -717,13 +699,17 @@ class AetherEngine:
     def _is_audio_idle_for_rotation(self) -> bool:
         """
         Determines if the audio pipeline is safe for silent session reconnection:
-        not audio.is_speaking and not user currently speaking and not tool executing.
+        not audio.is_speaking and not user currently speaking and not tool executing and no active turn.
         """
         if not self.is_running:
             return False
         if self.is_speaking or self.is_audio_streaming:
             return False
         if self.is_tool_running:
+            return False
+        if getattr(self, "_is_transcribing", False):
+            return False
+        if getattr(self, "_in_active_turn", False):
             return False
         return True
 
@@ -894,11 +880,15 @@ class AetherEngine:
     def reset_chat_context(self):
         """Signals the active pipeline loop to reset chat session state / memory."""
         self._reset_context_flag = True
+        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+            self.session_lifecycle.turn_history.clear()
+            self.session_lifecycle.reset_metrics()
         logger.info("[SESSION] Reset context requested by user/UI.")
         self.notify("chat_event", {
             "type": "system",
             "content": "✨ AI conversation context reset. Starting fresh task."
         })
+        self.request_live_session_rotation(reason="User Context Reset")
 
     def update_lexicon_context(self):
         """Updates the active session prompt context with the latest custom lexicon."""
@@ -1151,6 +1141,7 @@ class AetherEngine:
             return
         if state == "speech_detected":
             if not self.is_speaking:
+                self._in_active_turn = True
                 self.on_vad_speech_detected()
                 self.is_audio_streaming = True
                 self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
@@ -1167,6 +1158,7 @@ class AetherEngine:
         elif state in ("speech_idle", "speech_discarded"):
             self.is_audio_streaming = False
             self._is_transcribing = False
+            self._in_active_turn = False
             if self.is_speaking:
                 return
             agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether").strip() or "Aether"
@@ -1404,6 +1396,7 @@ class AetherEngine:
                     tool_call = getattr(response, "tool_call", None)
                     if tool_call is not None and tool_call.function_calls:
                         self.is_tool_executing = True
+                        self._in_active_turn = True
                         try:
                             function_responses = []
 
@@ -1517,6 +1510,7 @@ class AetherEngine:
                     model_turn = getattr(server_content, "model_turn", None)
                     if model_turn is not None:
                         self._is_transcribing = False
+                        self._in_active_turn = True
                         # Finalize user speech turn when model starts responding
                         if self.current_user_speech.strip():
                             self._kill_playback_flag = False
@@ -1566,6 +1560,7 @@ class AetherEngine:
                     if server_content.interrupted:
                         print("\n[USER INTERRUPTED - BARGE-IN]")
                         self.kill_audio()
+                        self._in_active_turn = False
                         self.notify("agent_turn_interrupted", {})
                         self.current_turn_text = ""
                         self.current_turn_tools = []
@@ -1622,15 +1617,17 @@ class AetherEngine:
                         if self.is_running:
                             self.last_user_turn_time = time.perf_counter()
                             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        self._in_active_turn = False
 
                         # Layer B: Check if session needs rolling compaction & silent reconnect
                         if (
-                            self.session_lifecycle.needs_rotation()
+                            (self.session_lifecycle.needs_rotation() or self._reset_context_flag)
                             and not self.session_lifecycle.rotation_in_progress
                             and client is not None
                             and model_id is not None
                         ):
-                            logger.info("[LIFECYCLE] Rotation threshold reached after turn completion. Launching silent reconnect...")
+                            reason = "Context reset after turn" if self._reset_context_flag else "Lifecycle threshold after turn"
+                            logger.info(f"[LIFECYCLE] Launching silent reconnect ({reason})...")
                             asyncio.create_task(
                                 self.rotate_live_session(
                                     client=client,
@@ -1639,7 +1636,8 @@ class AetherEngine:
                                     agent_name=agent_name,
                                     voice_name=voice_name or "Aoede",
                                     temperature=temperature if temperature is not None else 0.7,
-                                    voice_accent=voice_accent or "default"
+                                    voice_accent=voice_accent or "default",
+                                    reason=reason
                                 )
                             )
 
@@ -3762,6 +3760,54 @@ class AetherEngine:
             )
         )
 
+    def request_live_session_rotation(self, reason: str = "Context Reset") -> bool:
+        """
+        Schedules a seamless live session rotation if connected to Gemini Live WebSocket.
+        Thread-safe: can be invoked from UI threads, hotkey handlers, GameEngine callbacks, or background loops.
+        """
+        if not self.is_running:
+            return False
+        if not hasattr(self, "session_lifecycle") or self.session_lifecycle.rotation_in_progress:
+            return False
+        if self.conn_mgr.state != ConnectionState.CONNECTED:
+            return False
+
+        loop = getattr(self, "_loop", None)
+        client = getattr(self, "client", None) or getattr(self, "genai_client", None)
+        if not loop or not loop.is_running() or not client:
+            return False
+
+        api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+        model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
+        voice_name = api_cfg.get("voice_name", "Aoede")
+        temperature = float(api_cfg.get("temperature", 0.7))
+        voice_accent = api_cfg.get("voice_accent", "default")
+        agent_name = api_cfg.get("agent_name", "Aether")
+        kill_phrase = api_cfg.get("kill_phrase", "")
+
+        logger.info(f"[LIFECYCLE] Live session rotation requested (reason: {reason}).")
+        coro = self.rotate_live_session(
+            client=client,
+            model_id=model_id,
+            kill_phrase=kill_phrase,
+            agent_name=agent_name,
+            voice_name=voice_name,
+            temperature=temperature,
+            voice_accent=voice_accent,
+            reason=reason
+        )
+
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if current_loop is loop:
+            asyncio.create_task(coro)
+        else:
+            asyncio.run_coroutine_threadsafe(coro, loop)
+        return True
+
     async def rotate_live_session(
         self,
         client: genai.Client,
@@ -3770,7 +3816,8 @@ class AetherEngine:
         agent_name: str,
         voice_name: str = "Aoede",
         temperature: float = 0.7,
-        voice_accent: str = "default"
+        voice_accent: str = "default",
+        reason: str = "lifecycle"
     ) -> bool:
         """
         Executes a seamless silent reconnection of the Gemini Live WebSocket session:
@@ -3787,7 +3834,8 @@ class AetherEngine:
             return False
 
         self.session_lifecycle.rotation_in_progress = True
-        logger.info("[ROTATION] Commencing silent session rotation & context compaction...")
+        self.session_lifecycle.rotation_started_at = time.time()
+        logger.info(f"[ROTATION] Commencing silent session rotation ({reason})...")
 
         try:
             # 1. Wait until audio pipeline is idle (max 30 seconds to allow active user speech & response to finish)
@@ -3795,6 +3843,10 @@ class AetherEngine:
                 if self._is_audio_idle_for_rotation():
                     break
                 await asyncio.sleep(0.1)
+
+            if not self._is_audio_idle_for_rotation():
+                logger.warning(f"[ROTATION] Audio pipeline remained busy for >30s during rotation ({reason}). Aborting rotation.")
+                return False
 
             # 2. Asynchronous background summarization via gemini-3.8-flash (Two-Tier Game or Desktop)
             is_gm = bool(
@@ -3818,7 +3870,7 @@ class AetherEngine:
             )
 
             # 3. Pre-seed new connection system instruction with the state summary
-            base_inst = self._build_system_instruction() if is_gm else self._base_system_instruction
+            base_inst = self._build_system_instruction() or getattr(self, "_base_system_instruction", "You are Aether.")
             new_instruction = self.session_lifecycle.build_compacted_instruction(
                 base_inst,
                 summary=summary,
@@ -3877,20 +3929,22 @@ class AetherEngine:
             self.session_lifecycle.reset_metrics()
             self._session_resumption_handle = None
             self._is_transcribing = False
+            self._reset_context_flag = False
 
             self.notify("chat_event", {
                 "type": "system",
                 "content": "🔄 Context compacted seamlessly. Active session re-anchored with zero audio disruption."
             })
             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
-            logger.info("[ROTATION] Silent live session rotation completed successfully!")
+            logger.info(f"[ROTATION] Silent live session rotation completed successfully ({reason})!")
             return True
         except Exception as rot_err:
             logger.error(f"[ROTATION ERROR] Failed silent reconnect: {rot_err}", exc_info=True)
-            self.session_lifecycle.rotation_in_progress = False
             self._is_transcribing = False
             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
             return False
+        finally:
+            self.session_lifecycle.rotation_in_progress = False
 
     async def _run_live_pipeline(
         self,

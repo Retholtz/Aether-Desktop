@@ -55,7 +55,22 @@ COMMON_ALIASES = {
     "vlc": "vlc.exe",
     "vs code": "code.exe",
     "vscode": "code.exe",
-    "visual studio code": "code.exe"
+    "visual studio code": "code.exe",
+    "edcopilot": "EDCoPilot.exe",
+    "ed copilot": "EDCoPilot.exe",
+    "odyssey material helper": "OdysseyMaterialHelper.exe",
+    "material helper": "OdysseyMaterialHelper.exe",
+    "material manager": "OdysseyMaterialHelper.exe",
+    "eddiscovery": "EDDiscovery.exe",
+    "ed discovery": "EDDiscovery.exe",
+    "edmarketconnector": "EDMarketConnector.exe",
+    "edmc": "EDMarketConnector.exe",
+    "inara": "chrome.exe",
+    "inara.cz": "chrome.exe",
+    "coriolis": "chrome.exe",
+    "coriolis.io": "chrome.exe",
+    "eddb": "chrome.exe",
+    "spansh": "chrome.exe"
 }
 
 # Windows App package mappings where the running process name differs from the launcher stub

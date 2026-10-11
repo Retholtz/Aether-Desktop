@@ -22,11 +22,13 @@ if sys.platform == "win32":
     import win32con
     import win32process
     import win32clipboard
+    import win32api
 else:
     win32gui = None
     win32con = None
     win32process = None
     win32clipboard = None
+    win32api = None
 
 try:
     import psutil
@@ -365,35 +367,212 @@ def close_window(app_name: str) -> dict:
         return {"status": "error", "message": f"Failed to close '{app_name}': {str(e)}"}
 
 
-def navigate_browser(query_or_url: str, app_name: str = "chrome", whitelist: Optional[List[str]] = None) -> dict:
+# Companion Web Shortcuts & Knowledge Hubs for Games
+GAME_WEB_SHORTCUTS = {
+    "inara": "https://inara.cz",
+    "inara.cz": "https://inara.cz",
+    "eddb": "https://eddb.net",
+    "coriolis": "https://coriolis.io",
+    "coriolis.io": "https://coriolis.io",
+    "spansh": "https://spansh.co.uk",
+    "edsm": "https://www.edsm.net",
+    "mapgenie": "https://mapgenie.io",
+    "fextralife": "https://fextralife.com",
+}
+
+
+def get_monitors_info() -> List[Dict[str, Any]]:
+    """
+    Enumerates all active Windows display monitors (supports any 1 to N monitor setup).
+    Returns a sorted list of monitor dictionaries matching Windows Display Settings numbers:
+    - 'index': 1-based display number (1, 2, 3... up to N)
+    - 'is_primary': bool
+    - 'device': str (e.g. '\\\\.\\DISPLAY1')
+    - 'rect': (left, top, right, bottom) in virtual screen coordinates
+    - 'work_rect': (left, top, right, bottom) excluding taskbar/dock
+    - 'x', 'y', 'width', 'height': bounding box
+    - 'work_x', 'work_y', 'work_width', 'work_height': usable display workspace
+    """
+    ensure_thread_desktop()
+    if not win32api:
+        return []
+
+    monitors = []
+    try:
+        raw_monitors = win32api.EnumDisplayMonitors()
+        for idx, (hmon, hdc, rect) in enumerate(raw_monitors):
+            info = win32api.GetMonitorInfo(hmon)
+            device = info.get("Device", f"\\\\.\\DISPLAY{idx+1}")
+            m_match = re.search(r"DISPLAY(\d+)", device, re.IGNORECASE)
+            display_num = int(m_match.group(1)) if m_match else (idx + 1)
+
+            m_rect = info.get("Monitor", rect)
+            w_rect = info.get("Work", rect)
+            is_primary = bool(info.get("Flags", 0) & 1)
+
+            monitors.append({
+                "index": display_num,
+                "hmon": hmon,
+                "device": device,
+                "is_primary": is_primary,
+                "rect": m_rect,
+                "work_rect": w_rect,
+                "x": m_rect[0],
+                "y": m_rect[1],
+                "width": m_rect[2] - m_rect[0],
+                "height": m_rect[3] - m_rect[1],
+                "work_x": w_rect[0],
+                "work_y": w_rect[1],
+                "work_width": w_rect[2] - w_rect[0],
+                "work_height": w_rect[3] - w_rect[1],
+            })
+
+        # Sort so they appear in natural Windows display order
+        monitors.sort(key=lambda m: m["index"])
+    except Exception as e:
+        print(f"[OS_CONTROLS] Error enumerating display monitors: {e}")
+
+    return monitors
+
+
+def move_window_to_monitor(
+    app_name: str,
+    monitor: int = 1,
+    maximize: bool = False,
+    no_activate: bool = False
+) -> dict:
+    """
+    Moves an application window to a specific monitor (Monitor 1, 2, 3... up to N).
+    Supports all monitor numbers present within Windows Display Settings.
+
+    Args:
+        app_name: Target window title or executable name
+        monitor: Target monitor number (1-based index matching Windows Display Settings 1, 2, 3...)
+        maximize: Whether to maximize the window on the target monitor
+        no_activate: If True, moves the window without stealing active user/game focus
+    """
+    ensure_thread_desktop()
+    if not win32gui or not win32con or not win32api:
+        return {"status": "error", "message": "Win32 window management is only supported on Windows."}
+
+    monitors = get_monitors_info()
+    if not monitors:
+        return {"status": "error", "message": "No active display monitors detected."}
+
+    target_mon = None
+    for m in monitors:
+        if m["index"] == monitor:
+            target_mon = m
+            break
+
+    # Fallback to sequential index if Windows display IDs are non-standard
+    if not target_mon:
+        if 1 <= monitor <= len(monitors):
+            target_mon = monitors[monitor - 1]
+        else:
+            available_nums = ", ".join(f"Monitor {m['index']}" for m in monitors)
+            return {
+                "status": "error",
+                "message": f"Monitor #{monitor} not found. System has {len(monitors)} monitor(s) configured in Windows: {available_nums}."
+            }
+
+    hwnd = find_hwnd_by_query(app_name)
+    if not hwnd:
+        return {"status": "error", "message": f"No active window found for '{app_name}'."}
+
+    try:
+        title = win32gui.GetWindowText(hwnd) or app_name
+
+        # If currently maximized, restore first so SetWindowPos moves properly across display boundaries
+        if win32gui.IsZoomed(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.05)
+
+        wx = target_mon["work_x"]
+        wy = target_mon["work_y"]
+        ww = target_mon["work_width"]
+        wh = target_mon["work_height"]
+
+        target_w = max(800, int(ww * 0.88))
+        target_h = max(600, int(wh * 0.88))
+        target_x = wx + (ww - target_w) // 2
+        target_y = wy + (wh - target_h) // 2
+
+        u_flags = win32con.SWP_NOZORDER
+        if no_activate:
+            u_flags |= win32con.SWP_NOACTIVATE
+
+        win32gui.SetWindowPos(
+            hwnd,
+            None,
+            target_x,
+            target_y,
+            target_w,
+            target_h,
+            u_flags
+        )
+
+        if maximize:
+            time.sleep(0.05)
+            show_cmd = win32con.SW_SHOWMAXIMIZED if not no_activate else win32con.SW_MAXIMIZE
+            win32gui.ShowWindow(hwnd, show_cmd)
+
+        return {
+            "status": "success",
+            "action": "move_window_to_monitor",
+            "app_name": app_name,
+            "title": title,
+            "monitor": target_mon["index"],
+            "is_primary": target_mon["is_primary"],
+            "maximized": maximize,
+            "message": f"Moved '{title}' to Monitor #{target_mon['index']}."
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to move '{app_name}' to Monitor #{monitor}: {str(e)}"}
+
+
+def navigate_browser(
+    query_or_url: str,
+    app_name: str = "chrome",
+    whitelist: Optional[List[str]] = None,
+    monitor: Optional[int] = None
+) -> dict:
     """
     Deterministically navigates an open browser (or launches it if not open) to a URL or search query.
+    Supports targeting any monitor (Monitor 1, 2, 3... up to N).
     If the browser window is open:
         1. Brings the browser to the foreground (focus_window).
         2. Presses Ctrl+L to activate and highlight the omnibox address bar.
         3. Types the formatted URL/query and presses Enter.
+        4. Moves to target monitor if specified.
     If the browser window is not open:
-        Launches the browser with the target URL via WhitelistValidator.
+        Launches the browser with the target URL via WhitelistValidator, and places on target monitor.
     """
     ensure_thread_desktop()
     clean = str(query_or_url).strip()
     if not clean:
         return {"status": "error", "message": "query_or_url is required."}
 
-    # Format URL / search query
-    is_url = (
-        clean.startswith("http://")
-        or clean.startswith("https://")
-        or clean.startswith("file://")
-    )
-    if not is_url:
-        parts = clean.split()
-        if len(parts) == 1 and ("." in clean or clean.startswith("localhost")):
-            formatted_target = f"https://{clean}"
-        else:
-            formatted_target = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean)}"
+    # 1. Resolve game knowledge shortcut (e.g. 'inara' -> 'https://inara.cz')
+    lower_clean = clean.lower()
+    if lower_clean in GAME_WEB_SHORTCUTS:
+        formatted_target = GAME_WEB_SHORTCUTS[lower_clean]
+    elif lower_clean.startswith("inara ") or lower_clean.endswith(" inara"):
+        formatted_target = "https://inara.cz"
     else:
-        formatted_target = clean
+        is_url = (
+            clean.startswith("http://")
+            or clean.startswith("https://")
+            or clean.startswith("file://")
+        )
+        if not is_url:
+            parts = clean.split()
+            if len(parts) == 1 and ("." in clean or clean.startswith("localhost")):
+                formatted_target = f"https://{clean}"
+            else:
+                formatted_target = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean)}"
+        else:
+            formatted_target = clean
 
     hwnd = find_hwnd_by_query(app_name)
     if hwnd:
@@ -407,27 +586,44 @@ def navigate_browser(query_or_url: str, app_name: str = "chrome", whitelist: Opt
             time.sleep(0.08)
             gui.type_text(formatted_target, press_enter=True)
 
+            # Move to target monitor if specified
+            if monitor is not None:
+                time.sleep(0.1)
+                move_window_to_monitor(app_name, monitor=monitor, maximize=True)
+
             return {
                 "status": "success",
                 "action": "navigate_browser",
                 "app_name": app_name,
                 "target": formatted_target,
+                "monitor": monitor,
                 "method": "omnibox_ctrl_l",
-                "message": f"Navigated {app_name} to '{formatted_target}'."
+                "message": f"Navigated {app_name} to '{formatted_target}'" + (f" on Monitor #{monitor}." if monitor else ".")
             }
         except Exception as e:
             return {"status": "error", "message": f"Failed to navigate {app_name}: {str(e)}"}
     else:
         wl = whitelist if whitelist is not None else ["*"]
         launch_res = WhitelistValidator.validate_and_launch(app_name, wl, target=formatted_target)
+        
+        # If monitor specified, wait for window to appear and place it
+        if monitor is not None and launch_res.get("status") in ("success", "running"):
+            for _ in range(30):
+                time.sleep(0.1)
+                if find_hwnd_by_query(app_name):
+                    break
+            time.sleep(0.15)
+            move_window_to_monitor(app_name, monitor=monitor, maximize=True)
+
         return {
             "status": launch_res.get("status", "success"),
             "action": "navigate_browser",
             "app_name": app_name,
             "target": formatted_target,
+            "monitor": monitor,
             "method": "launch_process",
             "details": launch_res,
-            "message": launch_res.get("message", f"Launched {app_name} with target '{formatted_target}'.")
+            "message": launch_res.get("message", f"Launched {app_name} with target '{formatted_target}'.") + (f" Placed on Monitor #{monitor}." if monitor else "")
         }
 
 
@@ -581,8 +777,14 @@ class OSControls:
     def close_window(self, app_name: str) -> dict:
         return close_window(app_name)
 
-    def navigate_browser(self, url: str) -> dict:
-        return navigate_browser(url)
+    def navigate_browser(self, url: str, monitor: Optional[int] = None) -> dict:
+        return navigate_browser(url, monitor=monitor)
+
+    def move_window_to_monitor(self, app_name: str, monitor: int = 1, maximize: bool = False, no_activate: bool = False) -> dict:
+        return move_window_to_monitor(app_name, monitor=monitor, maximize=maximize, no_activate=no_activate)
+
+    def get_monitors_info(self) -> list:
+        return get_monitors_info()
 
     def send_hotkey(self, *keys) -> dict:
         """Sends key combination, e.g. send_hotkey('ctrl', 'v') or send_hotkey('ctrl+v')."""

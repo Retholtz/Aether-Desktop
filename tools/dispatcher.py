@@ -27,12 +27,20 @@ from tools.os_controls import (
     focus_window,
     close_window,
     navigate_browser,
+    move_window_to_monitor,
+    get_monitors_info,
+    bring_hwnd_to_foreground,
+    find_hwnd_by_query,
     register_background_monitor,
     list_background_monitors,
     register_monitoring_task,
     list_active_monitors,
     send_desktop_notification,
 )
+try:
+    import win32gui
+except ImportError:
+    win32gui = None
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
 from tools.skill_library import SkillLibrary
@@ -133,19 +141,65 @@ FOCUS_WINDOW_DECLARATION = {
     }
 }
 
-LAUNCH_APPLICATION_DECLARATION = {
-    "name": "launch_application",
+CLOSE_WINDOW_DECLARATION = {
+    "name": "close_window",
     "description": (
-        "Launches an installed Windows desktop application (e.g. Crimson Desert, Google Chrome, Notepad, Word, "
-        "Excel, Calculator, Spotify, Blender, File Explorer) if permitted by the user's security whitelist / programs list. "
-        "Can optionally pass command-line arguments/extensions (e.g. '--elevate'), open a target URL/file, or specify browser profile."
+        "Natively closes a specific application window (e.g. 'File Explorer', 'Notepad', 'Chrome') "
+        "by posting a native WM_CLOSE message without terminating the entire application or background process tree."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "app_name": {
                 "type": "STRING",
-                "description": "The name or executable of the application to launch (e.g. 'Crimson Desert', 'chrome', 'notepad', 'calc', 'explorer')."
+                "description": "The name or title of the window to close (e.g. 'File Explorer', 'notepad', 'chrome')."
+            }
+        },
+        "required": ["app_name"]
+    }
+}
+
+MOVE_WINDOW_TO_MONITOR_DECLARATION = {
+    "name": "move_window_to_monitor",
+    "description": (
+        "Moves an open application window or companion app (e.g. 'Chrome', 'EDCoPilot', 'Inara', 'Material Manager', 'Discord', 'Spotify', 'Notepad') "
+        "to a specific connected monitor (Monitor 1, 2, 3... up to N displays). "
+        "Supports any multi-monitor setup as configured in Windows Display Settings. "
+        "Can optionally maximize the window on that monitor."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "app_name": {
+                "type": "STRING",
+                "description": "The name or title of the window to move (e.g. 'chrome', 'inara', 'edcopilot', 'material manager', 'discord')."
+            },
+            "monitor": {
+                "type": "INTEGER",
+                "description": "Target monitor number (e.g. 1 for primary, 2 for secondary, 3, 4, 5... matching Windows display settings)."
+            },
+            "maximize": {
+                "type": "BOOLEAN",
+                "description": "Optional boolean whether to maximize the window on the target monitor. Default is True."
+            }
+        },
+        "required": ["app_name", "monitor"]
+    }
+}
+
+LAUNCH_APPLICATION_DECLARATION = {
+    "name": "launch_application",
+    "description": (
+        "Launches an installed Windows desktop application (e.g. Crimson Desert, Google Chrome, Notepad, Word, "
+        "Excel, Calculator, Spotify, Blender, File Explorer, EDCoPilot) if permitted by the user's security whitelist / programs list. "
+        "Can optionally pass command-line arguments/extensions (e.g. '--elevate'), open a target URL/file, specify browser profile, or target a specific monitor number."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "app_name": {
+                "type": "STRING",
+                "description": "The name or executable of the application to launch (e.g. 'Crimson Desert', 'chrome', 'notepad', 'calc', 'explorer', 'edcopilot')."
             },
             "target": {
                 "type": "STRING",
@@ -158,6 +212,10 @@ LAUNCH_APPLICATION_DECLARATION = {
             "arguments": {
                 "type": "STRING",
                 "description": "Optional command-line arguments or launch extensions/flags (e.g. '--elevate', '-windowed', '--incognito')."
+            },
+            "monitor": {
+                "type": "INTEGER",
+                "description": "Optional target monitor number (1, 2, 3... up to N displays matching Windows settings) to place the application on."
             }
         },
         "required": ["app_name"]
@@ -367,21 +425,25 @@ SCROLL_PAGE_DECLARATION = {
 NAVIGATE_BROWSER_DECLARATION = {
     "name": "navigate_browser",
     "description": (
-        "Deterministically navigates an open browser (or launches it if not open) to a URL or performs a web search. "
-        "Brings the browser window to focus, uses Ctrl+L to activate the address/search bar (omnibox), "
-        "and submits the query or URL. Always call this when asked to search or open a website in an already open browser "
-        "(e.g. 'search for News today', 'open MSN.com', 'go to youtube.com') instead of guessing mouse coordinates for the search bar."
+        "Deterministically navigates an open browser (or launches it if not open) to a URL, website, or search query "
+        "(e.g. 'https://inara.cz', 'inara', 'eddb', 'https://coriolis.io', game wikis, interactive maps, or 'News today'). "
+        "Can optionally target a specific monitor number (e.g. monitor=2 for auxiliary flight deck display) "
+        "and will automatically place and maximize the browser on that display."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "query_or_url": {
                 "type": "STRING",
-                "description": "The website URL to navigate to (e.g. 'https://www.msn.com', 'msn.com', 'youtube.com') or search phrase (e.g. 'News today')."
+                "description": "The website URL, shortcut name (e.g. 'inara', 'eddb', 'coriolis'), or search phrase to navigate to."
             },
             "app_name": {
                 "type": "STRING",
                 "description": "The browser application name. Default is 'chrome'."
+            },
+            "monitor": {
+                "type": "INTEGER",
+                "description": "Optional target monitor number (1, 2, 3... up to N displays matching Windows settings) to place the browser on."
             }
         },
         "required": ["query_or_url"]
@@ -884,6 +946,8 @@ def get_all_tool_declarations() -> List[dict]:
         MINIMIZE_WINDOW_DECLARATION,
         RESTORE_WINDOW_DECLARATION,
         FOCUS_WINDOW_DECLARATION,
+        CLOSE_WINDOW_DECLARATION,
+        MOVE_WINDOW_TO_MONITOR_DECLARATION,
         LAUNCH_APPLICATION_DECLARATION,
         CLOSE_APPLICATION_DECLARATION,
         ADD_TO_WHITELIST_DECLARATION,
@@ -1052,6 +1116,8 @@ class ToolDispatcher:
             MINIMIZE_WINDOW_DECLARATION,
             RESTORE_WINDOW_DECLARATION,
             FOCUS_WINDOW_DECLARATION,
+            CLOSE_WINDOW_DECLARATION,
+            MOVE_WINDOW_TO_MONITOR_DECLARATION,
             NAVIGATE_BROWSER_DECLARATION,
             FIND_AND_CLICK_ELEMENT_DECLARATION,
             MOUSE_CLICK_DECLARATION,
@@ -1328,6 +1394,32 @@ class ToolDispatcher:
                 })
                 return result
 
+            elif fn_name == "move_window_to_monitor":
+                app_name = str(args.get("app_name") or args.get("window_name") or args.get("title") or "").strip()
+                if app_name:
+                    self.last_target_app = app_name
+                try:
+                    monitor = int(args.get("monitor", 1))
+                except (ValueError, TypeError):
+                    monitor = 1
+                maximize = bool(args.get("maximize", True))
+                no_activate = bool(args.get("no_activate", False))
+
+                eng = getattr(self, "engine", None)
+                ge = getattr(eng, "game_engine", None) if eng else None
+                gm = getattr(eng, "game_mgr", None) if eng else (ge.manager if ge else None)
+                is_gm = bool((ge and ge.is_game_mode_active()) or (gm and gm.is_game_mode_active()))
+                if is_gm:
+                    no_activate = True
+
+                result = move_window_to_monitor(app_name, monitor=monitor, maximize=maximize, no_activate=no_activate)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Window Control",
+                    "content": f"🖥️ [MONITOR] {result.get('message', f'Moved {app_name} to Monitor #{monitor}')}"
+                })
+                return result
+
             # -------------------------------------------------------------
             # Tier 1 + Security: App Launching & Termination
             # -------------------------------------------------------------
@@ -1338,6 +1430,24 @@ class ToolDispatcher:
                 target = args.get("target", None)
                 profile = args.get("profile", None)
                 arguments = args.get("arguments", None)
+                monitor = args.get("monitor", None)
+                if monitor is not None:
+                    try:
+                        monitor = int(monitor)
+                    except (ValueError, TypeError):
+                        monitor = None
+
+                # Capture active foreground window if in Game Mode to preserve flight/game focus
+                game_hwnd = None
+                eng = getattr(self, "engine", None)
+                ge = getattr(eng, "game_engine", None) if eng else None
+                gm = getattr(eng, "game_mgr", None) if eng else (ge.manager if ge else None)
+                is_gm = bool((ge and ge.is_game_mode_active()) or (gm and gm.is_game_mode_active()))
+                if is_gm and win32gui:
+                    try:
+                        game_hwnd = win32gui.GetForegroundWindow()
+                    except Exception:
+                        game_hwnd = None
 
                 # Check ProgramManager first
                 prog_result = None
@@ -1357,11 +1467,29 @@ class ToolDispatcher:
                 if result.get("status") == "success":
                     prof_info = f" [Profile: {result.get('profile')}]" if result.get("profile") else ""
                     elev_info = " [Elevated / Admin]" if result.get("elevated") else ""
+                    mon_info = f" -> Monitor #{monitor}" if monitor else ""
                     self.notify("chat_event", {
                         "type": "tool",
                         "name": "Desktop Hook",
-                        "content": f"🚀 [LAUNCHED] {result.get('executable', app_name)}{prof_info}{elev_info}" + (f" -> '{target}'" if target else "")
+                        "content": f"🚀 [LAUNCHED] {result.get('executable', app_name)}{prof_info}{elev_info}{mon_info}" + (f" -> '{target}'" if target else "")
                     })
+
+                    # If monitor requested, wait briefly for window to spawn and place it
+                    if monitor is not None:
+                        for _ in range(25):
+                            time.sleep(0.1)
+                            if find_hwnd_by_query(app_name):
+                                break
+                        time.sleep(0.15)
+                        move_window_to_monitor(app_name, monitor=monitor, maximize=False, no_activate=is_gm)
+
+                    # Restore game focus if needed
+                    if is_gm and game_hwnd and win32gui:
+                        try:
+                            time.sleep(0.1)
+                            bring_hwnd_to_foreground(game_hwnd)
+                        except Exception:
+                            pass
                 else:
                     self.last_blocked_app = result.get("executable") or app_name
                     self.notify("chat_event", {
@@ -1371,8 +1499,64 @@ class ToolDispatcher:
                     })
                 return result
 
-            elif fn_name == "close_application":
-                app_name = str(args.get("app_name", "")).strip()
+            elif fn_name in ("close_window", "close_application"):
+                app_name = str(args.get("app_name") or args.get("window_name") or args.get("title") or "").strip()
+
+                # Game Shield: Prevent terminating active game during Game Mode
+                eng = getattr(self, "engine", None)
+                ge = getattr(eng, "game_engine", None) if eng else None
+                gm = getattr(eng, "game_mgr", None) if eng else (ge.manager if ge else None)
+                if (ge and ge.is_game_mode_active()) or (gm and gm.is_game_mode_active()):
+                    active_id = (gm.data.get("active_profile", "") if gm else "") or ""
+                    prof = gm.get_profile(active_id) if (gm and active_id) else {}
+                    game_title = prof.get("display_name", active_id) or "Active Game"
+                    pname = prof.get("process_name", "")
+
+                    norm_app = app_name.lower().replace(".exe", "").strip()
+                    protected_targets = set()
+                    if active_id:
+                        protected_targets.add(active_id.lower().replace("_", ""))
+                        protected_targets.add(active_id.lower().replace("_", " "))
+                    if game_title:
+                        protected_targets.add(game_title.lower())
+                        protected_targets.add(game_title.lower().replace(" ", ""))
+                    if pname:
+                        raw_p = pname.lower().replace(".exe", "")
+                        protected_targets.add(raw_p)
+                        protected_targets.add(pname.lower())
+
+                    norm_app_compact = norm_app.replace(" ", "").replace("_", "")
+                    is_shielded = False
+                    if norm_app:
+                        for pt in protected_targets:
+                            if pt and (pt == norm_app or pt == norm_app_compact or pt in norm_app or norm_app in pt):
+                                is_shielded = True
+                                break
+
+                    if is_shielded:
+                        shield_msg = f"Game Shield active: Cannot close running game '{game_title}' while Game Mode is enabled. Exit Game Mode first."
+                        self.notify("chat_event", {
+                            "type": "tool",
+                            "name": "Game Shield",
+                            "content": f"🛡️ [GAME SHIELD] Blocked close attempt on active game '{game_title}'."
+                        })
+                        return {
+                            "status": "blocked",
+                            "message": shield_msg,
+                            "error": shield_msg
+                        }
+
+                if fn_name == "close_window":
+                    result = close_window(app_name)
+                    if result.get("status") == "success":
+                        self.notify("chat_event", {
+                            "type": "tool",
+                            "name": "Desktop Hook",
+                            "content": f"🛑 [CLOSED WINDOW] {result.get('title', app_name)}"
+                        })
+                        return result
+                    # If close_window did not find an active window HWND, fall back to process termination
+
                 whitelist = self.whitelist_getter()
                 result = WhitelistValidator.validate_and_close(app_name, whitelist)
                 if result.get("status") == "success":
@@ -1457,12 +1641,41 @@ class ToolDispatcher:
                 app_name = str(args.get("app_name", "chrome")).strip() or "chrome"
                 if app_name:
                     self.last_target_app = app_name
+                monitor = args.get("monitor", None)
+                if monitor is not None:
+                    try:
+                        monitor = int(monitor)
+                    except (ValueError, TypeError):
+                        monitor = None
+
+                # Capture active foreground window if in Game Mode to preserve flight/game focus
+                game_hwnd = None
+                eng = getattr(self, "engine", None)
+                ge = getattr(eng, "game_engine", None) if eng else None
+                gm = getattr(eng, "game_mgr", None) if eng else (ge.manager if ge else None)
+                is_gm = bool((ge and ge.is_game_mode_active()) or (gm and gm.is_game_mode_active()))
+                if is_gm and win32gui:
+                    try:
+                        game_hwnd = win32gui.GetForegroundWindow()
+                    except Exception:
+                        game_hwnd = None
+
                 whitelist = self.whitelist_getter()
-                result = navigate_browser(query_or_url, app_name=app_name, whitelist=whitelist)
+                result = navigate_browser(query_or_url, app_name=app_name, whitelist=whitelist, monitor=monitor)
+
+                # Restore game focus if needed
+                if is_gm and game_hwnd and win32gui:
+                    try:
+                        time.sleep(0.1)
+                        bring_hwnd_to_foreground(game_hwnd)
+                    except Exception:
+                        pass
+
+                mon_info = f" [Monitor #{monitor}]" if monitor else ""
                 self.notify("chat_event", {
                     "type": "tool",
                     "name": "Browser Control",
-                    "content": f"🌐 [NAVIGATE] {app_name}: {result.get('message', query_or_url)}"
+                    "content": f"🌐 [NAVIGATE]{mon_info} {app_name}: {result.get('message', query_or_url)}"
                 })
                 return result
 
