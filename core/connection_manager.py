@@ -10,6 +10,7 @@ class ConnectionState(Enum):
     CONNECTING = "CONNECTING"
     CONNECTED = "CONNECTED"
     RECONNECTING = "RECONNECTING"
+    STANDBY = "STANDBY"
 
 
 class LiveConnectionManager:
@@ -39,6 +40,12 @@ class LiveConnectionManager:
             self.last_heartbeat_ts = time.time()
             print("[INFO] [CONNECTION] Live WebSocket established and healthy.")
 
+    def set_standby(self):
+        with self._lock:
+            self.state = ConnectionState.STANDBY
+            self.retry_count = 0
+            print("[INFO] [CONNECTION] Live WebSocket entered Standby.")
+
     def set_disconnected(self, reason: str = "Unknown"):
         with self._lock:
             prev_state = self.state
@@ -47,7 +54,9 @@ class LiveConnectionManager:
 
     def should_attempt_reconnect(self) -> bool:
         with self._lock:
-            return self.retry_count < self.max_retries and self.state != ConnectionState.CONNECTED
+            if self.state in (ConnectionState.STANDBY, ConnectionState.CONNECTED):
+                return False
+            return self.retry_count < self.max_retries
 
     def compute_next_backoff(self) -> float:
         """Computes exponential backoff delay with random jitter."""

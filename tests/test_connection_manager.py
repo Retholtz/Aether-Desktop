@@ -17,6 +17,10 @@ class TestLiveConnectionManager(unittest.TestCase):
         mgr.set_disconnected(reason="Simulated Wi-Fi Drop")
         self.assertEqual(mgr.state, ConnectionState.DISCONNECTED)
 
+        mgr.set_standby()
+        self.assertEqual(mgr.state, ConnectionState.STANDBY)
+        self.assertFalse(mgr.should_attempt_reconnect())
+
     def test_backoff_delays(self):
         mgr = LiveConnectionManager(base_delay=1.0, max_delay=10.0, jitter_factor=0.0)
         

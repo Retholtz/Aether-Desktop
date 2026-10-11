@@ -372,6 +372,11 @@ class AetherEngine:
         self._stop_requested = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
+        # On-Demand Ephemeral WebSocket Lifecycle Tracking
+        self._last_live_turn_completed_ts: float = time.time()
+        self._connect_in_progress: bool = False
+        self._linger_seconds: float = 60.0
+
         try:
             import main
             main.active_engine = self
@@ -460,10 +465,31 @@ class AetherEngine:
                 if now - getattr(self, "_transcribing_start_time", 0.0) > 10.0:
                     logger.warning("[WATCHDOG] Transcribing state timed out (>10s) without server response. Reverting to listening state.")
                     self._is_transcribing = False
+                    self._in_active_turn = False
                     agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether")
                     self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                    # Recover dead/hung socket automatically
+                    if self.is_running and hasattr(self, "request_live_session_rotation"):
+                        self.request_live_session_rotation(reason="Transcribing Timeout Recovery")
 
             if self.conn_mgr.state == ConnectionState.CONNECTED:
+                # 0. On-Demand Ephemeral WebSocket: Linger Window (PTT / Wake Word mode)
+                if self.is_on_demand_mode():
+                    linger_elapsed = now - getattr(self, "_last_live_turn_completed_ts", now)
+                    if (
+                        linger_elapsed >= getattr(self, "_linger_seconds", 60.0)
+                        and not self.is_speaking
+                        and not self.is_tool_running
+                        and not self.is_audio_streaming
+                        and not getattr(self, "_in_active_turn", False)
+                        and not getattr(self, "_is_transcribing", False)
+                        and not getattr(self, "_ptt_active", False)
+                        and (not self.audio or not getattr(self.audio, "ptt_active", False))
+                    ):
+                        logger.info(f"[LIVE ON-DEMAND] 60s linger window expired ({linger_elapsed:.1f}s idle). Transitioning to Standby.")
+                        self.request_live_session_disconnect(reason="Linger timeout (60s idle)")
+                        continue
+
                 # 1. Proactive session rotation when elapsed duration or metrics exceed threshold OR context reset flag is set during idle
                 if (
                     self.is_running
@@ -474,16 +500,27 @@ class AetherEngine:
                 ):
                     reason = "Session lifecycle threshold" if self.session_lifecycle.needs_rotation() else "Pending context reset"
                     self.request_live_session_rotation(reason=reason)
-                # 2. If idle for > 7 minutes without traffic, ping or transparently re-open before user turn
-                elif now - self.conn_mgr.last_heartbeat_ts > 420:  # 7 minutes (safely below 9m server limit)
-                    print("[INFO] [ENGINE] Preemptive idle refresh triggered on stale Live WebSocket.")
-                    self.reconnect_live_session(reason="Idle Timeout Prevention")
+                # 2. Hard safeguard: if session elapsed >= 480s (8 min) or idle for > 420s (7 min), FORCE rotation before gateway timeout
+                elif (
+                    self.is_running
+                    and hasattr(self, "session_lifecycle")
+                    and not getattr(self.session_lifecycle, "rotation_in_progress", False)
+                    and not self.is_speaking
+                    and not self.is_audio_streaming
+                ):
+                    elapsed = self.session_lifecycle.get_elapsed_seconds()
+                    idle_time = now - self.conn_mgr.last_heartbeat_ts
+                    if elapsed >= 480 or idle_time >= 420:
+                        logger.info(f"[LIFECYCLE] Force idle rotation: elapsed={elapsed:.0f}s, idle={idle_time:.0f}s. Reconnecting before gateway timeout.")
+                        self._in_active_turn = False
+                        self._is_transcribing = False
+                        self.request_live_session_rotation(reason="Idle Timeout Prevention")
             elif self.conn_mgr.state in (ConnectionState.DISCONNECTED, ConnectionState.RECONNECTING):
-                if self.conn_mgr.should_attempt_reconnect():
+                if not self.is_on_demand_mode() and self.conn_mgr.should_attempt_reconnect():
                     delay = self.conn_mgr.compute_next_backoff()
                     time.sleep(delay)
                     if not self._stop_watchdog.is_set():
-                        self.reconnect_live_session(reason="Auto Recovery")
+                        self.request_live_session_rotation(reason="Auto Recovery")
 
     def _establish_raw_live_stream(self, live_config: Optional[types.LiveConnectConfig] = None):
         """Establishes a raw Gemini Live stream using the active client and configuration."""
@@ -582,13 +619,233 @@ class AetherEngine:
                     coro = self.live_session.send_client_content(turns=sanitized, turn_complete=False)
                     if asyncio.iscoroutine(coro):
                         loop = getattr(self, "_loop", None)
-                        if loop and loop.is_running():
+                        try:
+                            running_loop = asyncio.get_running_loop()
+                        except RuntimeError:
+                            running_loop = None
+                        if running_loop and running_loop is loop:
+                            loop.create_task(coro)
+                        elif loop and loop.is_running():
                             asyncio.run_coroutine_threadsafe(coro, loop)
                         else:
                             coro.close()
                 print(f"[INFO] [ENGINE] Rehydrated {len(sanitized)} turns into reconnected live session.")
         except Exception as e:
             print(f"[WARN] [ENGINE] Context rehydration skipped: {e}")
+
+    def is_on_demand_mode(self) -> bool:
+        """
+        Returns True if the engine should manage the Gemini Live WebSocket on-demand
+        (connecting on PTT/wake word and lingering for 60s of silence before entering Standby).
+        Returns False for continuous open-mic 'always_on' listening mode without wake gating.
+        """
+        cfg = self.config_getter() if callable(getattr(self, "config_getter", None)) else {}
+        if not isinstance(cfg, dict):
+            return False
+        audio_cfg = cfg.get("audio", {}) if isinstance(cfg.get("audio"), dict) else {}
+        mode = audio_cfg.get("mode", cfg.get("audio_mode", "always_on"))
+        if mode == "ptt":
+            return True
+        wake_enabled = bool(cfg.get("wake_word_enabled", audio_cfg.get("wake_word_enabled", True)))
+        always_on_mode = audio_cfg.get("always_on_mode", cfg.get("always_on_mode", "wake_word"))
+        if mode in ("wake_word", "wake_sleep_toggle"):
+            return True
+        if wake_enabled and always_on_mode != "always_on":
+            return True
+        return False
+
+    def request_live_session_connect(self, reason: str = "On-demand"):
+        """Thread-safe request to establish or re-awaken the Gemini Live WebSocket."""
+        if not self.is_running:
+            return
+        loop = getattr(self, "_loop", None)
+        if not loop or not loop.is_running():
+            return
+        if self.conn_mgr.state == ConnectionState.CONNECTED and self.session is not None:
+            self._last_live_turn_completed_ts = time.time()
+            return
+        if getattr(self, "_connect_in_progress", False):
+            return
+
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if current_loop is loop:
+            asyncio.create_task(self._ensure_live_connected(reason=reason))
+        else:
+            asyncio.run_coroutine_threadsafe(self._ensure_live_connected(reason=reason), loop)
+
+    async def _ensure_live_connected(self, reason: str = "On-demand") -> bool:
+        """
+        Asynchronously connects the Gemini Live WebSocket session.
+        If already connected, touches the linger timestamp and returns True.
+        Buffers outgoing microphone audio in AudioPipeline during the ~350ms connection handshake.
+        """
+        if self.session is not None and self.conn_mgr.state == ConnectionState.CONNECTED:
+            self._last_live_turn_completed_ts = time.time()
+            return True
+
+        if getattr(self, "_connect_in_progress", False):
+            wait_count = 0
+            while getattr(self, "_connect_in_progress", False) and wait_count < 100:
+                await asyncio.sleep(0.05)
+                wait_count += 1
+            return bool(self.session is not None and self.conn_mgr.state == ConnectionState.CONNECTED)
+
+        self._connect_in_progress = True
+        self.conn_mgr.state = ConnectionState.CONNECTING
+        logger.info(f"[LIVE ON-DEMAND] Establishing Gemini Live WebSocket ({reason})...")
+
+        try:
+            client = getattr(self, "client", None) or getattr(self, "genai_client", None)
+            if client is None:
+                api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+                encrypted_key = api_cfg.get("api_key_encrypted", "")
+                api_key = unprotect_secret(encrypted_key) if encrypted_key else os.environ.get("GEMINI_API_KEY", "")
+                if not api_key:
+                    raise RuntimeError("Gemini API Key is not configured.")
+                client = genai.Client(api_key=api_key)
+                self.genai_client = client
+                self.dispatcher.genai_client = client
+
+            api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+            model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
+            voice_name = api_cfg.get("voice_name", "Aoede")
+            temperature = float(api_cfg.get("temperature", 0.7))
+            voice_accent = api_cfg.get("voice_accent", "default")
+            kill_phrase = self.config_getter().get("audio", {}).get("safe_phrase", "Aether stop") if self.config_getter else "Aether stop"
+            agent_name = api_cfg.get("agent_name", "Aether").strip() or "Aether"
+
+            live_config = self._build_live_config(
+                self._build_system_instruction(),
+                voice_name,
+                temperature
+            )
+
+            try:
+                cm = client.aio.live.connect(model=model_id, config=live_config)
+                self._active_cm = cm
+                session = await cm.__aenter__()
+            except Exception as conn_err:
+                if getattr(self, "_session_resumption_handle", None) and any(kw in str(conn_err).lower() for kw in ("handle", "resumption", "expired")):
+                    logger.warning(f"[LIVE ON-DEMAND] Resumption handle rejected ({conn_err}). Retrying fresh connection...")
+                    self._session_resumption_handle = None
+                    live_config = self._build_live_config(self._build_system_instruction(), voice_name, temperature, use_resumption=False)
+                    cm = client.aio.live.connect(model=model_id, config=live_config)
+                    self._active_cm = cm
+                    session = await cm.__aenter__()
+                else:
+                    raise
+
+            self.session = session
+            self.live_session = session
+            self.conn_mgr.set_connected()
+            self._rehydrate_session_context()
+            self._last_live_turn_completed_ts = time.time()
+
+            try:
+                import main
+                main.update_session_state(
+                    session=session,
+                    turns=0,
+                    start_time=time.time()
+                )
+            except Exception:
+                pass
+
+            # Start active receive task for this session
+            if hasattr(self, "_active_recv_task") and self._active_recv_task and not self._active_recv_task.done():
+                self._active_recv_task.cancel()
+            self._active_recv_task = asyncio.create_task(
+                self._receive_loop(
+                    session,
+                    kill_phrase,
+                    agent_name,
+                    client,
+                    model_id,
+                    voice_name,
+                    temperature,
+                    voice_accent
+                )
+            )
+
+            logger.info(f"[LIVE ON-DEMAND] WebSocket established successfully ({reason})! Ready for audio streaming.")
+            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+            return True
+        except Exception as conn_err:
+            logger.error(f"[LIVE ON-DEMAND] Connection failed ({reason}): {conn_err}", exc_info=True)
+            self.conn_mgr.set_disconnected(reason=str(conn_err))
+            self.notify("status", {"state": "error", "message": f"Connection error: {conn_err}"})
+            if self.audio and self.audio.input_queue:
+                while not self.audio.input_queue.empty():
+                    try:
+                        self.audio.input_queue.get_nowait()
+                    except Exception:
+                        break
+            return False
+        finally:
+            self._connect_in_progress = False
+
+    def request_live_session_disconnect(self, reason: str = "Linger timeout"):
+        """Thread-safe request to cleanly close the Live WebSocket and enter Standby."""
+        if not self.is_running:
+            return
+        loop = getattr(self, "_loop", None)
+        if not loop or not loop.is_running():
+            return
+
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if current_loop is loop:
+            asyncio.create_task(self._disconnect_live_session(reason=reason))
+        else:
+            asyncio.run_coroutine_threadsafe(self._disconnect_live_session(reason=reason), loop)
+
+    async def _disconnect_live_session(self, reason: str = "Linger timeout"):
+        """Cleanly closes the Live WebSocket session and transitions to Standby."""
+        if self.conn_mgr.state == ConnectionState.STANDBY and self.session is None:
+            return
+        logger.info(f"[LIVE ON-DEMAND] Closing Live session ({reason}) and entering Standby.")
+        old_session = self.session
+        old_cm = getattr(self, "_active_cm", None)
+        old_recv = getattr(self, "_active_recv_task", None)
+
+        self.session = None
+        self.live_session = None
+        self._active_cm = None
+        self._active_recv_task = None
+        self._in_active_turn = False
+        self._is_transcribing = False
+        self.is_tool_executing = False
+        self._is_audio_streaming = False
+        self.conn_mgr.set_standby()
+
+        if old_recv and not old_recv.done():
+            old_recv.cancel()
+
+        if old_session:
+            try:
+                await old_session.close()
+            except Exception as e:
+                logger.debug(f"[LIVE ON-DEMAND] Old session close: {e}")
+        if old_cm:
+            try:
+                await old_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+
+        cfg = self.config_getter() if self.config_getter else {}
+        agent_name = cfg.get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+        wake_phrase = cfg.get("wake_phrase", f"Hey {agent_name}")
+        if cfg.get("audio", {}).get("mode", "always_on") == "ptt":
+            self.notify("status", {"state": "standby", "message": f"{agent_name} is ready (Push-to-Talk)."})
+        else:
+            self.notify("status", {"state": "standby", "message": f"Standby — Say '{wake_phrase}' to wake {agent_name}."})
 
     def _read_next_live_message(self):
         """Reads the next message frame from the active live session if available."""
@@ -708,9 +965,19 @@ class AetherEngine:
         if self.is_tool_running:
             return False
         if getattr(self, "_is_transcribing", False):
-            return False
+            # If transcribing has been pending > 8.0s, allow rotation to recover
+            if time.time() - getattr(self, "_transcribing_start_time", 0.0) < 8.0:
+                return False
         if getattr(self, "_in_active_turn", False):
-            return False
+            # Check if active turn is genuine or an orphaned stale flag (>10s without speech/response)
+            last_activity = max(
+                getattr(self, "last_user_turn_timestamp", 0.0),
+                getattr(self, "last_agent_turn_timestamp", 0.0),
+            )
+            if last_activity > 0 and (time.time() - last_activity) < 10.0:
+                return False
+            # Auto-clear stale active turn flag
+            self._in_active_turn = False
         return True
 
     def _is_engine_idle(self) -> bool:
@@ -1090,6 +1357,8 @@ class AetherEngine:
             self.start(self._loop)
         if self.audio:
             self.audio.set_ptt(active)
+        if active and self.is_on_demand_mode():
+            self.request_live_session_connect(reason="PTT pressed")
         self.notify("mic_status", {
             "ptt_active": active,
             "is_speaking": self.audio.is_speaking if self.audio else False
@@ -1118,6 +1387,8 @@ class AetherEngine:
                 pass
         self.notify("assistant_woke", {"state": "ACTIVE_CONVERSATION"})
         self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+        if self.is_on_demand_mode():
+            self.request_live_session_connect(reason="Wake phrase detected")
 
     def _on_assistant_sleep(self):
         """Triggered when WakeWordDetector times out after >8.0s silence or receives Stop Listening phrase and returns to IDLE_LISTENING."""
@@ -1145,6 +1416,8 @@ class AetherEngine:
                 self.on_vad_speech_detected()
                 self.is_audio_streaming = True
                 self.notify("status", {"state": "hearing", "message": "Hearing speech..."})
+                if self.is_on_demand_mode() and (self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED):
+                    self.request_live_session_connect(reason="Speech detected")
             else:
                 logger.debug("[VAD] Acoustic energy detected during assistant playback; awaiting STT echo/kill check.")
         elif state == "speech_finalized":
@@ -1175,6 +1448,8 @@ class AetherEngine:
         """Queues a typed message to be sent into the active Gemini Live session."""
         if not text.strip():
             return
+        if self.is_on_demand_mode() and (self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED):
+            await self._ensure_live_connected(reason="Typed text sent")
         self.last_user_turn_timestamp = time.time()
         self.last_user_turn_time = time.perf_counter()
         await self._text_queue.put(text.strip())
@@ -1505,6 +1780,21 @@ class AetherEngine:
                         elif self._is_kill_command(clean_user_speech, kill_phrase, agent_name):
                             logger.info(f"[KILL PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio!")
                             self.kill_audio()
+                        # Check Game Mode Voice Interception (Mode toggle or Fast-path macro)
+                        elif hasattr(self, "game_engine") and self.game_engine:
+                            intercept = self.game_engine.intercept_voice_turn(clean_user_speech, agent_name=agent_name)
+                            if intercept.handled:
+                                logger.info(f"[GAME VOICE INTERCEPT] Action: {intercept.action_type} for '{clean_user_speech}'")
+                                if intercept.action_type == "mode_toggle":
+                                    self.kill_audio()
+                                    if intercept.requires_context_reset:
+                                        self.request_live_session_rotation(reason=f"Game Mode Voice: {clean_user_speech}")
+                                elif intercept.action_type == "fast_path_macro":
+                                    self.notify("chat_event", {
+                                        "type": "tool",
+                                        "name": "Game Macro",
+                                        "content": intercept.user_message
+                                    })
 
                     # 2. Model Audio Generation
                     model_turn = getattr(server_content, "model_turn", None)
@@ -1561,6 +1851,7 @@ class AetherEngine:
                         print("\n[USER INTERRUPTED - BARGE-IN]")
                         self.kill_audio()
                         self._in_active_turn = False
+                        self._last_live_turn_completed_ts = time.time()
                         self.notify("agent_turn_interrupted", {})
                         self.current_turn_text = ""
                         self.current_turn_tools = []
@@ -1616,6 +1907,8 @@ class AetherEngine:
                             self.audio.clear_output_buffer()
                         if self.is_running:
                             self.last_user_turn_time = time.perf_counter()
+                            self.last_user_turn_timestamp = time.time()
+                            self._last_live_turn_completed_ts = time.time()
                             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                         self._in_active_turn = False
 
@@ -1667,7 +1960,13 @@ class AetherEngine:
                     self.notify("status", {"state": "reconnecting", "message": "Refreshing live session..."})
                 else:
                     print(f"[INFO] [RECEIVE_LOOP] Live WebSocket closed by gateway: {e}")
-                    self.conn_mgr.set_disconnected(reason="Gateway closure")
+                    if self.is_on_demand_mode():
+                        self.conn_mgr.set_standby()
+                        self.session = None
+                        self.live_session = None
+                        self._active_cm = None
+                    else:
+                        self.conn_mgr.set_disconnected(reason="Gateway closure")
             elif not self.is_running:
                 pass
             else:
@@ -3929,6 +4228,9 @@ class AetherEngine:
             self.session_lifecycle.reset_metrics()
             self._session_resumption_handle = None
             self._is_transcribing = False
+            self._in_active_turn = False
+            self.is_tool_executing = False
+            self._is_audio_streaming = False
             self._reset_context_flag = False
 
             self.notify("chat_event", {
@@ -3941,6 +4243,9 @@ class AetherEngine:
         except Exception as rot_err:
             logger.error(f"[ROTATION ERROR] Failed silent reconnect: {rot_err}", exc_info=True)
             self._is_transcribing = False
+            self._in_active_turn = False
+            self.is_tool_executing = False
+            self._is_audio_streaming = False
             self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
             return False
         finally:
@@ -3957,7 +4262,7 @@ class AetherEngine:
         temperature: float,
         voice_accent: str = "default"
     ):
-        """Executes Gemini Multimodal Live WebSocket session with Silent Reconnect Lifecycle."""
+        """Executes Gemini Multimodal Live WebSocket session with On-Demand Ephemeral Linger Lifecycle."""
         model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
         self._base_system_instruction = system_instruction_text
         self._loop = asyncio.get_running_loop()
@@ -3965,128 +4270,35 @@ class AetherEngine:
 
         accent_info = f", Accent: {voice_accent}" if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", "") else ""
 
-        while self.is_running:
-            self.conn_mgr.state = ConnectionState.CONNECTING
-            self.notify("status", {"state": "connecting", "message": f"Connecting to Gemini Live ({model_id}, Voice: {voice_name}{accent_info})..."})
+        # Perpetual send loop for the lifetime of the live pipeline
+        send_task = asyncio.create_task(self._send_loop())
 
-            try:
-                client = genai.Client(api_key=api_key)
-                self.genai_client = client
-                self.dispatcher.genai_client = client
-
-                live_config = self._build_live_config(system_instruction_text, voice_name, temperature)
-                try:
-                    self._active_cm = client.aio.live.connect(model=model_id, config=live_config)
-                    session = await self._active_cm.__aenter__()
-                except Exception as conn_err:
-                    if getattr(self, "_session_resumption_handle", None) and any(kw in str(conn_err).lower() for kw in ("handle", "resumption", "expired")):
-                        logger.warning(f"[LIVE CONNECT] Resumption handle rejected ({conn_err}). Retrying fresh connection...")
-                        self._session_resumption_handle = None
-                        live_config = self._build_live_config(system_instruction_text, voice_name, temperature, use_resumption=False)
-                        self._active_cm = client.aio.live.connect(model=model_id, config=live_config)
-                        session = await self._active_cm.__aenter__()
-                    else:
-                        raise
-                self.session = session
-                self.live_session = session
-                self.conn_mgr.set_connected()
-                self._rehydrate_session_context()
-
-                try:
-                    import main
-                    main.update_session_state(
-                        session=session,
-                        turns=0,
-                        start_time=time.time()
-                    )
-                except Exception:
-                    pass
-
-                self.notify("status", {"state": "connected", "message": f"Connected to Gemini Live. {agent_name} is listening."})
+        try:
+            if not self.is_on_demand_mode():
+                logger.info("[LIVE PIPELINE] Initializing in Always-On continuous mode...")
+                await self._ensure_live_connected(reason="Initial startup (Always-On)")
+            else:
+                logger.info("[LIVE PIPELINE] Initializing in On-Demand Standby mode (PTT / Wake Word)...")
+                self.conn_mgr.set_standby()
+                wake_phrase = self.config_getter().get("wake_phrase", f"Hey {agent_name}")
+                if self.config_getter().get("audio", {}).get("mode", "always_on") == "ptt":
+                    self.notify("status", {"state": "standby", "message": f"{agent_name} is ready (Push-to-Talk)."})
+                else:
+                    self.notify("status", {"state": "standby", "message": f"Standby — Say '{wake_phrase}' to wake {agent_name}."})
                 self.notify("chat_event", {
                     "type": "system",
-                    "content": f"Connected to Gemini Live ({model_id}, Voice: {voice_name}{accent_info}). {agent_name} is listening..."
+                    "content": f"Ready in On-Demand mode ({model_id}, Voice: {voice_name}{accent_info}). {agent_name} is in Standby."
                 })
 
-                send_task = asyncio.create_task(self._send_loop())
-                self._active_recv_task = asyncio.create_task(
-                    self._receive_loop(session, kill_phrase, agent_name, client, model_id, voice_name, temperature, voice_accent)
-                )
+            while self.is_running:
+                await asyncio.sleep(0.5)
 
-                while self.is_running:
-                    tasks = {send_task, self._active_recv_task}
-                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                    if send_task in done:
-                        break
-                    if self._active_recv_task in done:
-                        try:
-                            self._active_recv_task.result()
-                        except asyncio.CancelledError:
-                            # Old receive loop was cancelled during rotation; wait for new active_recv_task
-                            continue
-                        except Exception as e:
-                            err_str = str(e)
-                            err_lower = err_str.lower()
-                            is_session_expiration = (
-                                "1008" in err_lower
-                                or "goaway" in err_lower
-                                or "session duration" in err_lower
-                                or "duration limit" in err_lower
-                            )
-                            if is_session_expiration:
-                                logger.info(f"[LIVE SESSION EXPIRATION] {e}")
-                            elif self.is_running and "1000" not in err_str:
-                                print(f"[TASK FINISHED WITH ERROR] {e}")
-                                logger.error(f"[LIVE RECEIVE TASK ERROR] {e}")
-                            break
-
-                # Teardown current connection
-                if send_task and not send_task.done():
-                    send_task.cancel()
-                if self._active_recv_task and not self._active_recv_task.done():
-                    self._active_recv_task.cancel()
-                if self.session:
-                    try:
-                        await self.session.close()
-                    except Exception:
-                        pass
-                if self._active_cm:
-                    try:
-                        await self._active_cm.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                err_str = str(e)
-                err_lower = err_str.lower()
-                self.conn_mgr.set_disconnected(reason=err_str)
-                if not self.is_running or "1000" in err_str or "normal" in err_lower:
-                    break
-                if not self.conn_mgr.should_attempt_reconnect():
-                    break
-
-                is_session_expiration = (
-                    "1008" in err_lower
-                    or "goaway" in err_lower
-                    or "session duration" in err_lower
-                    or "duration limit" in err_lower
-                )
-                if is_session_expiration:
-                    reconnect_delay = 0.5
-                    logger.info(f"[LIVE SESSION EXPIRATION: {e}] -> Auto-refreshing session in {reconnect_delay}s...")
-                    self.notify("status", {"state": "reconnecting", "message": "Refreshing live session..."})
-                else:
-                    reconnect_delay = self.conn_mgr.compute_next_backoff()
-                    print(f"\n[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
-                    logger.error(f"[LIVE SESSION DISCONNECTED: {e}] -> Auto-reconnecting in {reconnect_delay:.1f}s...")
-                    self.notify("status", {"state": "reconnecting", "message": f"Connection lost ({e}). Reconnecting in {reconnect_delay:.1f}s..."})
-                    self.notify("chat_event", {
-                        "type": "system",
-                        "content": f"⚠️ Connection interrupted ({e}). Reconnecting in {reconnect_delay:.1f}s..."
-                    })
-                await asyncio.sleep(reconnect_delay)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if send_task and not send_task.done():
+                send_task.cancel()
+            await self._disconnect_live_session(reason="Pipeline shutdown")
 
     def start(self, loop: asyncio.AbstractEventLoop):
         """Starts the assistant engine on the provided event loop."""
