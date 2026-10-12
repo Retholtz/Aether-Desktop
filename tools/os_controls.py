@@ -1082,6 +1082,23 @@ def send_directinput_combo(modifiers: list[str], key_name: str, hold_duration: f
             _send_scancode_event(sc, ext | KEYEVENTF_KEYUP)
 
 
+def send_directinput_string(text: str, delay_sec: float = 0.04) -> bool:
+    """
+    Types a string sequentially using DirectInput hardware scancodes.
+    Ideal for in-game search inputs, system query fields, or command consoles (e.g. Elite Dangerous).
+    """
+    for ch in text:
+        ch_lower = ch.lower()
+        if ch.isupper():
+            send_directinput_combo(["shift"], ch_lower, hold_duration=0.03)
+        elif ch in SCANCODE_MAP:
+            send_directinput_key(ch_lower, duration_sec=0.03)
+        elif ch == " ":
+            send_directinput_key("space", duration_sec=0.03)
+        time.sleep(delay_sec)
+    return True
+
+
 def drag_mouse_relative(dx: int, dy: int, button: str = "right", steps: int = 12, step_delay: float = 0.015):
     """
     Simulates clicking and dragging the mouse across the screen to pan game maps.

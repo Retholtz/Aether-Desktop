@@ -127,6 +127,40 @@ function renderActiveGameDetail() {
         };
     }
 
+    // Guidance Level Selector
+    const guidanceSelect = document.getElementById('select-guidance-level');
+    if (guidanceSelect) {
+        guidanceSelect.value = profile.guidance_level || 'tactical';
+        guidanceSelect.onchange = async (e) => {
+            const newLevel = e.target.value;
+            try {
+                const res = await window.pywebview.api.set_guidance_level(activeGameId, newLevel);
+                if (res && res.success) {
+                    profile.guidance_level = newLevel;
+                }
+            } catch (err) {
+                console.error("Failed setting guidance level:", err);
+            }
+        };
+    }
+
+    // Navigation Mode Selector
+    const navSelect = document.getElementById('select-navigation-mode');
+    if (navSelect) {
+        navSelect.value = profile.navigation_mode || 'controller';
+        navSelect.onchange = async (e) => {
+            const newMode = e.target.value;
+            try {
+                const res = await window.pywebview.api.set_navigation_mode(activeGameId, newMode);
+                if (res && res.success) {
+                    profile.navigation_mode = newMode;
+                }
+            } catch (err) {
+                console.error("Failed setting navigation mode:", err);
+            }
+        };
+    }
+
     // Keybinds Table
     const tbody = document.getElementById('tbody-game-binds');
     if (tbody) {

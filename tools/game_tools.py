@@ -4,6 +4,7 @@ Provides game status/telemetry inspection, macro triggering, market lookup,
 co-pilot observations, scratchpad management, and visual map navigation/waypoint setting.
 """
 
+import time
 from typing import Optional, Dict, Any
 from tools.dispatcher import register_tool
 
@@ -338,8 +339,185 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             elif hasattr(engine, "config_getter") and callable(engine.config_getter):
                 cfg = engine.config_getter()
                 model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-2.5-flash"))
-        nav = GameNavigator(client=client, model_endpoint=model_endpoint)
+        active_id = ""
+        target_process = ""
+        map_controls = None
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            if prof:
+                target_process = prof.get("process_name") or prof.get("display_name") or ""
+                map_controls = prof.get("map_controls")
+        nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
+        if active_id and game_manager:
+            nav_mode = game_manager.get_navigation_mode(active_id)
+            if nav_mode == "co_pilot_spotter":
+                return nav.spot_and_guide_map_location(landmark_description=landmark)
+            elif nav_mode == "search_bar":
+                return nav.search_and_route_destination(destination_name=landmark)
+            elif nav_mode == "controller":
+                return nav.pan_and_place_marker(landmark, general_direction, use_gamepad=True)
+            elif nav_mode == "mouse_keyboard":
+                return nav.pan_and_place_marker(landmark, general_direction, use_gamepad=False)
         return nav.pan_and_place_marker(landmark, general_direction)
+
+    @dispatcher.register(
+        name="pan_game_map",
+        description="Pans the in-game world map viewport toward a cardinal direction (e.g. north, south, east, west) using relative mouse dragging or gamepad stick.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "direction": {
+                    "type": "string",
+                    "enum": ["north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest"],
+                    "description": "Cardinal direction to pan the map viewport."
+                },
+                "distance": {
+                    "type": "integer",
+                    "description": "Distance in pixels or drag magnitude (default: 350)."
+                }
+            },
+            "required": ["direction"]
+        }
+    )
+    def pan_game_map(direction: str, distance: int = 350) -> dict:
+        from core.game_nav import GameNavigator
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        model_endpoint = "gemini-2.5-flash"
+        target_process = ""
+        map_controls = None
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            if prof:
+                target_process = prof.get("process_name") or prof.get("display_name") or ""
+                map_controls = prof.get("map_controls")
+        nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
+        nav.pan_map(direction=direction, distance=distance)
+        return {"status": "success", "direction": direction, "distance": distance}
+
+    @dispatcher.register(
+        name="place_map_marker",
+        description="Places a destination waypoint marker on the in-game world map at specific screen coordinates or at the current cursor position.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "x": {
+                    "type": "integer",
+                    "description": "Optional X screen coordinate (in pixels). If omitted, clicks at current cursor position."
+                },
+                "y": {
+                    "type": "integer",
+                    "description": "Optional Y screen coordinate (in pixels). If omitted, clicks at current cursor position."
+                }
+            }
+        }
+    )
+    def place_map_marker(x: Optional[int] = None, y: Optional[int] = None) -> dict:
+        from tools.os_controls import move_mouse_absolute, click_mouse_button
+        ctrl = {}
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            if prof:
+                ctrl = prof.get("map_controls") or {}
+        marker_method = ctrl.get("marker_method")
+        btn = "left" if marker_method == "left_click" else "right"
+        if x is not None and y is not None:
+            move_mouse_absolute(int(x), int(y))
+            time.sleep(0.1)
+        click_mouse_button(btn, hold_duration=0.08)
+        return {"status": "success", "placed_at": [x, y] if x is not None and y is not None else "cursor_pos", "button": btn}
+
+    @dispatcher.register(
+        name="center_map_on_player",
+        description="Snaps or centers the in-game world map back to the player character or origin.",
+        parameters={
+            "type": "object",
+            "properties": {}
+        }
+    )
+    def center_map_on_player() -> dict:
+        from tools.os_controls import pulse_key
+        ctrl = {}
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            if prof:
+                ctrl = prof.get("map_controls") or {}
+        center_key = ctrl.get("center_player_key", "r")
+        pulse_key(center_key)
+        return {"status": "success", "key": center_key, "message": f"Centered map using key '{center_key}'."}
+
+    @dispatcher.register(
+        name="spot_and_guide_map_landmark",
+        description="Co-Pilot Guided Spotter mode: Observes the in-game world map via computer vision, locates destination bearings or landmarks, and returns spoken guidance for the player without artificial cursor movement.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "landmark": {
+                    "type": "string",
+                    "description": "Name or visual description of the destination (e.g. 'Silver Wolf Mountain', 'Kweiden Outpost')."
+                }
+            },
+            "required": ["landmark"]
+        }
+    )
+    def spot_and_guide_map_landmark(landmark: str) -> dict:
+        from core.game_nav import UniversalGameNavigator
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        model_endpoint = "gemini-2.5-flash"
+        if engine:
+            if hasattr(engine, "config") and isinstance(engine.config, dict):
+                model_endpoint = engine.config.get("primary_model_endpoint", "gemini-2.5-flash")
+            elif hasattr(engine, "config_getter") and callable(engine.config_getter):
+                cfg = engine.config_getter()
+                model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-2.5-flash"))
+        target_process = ""
+        map_controls = None
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            if prof:
+                target_process = prof.get("process_name") or prof.get("display_name") or ""
+                map_controls = prof.get("map_controls")
+        nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
+        return nav.spot_and_guide_map_location(landmark_description=landmark)
+
+    @dispatcher.register(
+        name="search_and_route_destination",
+        description="Search Bar Navigation: Focuses in-game navigation search bar (e.g. Elite Dangerous galaxy map), types destination name via DirectInput, and plots route.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "destination_name": {
+                    "type": "string",
+                    "description": "Star system, sector, or destination name to search and plot."
+                }
+            },
+            "required": ["destination_name"]
+        }
+    )
+    def search_and_route_destination(destination_name: str) -> dict:
+        from core.game_nav import UniversalGameNavigator
+        target_process = ""
+        map_controls = None
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            if prof:
+                target_process = prof.get("process_name") or prof.get("display_name") or ""
+                map_controls = prof.get("map_controls")
+        nav = UniversalGameNavigator(target_process=target_process, map_controls=map_controls)
+        return nav.search_and_route_destination(destination_name=destination_name)
 
     @dispatcher.register(
         name="assist_game_navigation",
@@ -373,7 +551,21 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             elif hasattr(engine, "config_getter") and callable(engine.config_getter):
                 cfg = engine.config_getter()
                 model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-2.5-flash"))
-        nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint)
+        target_process = ""
+        map_controls = None
+        nav_mode = "controller"
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            if prof:
+                target_process = prof.get("process_name") or prof.get("display_name") or ""
+                map_controls = prof.get("map_controls")
+            nav_mode = game_manager.get_navigation_mode(active_id)
+        nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
+        if nav_mode == "co_pilot_spotter":
+            return nav.spot_and_guide_map_location(landmark_description=target_description)
+        elif nav_mode == "search_bar":
+            return nav.search_and_route_destination(destination_name=target_description)
         return nav.run_vision_navigation_loop(target_description=target_description, web_context=web_context)
 
     return {
@@ -388,4 +580,9 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "search_copilot_log": search_copilot_log,
         "pan_and_mark_map_location": pan_and_mark_map_location,
         "assist_game_navigation": assist_game_navigation,
+        "spot_and_guide_map_landmark": spot_and_guide_map_landmark,
+        "search_and_route_destination": search_and_route_destination,
+        "pan_game_map": pan_game_map,
+        "place_map_marker": place_map_marker,
+        "center_map_on_player": center_map_on_player,
     }

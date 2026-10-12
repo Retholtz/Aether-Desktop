@@ -46,6 +46,11 @@ class GameEngine:
         "search_copilot_log",
         "pan_and_mark_map_location",
         "assist_game_navigation",
+        "spot_and_guide_map_landmark",
+        "search_and_route_destination",
+        "pan_game_map",
+        "place_map_marker",
+        "center_map_on_player",
         "inspect_screen_context",
         "launch_application",
         "navigate_browser",
@@ -172,7 +177,67 @@ class GameEngine:
                 skip_llm=True
             )
 
-        # 3. Fast-Path DirectInput Macro Dispatch
+        # 3. Guidance Level Voice Setting Command
+        # Matches e.g. "set guidance level to walkthrough", "change guidance to companion", "guidance level tactical", "switch guidance to walkthrough"
+        guidance_match = re.search(r'\b(?:set|switch|change)?\s*(?:the\s*)?guidance(?:\s*level)?\s*(?:to\s*)?(companion|tactical|walkthrough)\b', clean_voice_cmd)
+        if guidance_match:
+            new_level = guidance_match.group(1).lower().strip()
+            active_id = self.manager.data.get("active_profile", "")
+            if active_id:
+                self.manager.set_guidance_level(active_id, new_level)
+                prof = self.manager.get_profile(active_id) or {}
+                game_title = prof.get("display_name", active_id)
+                level_display = new_level.capitalize()
+                msg = f"Guidance level set to {level_display} for {game_title}."
+                return GameInterceptionResult(
+                    handled=True,
+                    action_type="guidance_level_change",
+                    user_message=msg,
+                    tts_message=msg,
+                    requires_context_reset=True,
+                    skip_llm=True,
+                    details={"game_id": active_id, "guidance_level": new_level}
+                )
+
+        # 4. Map Navigation Mode Voice Setting Command
+        # Matches e.g. "set map navigation to controller", "change map navigation to spotter", "switch map navigation mode to search bar", "map navigation mouse"
+        nav_match = re.search(
+            r'\b(?:set|switch|change)?\s*(?:the\s*)?(?:map\s*)?navigation(?:\s*mode)?\s*(?:to\s*)?'
+            r'(controller|gamepad|spotter|co[-_ ]?pilot(?:\s*spotter)?|search\s*bar|mouse(?:\s*(?:and|&)?\s*keyboard)?)\b',
+            clean_voice_cmd
+        )
+        if nav_match:
+            raw_mode = nav_match.group(1).lower().strip()
+            if "spotter" in raw_mode or "pilot" in raw_mode:
+                canonical_mode = "co_pilot_spotter"
+                display_mode = "Co-Pilot Guided Spotter (Voice & Vision)"
+            elif "search" in raw_mode:
+                canonical_mode = "search_bar"
+                display_mode = "Search Bar & Binds"
+            elif "mouse" in raw_mode:
+                canonical_mode = "mouse_keyboard"
+                display_mode = "Mouse & Keyboard"
+            else:
+                canonical_mode = "controller"
+                display_mode = "Virtual Controller (ViGEmBus)"
+
+            active_id = self.manager.data.get("active_profile", "")
+            if active_id:
+                self.manager.set_navigation_mode(active_id, canonical_mode)
+                prof = self.manager.get_profile(active_id) or {}
+                game_title = prof.get("display_name", active_id)
+                msg = f"Map navigation mode set to {display_mode} for {game_title}."
+                return GameInterceptionResult(
+                    handled=True,
+                    action_type="navigation_mode_change",
+                    user_message=msg,
+                    tts_message=msg,
+                    requires_context_reset=True,
+                    skip_llm=True,
+                    details={"game_id": active_id, "navigation_mode": canonical_mode}
+                )
+
+        # 5. Fast-Path DirectInput Macro Dispatch
         active_game = self.manager.data.get("active_profile")
         if active_game:
             clean_macro = re.sub(r'^[,\.\s]+|[,\.\s]+$', '', lower_prompt).strip()

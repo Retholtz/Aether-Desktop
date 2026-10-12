@@ -122,6 +122,23 @@
                 <span id="game-mode-indicator" class="badge-status badge-online" style="margin-left: 6px; cursor: pointer;" title="Click to toggle Game Mode focus">🎮 Game Mode: ON</span>
               </div>
               <div class="banner-actions" style="display: flex; gap: 8px; align-items: center;">
+                <div class="guidance-level-wrap" style="display: flex; align-items: center; gap: 6px;">
+                  <label for="select-guidance-level" style="font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Guidance:</label>
+                  <select id="select-guidance-level" class="hud-select" style="font-size: 0.8rem; padding: 4px 8px; height: 32px; min-width: 130px;" title="Adjust AI puzzle and quest guidance helpfulness">
+                    <option value="companion">Companion (Hints)</option>
+                    <option value="tactical" selected>Tactical (Mechanics)</option>
+                    <option value="walkthrough">Walkthrough (Direct)</option>
+                  </select>
+                </div>
+                <div class="navigation-mode-wrap" style="display: flex; align-items: center; gap: 6px;">
+                  <label for="select-navigation-mode" style="font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Map Nav:</label>
+                  <select id="select-navigation-mode" class="hud-select" style="font-size: 0.8rem; padding: 4px 8px; height: 32px; min-width: 155px;" title="Map navigation and waypoint method">
+                    <option value="controller">🎮 Controller (ViGEmBus)</option>
+                    <option value="co_pilot_spotter">🧭 Spotter (Voice &amp; Vision)</option>
+                    <option value="search_bar">🔍 Search Bar (Typing)</option>
+                    <option value="mouse_keyboard">🖱️ Mouse &amp; Keyboard</option>
+                  </select>
+                </div>
                 <button type="button" id="btn-sync-game-binds" class="btn-secondary-sm" title="Scan local files for keybinds">
                   <span class="icon">🔍</span> Scan / Sync Keybinds
                 </button>

@@ -2063,26 +2063,47 @@ class ToolDispatcher:
                 handler = self._custom_handlers.get(fn_name) or _CUSTOM_TOOL_HANDLERS.get(fn_name)
                 import inspect
                 sig = inspect.signature(handler)
-                if len(sig.parameters) == 0:
-                    call_result = handler()
-                elif len(sig.parameters) == 1 and not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-                    p_name = next(iter(sig.parameters.keys()))
-                    if p_name in args:
-                        call_result = handler(args[p_name])
-                    elif p_name in ("args", "params", "data", "payload"):
-                        call_result = handler(args)
-                    else:
-                        call_result = handler(args)
-                else:
-                    try:
-                        call_result = handler(**args)
-                    except TypeError:
-                        call_result = handler(args)
 
-                if asyncio.iscoroutine(call_result):
+                def _invoke_sync():
+                    if len(sig.parameters) == 0:
+                        return handler()
+                    elif len(sig.parameters) == 1 and not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                        p_name = next(iter(sig.parameters.keys()))
+                        if p_name in args:
+                            return handler(args[p_name])
+                        elif p_name in ("args", "params", "data", "payload"):
+                            return handler(args)
+                        else:
+                            return handler(args)
+                    else:
+                        try:
+                            return handler(**args)
+                        except TypeError:
+                            return handler(args)
+
+                if inspect.iscoroutinefunction(handler):
+                    if len(sig.parameters) == 0:
+                        call_result = handler()
+                    elif len(sig.parameters) == 1 and not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                        p_name = next(iter(sig.parameters.keys()))
+                        if p_name in args:
+                            call_result = handler(args[p_name])
+                        elif p_name in ("args", "params", "data", "payload"):
+                            call_result = handler(args)
+                        else:
+                            call_result = handler(args)
+                    else:
+                        try:
+                            call_result = handler(**args)
+                        except TypeError:
+                            call_result = handler(args)
                     result = await call_result
                 else:
-                    result = call_result
+                    call_result = await asyncio.to_thread(_invoke_sync)
+                    if asyncio.iscoroutine(call_result):
+                        result = await call_result
+                    else:
+                        result = call_result
 
                 self.notify("chat_event", {
                     "type": "tool",

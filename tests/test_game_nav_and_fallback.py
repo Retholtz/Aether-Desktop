@@ -119,12 +119,12 @@ class TestGameNavAndFallback(unittest.TestCase):
             self.assertTrue(res.get("verified"))
             self.assertFalse(res.get("auto_corrected"))
             # Gamepad view tried, returned False, so fallback 'm' pulsed
-            mock_pad.assert_called_with("view", duration_sec=0.1)
+            mock_pad.assert_any_call("view", duration_sec=0.1)
             mock_key.assert_called_with("m", duration_sec=0.1)
             # Cursor moved to 500, 500
             mock_move.assert_called_with(500, 500)
-            # Right click to place waypoint
-            mock_click.assert_called_with("right", hold_duration=0.08)
+            # In gamepad mode, marker is placed using gamepad 'a'
+            mock_pad.assert_any_call("a", duration_sec=0.1)
 
     def test_pan_and_place_marker_keyboard_default(self):
         json_resp = '{"found": true, "point": [500, 500]}'
@@ -159,7 +159,8 @@ class TestGameNavAndFallback(unittest.TestCase):
             res = nav.pan_and_place_marker_verified("Kweiden Camp", use_gamepad=True)
             self.assertEqual(res["status"], "success")
             self.assertEqual(res["placed_at"], [300, 400])
-            mock_pad.assert_called_with("view", duration_sec=0.1)
+            mock_pad.assert_any_call("view", duration_sec=0.1)
+            mock_pad.assert_any_call("a", duration_sec=0.1)
             # Keyboard 'm' should NOT be called when gamepad succeeded
             mock_key.assert_not_called()
 
@@ -519,6 +520,37 @@ class TestGameNavAndFallback(unittest.TestCase):
         self.assertTrue(engine._reset_context_flag)
 
         engine.shutdown()
+
+    def test_pan_and_place_marker_focuses_target_process(self):
+        """Verifies that pan_and_place_marker focuses target_process before input injection."""
+        json_resp = '{"found": true, "point": [500, 500]}'
+        client = MockClient(json_resp)
+        nav = GameNavigator(client=client, target_process="CrimsonDesert.exe")
+
+        with patch.object(nav, "capture_screen", return_value=(b"fake_jpeg", 1000, 1000)), \
+             patch("tools.os_controls.focus_window") as mock_focus, \
+             patch("core.game_nav.send_directinput_key"), \
+             patch("core.game_nav.move_mouse_absolute"), \
+             patch("core.game_nav.click_mouse_button"), \
+             patch.object(nav, "verify_marker_placement", return_value={"accurate": True, "correction_needed": False}):
+
+            res = nav.pan_and_place_marker("Camp Outpost")
+            self.assertEqual(res["status"], "success")
+            mock_focus.assert_called_with("CrimsonDesert.exe")
+
+    def test_pan_and_place_marker_aborts_when_map_fails_to_open(self):
+        """Verifies that pan_and_place_marker aborts with map_not_open when screen is confirmed not a map."""
+        json_resp = '{"is_map": false}'
+        client = MockClient(json_resp)
+        nav = GameNavigator(client=client)
+
+        with patch.object(nav, "capture_screen", return_value=(b"fake_jpeg", 1000, 1000)), \
+             patch("core.game_nav.send_directinput_key"):
+
+            res = nav.pan_and_place_marker("Camp Outpost")
+            self.assertEqual(res["status"], "map_not_open")
+            self.assertFalse(res["success"])
+            self.assertIn("Attempted to open the map with 'm'", res["message"])
 
 
 if __name__ == "__main__":

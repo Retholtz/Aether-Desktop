@@ -462,7 +462,7 @@ class AetherEngine:
             now = time.time()
             # Watchdog safeguard against orphaned "transcribing" state (>10s)
             if getattr(self, "_is_transcribing", False):
-                if now - getattr(self, "_transcribing_start_time", 0.0) > 10.0:
+                if not self.is_tool_running and (now - getattr(self, "_transcribing_start_time", 0.0) > 10.0):
                     logger.warning("[WATCHDOG] Transcribing state timed out (>10s) without server response. Reverting to listening state.")
                     self._is_transcribing = False
                     self._in_active_turn = False
@@ -912,7 +912,7 @@ class AetherEngine:
 
     @property
     def is_tool_running(self) -> bool:
-        return bool(self._is_tool_running or self.is_tool_executing)
+        return bool(getattr(self, "_is_tool_running", False) or getattr(self, "is_tool_executing", False))
 
     @is_tool_running.setter
     def is_tool_running(self, val: bool):
@@ -1670,6 +1670,7 @@ class AetherEngine:
                     # 0. Handle Tool Calls from Model via Modular Dispatcher
                     tool_call = getattr(response, "tool_call", None)
                     if tool_call is not None and tool_call.function_calls:
+                        self._is_transcribing = False
                         self.is_tool_executing = True
                         self._in_active_turn = True
                         try:
@@ -1785,8 +1786,14 @@ class AetherEngine:
                             intercept = self.game_engine.intercept_voice_turn(clean_user_speech, agent_name=agent_name)
                             if intercept.handled:
                                 logger.info(f"[GAME VOICE INTERCEPT] Action: {intercept.action_type} for '{clean_user_speech}'")
-                                if intercept.action_type == "mode_toggle":
+                                if intercept.action_type in ("mode_toggle", "guidance_level_change"):
                                     self.kill_audio()
+                                    if intercept.user_message:
+                                        self.notify("chat_event", {
+                                            "type": "assistant",
+                                            "content": intercept.user_message,
+                                            "source": "system"
+                                        })
                                     if intercept.requires_context_reset:
                                         self.request_live_session_rotation(reason=f"Game Mode Voice: {clean_user_speech}")
                                 elif intercept.action_type == "fast_path_macro":
@@ -3410,24 +3417,26 @@ class AetherEngine:
 
     def _build_system_instruction(self) -> str:
         """Returns the active system instruction for Cortex turn generation."""
+        base_inst = ""
         if hasattr(self, "game_engine") and self.game_engine and self.game_engine.is_game_mode_active():
             hk_display = getattr(self, "hotkey_manager", None) and getattr(self.hotkey_manager, "game_mode_display", "Ctrl+Shift+G") or "Ctrl+Shift+G"
             game_instruction = self.game_engine.build_system_instruction(hotkey_display=hk_display)
             if game_instruction:
-                return game_instruction
+                base_inst = game_instruction
         elif hasattr(self, "game_mgr") and self.game_mgr and self.game_mgr.is_game_mode_active():
             game_context = self.game_mgr.get_active_game_context()
             if game_context:
-                return game_context
+                base_inst = game_context
 
-        if getattr(self, "_base_system_instruction", ""):
-            base_inst = self._base_system_instruction
-        else:
-            api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-            base_inst = api_cfg.get("system_instruction", "You are Aether.")
+        if not base_inst:
+            if getattr(self, "_base_system_instruction", ""):
+                base_inst = self._base_system_instruction
+            else:
+                api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
+                base_inst = api_cfg.get("system_instruction", "You are Aether.")
 
-        if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
-            base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"
+            if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
+                base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"
 
         cfg = self.config_getter() if self.config_getter else {}
         api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}

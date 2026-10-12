@@ -1740,6 +1740,43 @@ class GuiBridge:
         gid = game_id or self.game_mgr.data.get("active_profile", "")
         return self.game_mgr.add_copilot_log_entry(gid, summary=summary, category=category, location=location)
 
+    def get_guidance_level(self, game_id: Optional[str] = None) -> dict:
+        """Returns the current guidance level for the game (companion, tactical, walkthrough)."""
+        level = self.game_mgr.get_guidance_level(game_id)
+        return {"success": True, "guidance_level": level}
+
+    def set_guidance_level(self, game_id: str, level: str) -> dict:
+        """Sets the guidance level for the game and triggers session prompt rotation if needed."""
+        res = self.game_mgr.set_guidance_level(game_id, level)
+        if res.get("success"):
+            if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "_reset_context_flag"):
+                self._engine._reset_context_flag = True
+            elif hasattr(self, "engine") and self.engine and hasattr(self.engine, "_reset_context_flag"):
+                self.engine._reset_context_flag = True
+        return res
+
+    def get_navigation_mode(self, game_id: Optional[str] = None) -> dict:
+        """Returns the current map navigation mode for the game (controller, co_pilot_spotter, search_bar, mouse_keyboard)."""
+        mode = self.game_mgr.get_navigation_mode(game_id)
+        return {"success": True, "navigation_mode": mode}
+
+    def set_navigation_mode(self, game_id: str, mode: str) -> dict:
+        """Sets the map navigation mode for the game and triggers session prompt rotation if needed."""
+        res = self.game_mgr.set_navigation_mode(game_id, mode)
+        if res.get("success"):
+            if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "_reset_context_flag"):
+                self._engine._reset_context_flag = True
+            elif hasattr(self, "engine") and self.engine and hasattr(self.engine, "_reset_context_flag"):
+                self.engine._reset_context_flag = True
+        return res
+
+    def get_map_controls(self, game_id: Optional[str] = None) -> dict:
+        """Returns the configured map controls for the game."""
+        gid = game_id or self.game_mgr.data.get("active_profile", "")
+        prof = self.game_mgr.get_profile(gid) if gid else None
+        controls = prof.get("map_controls", {}) if prof else {}
+        return {"success": True, "map_controls": controls}
+
     def get_game_telemetry(self) -> dict:
         """Returns live in-game telemetry snapshot for the active profile."""
         active_id = self.game_mgr.data.get("active_profile", "")

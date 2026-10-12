@@ -124,6 +124,14 @@ class GameManager:
             "display_name": name_clean,
             "process_name": process_name.strip(),
             "telemetry_type": telemetry_type or "scratchpad_only",
+            "guidance_level": "tactical",
+            "navigation_mode": "controller",
+            "map_controls": {
+                "preferred_input": "gamepad",
+                "pan_method": "left_drag",
+                "marker_method": "right_click",
+                "zoom_method": "mouse_wheel"
+            },
             "scratchpad": scratchpad if scratchpad is not None else {
                 "active_quests": [],
                 "crafting_materials": [],
@@ -207,6 +215,64 @@ class GameManager:
             self._notify_mode_changed()
             return True
         return False
+
+    def get_guidance_level(self, game_id: Optional[str] = None) -> str:
+        """Retrieves guidance level for the game ('companion', 'tactical', or 'walkthrough'). Defaults to 'tactical'."""
+        gid = game_id or self.data.get("active_profile")
+        if not gid:
+            return "tactical"
+        profile = self.get_profile(gid)
+        if not profile:
+            return "tactical"
+        level = (profile.get("guidance_level") or "tactical").lower().strip()
+        return level if level in ("companion", "tactical", "walkthrough") else "tactical"
+
+    def set_guidance_level(self, game_id: str, level: str) -> dict:
+        """Sets the guidance level for the specified game profile."""
+        norm_level = (level or "").lower().strip()
+        if norm_level not in ("companion", "tactical", "walkthrough"):
+            return {
+                "success": False,
+                "error": f"Invalid guidance level '{level}'. Must be 'companion', 'tactical', or 'walkthrough'."
+            }
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        profile["guidance_level"] = norm_level
+        self._save_profiles(self.data)
+        return {"success": True, "game_id": game_id, "guidance_level": norm_level}
+
+    def get_navigation_mode(self, game_id: Optional[str] = None) -> str:
+        """Retrieves map navigation mode ('controller', 'co_pilot_spotter', 'search_bar', 'mouse_keyboard'). Defaults to 'controller'."""
+        gid = game_id or self.data.get("active_profile")
+        if not gid:
+            return "controller"
+        profile = self.get_profile(gid)
+        if not profile:
+            return "controller"
+        mode = (profile.get("navigation_mode") or "controller").lower().strip()
+        return mode if mode in ("controller", "co_pilot_spotter", "search_bar", "mouse_keyboard") else "controller"
+
+    def set_navigation_mode(self, game_id: str, mode: str) -> dict:
+        """Sets the map navigation mode for the specified game profile."""
+        norm_mode = (mode or "").lower().strip()
+        valid_modes = ("controller", "co_pilot_spotter", "search_bar", "mouse_keyboard")
+        if norm_mode not in valid_modes:
+            return {
+                "success": False,
+                "error": f"Invalid navigation mode '{mode}'. Must be one of: {', '.join(valid_modes)}."
+            }
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        profile["navigation_mode"] = norm_mode
+        map_ctrl = profile.setdefault("map_controls", {})
+        if norm_mode == "controller":
+            map_ctrl["preferred_input"] = "gamepad"
+        elif norm_mode == "mouse_keyboard":
+            map_ctrl["preferred_input"] = "mouse_keyboard"
+        self._save_profiles(self.data)
+        return {"success": True, "game_id": game_id, "navigation_mode": norm_mode}
 
     def is_game_running(self, game_id: Optional[str] = None) -> bool:
         """
@@ -576,6 +642,63 @@ class GameManager:
             f"   - Maintain player immersion while fulfilling display requests (e.g. 'Opening Inara market uplink on auxiliary console Monitor 2.').\n"
             f"   - Game Shield: You are strictly prevented from closing the active game itself, but you may manage auxiliary windows and companion consoles."
         )
+
+        # 7. Guidance Level & Helpful Assistance Directive
+        guidance_level = profile.get("guidance_level", "tactical").lower().strip()
+        guidance_descriptions = {
+            "companion": (
+                "MODE: COMPANION (LOW / IMMERSIVE HINTS ONLY)\n"
+                "- Act as an atmospheric, observant fellow traveler.\n"
+                "- Provide lore context, subtle observations, and gentle thematic hints.\n"
+                "- Do NOT spoil or give away the direct puzzle sequence, answer, or riddle solution outright unless the player triggers the breakthrough override."
+            ),
+            "tactical": (
+                "MODE: TACTICAL (MEDIUM / MECHANICS & CLUES - DEFAULT)\n"
+                "- Focus on game mechanics, key clues, interactive elements in the area, and logical deductions.\n"
+                "- Point out what the player might be missing, levers, symbols, or environmental patterns to empower them to solve it without spoiling every exact step immediately."
+            ),
+            "walkthrough": (
+                "MODE: WALKTHROUGH (HIGH / DIRECT STEP-BY-STEP SOLUTIONS)\n"
+                "- Provide clear, direct, step-by-step walkthrough instructions and exact solutions to puzzles, riddles, or navigation challenges immediately.\n"
+                "- Deliver the solution clearly and concisely while remaining completely in-character."
+            )
+        }
+        active_guidance_desc = guidance_descriptions.get(guidance_level, guidance_descriptions["tactical"])
+
+        parts.append(
+            f"=== GUIDANCE LEVEL: {guidance_level.upper()} ===\n"
+            f"{active_guidance_desc}\n\n"
+            "DYNAMIC BREAKTHROUGH OVERRIDE:\n"
+            "If the player explicitly demands the direct answer, solution, or asks 'how do I do this' / 'just tell me the solution' / 'give me the answer' / 'no hints':\n"
+            "TEMPORARILY ESCALATE YOUR ASSISTANCE TO WALKTHROUGH MODE FOR THIS TURN! Immediately give the exact, step-by-step answer or puzzle solution directly, while remaining in character (e.g., 'Alright, let's cut to the chase...', 'Understood, here is the exact sequence...'). Do not withhold the solution or force more riddles upon them when they ask directly."
+        )
+
+        # 8. In-Game Map Navigation Directive
+        nav_mode = profile.get("navigation_mode", "controller").lower().strip()
+        nav_directives = {
+            "controller": (
+                "MAP NAVIGATION MODE: VIRTUAL CONTROLLER (ViGEmBus)\n"
+                "- When navigating or placing map markers, the system communicates directly with the game using virtual Xbox 360 controller hardware events (ViGEmBus).\n"
+                "- You can execute `pan_and_mark_map_location`, `pan_game_map`, and `place_map_marker` autonomously."
+            ),
+            "co_pilot_spotter": (
+                "MAP NAVIGATION MODE: CO-PILOT GUIDED SPOTTER (VOICE & VISION)\n"
+                "- Do NOT attempt to blindly move the player's physical mouse cursor.\n"
+                "- Instead, act as an observant human co-pilot/spotter: verbally guide the player on where to look on their map (e.g. 'Open your map and pan northeast past the river towards Silver Wolf Mountain.').\n"
+                "- Use `inspect_screen_context` or `spot_and_guide_map_landmark` to look at their map screen in real time, call out when they are near the destination ('Right there, place your marker near that ruin icon!'), and verify once they place their pin."
+            ),
+            "search_bar": (
+                "MAP NAVIGATION MODE: SEARCH BAR & KEYBOARD ROUTING (e.g. Elite Dangerous / Systems)\n"
+                "- Use text search entry to plot courses rather than manual viewport dragging.\n"
+                "- When the player requests navigation, focus the navigation search box, enter the system/destination name via `search_and_route_destination`, and plot the route."
+            ),
+            "mouse_keyboard": (
+                "MAP NAVIGATION MODE: MOUSE & KEYBOARD DRAG\n"
+                "- The map is navigated via left-click canvas dragging and DirectInput keystrokes."
+            )
+        }
+        active_nav_desc = nav_directives.get(nav_mode, nav_directives["controller"])
+        parts.append(f"=== MAP NAVIGATION PROTOCOL: {nav_mode.upper()} ===\n{active_nav_desc}")
 
         return "\n\n".join(parts)
 
