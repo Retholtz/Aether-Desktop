@@ -190,14 +190,18 @@ body {
 /* Status Panel */
 .hud-status-panel {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
+  justify-content: center;
+  gap: 3px;
+  flex-shrink: 0;
 }
 
 .hud-meter-container {
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .meter-label {
@@ -234,6 +238,13 @@ body {
   border-radius: 12px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-input);
+  white-space: nowrap;
+}
+
+.hud-status-panel .status-pill {
+  padding: 2px 8px;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .status-dot {
@@ -2390,15 +2401,89 @@ label {
 
 .game-banner {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 12px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border-color, #282c37);
 }
 
-.game-banner h2 {
-  margin: 0 0 4px 0;
+.game-banner-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.game-banner-row-1 {
+  justify-content: space-between;
+}
+
+.game-banner-row-1 h2 {
+  margin: 0;
   font-size: 1.4rem;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.game-banner-row-2,
+.game-banner-row-3 {
+  gap: 20px;
+}
+
+.game-banner-col-status {
+  width: 250px;
+  min-width: 250px;
+  display: flex;
+  align-items: center;
+}
+
+.game-banner-col-select {
+  display: flex;
+  align-items: center;
+}
+
+.guidance-level-wrap,
+.navigation-mode-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.guidance-level-wrap label,
+.navigation-mode-wrap label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  width: 76px;
+  min-width: 76px;
+  letter-spacing: 0.04em;
+}
+
+.guidance-level-wrap select,
+.navigation-mode-wrap select {
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  height: 32px;
+  min-width: 190px;
+}
+
+.game-banner-col-action {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.game-banner .badge-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+#game-mode-indicator:hover {
+  filter: brightness(1.15);
 }
 
 .badge-status {
