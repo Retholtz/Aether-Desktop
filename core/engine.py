@@ -9,7 +9,7 @@ import numpy as np
 import threading
 import time
 import traceback
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Dict
 
 from google import genai
 from google.genai import types, errors
@@ -91,6 +91,173 @@ DOSSIER_GENERATION_DIRECTIVE = """
 - Call the `export_research_dossier` tool to write the full Markdown document to disk.
 - In your verbal turn, speak only a crisp 2-to-3 sentence conversational executive summary of the key findings, and confirm that the full details have been compiled and saved to their dossier files.
 """
+
+ACCENT_START_MARKER = "<!-- SPOKEN VOICE ACCENT & DIALECT DIRECTIVE START -->"
+ACCENT_END_MARKER = "<!-- SPOKEN VOICE ACCENT & DIALECT DIRECTIVE END -->"
+ACCENT_REMINDER_START_MARKER = "<!-- SPOKEN VOICE ACCENT REMINDER START -->"
+ACCENT_REMINDER_END_MARKER = "<!-- SPOKEN VOICE ACCENT REMINDER END -->"
+
+ACCENT_DIRECTIVES: Dict[str, str] = {
+    "cockney": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with an authentic, distinct Cockney (East London) accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use authentic East London phonology: glottal stops for intervocalic and final 't' sounds (e.g., 'better', 'a lot'), vocalized 'l' (sounding like 'w' or 'u' as in 'well', 'call'), fronted 'th' (soft 'f' and 'v' sounds as in 'think', 'brother'), and characteristic wide diphthong shifts.\n"
+        "- RHYTHM & CADENCE: Use energetic, punchy East London cadence, cheeky colloquial warmth, and lively rhythm.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "british": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with a crisp, authentic British accent (Received Pronunciation / BBC English) in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Consistently articulate with refined British phonology: strict non-rhoticity (drop post-vocalic 'r' unless followed by an initial vowel in connected speech), crisp alveolar 't' articulation (do not flap 't' to 'd' as in American English), and broad 'a' vowels in words like 'fast', 'can\\'t', and 'path'.\n"
+        "- RHYTHM & CADENCE: Maintain measured, elegant British cadence, melodic intonation, and clear vocal resonance.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "scottish": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with an authentic, distinct Scottish accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use distinctive Scots phonology: firm rhoticity with tapped or lightly rolled alveolar 'r's, pure monophthong vowels for 'o' and 'e' (e.g., 'boat' and 'face'), crisp velar and dental consonant articulation, and glottal stops where natural.\n"
+        "- RHYTHM & CADENCE: Deliver speech with a spirited Scottish lilt, upward inflection on clause boundaries, and lively, rhythmic cadence.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "irish": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with an authentic, musical Irish accent (Hiberno-English) in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Articulate with Irish phonology: soft dental stops for 'th' (yielding soft dental 't' and 'd'), rounded vowels, clear rhoticity with smooth post-vocalic 'r', and softened consonant attacks.\n"
+        "- RHYTHM & CADENCE: Express speech with a warm, melodic Irish lilt, undulating pitch contours, and friendly lyrical rhythm.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "australian": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with a natural, distinct Australian accent (General Australian) in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use characteristic Australian vowel shifts: wide diphthongs (the 'i' sound shifts towards 'oi', and 'ay' broadens), non-rhotic pronunciation (omit post-vocalic 'r'), and linking 'r' between consecutive vowel sounds.\n"
+        "- RHYTHM & CADENCE: Deliver speech with an easy-going drawl, upbeat rhythm, friendly warmth, and subtle high rising terminals on descriptive phrases.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "american southern": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with a natural, authentic American Southern accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Employ classic Southern phonology: vowel breaking and elongation (monophthongs glide into diphthongs, e.g., 'well' develops a relaxed two-part drawl), the pin/pen vowel merger, and softened consonant releases.\n"
+        "- RHYTHM & CADENCE: Maintain an unhurried, hospitable cadence, warm melodic drawl, and courteous Southern charm.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "american new york": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with an authentic, distinct New York City accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use classic New York phonology: raised and lengthened 'aw' vowels in words like 'coffee', 'talk', and 'dog' (pronounced high and rounded), dentalized 't' and 'd', and crisp, sharp consonant attacks.\n"
+        "- RHYTHM & CADENCE: Speak with brisk, energetic pacing, assertive rhythm, punchy intonation, and direct East Coast warmth.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "french": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak English with an authentic, charming French accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use characteristic French phonology: substitute 'th' sounds with soft 'z' or 's', use uvular/soft French 'r' articulation, pure un-glided French vowels, and slight stress shift toward the end of words or phrases.\n"
+        "- RHYTHM & CADENCE: Deliver speech with smooth, flowing syllable timing, gentle musical cadence, and charming intonation.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "german": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak English with an authentic, distinct German accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use characteristic German phonology: crisp devoicing of final consonants ('d' sounds like 't', 'b' sounds like 'p', 'v' sounds like 'f'), clear glottal stops before word-initial vowels, precise consonant clusters, and 'w' pronounced with soft 'v' friction.\n"
+        "- RHYTHM & CADENCE: Maintain structured, even cadence, articulate consonant definition, and confident, steady intonation.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "italian": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak English with an authentic, vibrant Italian accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use Italian phonology: bright, open vowels without reduction to unstressed schwas, light vowel echo after terminal consonants, tapped or lightly rolled 'r', and energetic dental 't' and 'd'.\n"
+        "- RHYTHM & CADENCE: Speak with an animated, lyrical cadence, buoyant pitch modulation, expressive rhythm, and warm enthusiasm.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "spanish": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak English with an authentic, natural Spanish accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use Spanish phonology: pure five-vowel pronunciation (clear 'a, e, i, o, u' without vowel reduction), crisp tapped 'r', soft bilabial articulation for 'b' and 'v', and unaspirated 'p', 't', and 'k'.\n"
+        "- RHYTHM & CADENCE: Speak with syllable-timed rhythm, vibrant tempo, expressive rising and falling inflections, and warm cadence.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "indian": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with an authentic, distinct Indian accent (Indian English) in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Articulate speech with characteristic Indian English phonology: use distinct retroflex consonants for 't' and 'd' (pronounced with the tongue curled back slightly against the palate); articulate light, tapped 'r's; produce pure monophthong vowels for 'o' and 'a' rather than American diphthong glides (e.g., 'go' is [goː], not [goʊ]); soft unaspirated 'p', 't', and 'k'.\n"
+        "- RHYTHM & CADENCE: Employ syllable-timed rhythm where each syllable carries roughly equal duration and timing, contrasting with American stress-timing. Use melodic pitch modulation, polite cadence, and natural Indian English phrasing and conversational discourse markers (e.g., 'definitely', 'absolutely', 'kindly', 'no problem at all', 'straight away').\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+    "japanese": (
+        "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+        "- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak English with an authentic, gentle Japanese accent in all spoken responses.\n"
+        "- PHONOLOGY & ARTICULATION: Use Japanese phonology: mora-timed pacing, clear unreduced vowels ('a, i, u, e, o'), light alveolar liquid consonant for 'l'/'r', and gentle, unaspirated plosive consonants.\n"
+        "- RHYTHM & CADENCE: Maintain a calm, polite, measured cadence, gentle pitch contour, and respectful, courteous tone.\n"
+        "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+    ),
+}
+
+
+def build_accent_directive(accent: Optional[str]) -> str:
+    """Builds a formatted spoken voice accent and dialect directive."""
+    if not accent or str(accent).strip().lower() in ("default", "none", "neutral", "", "default (native / standard)"):
+        return ""
+    clean_key = str(accent).strip().lower()
+    directive_body = ACCENT_DIRECTIVES.get(clean_key)
+    if not directive_body:
+        directive_body = (
+            "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
+            f"- MANDATORY VOCAL OVERRIDE: Regardless of the default acoustic profile or native accent of the prebuilt voice persona, you MUST speak exclusively with a natural, distinct {accent} accent in all spoken responses.\n"
+            f"- Consistently articulate all words with authentic {accent} phonology, pronunciation, rhythm, and cadence.\n"
+            "- Ensure speech remains completely clear, engaging, and intelligible to the user."
+        )
+    return f"{ACCENT_START_MARKER}\n{directive_body}\n{ACCENT_END_MARKER}"
+
+
+def build_accent_reminder(accent: Optional[str]) -> str:
+    """Builds a concise closing reminder anchor to preserve accent adherence after long tool definitions."""
+    if not accent or str(accent).strip().lower() in ("default", "none", "neutral", "", "default (native / standard)"):
+        return ""
+    clean_key = str(accent).strip().lower()
+    accent_name = clean_key.title()
+    return (
+        f"{ACCENT_REMINDER_START_MARKER}\n"
+        f"CRITICAL SPOKEN VOICE REMINDER: Deliver all verbal speech in your authentic {accent_name} accent with its distinctive pronunciation, phonology, and cadence. Regardless of the prebuilt voice persona, do NOT revert to a standard or default American accent.\n"
+        f"{ACCENT_REMINDER_END_MARKER}"
+    )
+
+
+def strip_accent_directive(instruction: str) -> str:
+    """Removes any existing voice accent directives (start directive, closing reminder, or legacy marker) from instruction text."""
+    if not instruction:
+        return ""
+    if ACCENT_START_MARKER in instruction and ACCENT_END_MARKER in instruction:
+        prefix = instruction.split(ACCENT_START_MARKER)[0]
+        suffix = instruction.split(ACCENT_END_MARKER)[1]
+        instruction = f"{prefix.rstrip()}\n\n{suffix.lstrip()}".strip()
+
+    if ACCENT_REMINDER_START_MARKER in instruction and ACCENT_REMINDER_END_MARKER in instruction:
+        prefix = instruction.split(ACCENT_REMINDER_START_MARKER)[0]
+        suffix = instruction.split(ACCENT_REMINDER_END_MARKER)[1]
+        instruction = f"{prefix.rstrip()}\n\n{suffix.lstrip()}".strip()
+
+    legacy_marker = "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:"
+    if legacy_marker in instruction:
+        instruction = re.sub(
+            r"SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\s*(?:\n\s*-\s*[^\n]+)+",
+            "",
+            instruction,
+            flags=re.MULTILINE
+        ).strip()
+
+    return instruction.strip()
+
+
+def apply_accent_directive(base_instruction: str, accent: Optional[str]) -> str:
+    """Strips any existing accent directive from base_instruction and applies dual-anchor directive if configured."""
+    clean_base = strip_accent_directive(base_instruction)
+    directive = build_accent_directive(accent)
+    reminder = build_accent_reminder(accent)
+    if directive:
+        if clean_base:
+            return f"{directive}\n\n{clean_base}\n\n{reminder}"
+        return f"{directive}\n\n{reminder}"
+    return clean_base
+
 
 
 # The 30 Gemini Live prebuilt voices - Alphabetized
@@ -711,12 +878,14 @@ class AetherEngine:
                 self.dispatcher.genai_client = client
 
             api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-            model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
-            voice_name = api_cfg.get("voice_name", "Aoede")
+            cfg = self.config_getter() if self.config_getter else {}
+            model_id = api_cfg.get("live_model_id") or cfg.get("primary_model_endpoint") or "gemini-3.1-flash-live-preview"
+            voice_name = api_cfg.get("voice_name") or cfg.get("tts_voice") or "Aoede"
             temperature = float(api_cfg.get("temperature", 0.7))
-            voice_accent = api_cfg.get("voice_accent", "default")
-            kill_phrase = self.config_getter().get("audio", {}).get("safe_phrase", "Aether stop") if self.config_getter else "Aether stop"
-            agent_name = api_cfg.get("agent_name", "Aether").strip() or "Aether"
+            voice_accent = api_cfg.get("voice_accent") or cfg.get("voice_accent") or "default"
+            kill_phrase = cfg.get("audio", {}).get("safe_phrase", "Aether stop") if cfg else "Aether stop"
+            agent_name = api_cfg.get("agent_name") or cfg.get("agent_name") or "Aether"
+            agent_name = str(agent_name).strip() or "Aether"
 
             live_config = self._build_live_config(
                 self._build_system_instruction(),
@@ -1147,6 +1316,7 @@ class AetherEngine:
     def reset_chat_context(self):
         """Signals the active pipeline loop to reset chat session state / memory."""
         self._reset_context_flag = True
+        self._session_resumption_handle = None
         if hasattr(self, "session_lifecycle") and self.session_lifecycle:
             self.session_lifecycle.turn_history.clear()
             self.session_lifecycle.reset_metrics()
@@ -1155,7 +1325,7 @@ class AetherEngine:
             "type": "system",
             "content": "✨ AI conversation context reset. Starting fresh task."
         })
-        self.request_live_session_rotation(reason="User Context Reset")
+        self.invalidate_live_session(reason="User Context Reset")
 
     def update_lexicon_context(self):
         """Updates the active session prompt context with the latest custom lexicon."""
@@ -1200,6 +1370,16 @@ class AetherEngine:
                 self._base_system_instruction = f"{start_marker}\n{new_directive}{end_marker}\n\n" + self._base_system_instruction
 
         logger.info("[ENGINE] Updated active user identity directive in base system instruction.")
+
+    def update_voice_accent_directive(self, new_accent: Optional[str] = None):
+        """Updates the active session prompt context with the latest voice accent directive."""
+        if new_accent is None:
+            cfg = self.config_getter() if self.config_getter else {}
+            api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+            new_accent = api_cfg.get("voice_accent") or cfg.get("voice_accent") or "default"
+        self._base_system_instruction = strip_accent_directive(self._base_system_instruction)
+        self._session_resumption_handle = None
+        logger.info(f"[ENGINE] Spoken voice accent updated to: {new_accent}")
 
     def _get_whitelist(self) -> list:
         if hasattr(self, "program_mgr") and self.program_mgr:
@@ -2013,8 +2193,8 @@ class AetherEngine:
         if model_id == "gemini-2.0-flash-exp":
             model_id = "gemini-2.5-flash-native-audio-latest"
 
-        voice_name = api_cfg.get("voice_name", "Aoede")
-        voice_accent = api_cfg.get("voice_accent", "default")
+        voice_name = api_cfg.get("voice_name") or config.get("tts_voice") or "Aoede"
+        voice_accent = api_cfg.get("voice_accent") or config.get("voice_accent") or "default"
         temperature = float(api_cfg.get("temperature", 1.0))
 
         # System instructions with strict identity directive and [Agent Name] template support
@@ -2173,20 +2353,12 @@ class AetherEngine:
             + "\n\n"
             + templated_instruction
         )
-        if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
-            accent_directive = (
-                f"SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
-                f"- You must speak with a natural, distinct {voice_accent} accent in all spoken responses.\n"
-                f"- Consistently articulate all words with {voice_accent} pronunciation, cadence, and intonation.\n"
-                f"- Maintain standard English vocabulary and phrasing unless asked otherwise, but always express speech with your {voice_accent} accent.\n\n"
-            )
-            system_instruction_text = accent_directive + system_instruction_text
-
         # Layer D: Custom User Lexicon & Phonetic Pronunciation Guide (STT/TTS Biasing)
         lexicon_directive = self.user_memory.build_lexicon_instruction()
         if lexicon_directive:
             system_instruction_text += "\n" + lexicon_directive
 
+        # Store pristine base system instruction without hardcoded accent
         self._base_system_instruction = system_instruction_text
 
         audio_mode = audio_cfg.get("mode", "always_on")
@@ -2279,6 +2451,8 @@ class AetherEngine:
             or "live"
         ).lower()
 
+        active_instruction = apply_accent_directive(system_instruction_text, voice_accent)
+
         try:
             if pipeline_mode == "modular":
                 await self._run_modular_pipeline(
@@ -2286,7 +2460,7 @@ class AetherEngine:
                     agent_name=agent_name,
                     kill_phrase=kill_phrase,
                     api_cfg=api_cfg,
-                    system_instruction_text=system_instruction_text,
+                    system_instruction_text=active_instruction,
                     voice_name=voice_name,
                     voice_accent=voice_accent,
                     temperature=temperature
@@ -2297,7 +2471,7 @@ class AetherEngine:
                     agent_name=agent_name,
                     kill_phrase=kill_phrase,
                     api_cfg=api_cfg,
-                    system_instruction_text=system_instruction_text,
+                    system_instruction_text=active_instruction,
                     voice_name=voice_name,
                     voice_accent=voice_accent,
                     temperature=temperature
@@ -3351,7 +3525,7 @@ class AetherEngine:
                         game_title=gm_title,
                         active_game_context=gm_ctx
                     )
-                    base_inst = self._build_system_instruction() if is_gm else self._base_system_instruction
+                    base_inst = self._build_system_instruction()
                     updated_instruction = self.session_lifecycle.build_compacted_instruction(
                         base_inst,
                         summary=summary,
@@ -3429,11 +3603,10 @@ class AetherEngine:
                 base_inst = game_context
 
         if not base_inst:
-            if getattr(self, "_base_system_instruction", ""):
-                base_inst = self._base_system_instruction
-            else:
-                api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-                base_inst = api_cfg.get("system_instruction", "You are Aether.")
+            cfg_now = self.config_getter() if self.config_getter else {}
+            api_cfg = cfg_now.get("api", {}) if isinstance(cfg_now, dict) else {}
+            agent_name = cfg_now.get("ui", {}).get("agent_name", "Aether") if isinstance(cfg_now, dict) else "Aether"
+            base_inst = getattr(self, "_base_system_instruction", "") or api_cfg.get("system_instruction") or f"You are {agent_name}, a fast, knowledgeable desktop voice assistant."
 
             if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
                 base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"
@@ -3441,18 +3614,8 @@ class AetherEngine:
         cfg = self.config_getter() if self.config_getter else {}
         api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
         accent = api_cfg.get("voice_accent") or cfg.get("voice_accent") or "default"
-        if accent and str(accent).strip().lower() not in ("default", "none", "neutral", ""):
-            accent_marker = "SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:"
-            if accent_marker not in base_inst:
-                accent_directive = (
-                    f"SPOKEN VOICE ACCENT & DIALECT DIRECTIVE:\n"
-                    f"- You must speak with a natural, distinct {accent} accent in all spoken responses.\n"
-                    f"- Consistently articulate all words with {accent} pronunciation, cadence, and intonation.\n"
-                    f"- Maintain standard English vocabulary and phrasing unless asked otherwise, but always express speech with your {accent} accent.\n\n"
-                )
-                base_inst = accent_directive + base_inst
 
-        return base_inst
+        return apply_accent_directive(base_inst, accent)
 
     def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
         """
@@ -3685,7 +3848,11 @@ class AetherEngine:
                 live_model = "gemini-3.1-flash-live-preview"
                 accent_phrase = ""
                 if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
-                    accent_phrase = f" with a natural, distinct {voice_accent} accent"
+                    clean_acc = str(voice_accent).strip()
+                    if clean_acc.lower() == "cockney":
+                        accent_phrase = " with an authentic, distinct Cockney (East London) accent and natural London inflection"
+                    else:
+                        accent_phrase = f" with an authentic, distinct {clean_acc} accent and characteristic pronunciation"
 
                 tts_text = (
                     f"You are a vocal speech synthesis engine. Read the user input aloud directly{accent_phrase} "
@@ -3971,7 +4138,10 @@ class AetherEngine:
         try:
             input_text = text
             if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
-                input_text = f"Say with a {voice_accent} accent: {input_text}"
+                if str(voice_accent).strip().lower() == "cockney":
+                    input_text = f"Say with an authentic Cockney (East London) accent: {input_text}"
+                else:
+                    input_text = f"Say with a {voice_accent} accent: {input_text}"
             tts_resp = await asyncio.to_thread(
                 client.interactions.create,
                 model=model,
@@ -4032,8 +4202,9 @@ class AetherEngine:
         else:
             live_tools = get_all_tool_declarations()
 
+        cfg = self.config_getter() if self.config_getter else {}
         if voice_name is None:
-            voice_name = api_cfg.get("voice_name", "Aoede")
+            voice_name = api_cfg.get("voice_name") or cfg.get("tts_voice") or "Aoede"
         if temperature is None:
             temperature = float(api_cfg.get("temperature", 1.0))
 
@@ -4068,6 +4239,53 @@ class AetherEngine:
             )
         )
 
+    def invalidate_live_session(self, reason: str = "Settings Updated"):
+        """
+        Invalidates any active or lingering Gemini Live session and wipes session resumption tokens.
+        Ensures that subsequent audio input establishes a completely fresh connection using
+        the latest configuration, voice, and system instructions.
+        """
+        logger.info(f"[ENGINE] Invalidating Live session and resumption tokens ({reason}).")
+        # 1. Clear session resumption handle to prevent reviving stale persona / system instruction
+        self._session_resumption_handle = None
+
+        # 2. Reset lifecycle compactor metrics
+        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+            self.session_lifecycle.reset_metrics()
+
+        # 3. Handle active vs standby vs stopped engine states
+        conn_mgr = getattr(self, "conn_mgr", None)
+        conn_state = str(getattr(getattr(conn_mgr, "state", None), "value", getattr(conn_mgr, "state", ""))).upper() if conn_mgr else ""
+        if self.is_running:
+            if conn_state == "CONNECTED" or conn_mgr is None:
+                # Actively connected live session (or mock without conn_mgr): rotate to apply new config without audio drop
+                self.request_live_session_rotation(reason=reason)
+            else:
+                # In standby or lingering: close any lingering session so the next turn starts fresh
+                loop = getattr(self, "_loop", None)
+                if loop and loop.is_running():
+                    try:
+                        current_loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        current_loop = None
+
+                    if current_loop is loop:
+                        asyncio.create_task(self._disconnect_live_session(reason=reason))
+                    else:
+                        asyncio.run_coroutine_threadsafe(self._disconnect_live_session(reason=reason), loop)
+                else:
+                    self.session = None
+                    self.live_session = None
+                    self._active_cm = None
+                    if conn_mgr:
+                        conn_mgr.set_standby()
+        else:
+            self.session = None
+            self.live_session = None
+            self._active_cm = None
+            if conn_mgr:
+                conn_mgr.set_standby()
+
     def request_live_session_rotation(self, reason: str = "Context Reset") -> bool:
         """
         Schedules a seamless live session rotation if connected to Gemini Live WebSocket.
@@ -4086,12 +4304,14 @@ class AetherEngine:
             return False
 
         api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-        model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
-        voice_name = api_cfg.get("voice_name", "Aoede")
+        cfg = self.config_getter() if self.config_getter else {}
+        model_id = api_cfg.get("live_model_id") or cfg.get("primary_model_endpoint") or "gemini-3.1-flash-live-preview"
+        voice_name = api_cfg.get("voice_name") or cfg.get("tts_voice") or "Aoede"
         temperature = float(api_cfg.get("temperature", 0.7))
-        voice_accent = api_cfg.get("voice_accent", "default")
-        agent_name = api_cfg.get("agent_name", "Aether")
-        kill_phrase = api_cfg.get("kill_phrase", "")
+        voice_accent = api_cfg.get("voice_accent") or cfg.get("voice_accent") or "default"
+        agent_name = api_cfg.get("agent_name") or cfg.get("agent_name") or "Aether"
+        agent_name = str(agent_name).strip() or "Aether"
+        kill_phrase = api_cfg.get("kill_phrase") or cfg.get("kill_phrase") or ""
 
         logger.info(f"[LIFECYCLE] Live session rotation requested (reason: {reason}).")
         coro = self.rotate_live_session(
@@ -4273,7 +4493,7 @@ class AetherEngine:
     ):
         """Executes Gemini Multimodal Live WebSocket session with On-Demand Ephemeral Linger Lifecycle."""
         model_id = api_cfg.get("live_model_id", "gemini-3.1-flash-live-preview")
-        self._base_system_instruction = system_instruction_text
+        self._base_system_instruction = strip_accent_directive(system_instruction_text)
         self._loop = asyncio.get_running_loop()
         self.start_connection_watchdog()
 
@@ -4384,8 +4604,12 @@ class AetherEngine:
         if hasattr(self, "session_lifecycle") and self.session_lifecycle:
             try:
                 self.session_lifecycle.flush_session_to_disk()
+                self.session_lifecycle.turn_history.clear()
+                self.session_lifecycle.reset_metrics()
             except Exception as e:
                 logger.warning(f"[STOP] Session transcript flush error: {e}")
+
+        self._session_resumption_handle = None
 
         if hasattr(self, "game_engine") and self.game_engine:
             try:

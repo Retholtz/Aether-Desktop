@@ -552,6 +552,14 @@ class GuiBridge:
 
     def _save_config_locked(self, new_config: Optional[dict] = None) -> dict:
         try:
+            old_accent = self._config.get("voice_accent") or self._config.get("api", {}).get("voice_accent")
+            old_voice = self._config.get("tts_voice") or self._config.get("api", {}).get("voice_name")
+            old_model = self._config.get("primary_model_endpoint") or self._config.get("tier1_fast_model") or self._config.get("api", {}).get("model_id")
+            old_live_model = self._config.get("api", {}).get("live_model_id")
+            old_prompt = self._config.get("api", {}).get("system_instruction")
+            old_agent_name = self._config.get("agent_name") or self._config.get("api", {}).get("agent_name")
+            old_temp = self._config.get("api", {}).get("temperature")
+
             if new_config is None:
                 sync_config_schema(self._config)
                 save_config_atomic(self._config, self._config_path)
@@ -795,8 +803,44 @@ class GuiBridge:
                 if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
                     self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
 
+            new_accent = self._config.get("voice_accent") or self._config.get("api", {}).get("voice_accent")
+            new_voice = self._config.get("tts_voice") or self._config.get("api", {}).get("voice_name")
+            new_model = self._config.get("primary_model_endpoint") or self._config.get("tier1_fast_model") or self._config.get("api", {}).get("model_id")
+            new_live_model = self._config.get("api", {}).get("live_model_id")
+            new_prompt = self._config.get("api", {}).get("system_instruction")
+            new_agent_name = self._config.get("agent_name") or self._config.get("api", {}).get("agent_name")
+            new_temp = self._config.get("api", {}).get("temperature")
+
+            accent_changed = (old_accent != new_accent)
+            voice_changed = (old_voice != new_voice)
+            model_changed = (old_model != new_model or old_live_model != new_live_model)
+            prompt_changed = (old_prompt != new_prompt or old_agent_name != new_agent_name)
+            temp_changed = (old_temp != new_temp)
+
+            live_config_changed = bool(accent_changed or voice_changed or model_changed or prompt_changed or temp_changed)
+
             sync_config_schema(self._config)
             save_config_atomic(self._config, self._config_path)
+
+            engine_ref = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if engine_ref:
+                if hasattr(engine_ref, "update_voice_accent_directive"):
+                    engine_ref.update_voice_accent_directive(new_accent)
+                if live_config_changed:
+                    changes = []
+                    if accent_changed: changes.append(f"accent: {old_accent} -> {new_accent}")
+                    if voice_changed: changes.append(f"voice: {old_voice} -> {new_voice}")
+                    if model_changed: changes.append("model")
+                    if prompt_changed: changes.append("prompt/name")
+                    if temp_changed: changes.append("temp")
+                    reason_str = f"Settings: {', '.join(changes)}"
+                    logger.info(f"[GUI BRIDGE] Live configuration updated ({reason_str}). Invalidating live session.")
+                    if hasattr(engine_ref, "invalidate_live_session"):
+                        engine_ref.invalidate_live_session(reason=reason_str)
+                    elif getattr(engine_ref, "is_running", False):
+                        conn_mgr = getattr(engine_ref, "conn_mgr", None)
+                        if conn_mgr and str(getattr(getattr(conn_mgr, "state", None), "value", getattr(conn_mgr, "state", ""))).upper() == "CONNECTED":
+                            engine_ref.request_live_session_rotation(reason=reason_str)
 
             self._on_engine_event("config_updated", self.get_config())
 

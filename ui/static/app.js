@@ -717,7 +717,7 @@ window.aetherUI = {
       });
     }
 
-    const voiceAccentSelect = document.getElementById("voiceAccentSelect");
+    const voiceAccentSelect = document.getElementById("select-voice-accent") || document.getElementById("voiceAccentSelect");
     if (voiceAccentSelect) {
       voiceAccentSelect.addEventListener("change", () => {
         this.updateVoiceLabels();
