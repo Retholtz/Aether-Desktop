@@ -112,6 +112,9 @@ class TestGuidanceAndMapControls(unittest.TestCase):
         ctx_walkthrough = self.manager.get_active_game_context()
         self.assertIn("=== GUIDANCE LEVEL: WALKTHROUGH ===", ctx_walkthrough)
         self.assertIn("DIRECT STEP-BY-STEP SOLUTIONS", ctx_walkthrough)
+        self.assertIn("CRITICAL NON-PROACTIVE RULE FOR PUZZLES & WALKTHROUGHS:", ctx_walkthrough)
+        self.assertIn("DO NOT BE OVERZEALOUS OR PROACTIVE:", ctx_walkthrough)
+        self.assertIn("ONLY WHEN THE PLAYER ASKS FOR HELP", ctx_walkthrough)
 
     # --- 2. Voice Pipeline Interception for Guidance Levels ---
 
