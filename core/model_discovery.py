@@ -36,19 +36,11 @@ CHAT_EXCLUDE_KEYWORDS = [
 DEFAULT_CATEGORIZED_MODELS: Dict[str, List[Dict[str, Any]]] = {
     "chat_models": [
         {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (High Speed)"},
-        {"id": "gemini-3.7-flash", "display_name": "Gemini 3.7 Flash"},
-        {"id": "gemini-3.6-flash", "display_name": "Gemini 3.6 Flash"},
-        {"id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash"},
-        {"id": "gemini-3.5-flash-lite", "display_name": "Gemini 3.5 Flash Lite"},
-        {"id": "gemini-3.1-pro-preview", "display_name": "Gemini 3.1 Pro Preview"}
+        {"id": "gemini-4-argon", "display_name": "Gemini 4 Argon (Balanced Reasoning)"}
     ],
     "heavy_models": [
-        {"id": "gemini-3.8-flash-extended", "display_name": "Gemini 3.8 Extended (Deep Reasoning)"},
-        {"id": "gemini-3.8-live-extended-thinking", "display_name": "Gemini 3.8 Live Extended Thinking"},
-        {"id": "gemini-3.1-pro-preview", "display_name": "Gemini 3.1 Pro Preview"},
-        {"id": "gemini-3.7-flash", "display_name": "Gemini 3.7 Flash"},
-        {"id": "gemini-3.6-flash", "display_name": "Gemini 3.6 Flash"},
-        {"id": "gemini-3.5-flash", "display_name": "Gemini 3.5 Flash"}
+        {"id": "gemini-4-argon", "display_name": "Gemini 4 Argon (High Reasoning)"},
+        {"id": "gemini-3.8-flash-extended", "display_name": "Gemini 3.8 Extended (Deep Reasoning)"}
     ],
     "tts_models": [
         {"id": "gemini-3.8-flash-tts", "display_name": "Gemini 3.8 Flash TTS (Cloud)"},
@@ -80,13 +72,20 @@ def _generate_silent_wav_bytes(duration_sec: float = 0.1) -> bytes:
 
 
 def verify_chat_endpoint(client, model_id: str) -> bool:
-    """Probes a conversational chat model with a 1-token verification query."""
+    """Probes a conversational chat model with a verification query."""
     try:
-        res = client.models.generate_content(
-            model=model_id,
-            contents="ping",
-            config={"max_output_tokens": 1}
-        )
+        if "argon" in model_id.lower():
+            res = client.models.generate_content(
+                model=model_id,
+                contents="ping",
+                config={"max_output_tokens": 1024, "thinking_config": {"thinking_level": "low"}}
+            )
+        else:
+            res = client.models.generate_content(
+                model=model_id,
+                contents="ping",
+                config={"max_output_tokens": 1}
+            )
         return bool(res and hasattr(res, "text"))
     except Exception as err:
         print(f"[DEBUG] [MODEL_DISCOVERY] Chat probe failed for '{model_id}': {err}")
@@ -167,6 +166,8 @@ def model_chronological_key(item: Any) -> tuple:
     rev_match = re.search(r'[-_](00\d)\b', mid)
     if "latest" in mid:
         checkpoint_score = 9999
+    elif "argon" in mid:
+        checkpoint_score = 9000
     elif rev_match:
         checkpoint_score = int(rev_match.group(1))
     elif "preview" in mid or "exp" in mid:

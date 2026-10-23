@@ -266,10 +266,12 @@ class TestModelDiscovery(unittest.TestCase):
             {"id": "gemini-2.5-flash"},
             {"id": "gemini-3.1-pro-preview"},
             {"id": "gemini-3.8-flash"},
+            {"id": "gemini-4-argon"},
         ]
         models.sort(key=model_chronological_key, reverse=True)
         sorted_ids = [m["id"] for m in models]
         self.assertEqual(sorted_ids, [
+            "gemini-4-argon",
             "gemini-3.8-flash",
             "gemini-3.1-pro-preview",
             "gemini-2.5-flash",

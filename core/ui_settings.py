@@ -69,7 +69,7 @@ def refresh_aether_settings_ui(ui, config):
         populate_dropdown(
             ui.tier2_model_combo, 
             models_cfg.get("tier2_options", []), 
-            default_id=config.get("tier2_heavy_model", "gemini-3.1-pro-preview")
+            default_id=config.get("tier2_heavy_model", "gemini-4-argon")
         )
     
     # Speech-to-Text (STT)

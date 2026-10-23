@@ -1494,3 +1494,24 @@ def is_running_as_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin() != 0)
     except Exception:
         return False
+
+
+def send_hotkey(key_combo: str) -> dict:
+    """Sends a hotkey combo to the active window using low-level GUI primitives."""
+    try:
+        from tools.gui_primitives import GuiPrimitivesController
+        gui = GuiPrimitivesController()
+        return gui.press_key(key_combo)
+    except Exception as e:
+        return {"status": "error", "message": f"send_hotkey failed: {e}"}
+
+
+def type_text_to_foreground(text: str, press_enter: bool = False) -> dict:
+    """Types text to the foreground window."""
+    try:
+        from tools.gui_primitives import GuiPrimitivesController
+        gui = GuiPrimitivesController()
+        return gui.type_text(text, press_enter=press_enter)
+    except Exception as e:
+        return {"status": "error", "message": f"type_text_to_foreground failed: {e}"}
+

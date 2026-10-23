@@ -23,18 +23,11 @@ def apply_startup_configuration(cfg: dict):
 DEFAULT_CURATED_MODELS: Dict[str, List[Dict[str, str]]] = {
     "tier1_options": [
         {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (High Speed)"},
-        {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash"},
-        {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
-        {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
-        {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite"}
+        {"id": "gemini-4-argon", "label": "Gemini 4 Argon (Balanced Reasoning)"}
     ],
     "tier2_options": [
-        {"id": "gemini-3.8-flash-extended", "label": "Gemini 3.8 Extended (Deep Reasoning)"},
-        {"id": "gemini-3.8-live-extended-thinking", "label": "Gemini 3.8 Live Extended Thinking"},
-        {"id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview"},
-        {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash"},
-        {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
-        {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"}
+        {"id": "gemini-4-argon", "label": "Gemini 4 Argon (High Reasoning)"},
+        {"id": "gemini-3.8-flash-extended", "label": "Gemini 3.8 Extended (Deep Reasoning)"}
     ],
     "stt_options": [
         {"id": "gemini_live_audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)"},
@@ -311,10 +304,21 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     heavy_model = (
         cfg.get("tier2_heavy_model")
         or api_cfg.get("pro_model_id")
-        or "gemini-3.8-flash-extended"
+        or "gemini-4-argon"
     )
+    # Migrate legacy defaults to gemini-4-argon if still on deprecated preview models
+    if heavy_model in ("gemini-3.1-pro-preview", "gemini-3.8-pro", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"):
+        heavy_model = "gemini-4-argon"
     cfg["tier2_heavy_model"] = heavy_model
     api_cfg["pro_model_id"] = heavy_model
+
+    thinking_level = (
+        cfg.get("tier2_thinking_level")
+        or api_cfg.get("tier2_thinking_level")
+        or "high"
+    )
+    cfg["tier2_thinking_level"] = thinking_level
+    api_cfg["tier2_thinking_level"] = thinking_level
 
     cfg.setdefault("boot_on_startup", False)
     cfg.setdefault("start_minimized", False)
@@ -387,6 +391,8 @@ class ConfigManager:
                 "primary_model_endpoint",
                 "tier1_fast_model",
                 "tier2_heavy_model",
+                "tier2_thinking_level",
+                "tier2_thinking_budget",
                 "mode",
                 "ptt_type",
                 "ptt_key",
@@ -406,6 +412,9 @@ class ConfigManager:
             if "tier2_heavy_model" in updates:
                 self.config["tier2_heavy_model"] = updates["tier2_heavy_model"]
                 self.config.setdefault("api", {})["pro_model_id"] = updates["tier2_heavy_model"]
+            if "tier2_thinking_level" in updates:
+                self.config["tier2_thinking_level"] = updates["tier2_thinking_level"]
+                self.config.setdefault("api", {})["tier2_thinking_level"] = updates["tier2_thinking_level"]
             if "stt_model_endpoint" in updates or "stt_endpoint" in updates:
                 stt_val = updates.get("stt_endpoint") or updates.get("stt_model_endpoint")
                 self.config["stt_model_endpoint"] = stt_val
@@ -499,6 +508,9 @@ class ConfigManager:
                     if "tier2_heavy_model" in sec_copy:
                         self.config["tier2_heavy_model"] = sec_copy["tier2_heavy_model"]
                         self.config.setdefault("api", {})["pro_model_id"] = sec_copy["tier2_heavy_model"]
+                    if "tier2_thinking_level" in sec_copy:
+                        self.config["tier2_thinking_level"] = sec_copy["tier2_thinking_level"]
+                        self.config.setdefault("api", {})["tier2_thinking_level"] = sec_copy["tier2_thinking_level"]
 
         sync_config_schema(self.config)
         try:

@@ -109,10 +109,11 @@ class ReflexionEngine:
         if not isinstance(self.config, dict):
             self.config = {}
 
-        configured_heavy = self.config.get("tier2_heavy_model", "gemini-3.8-flash-extended")
-        if configured_heavy in ("gemini-3.8-pro", "gemini-3.8-flash-extended"):
-            configured_heavy = "gemini-3.8-flash"
+        configured_heavy = self.config.get("tier2_heavy_model", "gemini-4-argon")
+        if configured_heavy in ("gemini-3.8-pro",):
+            configured_heavy = "gemini-4-argon"
         self.heavy_model = configured_heavy
+        self.thinking_level = self.config.get("tier2_thinking_level", "high")
         self.thinking_budget = self.config.get("tier2_thinking_budget", 2048)
 
         # Gemini Client Resolution: env var -> engine client -> decrypted config
@@ -138,6 +139,33 @@ class ReflexionEngine:
 
         # Optional callbacks for legacy/extensibility
         self.on_optimized = kwargs.get("on_optimized")
+
+    def _build_generate_config(
+        self,
+        response_mime_type: Optional[str] = None,
+        temperature: Optional[float] = None
+    ) -> types.GenerateContentConfig:
+        """Constructs GenerateContentConfig adapting thinking parameters for Argon vs older models."""
+        is_argon = "argon" in str(self.heavy_model).lower()
+        if is_argon:
+            level = str(self.thinking_level or "high").lower()
+            if level not in ("low", "medium", "high"):
+                level = "high"
+            thinking_cfg = types.ThinkingConfig(thinking_level=level)
+        else:
+            thinking_cfg = types.ThinkingConfig(thinking_budget=int(self.thinking_budget or 2048))
+
+        kwargs: Dict[str, Any] = {
+            "safety_settings": get_permissive_safety_settings(),
+            "thinking_config": thinking_cfg,
+        }
+        if response_mime_type:
+            kwargs["response_mime_type"] = response_mime_type
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if is_argon:
+            kwargs["max_output_tokens"] = 65536
+        return types.GenerateContentConfig(**kwargs)
 
     def _get_genai_client(self) -> Optional[genai.Client]:
         """Dynamically retrieves or resolves the Google GenAI client if not initialized."""
@@ -253,11 +281,7 @@ class ReflexionEngine:
         )
 
         try:
-            config = types.GenerateContentConfig(
-                temperature=0.2,
-                safety_settings=get_permissive_safety_settings(),
-                thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
-            )
+            config = self._build_generate_config(temperature=0.2)
             response = active_client.models.generate_content(
                 model=self.heavy_model,
                 contents=prompt,
@@ -390,11 +414,7 @@ Conversation:
                 active_client = self._get_genai_client()
                 if not active_client:
                     continue
-                config = types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    safety_settings=get_permissive_safety_settings(),
-                    thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
-                )
+                config = self._build_generate_config(response_mime_type="application/json")
                 response = active_client.models.generate_content(
                     model=self.heavy_model,
                     contents=prompt,
@@ -449,11 +469,7 @@ Conversation:
             active_client = self._get_genai_client()
             if not active_client:
                 return
-            config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-                safety_settings=get_permissive_safety_settings(),
-                thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget)
-            )
+            config = self._build_generate_config(response_mime_type="application/json")
             response = active_client.models.generate_content(
                 model=self.heavy_model,
                 contents=prompt,

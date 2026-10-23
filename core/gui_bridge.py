@@ -579,7 +579,7 @@ class GuiBridge:
                     self._engine.audio.set_vad_trailing_silence(silence_ms)
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
-            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
+            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "tier2_thinking_level", "tier2_thinking_budget", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
                 if top_key in new_config:
                     self._config[top_key] = new_config[top_key]
 
@@ -621,6 +621,10 @@ class GuiBridge:
             if "tier2_heavy_model" in new_config:
                 self._config["tier2_heavy_model"] = new_config["tier2_heavy_model"]
                 self._config.setdefault("api", {})["pro_model_id"] = new_config["tier2_heavy_model"]
+
+            if "tier2_thinking_level" in new_config:
+                self._config["tier2_thinking_level"] = new_config["tier2_thinking_level"]
+                self._config.setdefault("api", {})["tier2_thinking_level"] = new_config["tier2_thinking_level"]
 
             if "stt_endpoint" in new_config and new_config["stt_endpoint"]:
                 self._config["stt_endpoint"] = new_config["stt_endpoint"]

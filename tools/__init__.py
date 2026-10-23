@@ -26,6 +26,16 @@ from tools.os_controls import (
 from tools.gui_primitives import GuiPrimitivesController
 from tools.script_runner import ScriptRunner
 
+from tools.clipboard import (
+    set_clipboard_html,
+    set_clipboard_text,
+    get_clipboard_text,
+    format_windows_html_clipboard,
+    markdown_to_html_for_clipboard,
+    clean_markdown_typography,
+    paste_markdown_to_target_app,
+)
+
 __all__ = [
     "ToolDispatcher",
     "get_all_tool_declarations",
@@ -46,5 +56,11 @@ __all__ = [
     "SCANCODE_MAP",
     "GuiPrimitivesController",
     "ScriptRunner",
+    "set_clipboard_html",
+    "set_clipboard_text",
+    "get_clipboard_text",
+    "format_windows_html_clipboard",
+    "markdown_to_html_for_clipboard",
+    "paste_markdown_to_target_app",
 ]
 

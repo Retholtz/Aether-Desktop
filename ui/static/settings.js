@@ -58,6 +58,8 @@ function sortModelsChronologically(models) {
     const revMatch = id.match(/[-_](00\d)\b/);
     if (id.includes('latest')) {
       checkpointScore = 9999;
+    } else if (id.includes('argon')) {
+      checkpointScore = 9000;
     } else if (revMatch) {
       checkpointScore = parseInt(revMatch[1], 10);
     } else if (id.includes('preview') || id.includes('exp')) {
@@ -82,20 +84,12 @@ function sortModelsChronologically(models) {
 // Base default options for conversational and heavy models
 const DEFAULT_CHAT_MODELS = [
   { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (High Speed)" },
-  { id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash" },
-  { id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash" },
-  { id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash" },
-  { id: "gemini-3.5-flash-lite", display_name: "Gemini 3.5 Flash Lite" },
-  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview" }
+  { id: "gemini-4-argon", display_name: "Gemini 4 Argon (Balanced Reasoning)" }
 ];
 
 const DEFAULT_HEAVY_MODELS = [
-  { id: "gemini-3.8-flash-extended", display_name: "Gemini 3.8 Extended (Deep Reasoning)" },
-  { id: "gemini-3.8-live-extended-thinking", display_name: "Gemini 3.8 Live Extended Thinking" },
-  { id: "gemini-3.1-pro-preview", display_name: "Gemini 3.1 Pro Preview" },
-  { id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash" },
-  { id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash" },
-  { id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash" }
+  { id: "gemini-4-argon", display_name: "Gemini 4 Argon (High Reasoning)" },
+  { id: "gemini-3.8-flash-extended", display_name: "Gemini 3.8 Extended (Deep Reasoning)" }
 ];
 
 // Base fixed options for TTS (offline/native engines that are not Google API endpoints)
@@ -177,7 +171,7 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
     populateDropdown(
       heavyEl, 
       heavyModels, 
-      currentConfig.tier2_heavy_model || (currentConfig.api && currentConfig.api.pro_model_id) || 'gemini-3.8-flash-extended'
+      currentConfig.tier2_heavy_model || (currentConfig.api && currentConfig.api.pro_model_id) || 'gemini-4-argon'
     );
   }
 
@@ -370,7 +364,7 @@ function collectSettingsPayload() {
     start_minimized: minEl ? minEl.checked : false,
     primary_model_endpoint: primaryEl ? primaryEl.value : 'gemini-3.8-flash',
     tier1_fast_model: primaryEl ? primaryEl.value : 'gemini-3.8-flash',
-    tier2_heavy_model: heavyEl ? heavyEl.value : 'gemini-3.8-flash-extended',
+    tier2_heavy_model: heavyEl ? heavyEl.value : 'gemini-4-argon',
     stt_model_endpoint: sttEl ? sttEl.value : 'gemini_live_audio',
     stt_endpoint: sttEl ? sttEl.value : 'gemini_live_audio',
     tts_model_endpoint: ttsEl ? ttsEl.value : 'gemini_live',

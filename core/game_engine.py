@@ -58,6 +58,8 @@ class GameEngine:
         "focus_window",
         "close_window",
         "close_application",
+        "delegate_heavy_task",
+        "export_research_dossier",
     }
 
     def __init__(

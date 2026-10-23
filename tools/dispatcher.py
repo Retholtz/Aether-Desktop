@@ -49,6 +49,7 @@ from core.user_memory import UserMemory
 from tools.payload_sanitizer import sanitize_tool_result
 from tools.screen_vision import capture_screen_image
 from tools.dossier_exporter import export_research_dossier
+from tools.clipboard import paste_markdown_to_target_app
 
 CATALOG_PATH = os.path.join("scripts", "skills_catalog.json")
 
@@ -866,9 +867,9 @@ SEND_DESKTOP_NOTIFICATION_DECLARATION = {
 EXPORT_DOSSIER_DECLARATION = {
     "name": "export_research_dossier",
     "description": (
-        "Exports detailed research findings, family lineage trees, directories, or complex multi-part summaries "
-        "to a structured Markdown file on disk. Use this when the findings are dense, saving the user from listening "
-        "to a long audio list. Always summarize the findings concisely via voice after saving."
+        "Direct disk export for pre-existing findings or brief text summaries to a Markdown file on disk. "
+        "Do NOT use this tool to generate new comprehensive guides, recipes, manuals, or research dossiers from scratch—"
+        "always use `delegate_heavy_task` instead so Gemini 4 Argon can synthesize the full publication-grade document."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -892,6 +893,60 @@ EXPORT_DOSSIER_DECLARATION = {
             }
         },
         "required": ["title", "content_markdown"]
+    }
+}
+
+DELEGATE_HEAVY_TASK_DECLARATION = {
+    "name": "delegate_heavy_task",
+    "description": (
+        "Delegates complex multi-step tasks, comprehensive guides/manuals/recipes from scratch, deep research document generation, "
+        "or intricate Python automation coding to the Tier 2 Heavy Reasoning Model (Gemini 4 Argon with High Thinking). "
+        "ALWAYS invoke this tool whenever the user asks to 'use Argon', 'use Tier 2', 'think deeply', create a detailed document or guide, "
+        "or requires multi-page structured reports with tables, diagrams, and meticulous detail."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "task_type": {
+                "type": "STRING",
+                "enum": ["research_dossier", "python_automation", "deep_analysis"],
+                "description": "The category of heavy task to delegate to Tier 2."
+            },
+            "title": {
+                "type": "STRING",
+                "description": "Short descriptive title for the document, script, or task."
+            },
+            "instructions": {
+                "type": "STRING",
+                "description": "Detailed instructions, requirements, outline, and goals for the heavy reasoning model."
+            },
+            "context_data": {
+                "type": "STRING",
+                "description": "Optional background notes, telemetry, or source data to aid the reasoning model."
+            },
+            "category": {
+                "type": "STRING",
+                "enum": ["genealogy", "technical", "system_audit", "general"],
+                "description": "Domain category if generating a dossier (defaults to general)."
+            },
+            "open_immediately": {
+                "type": "BOOLEAN",
+                "description": "Whether to auto-open the exported dossier on screen upon completion."
+            },
+            "execute_if_code": {
+                "type": "BOOLEAN",
+                "description": "Whether to automatically execute the generated Python script via ScriptRunner (for python_automation)."
+            },
+            "paste_to_active_doc": {
+                "type": "BOOLEAN",
+                "description": "Whether to automatically paste the formatted document into the active editor or browser (e.g. Google Docs in Chrome, Word, Notepad) via rich HTML clipboard."
+            },
+            "target_app": {
+                "type": "STRING",
+                "description": "The target application name for pasting (e.g. 'chrome', 'google docs', 'notepad', 'winword'). Defaults to 'chrome'."
+            }
+        },
+        "required": ["task_type", "title", "instructions"]
     }
 }
 
@@ -976,6 +1031,7 @@ def get_all_tool_declarations() -> List[dict]:
         LIST_ACTIVE_MONITORS_DECLARATION,
         SEND_DESKTOP_NOTIFICATION_DECLARATION,
         EXPORT_DOSSIER_DECLARATION,
+        DELEGATE_HEAVY_TASK_DECLARATION,
     ]
     for d in _CUSTOM_TOOL_DECLARATIONS.values():
         if d not in decls:
@@ -1106,6 +1162,7 @@ class ToolDispatcher:
             EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
             SEND_DESKTOP_NOTIFICATION_DECLARATION,
             EXPORT_DOSSIER_DECLARATION,
+            DELEGATE_HEAVY_TASK_DECLARATION,
             REMEMBER_USER_FACT_DECLARATION,
             FORGET_USER_FACT_DECLARATION,
             TEACH_WORD_PRONUNCIATION_DECLARATION,
@@ -1134,6 +1191,10 @@ class ToolDispatcher:
             if d not in core:
                 core.append(d)
         return core
+
+    def get_all_tool_declarations(self) -> List[dict]:
+        """Returns the full list of tool declarations for Gemini Multimodal Live."""
+        return get_all_tool_declarations()
 
     def get_routed_tool_declarations(self, user_prompt: str, max_dynamic_skills: int = 3) -> List[dict]:
         """
@@ -2046,16 +2107,76 @@ class ToolDispatcher:
                 }
 
             elif fn_name == "export_research_dossier":
+                title = str(args.get("title", "Research_Dossier")).strip() or "Research_Dossier"
+                content_markdown = str(args.get("content_markdown", ""))
+                category = str(args.get("category", "general"))
+                open_immediately = bool(args.get("open_immediately", False))
+
+                # SAFETY NET: If the generated content is shallow (< 1500 chars) or appears to be a stub/outline
+                # for a guide, tutorial, recipe, deep report, or dossier, delegate to Tier 2 (Gemini 4 Argon)
+                # to automatically synthesize the full exhaustive document rather than saving an inadequate stub.
+                is_shallow = len(content_markdown.strip()) < 1500
+                lower_title = title.lower()
+                needs_enrichment = is_shallow and any(
+                    kw in lower_title or kw in content_markdown.lower()
+                    for kw in ("guide", "sourdough", "recipe", "instruction", "dossier", "report", "manual", "tutorial", "scratch", "deep", "comprehensive")
+                )
+
+                if needs_enrichment:
+                    logger.info(f"[DISPATCHER] Shallow dossier stub detected ({len(content_markdown)} chars) for '{title}'. Automatically enriching via Tier 2 Heavy Reasoning (Argon)...")
+                    result = await self.execute_heavy_task(
+                        task_type="research_dossier",
+                        title=title,
+                        instructions=f"Synthesize an exhaustive, publication-grade document for '{title}'. Base content outline/notes:\n{content_markdown}",
+                        category=category,
+                        open_immediately=open_immediately
+                    )
+                    self.notify("chat_event", {
+                        "type": "tool",
+                        "name": "Research Dossier (Argon Enriched)",
+                        "content": f"📁 [DOSSIER] Synthesized full report '{title}' via Tier 2 Argon ({result.get('char_count', 0)} chars)"
+                    })
+                    return result
+
                 result = export_research_dossier(
-                    title=args.get("title", "Research_Dossier"),
-                    content_markdown=args.get("content_markdown", ""),
-                    category=args.get("category", "general"),
-                    open_immediately=bool(args.get("open_immediately", False))
+                    title=title,
+                    content_markdown=content_markdown,
+                    category=category,
+                    open_immediately=open_immediately
                 )
                 self.notify("chat_event", {
                     "type": "tool",
                     "name": "Research Dossier",
-                    "content": f"📁 [DOSSIER] Saved '{result.get('filename', args.get('title', 'Research_Dossier'))}' ({result.get('char_count', 0)} chars)"
+                    "content": f"📁 [DOSSIER] Saved '{result.get('filename', title)}' ({result.get('char_count', 0)} chars)"
+                })
+                return result
+
+            elif fn_name == "delegate_heavy_task":
+                task_type = str(args.get("task_type", "research_dossier")).lower()
+                title = str(args.get("title", "Heavy_Task")).strip() or "Heavy_Task"
+                instructions = str(args.get("instructions", "")).strip()
+                context_data = str(args.get("context_data", "")).strip()
+                category = str(args.get("category", "general"))
+                open_immediately = bool(args.get("open_immediately", False))
+                execute_if_code = bool(args.get("execute_if_code", True))
+                paste_to_active_doc = bool(args.get("paste_to_active_doc", False))
+                target_app = str(args.get("target_app", "chrome")).strip() or "chrome"
+
+                result = await self.execute_heavy_task(
+                    task_type=task_type,
+                    title=title,
+                    instructions=instructions,
+                    context_data=context_data,
+                    category=category,
+                    open_immediately=open_immediately,
+                    execute_if_code=execute_if_code,
+                    paste_to_active_doc=paste_to_active_doc,
+                    target_app=target_app
+                )
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Heavy Reasoning Task (Argon)",
+                    "content": f"🧠 [TIER 2] Completed {task_type.replace('_', ' ').title()}: '{title}'"
                 })
                 return result
 
@@ -2155,4 +2276,253 @@ class ToolDispatcher:
                 "error": str(e),
                 "message": err_msg
             }
+
+    async def execute_heavy_task(
+        self,
+        task_type: str,
+        title: str,
+        instructions: str,
+        context_data: str = "",
+        category: str = "general",
+        open_immediately: bool = False,
+        execute_if_code: bool = True,
+        paste_to_active_doc: bool = False,
+        target_app: str = "chrome"
+    ) -> Dict[str, Any]:
+        """
+        Executes a complex task on demand using the Tier 2 Heavy Reasoning Model (Gemini 4 Argon).
+        Generates exhaustive research dossiers, complex Python scripts, or deep analysis.
+        """
+        client = getattr(self, "genai_client", None)
+        if not client:
+            cfg = self.config_getter() if self.config_getter else {}
+            api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+            encrypted_key = api_cfg.get("api_key_encrypted", "")
+            api_key = unprotect_secret(encrypted_key) if encrypted_key else os.environ.get("GEMINI_API_KEY", "")
+            if api_key:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    self.genai_client = client
+                except Exception as ce:
+                    logger.warning(f"[HEAVY_TASK] Failed initializing GenAI client: {ce}")
+
+        if not client:
+            return {
+                "status": "error",
+                "message": "GenAI API Client is not configured or available for Tier 2 delegation."
+            }
+
+        cfg = self.config_getter() if self.config_getter else {}
+        heavy_model = cfg.get("tier2_heavy_model") or "gemini-4-argon"
+        thinking_level = cfg.get("tier2_thinking_level", "high")
+        is_argon = "argon" in str(heavy_model).lower()
+
+        # Visual HUD & Audio working indicator
+        self.notify("status", {
+            "state": "thinking",
+            "action": f"🧠 Argon: {title}...",
+            "message": f"Gemini 4 Argon ({heavy_model}) is synthesizing '{title}' with High Thinking..."
+        })
+        self.notify("chat_event", {
+            "type": "tool",
+            "name": "Gemini 4 Argon",
+            "content": f"🧠 [TIER 2] Initiating deep synthesis for '{title}' via {heavy_model} (thinking_level: {thinking_level})..."
+        })
+        try:
+            from core.wake_word import play_chime_async
+            play_chime_async("working")
+        except Exception:
+            pass
+
+        if is_argon:
+            level = str(thinking_level or "high").lower()
+            if level not in ("low", "medium", "high"):
+                level = "high"
+            thinking_cfg = types.ThinkingConfig(thinking_level=level)
+            gen_config = types.GenerateContentConfig(
+                thinking_config=thinking_cfg,
+                max_output_tokens=65536,
+                temperature=0.3
+            )
+        else:
+            budget = int(cfg.get("tier2_thinking_budget", 2048))
+            gen_config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=budget),
+                temperature=0.3
+            )
+
+        if task_type == "research_dossier":
+            prompt = (
+                f"You are Aether's Tier 2 Deep Reasoning Engine. Synthesize an exhaustive, publication-grade "
+                f"Markdown research dossier for: '{title}'.\n\n"
+                f"Instructions:\n{instructions}\n\n"
+            )
+            if context_data:
+                prompt += f"Context & Background Data:\n{context_data}\n\n"
+            prompt += (
+                "Formatting & Typography Requirements (Optimized for Google Docs, Word & Web):\n"
+                "- Write comprehensive, deeply structured publication-grade Markdown.\n"
+                "- Include an Executive Summary, Detailed Granular Findings, Key Entities & Facts, and Actionable Takeaways.\n"
+                "- Clean Typography & Units: Do NOT use raw LaTeX math delimiters ($...$, \\circ, \\text{}) for temperatures, ratios, chemical formulas, or units. Use clean native Unicode directly: e.g., '25°C', '77°F', '±0.5°C', '≤ 4°C', 'CO₂', 'H₂O', 'Ca²⁺'.\n"
+                "- Standard Portrait Page Table Layout: Keep tables between 3 to 5 columns maximum so table columns do not horizontally compress or wrap letters vertically on 8.5x11 portrait pages. Group related attributes if necessary.\n"
+                "- Multi-line Table Cells: Do NOT output raw '<br>' tags in table cells. Use clean concise prose or markdown list items.\n"
+                "- Workflows & Visuals: Word processors like Google Docs do not render raw Mermaid blocks. Present workflows and sequences as clearly structured numbered phase breakdowns, step-by-step pipeline cards, or clean ASCII flow diagrams.\n"
+                "- Completeness: Do NOT truncate, use placeholders, or summarize prematurely.\n"
+            )
+
+            try:
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: client.models.generate_content(
+                        model=heavy_model,
+                        contents=prompt,
+                        config=gen_config
+                    )
+                )
+                markdown_content = getattr(response, "text", "") or ""
+                if not markdown_content.strip():
+                    return {"status": "error", "message": "Heavy reasoning model returned empty content."}
+
+                dossier_res = export_research_dossier(
+                    title=title,
+                    content_markdown=markdown_content,
+                    category=category,
+                    open_immediately=open_immediately
+                )
+
+                pasted_info = ""
+                should_paste = paste_to_active_doc or any(
+                    kw in instructions.lower() or kw in title.lower()
+                    for kw in ("doc", "google doc", "docs", "document canvas", "active doc", "paste")
+                )
+                if should_paste:
+                    try:
+                        paste_res = paste_markdown_to_target_app(markdown_content, app_name=target_app)
+                        if paste_res.get("status") == "success":
+                            pasted_info = f" The formatted document with rich tables was automatically pasted into {target_app}."
+                            self.notify("chat_event", {
+                                "type": "tool",
+                                "name": "Document Paste",
+                                "content": f"📋 [PASTED] Full formatted document ({len(markdown_content)} chars) pasted into {target_app} via HTML clipboard."
+                            })
+                    except Exception as pe:
+                        logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
+
+                is_pasted = bool(pasted_info)
+                if is_pasted:
+                    directive = (
+                        f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and pasted into {target_app}.{pasted_info} "
+                        "Double-check with a quick capture_screen_snapshot to verify the content appears on screen, then deliver a crisp "
+                        "2-to-3 sentence conversational executive summary of the key findings over voice."
+                    )
+                else:
+                    directive = (
+                        f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and saved to disk. "
+                        f"WARNING: Content has NOT been pasted into {target_app} yet because the document window was not open. "
+                        "You MUST navigate to or focus the document (e.g. navigate_browser('https://docs.new')), wait for the canvas to load, "
+                        "click into the canvas, press Ctrl+V, and perform a quick double-check with capture_screen_snapshot to verify text is present "
+                        "before telling the user the document is ready."
+                    )
+
+                return {
+                    "status": "success",
+                    "task_type": "research_dossier",
+                    "file_path": dossier_res.get("file_path"),
+                    "filename": dossier_res.get("filename"),
+                    "char_count": len(markdown_content),
+                    "pasted": is_pasted,
+                    "pasted_to_doc": is_pasted,
+                    "directive": directive
+                }
+            except Exception as e:
+                logger.error(f"[HEAVY_TASK] Research dossier synthesis failed: {e}")
+                return {"status": "error", "message": str(e)}
+
+        elif task_type == "python_automation":
+            prompt = (
+                f"You are Aether's Tier 2 Software Engineering Engine. Write a robust, production-grade Python script for:\n"
+                f"Task: {title}\n"
+                f"Requirements: {instructions}\n\n"
+            )
+            if context_data:
+                prompt += f"Context & Environment Data:\n{context_data}\n\n"
+            prompt += (
+                "Engineering Constraints:\n"
+                "- Self-contained, executable Windows automation script.\n"
+                "- Complete error handling (try/finally to cleanly release handles, COM objects, or processes).\n"
+                "- No busy-wait or infinite sleep loops.\n"
+                "- Return ONLY valid Python code in a ```python ... ``` block.\n"
+            )
+
+            try:
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: client.models.generate_content(
+                        model=heavy_model,
+                        contents=prompt,
+                        config=gen_config
+                    )
+                )
+                raw_code = getattr(response, "text", "") or ""
+                match = re.search(r"```(?:python)?\s*([\s\S]*?)\s*```", raw_code)
+                clean_code = match.group(1).strip() if match else raw_code.strip()
+
+                if execute_if_code and clean_code:
+                    exec_result = await asyncio.to_thread(
+                        self.script_runner.execute_script,
+                        script_code=clean_code,
+                        script_type="python",
+                        description=f"Tier 2 Synthesized: {title}"
+                    )
+                    return {
+                        "status": "success",
+                        "task_type": "python_automation",
+                        "generated_code": clean_code,
+                        "execution_result": exec_result,
+                        "directive": f"Script synthesized and executed. Report outcome ({exec_result.get('status')}) concisely over voice."
+                    }
+                else:
+                    return {
+                        "status": "success",
+                        "task_type": "python_automation",
+                        "generated_code": clean_code,
+                        "directive": f"Script synthesized by Tier 2 ({heavy_model}). Ready for execution."
+                    }
+            except Exception as e:
+                logger.error(f"[HEAVY_TASK] Python automation synthesis failed: {e}")
+                return {"status": "error", "message": str(e)}
+
+        elif task_type == "deep_analysis":
+            prompt = (
+                f"You are Aether's Tier 2 Frontier Reasoning Engine. Conduct an in-depth analysis on:\n"
+                f"Subject: {title}\n"
+                f"Instructions: {instructions}\n\n"
+            )
+            if context_data:
+                prompt += f"Context / Input Data:\n{context_data}\n\n"
+
+            try:
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: client.models.generate_content(
+                        model=heavy_model,
+                        contents=prompt,
+                        config=gen_config
+                    )
+                )
+                analysis_text = getattr(response, "text", "") or ""
+                return {
+                    "status": "success",
+                    "task_type": "deep_analysis",
+                    "analysis": analysis_text,
+                    "directive": "Deliver a concise high-level verbal summary of the analysis."
+                }
+            except Exception as e:
+                logger.error(f"[HEAVY_TASK] Deep analysis failed: {e}")
+                return {"status": "error", "message": str(e)}
+
+        return {"status": "error", "message": f"Unsupported task_type: '{task_type}'"}
 

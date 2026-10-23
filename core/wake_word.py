@@ -45,25 +45,30 @@ class AudioGateState(Enum):
     ACTIVE_CONVERSATION = "ACTIVE_CONVERSATION"
 
 
-def ensure_wake_sleep_sounds(base_dir: Optional[str] = None) -> Tuple[str, str]:
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SOUNDS_DIR = os.path.join(PROJECT_ROOT, "ui", "sounds")
+
+
+def ensure_wake_sleep_sounds(base_dir: Optional[str] = None) -> Tuple[str, str, str]:
     """
-    Ensures subtle wake.wav and sleep.wav chime files exist under ui/sounds/.
-    Returns (wake_wav_path, sleep_wav_path).
+    Ensures subtle wake.wav, sleep.wav, and working.wav chime files exist under ui/sounds/.
+    Returns (wake_wav_path, sleep_wav_path, working_wav_path).
     """
-    if base_dir is None:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    sounds_dir = os.path.join(base_dir, "ui", "sounds")
+    sounds_dir = os.path.join(base_dir, "ui", "sounds") if base_dir else SOUNDS_DIR
     os.makedirs(sounds_dir, exist_ok=True)
 
     wake_path = os.path.join(sounds_dir, "wake.wav")
     sleep_path = os.path.join(sounds_dir, "sleep.wav")
+    working_path = os.path.join(sounds_dir, "working.wav")
 
     if not os.path.exists(wake_path):
         _synthesize_chime_wav(wake_path, freqs=(523.25, 659.25), duration_sec=0.18, volume=0.22)
     if not os.path.exists(sleep_path):
         _synthesize_chime_wav(sleep_path, freqs=(587.33, 440.00), duration_sec=0.20, volume=0.18)
+    if not os.path.exists(working_path):
+        _synthesize_chime_wav(working_path, freqs=(440.00, 659.25), duration_sec=0.22, volume=0.19)
 
-    return wake_path, sleep_path
+    return wake_path, sleep_path, working_path
 
 
 def _synthesize_chime_wav(
@@ -97,10 +102,16 @@ def _synthesize_chime_wav(
 
 
 def play_chime_async(sound_type: str = "wake"):
-    """Plays ui/sounds/wake.wav or ui/sounds/sleep.wav asynchronously without blocking audio threads."""
+    """Plays subtle chime (wake, sleep, or working) asynchronously without blocking audio threads."""
     try:
-        wake_path, sleep_path = ensure_wake_sleep_sounds()
-        target = wake_path if sound_type == "wake" else sleep_path
+        wake_path, sleep_path, working_path = ensure_wake_sleep_sounds()
+        if sound_type in ("working", "thinking", "processing"):
+            target = working_path
+        elif sound_type == "sleep":
+            target = sleep_path
+        else:
+            target = wake_path
+
         if sys.platform == "win32" and os.path.exists(target):
             import winsound
             winsound.PlaySound(target, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)

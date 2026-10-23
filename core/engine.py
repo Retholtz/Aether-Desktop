@@ -86,10 +86,31 @@ You are explicitly authorized and expected to assist the user with biographical 
 """
 
 DOSSIER_GENERATION_DIRECTIVE = """
-### CONCISE VOICE WITH STRUCTURED DOSSIER EXPORT:
-- When a user inquiry yields a dense collection of facts (such as a full family tree, multi-person directory listing, comprehensive biography, or technical log output), do NOT read the entire list or table over Text-to-Speech.
-- Call the `export_research_dossier` tool to write the full Markdown document to disk.
-- In your verbal turn, speak only a crisp 2-to-3 sentence conversational executive summary of the key findings, and confirm that the full details have been compiled and saved to their dossier files.
+### TWO-TIER ARCHITECTURE & GEMINI 4 ARGON DELEGATION DIRECTIVE:
+You are Aether's Tier 1 Conversational Front-End (Gemini 3.8 Flash Live), engineered for sub-second, real-time voice interaction.
+Your companion engine is Gemini 4 Argon, the Tier 2 Heavy Reasoning Engine with High Thinking depth.
+
+MANDATORY TIER 2 DELEGATION RULES:
+1. YOU MUST CALL `delegate_heavy_task` (NEVER attempt to author long-form text yourself) whenever the user asks to:
+   - "use Argon", "switch to Argon", "use Tier 2", or "think deeply"
+   - Create or write an exhaustive guide, manual, instruction set, recipe from scratch, or tutorial (e.g., sourdough from scratch, system setup, workflows)
+   - Generate a comprehensive research dossier, multi-page report, or structured document with tables, schedules, and sections
+   - Author complex, robust Python automation scripts, multi-step macros, or data pipelines
+2. IMMEDIATE SPOKEN CHECK-IN (AUDIO INDICATOR):
+   - Whenever invoking `delegate_heavy_task`, ALWAYS speak a brief 1-sentence verbal check-in in the same turn (e.g., "Starting the deep sourdough guide with Gemini 4 Argon now. I will have the complete instructions ready in a moment.") so the user hears an immediate confirmation that work is actively underway.
+3. NEVER TYPE DOCUMENTS LINE-BY-LINE VIA `type_text`:
+   - NEVER use `type_text` to type out guides, recipes, manuals, or documents into applications line-by-line. It is slow and stalls out.
+   - Set `paste_to_active_doc=True` in `delegate_heavy_task` if Google Docs, Word, or an editor is open or requested; `delegate_heavy_task` will automatically paste the full publication-grade document with rich tables into the app instantly via HTML clipboard.
+4. NEVER DRAFT SHALLOW SUMMARIES INSTEAD OF CALLING ARGON:
+   - Do NOT attempt to write a 3-paragraph summary or a tiny 3-row table yourself in voice or via basic tools.
+   - Do NOT call `export_research_dossier` directly for new comprehensive requests; ALWAYS call `delegate_heavy_task(task_type="research_dossier", title=..., instructions=..., paste_to_active_doc=...)` so that Gemini 4 Argon generates the exhaustive, publication-grade document with deep tables and meticulous detail.
+5. MANDATORY VERIFICATION BEFORE DECLARING TASK COMPLETION (THE DOUBLE-CHECK PEEK):
+   - NEVER tell the user a document has been placed into Google Docs or an editor without verifying that the content was actually pasted into the canvas.
+   - If Google Docs was not already open when Argon ran: open `https://docs.new`, wait for the canvas to load, click into the canvas, and press `Ctrl+V` (via `press_key("ctrl+v")`).
+   - Take a quick visual peek with `capture_screen_snapshot()` to confirm the document has non-empty text before stating "I've created your document and placed it into Google Docs."
+6. CONCISE VERBAL RESPONSE AFTER VERIFIED DELEGATION:
+   - When `delegate_heavy_task` completes and you have visually verified the paste, speak ONLY a crisp 2-to-3 sentence executive summary of the highlights over voice.
+   - Confirm clearly that Argon has synthesized and saved the full exhaustive document to disk and placed it into their open document.
 """
 
 ACCENT_START_MARKER = "<!-- SPOKEN VOICE ACCENT & DIALECT DIRECTIVE START -->"
@@ -1042,7 +1063,8 @@ class AetherEngine:
         cfg = self.config_getter()
         defaults = {
             "tier1_fast_model": "gemini-3.8-flash",
-            "tier2_heavy_model": "gemini-3.8-flash-extended",
+            "tier2_heavy_model": "gemini-4-argon",
+            "tier2_thinking_level": "high",
             "tier2_thinking_budget": 2048,
             "reflexion_idle_delay_seconds": 15,
             "reflexion_poll_interval_seconds": 30
@@ -1382,10 +1404,18 @@ class AetherEngine:
         logger.info(f"[ENGINE] Spoken voice accent updated to: {new_accent}")
 
     def _get_whitelist(self) -> list:
-        if hasattr(self, "program_mgr") and self.program_mgr:
-            return self.program_mgr.get_whitelist_names()
-        cfg = self.config_getter()
-        return cfg.get("security", {}).get("app_whitelist", [])
+        try:
+            if hasattr(self, "program_mgr") and self.program_mgr and hasattr(self.program_mgr, "get_whitelist_names"):
+                names = self.program_mgr.get_whitelist_names()
+                if names:
+                    return names
+        except Exception as e:
+            logger.debug(f"[ENGINE] Failed to retrieve whitelist from program_mgr: {e}")
+        try:
+            cfg = self.config_getter()
+            return cfg.get("security", {}).get("app_whitelist", ["*"])
+        except Exception:
+            return ["*"]
 
     def _update_whitelist(self, new_whitelist: list) -> dict:
         if self.on_whitelist_update:
@@ -1864,6 +1894,21 @@ class AetherEngine:
                                 if fn_name not in self.current_turn_tools:
                                     self.current_turn_tools.append(fn_name)
 
+                                # Immediate visual indicator on HUD for tool / heavy reasoning execution
+                                if fn_name == "delegate_heavy_task":
+                                    task_title = fn_args.get("title") or fn_args.get("task_type") or "Argon Task"
+                                    self.notify("status", {
+                                        "state": "thinking",
+                                        "action": f"🧠 Argon: {task_title}...",
+                                        "message": f"Gemini 4 Argon is synthesizing '{task_title}' (High Thinking)..."
+                                    })
+                                else:
+                                    self.notify("status", {
+                                        "state": "executing",
+                                        "action": f"⚙️ {fn_name.replace('_', ' ').title()}...",
+                                        "message": f"{agent_name} is executing {fn_name}..."
+                                    })
+
                                 result = await self.dispatcher.dispatch(fn_name, fn_args)
                                 try:
                                     res_clean = (
@@ -1907,6 +1952,8 @@ class AetherEngine:
                                 await session.send_tool_response(function_responses=function_responses)
                         finally:
                             self.is_tool_executing = False
+                            if self.is_running and not self._in_active_turn and not self._is_audio_streaming:
+                                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
                     # Track Session Resumption Token from Gemini Live
                     resump_update = getattr(response, "session_resumption_update", None)
@@ -2096,7 +2143,8 @@ class AetherEngine:
                             self.last_user_turn_time = time.perf_counter()
                             self.last_user_turn_timestamp = time.time()
                             self._last_live_turn_completed_ts = time.time()
-                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                            if not self.is_tool_executing:
+                                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                         self._in_active_turn = False
 
                         # Layer B: Check if session needs rolling compaction & silent reconnect

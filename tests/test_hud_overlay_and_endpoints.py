@@ -92,7 +92,7 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
         self.assertIn('id="select-primary-model"', content)
         self.assertIn('id="select-heavy-model"', content)
         self.assertIn('value="gemini-3.8-flash"', content)
-        self.assertIn('value="gemini-3.1-pro-preview"', content)
+        self.assertIn('value="gemini-4-argon"', content)
 
     def test_settings_js_default_models_defined(self):
         """Ensures settings.js defines default fallback model arrays."""
@@ -104,7 +104,7 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
         self.assertIn("DEFAULT_CHAT_MODELS", content)
         self.assertIn("DEFAULT_HEAVY_MODELS", content)
         self.assertIn("gemini-3.8-flash", content)
-        self.assertIn("gemini-3.1-pro-preview", content)
+        self.assertIn("gemini-4-argon", content)
 
     def test_app_js_no_duplicate_declarations(self):
         """Ensures app.js does not redeclare block-scoped variables."""

@@ -245,6 +245,40 @@ class ProgramManager:
     # -------------------------------------------------------------------------
     # CRUD API
     # -------------------------------------------------------------------------
+    def get_whitelist_names(self) -> List[str]:
+        """Returns the list of whitelisted program executable names, stems, and aliases."""
+        with self._lock:
+            wl: List[str] = []
+            for p in self.data.get("programs", {}).values():
+                path = (p.get("path") or "").strip()
+                name = (p.get("name") or "").strip()
+                if path:
+                    base = os.path.basename(path).lower()
+                    if base and base not in wl:
+                        wl.append(base)
+                    stem = base[:-4] if base.endswith(".exe") else base
+                    if stem and stem not in wl:
+                        wl.append(stem)
+                if name:
+                    clean_name = name.lower()
+                    if clean_name and clean_name not in wl:
+                        wl.append(clean_name)
+                    if not clean_name.endswith(".exe") and f"{clean_name}.exe" not in wl:
+                        wl.append(f"{clean_name}.exe")
+
+            # Merge from config.json security whitelist if available
+            try:
+                from core.config_manager import load_config
+                cfg = load_config()
+                cfg_wl = cfg.get("security", {}).get("app_whitelist", [])
+                for item in cfg_wl:
+                    s_item = str(item).strip().lower()
+                    if s_item and s_item not in wl:
+                        wl.append(s_item)
+            except Exception:
+                pass
+            return wl
+
     def list_programs(self) -> Dict[str, Any]:
         """Returns all configured programs, active program, and process running status."""
         with self._lock:
