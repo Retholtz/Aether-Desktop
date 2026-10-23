@@ -146,6 +146,17 @@ class ScriptRunner:
 
     def _get_execution_env(self, args: Optional[dict] = None) -> dict:
         env = os.environ.copy()
+        # Strip sensitive API/OAuth credentials from child script environment
+        for secret_key in (
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "AETHER_MASTER_KEY",
+            "GOOGLE_CLIENT_SECRET",
+            "MS_CLIENT_SECRET",
+        ):
+            env.pop(secret_key, None)
         python_path = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = (self.workspace_root + os.pathsep + python_path) if python_path else self.workspace_root
         if args is not None:
@@ -156,14 +167,15 @@ class ScriptRunner:
         self,
         cmd: List[str],
         timeout: int,
-        env: dict
+        env: dict,
+        peak_mb_out: Optional[List[float]] = None
     ) -> Tuple[int, str, str, float, float]:
         """
         Executes subprocess while sampling peak memory usage (MB) and wall-clock duration.
         Returns: (exit_code, stdout, stderr, elapsed_ms, peak_mb)
         """
         t0 = time.perf_counter()
-        peak_mb = [0.0]
+        peak_mb = peak_mb_out if peak_mb_out is not None else [0.0]
         stop_monitor = threading.Event()
 
         proc = subprocess.Popen(
@@ -193,15 +205,24 @@ class ScriptRunner:
         monitor_thread.start()
 
         try:
-            stdout, stderr = proc.communicate(timeout=max(5, min(120, timeout)))
+            stdout, stderr = proc.communicate(timeout=max(1, min(120, timeout)))
             elapsed_ms = (time.perf_counter() - t0) * 1000
             stop_monitor.set()
             monitor_thread.join(timeout=0.1)
             exit_code = proc.returncode
-            return exit_code, stdout or "", stderr or "", elapsed_ms, peak_mb[0]
+            return exit_code, stdout or "", stderr or "", elapsed_ms, float(peak_mb[0])
         except subprocess.TimeoutExpired:
             stop_monitor.set()
             elapsed_ms = (time.perf_counter() - t0) * 1000
+            try:
+                parent = psutil.Process(proc.pid)
+                for child in parent.children(recursive=True):
+                    try:
+                        child.kill()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             try:
                 proc.kill()
                 proc.wait(timeout=2)
@@ -251,8 +272,23 @@ class ScriptRunner:
         logger.info(f"[SCRIPT INVOKE] Type: {st_lower} | Desc: '{description}' | Args: {json.dumps(args or {}, default=str)}")
         logger.debug(f"[SCRIPT CODE]\n{script_clean}")
 
-        # 1. AST Security Gatekeeper validation for Python scripts
-        if st_lower == "python":
+        # 1. Security Gatekeeper validation
+        if st_lower in ("powershell", "ps1"):
+            logger.warning("[SCRIPT BLOCKED] PowerShell script execution rejected by security policy (use Python).")
+            return {
+                "status": "blocked",
+                "script_type": st_lower,
+                "description": description,
+                "error": "PowerShell execution is disabled for security; please write a Python script instead.",
+                "message": "PowerShell scripts are disabled by the safety gatekeeper. Rewrite the automation using Python (`script_type='python'`).",
+                "execution_time_ms": 0.0,
+                "retry_count": 0,
+                "exit_code": 1,
+                "traceback_history": ["PowerShell execution disabled; use Python."],
+                "memory_peak_mb": 0.0,
+                "run_id": active_run_id
+            }
+        elif st_lower == "python":
             is_safe, error_msg = validate_python_script(script_clean)
             if not is_safe:
                 logger.warning(f"[SCRIPT BLOCKED] AST Gatekeeper rejected script: {error_msg}")
@@ -322,12 +358,14 @@ class ScriptRunner:
 
         # 4. Execute with runtime metrics instrumentation
         t0 = time.perf_counter()
-        peak_mb = [0.0]
+        peak_mb_holder = [0.0]
+        peak_mb = 0.0
         try:
             exit_code, stdout_raw, stderr_raw, elapsed_ms, peak_mb = self._run_subprocess_monitored(
                 cmd=cmd,
                 timeout=timeout,
-                env=self._get_execution_env(args)
+                env=self._get_execution_env(args),
+                peak_mb_out=peak_mb_holder
             )
 
             stdout = (stdout_raw or "").strip()
@@ -455,6 +493,7 @@ class ScriptRunner:
 
         except subprocess.TimeoutExpired:
             elapsed_ms = (time.perf_counter() - t0) * 1000
+            peak_val = float(peak_mb_holder[0])
             logger.error(f"[SCRIPT TIMEOUT] Duration: {elapsed_ms:.1f}ms (Limit: {timeout}s) | File: {script_file}")
             self.telemetry_db.record_run(
                 run_id=active_run_id,
@@ -465,7 +504,7 @@ class ScriptRunner:
                 status="failed",
                 traceback=f"Execution timed out after {timeout} seconds.",
                 exit_code=1,
-                memory_peak_mb=peak_mb[0]
+                memory_peak_mb=peak_val
             )
             return {
                 "status": "timeout",
@@ -475,7 +514,7 @@ class ScriptRunner:
                 "execution_time_ms": round(elapsed_ms, 1),
                 "retry_count": 0,
                 "traceback_history": [f"Execution timed out after {timeout} seconds."],
-                "memory_peak_mb": round(peak_mb[0], 2),
+                "memory_peak_mb": round(peak_val, 2),
                 "run_id": active_run_id,
                 "telemetry_status": "failed",
                 "description": description,
@@ -485,6 +524,7 @@ class ScriptRunner:
             }
         except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000
+            peak_val = float(peak_mb_holder[0])
             logger.error(f"[SCRIPT ERROR] Duration: {elapsed_ms:.1f}ms | Error: {e}")
             self.telemetry_db.record_run(
                 run_id=active_run_id,
@@ -495,7 +535,7 @@ class ScriptRunner:
                 status="failed",
                 traceback=str(e),
                 exit_code=1,
-                memory_peak_mb=peak_mb[0]
+                memory_peak_mb=peak_val
             )
             return {
                 "status": "error",
@@ -505,7 +545,7 @@ class ScriptRunner:
                 "execution_time_ms": round(elapsed_ms, 1),
                 "retry_count": 0,
                 "traceback_history": [str(e)],
-                "memory_peak_mb": round(peak_mb[0], 2),
+                "memory_peak_mb": round(peak_val, 2),
                 "run_id": active_run_id,
                 "telemetry_status": "failed",
                 "description": description,
@@ -537,24 +577,21 @@ class ScriptRunner:
         file_name = os.path.basename(script_file)
         logger.info(f"[SKILL INVOKE] File: {file_name} | Desc: '{description}' | Args: {json.dumps(args or {}, default=str)}")
 
-        # Safety validation for Python scripts
-        if script_file.endswith(".py"):
-            try:
-                with open(script_file, "r", encoding="utf-8") as f:
-                    code = f.read()
-                is_safe, error_msg = validate_python_script(code)
-                if not is_safe:
-                    logger.warning(f"[SKILL BLOCKED] AST Gatekeeper rejected {file_name}: {error_msg}")
-                    return {
-                        "status": "blocked",
-                        "error": f"AST Gatekeeper Rejected: {error_msg}",
-                        "message": f"Skill execution was blocked by the safety gatekeeper: {error_msg}"
-                    }
-            except Exception as e:
-                logger.error(f"[SKILL ERROR] Failed reading script {file_name}: {e}")
-                return {"status": "error", "error": f"Failed reading script: {e}"}
-        else:
-            code = ""
+        # Safety validation for all scripts executed via Python interpreter
+        try:
+            with open(script_file, "r", encoding="utf-8") as f:
+                code = f.read()
+            is_safe, error_msg = validate_python_script(code)
+            if not is_safe:
+                logger.warning(f"[SKILL BLOCKED] AST Gatekeeper rejected {file_name}: {error_msg}")
+                return {
+                    "status": "blocked",
+                    "error": f"AST Gatekeeper Rejected: {error_msg}",
+                    "message": f"Skill execution was blocked by the safety gatekeeper: {error_msg}"
+                }
+        except Exception as e:
+            logger.error(f"[SKILL ERROR] Failed reading script {file_name}: {e}")
+            return {"status": "error", "error": f"Failed reading script: {e}"}
 
         cmd = [self.python_exe, script_file]
         if args is not None:
@@ -641,15 +678,14 @@ def execute_cached_script(script_path: str, intent_label: str = "adhoc_task", ti
     if not os.path.exists(script_path):
         return 1, "", f"Script file not found: {script_path}"
 
-    if script_path.endswith(".py"):
-        try:
-            with open(script_path, "r", encoding="utf-8") as f:
-                code = f.read()
-            is_safe, error_msg = validate_python_script(code)
-            if not is_safe:
-                return 1, "", f"AST Gatekeeper Rejected: {error_msg}"
-        except Exception as e:
-            return 1, "", f"Failed reading script: {e}"
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        is_safe, error_msg = validate_python_script(code)
+        if not is_safe:
+            return 1, "", f"AST Gatekeeper Rejected: {error_msg}"
+    except Exception as e:
+        return 1, "", f"Failed reading script: {e}"
 
     runner = ScriptRunner()
     t0 = time.perf_counter()

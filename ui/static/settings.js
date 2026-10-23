@@ -277,6 +277,201 @@ async function loadSettingsUI() {
   loadStartupSettings(config);
   updateSettingsModelDropdowns(modelData, config);
   await loadVoicesUI(config);
+  await loadOAuthStatusUI();
+}
+
+function showOAuthFeedback(msg, isError = false) {
+  const banner = document.getElementById('oauthFeedbackBanner');
+  if (!banner) return;
+  banner.style.display = msg ? 'block' : 'none';
+  banner.style.color = isError ? '#f87171' : '#38bdf8';
+  banner.textContent = msg || '';
+}
+
+function renderOAuthStatus(statusMap) {
+  if (!statusMap || typeof statusMap !== 'object') return;
+
+  const updateProviderRow = (provKey, prefix) => {
+    const info = statusMap[provKey] || {};
+    const connected = Boolean(info.connected);
+    const badge = document.getElementById(`oauth${prefix}StatusBadge`);
+    const label = document.getElementById(`oauth${prefix}AccountLabel`);
+    const disBtn = document.getElementById(`btnDisconnect${prefix === 'Imap' ? 'Imap' : prefix + 'OAuth'}`);
+
+    if (badge) {
+      badge.textContent = connected ? 'CONNECTED' : 'DISCONNECTED';
+      badge.className = `step-status-pill ${connected ? 'done' : 'pending'}`;
+    }
+    if (label) {
+      if (connected) {
+        const acct = info.account_email || info.account_name || 'Connected Account';
+        label.textContent = `Connected as ${acct}`;
+        label.style.color = '#34d399';
+      } else {
+        label.textContent = info.has_client_id ? `Client ID saved (${info.client_id_preview || 'configured'}) — ready to sign in` : 'Not connected';
+        label.style.color = '#94a3b8';
+      }
+    }
+    if (disBtn) {
+      disBtn.style.display = connected ? 'inline-block' : 'none';
+    }
+  };
+
+  updateProviderRow('google', 'Google');
+  updateProviderRow('microsoft', 'Microsoft');
+  updateProviderRow('imap', 'Imap');
+
+  const gInfo = statusMap.google || {};
+  const gCidInput = document.getElementById('oauthGoogleClientId');
+  if (gCidInput && gInfo.client_id && !gCidInput.value) {
+    gCidInput.value = gInfo.client_id;
+  }
+
+  const mInfo = statusMap.microsoft || {};
+  const mCidInput = document.getElementById('oauthMicrosoftClientId');
+  if (mCidInput && mInfo.client_id && !mCidInput.value) {
+    mCidInput.value = mInfo.client_id;
+  }
+  const mTenantInput = document.getElementById('oauthMicrosoftTenantId');
+  if (mTenantInput && mInfo.tenant_id) {
+    mTenantInput.value = mInfo.tenant_id;
+  }
+
+  const iInfo = statusMap.imap || {};
+  const iEmail = document.getElementById('oauthImapEmail');
+  const iHost = document.getElementById('oauthImapHost');
+  const sHost = document.getElementById('oauthSmtpHost');
+  if (iEmail && iInfo.account_email && !iEmail.value) iEmail.value = iInfo.account_email;
+  if (iHost && iInfo.imap_host && !iHost.value) iHost.value = iInfo.imap_host;
+  if (sHost && iInfo.smtp_host && !sHost.value) sHost.value = iInfo.smtp_host;
+}
+
+async function loadOAuthStatusUI() {
+  if (typeof window !== 'undefined' && window.pywebview && window.pywebview.api && window.pywebview.api.get_oauth_status) {
+    try {
+      const status = await window.pywebview.api.get_oauth_status();
+      renderOAuthStatus(status);
+    } catch (e) {
+      console.warn('Could not load OAuth status:', e);
+    }
+  }
+}
+
+function wireOAuthAccountButtons() {
+  const bindOnce = (id, handler) => {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.wiredOAuth === 'true') return;
+    el.dataset.wiredOAuth = 'true';
+    el.addEventListener('click', handler);
+  };
+
+  bindOnce('btnSaveGoogleOAuth', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const cid = (document.getElementById('oauthGoogleClientId')?.value || '').trim();
+    const sec = (document.getElementById('oauthGoogleClientSecret')?.value || '').trim();
+    const payload = { client_id: cid };
+    if (sec) payload.client_secret = sec;
+    const res = await window.pywebview.api.save_oauth_client_config('google', payload);
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showOAuthFeedback('Google OAuth Client ID saved to DPAPI vault.');
+    } else {
+      showOAuthFeedback(res?.error || 'Failed saving Google Client ID.', true);
+    }
+  });
+
+  bindOnce('btnConnectGoogleOAuth', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const cid = (document.getElementById('oauthGoogleClientId')?.value || '').trim();
+    const sec = (document.getElementById('oauthGoogleClientSecret')?.value || '').trim();
+    if (cid) {
+      const payload = { client_id: cid };
+      if (sec) payload.client_secret = sec;
+      await window.pywebview.api.save_oauth_client_config('google', payload);
+    }
+    const res = await window.pywebview.api.start_oauth_flow('google');
+    if (res && res.success) {
+      showOAuthFeedback(res.message || 'Complete Google sign-in in your browser...');
+    } else {
+      showOAuthFeedback(res?.error || 'Could not start Google OAuth flow.', true);
+    }
+  });
+
+  bindOnce('btnDisconnectGoogleOAuth', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const res = await window.pywebview.api.disconnect_oauth_provider('google');
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showOAuthFeedback('Disconnected Google account.');
+    }
+  });
+
+  bindOnce('btnSaveMicrosoftOAuth', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const cid = (document.getElementById('oauthMicrosoftClientId')?.value || '').trim();
+    const tenant = (document.getElementById('oauthMicrosoftTenantId')?.value || 'common').trim() || 'common';
+    const res = await window.pywebview.api.save_oauth_client_config('microsoft', { client_id: cid, tenant_id: tenant });
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showOAuthFeedback('Microsoft Application Client ID saved to DPAPI vault.');
+    } else {
+      showOAuthFeedback(res?.error || 'Failed saving Microsoft Client ID.', true);
+    }
+  });
+
+  bindOnce('btnConnectMicrosoftOAuth', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const cid = (document.getElementById('oauthMicrosoftClientId')?.value || '').trim();
+    const tenant = (document.getElementById('oauthMicrosoftTenantId')?.value || 'common').trim() || 'common';
+    if (cid) {
+      await window.pywebview.api.save_oauth_client_config('microsoft', { client_id: cid, tenant_id: tenant });
+    }
+    const res = await window.pywebview.api.start_oauth_flow('microsoft');
+    if (res && res.success) {
+      showOAuthFeedback(res.message || 'Complete Microsoft sign-in in your browser...');
+    } else {
+      showOAuthFeedback(res?.error || 'Could not start Microsoft OAuth flow.', true);
+    }
+  });
+
+  bindOnce('btnDisconnectMicrosoftOAuth', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const res = await window.pywebview.api.disconnect_oauth_provider('microsoft');
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showOAuthFeedback('Disconnected Microsoft account.');
+    }
+  });
+
+  bindOnce('btnConnectImap', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const email_address = (document.getElementById('oauthImapEmail')?.value || '').trim();
+    const app_password = (document.getElementById('oauthImapPassword')?.value || '').trim();
+    const imap_host = (document.getElementById('oauthImapHost')?.value || '').trim();
+    const smtp_host = (document.getElementById('oauthSmtpHost')?.value || '').trim();
+    showOAuthFeedback('Verifying IMAP connection...');
+    const res = await window.pywebview.api.save_oauth_client_config('imap', {
+      email_address,
+      app_password,
+      imap_host,
+      smtp_host,
+    });
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showOAuthFeedback(`Connected IMAP account (${email_address}).`);
+    } else {
+      showOAuthFeedback(res?.error || 'IMAP connection failed.', true);
+    }
+  });
+
+  bindOnce('btnDisconnectImap', async () => {
+    if (!window.pywebview || !window.pywebview.api) return;
+    const res = await window.pywebview.api.disconnect_oauth_provider('imap');
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showOAuthFeedback('Disconnected IMAP account.');
+    }
+  });
 }
 
 // Refresh button event listener wiring:
@@ -326,6 +521,7 @@ if (typeof document !== "undefined") {
   const initSettingsOnReady = () => {
     wireModelRefreshButton();
     wireTtsChangeListener();
+    wireOAuthAccountButtons();
   };
 
   if (document.readyState === "loading") {
@@ -335,6 +531,7 @@ if (typeof document !== "undefined") {
   }
 
   window.addEventListener("pywebviewready", () => {
+    wireOAuthAccountButtons();
     loadSettingsUI();
   });
 }
@@ -386,6 +583,8 @@ if (typeof window !== "undefined") {
   window.sortModelsChronologically = sortModelsChronologically;
   window.loadSettingsUI = loadSettingsUI;
   window.loadVoicesUI = loadVoicesUI;
+  window.loadOAuthStatusUI = loadOAuthStatusUI;
+  window.renderOAuthStatus = renderOAuthStatus;
   window.wireModelRefreshButton = wireModelRefreshButton;
   window.collectSettingsPayload = collectSettingsPayload;
 }

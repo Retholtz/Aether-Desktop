@@ -431,12 +431,6 @@ class HUDBridge:
             return self._bridge.toggle_game_mode()
         return {"success": False}
 
-    def get_agent_name(self) -> dict:
-        """Relays get_agent_name call from HUD overlay to GuiBridge."""
-        if hasattr(self._bridge, "get_agent_name"):
-            return self._bridge.get_agent_name()
-        return {"agent_name": "Aether"}
-
 
 class HudWindow:
     """Encapsulates the PyWebView HUD interface, floating overlay, and system tray."""

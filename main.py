@@ -174,10 +174,19 @@ def main():
         hud.start(debug=False)
     finally:
         print("\n[SHUTDOWN] Window closed. Stopping assistant engine...")
+        try:
+            bridge.stop_audio_watcher()
+        except Exception:
+            pass
         bridge.stop_assistant()
         if hasattr(bridge._engine, "hotkey_manager") and bridge._engine.hotkey_manager:
             try:
                 bridge._engine.hotkey_manager.stop()
+            except Exception:
+                pass
+        if hasattr(bridge._engine, "user_memory") and bridge._engine.user_memory:
+            try:
+                bridge._engine.user_memory.close()
             except Exception:
                 pass
         if hasattr(bridge._engine, "telemetry_db") and bridge._engine.telemetry_db:

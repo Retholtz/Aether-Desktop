@@ -432,13 +432,11 @@ class GuiPrimitivesController:
         # NEVER use keybd_event with KEYEVENTF_UNICODE (it causes the dot flurry bug)
         if res < n_inputs and win32clipboard and win32con:
             try:
-                win32clipboard.OpenClipboard()
-                try:
-                    win32clipboard.EmptyClipboard()
-                    win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
-                finally:
-                    win32clipboard.CloseClipboard()
+                from tools.clipboard import set_clipboard_text, restore_previous_clipboard
+                set_clipboard_text(text, record_history=True)
                 self.press_key("ctrl+v")
+                time.sleep(0.08)
+                restore_previous_clipboard()
                 if press_enter:
                     self.press_key("enter")
             except Exception as e:

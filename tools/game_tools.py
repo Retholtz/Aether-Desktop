@@ -118,16 +118,52 @@ def register_game_tools(dispatcher, game_manager, engine=None):
     )
     def lookup_inara_market(commodity: str, star_system: Optional[str] = None) -> dict:
         ref_system = star_system
-        if not ref_system and game_manager.ed_watcher:
+        if not ref_system and game_manager and game_manager.ed_watcher:
             s = game_manager.ed_watcher.state.get("star_system")
             if s and s != "Unknown":
                 ref_system = s
         ref_system = ref_system or "Sol"
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        if client:
+            try:
+                from google.genai import types
+                model_endpoint = "gemini-3.8-flash"
+                if engine and hasattr(engine, "config") and isinstance(engine.config, dict):
+                    model_endpoint = engine.config.get("primary_model_endpoint", "gemini-3.8-flash")
+                resp = client.models.generate_content(
+                    model=model_endpoint,
+                    contents=(
+                        f"Search Inara.cz (inara.cz/elite/commodities) and Elite Dangerous market databases for "
+                        f"the commodity or module '{commodity}' near star system '{ref_system}'. "
+                        f"Return nearest buying/selling stations, approximate prices, pad sizes, and system distances if available."
+                    ),
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        temperature=0.1,
+                    ),
+                )
+                return {
+                    "status": "success",
+                    "commodity": commodity,
+                    "reference_system": ref_system,
+                    "market_intel": (resp.text or "").strip(),
+                }
+            except Exception as e:
+                return {
+                    "status": "partial",
+                    "commodity": commodity,
+                    "reference_system": ref_system,
+                    "message": f"Live Inara lookup encountered an error ({e}). Use Google Search grounding to check inara.cz for '{commodity}' near {ref_system}."
+                }
         return {
-            "status": "success",
+            "status": "info",
             "commodity": commodity,
             "reference_system": ref_system,
-            "message": f"Querying Inara/EDDN market data for '{commodity}' near {ref_system}."
+            "message": f"Reference star system resolved to '{ref_system}'. Use Google Search grounding to look up current Inara.cz market data for '{commodity}' near {ref_system}."
         }
 
     @dispatcher.register(
@@ -381,13 +417,19 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def pan_game_map(direction: str, distance: int = 350) -> dict:
-        from core.game_nav import GameNavigator
+        from core.game_nav import UniversalGameNavigator as GameNavigator
         client = (
             getattr(engine, "genai_client", None)
             or getattr(engine, "client", None)
             or getattr(dispatcher, "genai_client", None)
         )
-        model_endpoint = "gemini-2.5-flash"
+        model_endpoint = "gemini-3.8-flash"
+        if engine:
+            if hasattr(engine, "config") and isinstance(engine.config, dict):
+                model_endpoint = engine.config.get("primary_model_endpoint", "gemini-3.8-flash")
+            elif hasattr(engine, "config_getter") and callable(engine.config_getter):
+                cfg = engine.config_getter()
+                model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-3.8-flash"))
         target_process = ""
         map_controls = None
         if game_manager:

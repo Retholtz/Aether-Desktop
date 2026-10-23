@@ -23,10 +23,13 @@ NEUTRALIZED_ASSISTANT_REPLACEMENT = (
 
 
 def is_refusal_text(text: str) -> bool:
-    """Returns True if the text contains a defensive policy/PII refusal pattern."""
+    """Returns True if the text is a short standalone policy/PII refusal rather than a long document summary."""
     if not text or not isinstance(text, str):
         return False
-    return any(pattern.search(text) for pattern in COMPILED_REFUSAL_REGEX)
+    stripped = text.strip()
+    if len(stripped) > 600:
+        return False
+    return any(pattern.search(stripped) for pattern in COMPILED_REFUSAL_REGEX)
 
 
 def sanitize_turn_history(history: List[Any]) -> List[Any]:
@@ -90,7 +93,7 @@ def sanitize_turn_history(history: List[Any]) -> List[Any]:
                     has_refusal = True
 
             # Case B: Gemini SDK structured parts format
-            elif "parts" in turn and isinstance(turn["parts"], list):
+            if "parts" in turn and isinstance(turn["parts"], list):
                 new_parts = []
                 for part in turn["parts"]:
                     text_content = ""
@@ -106,8 +109,12 @@ def sanitize_turn_history(history: List[Any]) -> List[Any]:
                         if isinstance(part, dict):
                             new_parts.append({"text": NEUTRALIZED_ASSISTANT_REPLACEMENT})
                         elif hasattr(part, "text"):
-                            # Replace part or text attribute
-                            new_parts.append(NEUTRALIZED_ASSISTANT_REPLACEMENT)
+                            try:
+                                from google.genai import types
+                                new_parts.append(types.Part.from_text(text=NEUTRALIZED_ASSISTANT_REPLACEMENT))
+                            except Exception:
+                                part.text = NEUTRALIZED_ASSISTANT_REPLACEMENT
+                                new_parts.append(part)
                         else:
                             new_parts.append(NEUTRALIZED_ASSISTANT_REPLACEMENT)
                     else:

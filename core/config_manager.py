@@ -8,9 +8,12 @@ import copy
 import json
 import os
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from security.crypto import protect_secret, unprotect_secret
+
+encrypt_secret = protect_secret
+decrypt_secret = unprotect_secret
 from core.startup_manager import set_boot_on_startup
 
 
@@ -520,6 +523,25 @@ class ConfigManager:
         return self.config
 
 
+def mask_sensitive_config(config_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Returns a deep copy of config_data with encrypted/plaintext API keys and tokens masked
+    for safe transmission over UI event streams.
+    """
+    if not isinstance(config_data, dict):
+        return {}
+    safe_cfg = copy.deepcopy(config_data)
+    api_sec = safe_cfg.get("api")
+    if isinstance(api_sec, dict):
+        enc_key = api_sec.pop("api_key_encrypted", "")
+        api_sec.pop("new_api_key", None)
+        api_sec.pop("api_key_display", None)
+        api_sec["has_api_key"] = bool(enc_key)
+        api_sec["has_key"] = bool(enc_key)
+        api_sec["api_key_masked"] = "••••••••••••••••" if enc_key else ""
+    return safe_cfg
+
+
 def save_config_atomic(config_data: dict, config_path: str = "config.json"):
     """
     Writes configuration to a temporary file before atomically renaming it.
@@ -529,9 +551,15 @@ def save_config_atomic(config_data: dict, config_path: str = "config.json"):
     base_dir = os.path.dirname(abs_config_path)
     os.makedirs(base_dir, exist_ok=True)
 
+    # Strip any transient plaintext secret fields before persisting to disk
+    clean_data = copy.deepcopy(config_data) if isinstance(config_data, dict) else config_data
+    if isinstance(clean_data, dict) and isinstance(clean_data.get("api"), dict):
+        clean_data["api"].pop("new_api_key", None)
+        clean_data["api"].pop("api_key_display", None)
+
     with tempfile.NamedTemporaryFile("w", dir=base_dir, delete=False, suffix=".tmp", encoding="utf-8") as tf:
         temp_name = tf.name
-        json.dump(config_data, tf, indent=2)
+        json.dump(clean_data, tf, indent=2)
 
     # os.replace is an atomic operation on Windows (NTFS) and POSIX
     os.replace(temp_name, abs_config_path)

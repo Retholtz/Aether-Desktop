@@ -113,6 +113,8 @@ window.aetherUI = {
   setupTabs: function() {
     const tabs = document.querySelectorAll(".hud-tab, .nav-btn");
     tabs.forEach(tab => {
+      if (tab.dataset.tabWired === "1") return;
+      tab.dataset.tabWired = "1";
       tab.addEventListener("click", () => {
         tabs.forEach(t => t.classList.remove("active"));
         document.querySelectorAll(".tab-pane").forEach(p => {
@@ -2034,6 +2036,10 @@ window.aetherUI = {
       this.updateTelemetryMetrics(data);
     } else if (type === "voice_profile_updated") {
       this.updateVoiceProfileUI(data);
+    } else if (type === "oauth_status_updated") {
+      if (typeof window.renderOAuthStatus === "function") {
+        window.renderOAuthStatus(data);
+      }
     } else if (type === "mic_status") {
       this.isPttActive = !!data.ptt_active;
       this.updatePttButtonUI();
@@ -2136,10 +2142,11 @@ window.aetherUI = {
       senderLabel = "ERROR / DIAGNOSTIC";
     }
 
+    const safeType = String(item.type || "system").replace(/[^a-zA-Z0-9_-]/g, "");
     bubble.innerHTML = `
       <div class="bubble-meta">
-        <span class="sender-tag ${item.type}">${senderLabel}</span>
-        <span class="timestamp">${timeStr}</span>
+        <span class="sender-tag ${safeType}">${this.escapeHtml(senderLabel)}</span>
+        <span class="timestamp">${this.escapeHtml(timeStr)}</span>
       </div>
       <div class="bubble-body">${this.escapeHtml(item.content)}</div>
     `;
@@ -2279,19 +2286,24 @@ window.aetherUI = {
   // Telemetry Polling Loop (Mic Level Meter & State Sync)
   // =========================================================================
   startTelemetryLoop: function() {
+    if (this._telemetryLoopTimer) return;
     const meterFill = document.getElementById("micMeterFill");
-    setInterval(async () => {
-      if (!window.pywebview || !window.pywebview.api) return;
+    let inFlight = false;
+    this._telemetryLoopTimer = setInterval(async () => {
+      if (inFlight || document.hidden || !window.pywebview || !window.pywebview.api) return;
+      inFlight = true;
       try {
         const tel = await window.pywebview.api.get_telemetry();
-        if (tel) {
-          const pct = Math.min(100, Math.round(tel.mic_level * 100));
+        if (tel && meterFill) {
+          const pct = Math.min(100, Math.round((tel.mic_level || 0) * 100));
           meterFill.style.width = pct + "%";
         }
       } catch (e) {
         // Suppress polling error
+      } finally {
+        inFlight = false;
       }
-    }, 100);
+    }, 150);
   },
 
   appendBubble: function(type, content, sender) {

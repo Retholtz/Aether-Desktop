@@ -31,6 +31,7 @@ class GameManager:
 
     def __init__(self, profiles_path: str = GAMES_PROFILES_PATH):
         self.profiles_path = profiles_path
+        self._lock = threading.RLock()
         self.data = self._load_profiles()
         self.ed_watcher: Optional[EliteTelemetryWatcher] = None
         self._init_telemetry_watchers()
@@ -91,12 +92,23 @@ class GameManager:
         return initial
 
     def _save_profiles(self, payload: Dict[str, Any]):
-        """Persists profile payload to disk."""
-        dirname = os.path.dirname(self.profiles_path)
-        if dirname:
-            os.makedirs(dirname, exist_ok=True)
-        with open(self.profiles_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+        """Persists profile payload to disk atomically with lock protection."""
+        with self._lock:
+            dirname = os.path.dirname(self.profiles_path)
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
+            tmp_path = f"{self.profiles_path}.{os.getpid()}.tmp"
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                os.replace(tmp_path, self.profiles_path)
+            except Exception as e:
+                print(f"[WARN] [GAME_MGR] Failed saving {self.profiles_path}: {e}")
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
 
     def add_game(
         self,

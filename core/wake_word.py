@@ -334,7 +334,7 @@ class WakeWordDetector:
             "wake up aether",
             "aether listen",
         ]
-        if "aether" in target or True:
+        if "aether" in target:
             for phonetic in AETHER_PHONETIC_VARIANTS:
                 if "aether" in target:
                     cand = target.replace("aether", phonetic)

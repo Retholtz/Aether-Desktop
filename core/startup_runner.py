@@ -151,25 +151,23 @@ class StartupJobRunner:
                 break
 
     def _resolve_script_path(self, script_path: str) -> str:
-        """Resolves absolute or relative script path against workspace or startup dir."""
-        if os.path.isabs(script_path) and os.path.exists(script_path):
-            return script_path
-
-        cand1 = os.path.join(self.workspace_root, script_path)
-        if os.path.exists(cand1):
-            return cand1
-
-        cand2 = os.path.join(self.startup_dir, os.path.basename(script_path))
+        """Resolves script path safely within the workspace scripts/startup or skills directories."""
+        cand2 = os.path.abspath(os.path.join(self.startup_dir, os.path.basename(script_path)))
         if os.path.exists(cand2):
             return cand2
 
-        if os.path.exists(script_path):
-            return os.path.abspath(script_path)
+        cand1 = os.path.abspath(os.path.join(self.workspace_root, script_path))
+        ws_abs = os.path.abspath(self.workspace_root)
+        try:
+            if os.path.commonpath([ws_abs, cand1]) == ws_abs and os.path.exists(cand1):
+                return cand1
+        except ValueError:
+            pass
 
-        return cand1
+        return cand2
 
     def _execute_monitor_script(self, monitor: Dict[str, Any]):
-        """Executes a monitor script in an isolated subprocess and handles notifications."""
+        """Executes a monitor script in an isolated subprocess after AST Gatekeeper validation."""
         raw_path = monitor.get("script_path", "")
         task_id = monitor.get("task_id", "")
         desc = monitor.get("description") or task_id
@@ -181,16 +179,38 @@ class StartupJobRunner:
             self._update_monitor_status(task_id, "missing_file")
             return
 
+        # Enforce AST Gatekeeper safety validation before running any background job
+        try:
+            from security.ast_gatekeeper import validate_python_script
+            with open(resolved_path, "r", encoding="utf-8") as f:
+                script_code = f.read()
+            is_safe, err_msg = validate_python_script(script_code)
+            if not is_safe:
+                print(f"[SECURITY] [STARTUP_RUNNER] Blocked unsafe monitor script '{task_id}': {err_msg}")
+                monitor["last_status"] = f"blocked: {err_msg}"
+                self._update_monitor_status(task_id, f"blocked: {err_msg}")
+                return
+        except Exception as e:
+            print(f"[ERROR] [STARTUP_RUNNER] Failed validating monitor script '{task_id}': {e}")
+            monitor["last_status"] = f"validation_error: {e}"
+            self._update_monitor_status(task_id, f"validation_error: {e}")
+            return
+
         print(f"[INFO] [STARTUP_RUNNER] Running background job: {task_id}")
         last_run = time.time()
         status = "unknown"
+
+        clean_env = os.environ.copy()
+        for secret_key in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "AETHER_MASTER_KEY"):
+            clean_env.pop(secret_key, None)
 
         try:
             result = subprocess.run(
                 [sys.executable, resolved_path],
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=120,
+                env=clean_env
             )
 
             if result.returncode == 0:

@@ -42,8 +42,14 @@ class InterruptibleAudioPlayer:
         self._pending_fade_chunk: Optional[bytes] = None
 
     def enqueue_chunk(self, pcm_bytes: bytes):
-        """Adds raw PCM audio chunk to output queue."""
+        """Adds raw PCM audio chunk to output queue (bounded to prevent memory leaks if play_loop is inactive)."""
         if not self._interrupt_event.is_set() and pcm_bytes:
+            while self.audio_queue.qsize() >= 64:
+                try:
+                    self.audio_queue.get_nowait()
+                    self.audio_queue.task_done()
+                except queue.Empty:
+                    break
             self.audio_queue.put(pcm_bytes)
 
     def trigger_barge_in(self):

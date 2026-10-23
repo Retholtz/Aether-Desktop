@@ -47,6 +47,15 @@ function renderProgramsSidebar() {
         activeProgramId = programIds[0];
     }
 
+function escapeProgHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
     programIds.forEach(pid => {
         const p = programs[pid];
         const isOnline = running[pid] || false;
@@ -56,7 +65,7 @@ function renderProgramsSidebar() {
         item.onclick = () => switchActiveProgram(pid);
 
         item.innerHTML = `
-            <span class="program-item-name">${p.name || pid}</span>
+            <span class="program-item-name">${escapeProgHtml(p.name || pid)}</span>
             <span class="badge-status ${isOnline ? 'badge-online' : 'badge-offline'}">
                 ${isOnline ? 'RUNNING' : 'IDLE'}
             </span>
@@ -369,8 +378,8 @@ function renderProgramProcsList(containerId, data, filterText = '', isAddModal =
             const item = document.createElement('div');
             item.className = 'proc-item';
             item.innerHTML = `
-                <span class="proc-item-title">🪟 ${app.title || app.name}</span>
-                <span class="proc-item-exe">${app.name}</span>
+                <span class="proc-item-title">🪟 ${escapeProgHtml(app.title || app.name)}</span>
+                <span class="proc-item-exe">${escapeProgHtml(app.name)}</span>
             `;
             item.onclick = () => selectProgramRunningProcess(app.name, app.title, isAddModal);
             list.appendChild(item);
@@ -387,8 +396,8 @@ function renderProgramProcsList(containerId, data, filterText = '', isAddModal =
             const item = document.createElement('div');
             item.className = 'proc-item';
             item.innerHTML = `
-                <span class="proc-item-title" style="color: #cbd5e1;">⚡ ${pname}</span>
-                <span class="proc-item-exe">${pname}</span>
+                <span class="proc-item-title" style="color: #cbd5e1;">⚡ ${escapeProgHtml(pname)}</span>
+                <span class="proc-item-exe">${escapeProgHtml(pname)}</span>
             `;
             item.onclick = () => selectProgramRunningProcess(pname, '', isAddModal);
             list.appendChild(item);

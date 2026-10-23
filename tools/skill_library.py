@@ -147,10 +147,27 @@ class SkillLibrary:
         return {}
 
     def _save_catalog(self, catalog: Dict[str, dict]):
-        """Persists the skills catalog to disk."""
+        """Persists the skills catalog to disk and synchronizes the top-level router catalog."""
         try:
             with open(self.catalog_file, "w", encoding="utf-8") as f:
                 json.dump(catalog, f, indent=2)
+            # Keep scripts/skills_catalog.json synchronized so ToolDispatcher hot-reloads immediately
+            root_catalog_path = os.path.join(self.workspace_root, "scripts", "skills_catalog.json")
+            os.makedirs(os.path.dirname(root_catalog_path), exist_ok=True)
+            skills_list = []
+            for s_name, s_meta in catalog.items():
+                if isinstance(s_meta, dict):
+                    fname = s_meta.get("file", f"{s_name}.py")
+                    skills_list.append({
+                        "name": s_name,
+                        "filename": fname,
+                        "path": os.path.join("scripts", "library", fname),
+                        "intent": s_meta.get("intent", s_meta.get("description", "")),
+                        "description": s_meta.get("description", ""),
+                        "parameters": s_meta.get("parameters", {}),
+                    })
+            with open(root_catalog_path, "w", encoding="utf-8") as f:
+                json.dump({"skills": skills_list}, f, indent=2)
         except Exception as e:
             print(f"[SKILL_LIBRARY] Error saving catalog: {e}")
 

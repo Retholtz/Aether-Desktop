@@ -251,107 +251,117 @@ class ReflexionEngine:
     def _process_script_optimization_queue(self):
         """Task A: Refactor sub-optimal scripts from data/telemetry.db."""
         db = getattr(self.engine, "telemetry_db", None)
+        owns_db = False
         if not db:
             from core.telemetry_db import TelemetryDB
             db = TelemetryDB()
-
-        queued = db.get_queued_runs(limit=1)
-        if not queued:
-            return
-
-        if not self._is_engine_idle():
-            return
-
-        run = queued[0]
-        run_id = run.get("run_id")
-        intent = run.get("intent_description") or "Unspecified intent"
-        orig_code = run.get("original_code") or ""
-        exec_ms = run.get("execution_time_ms", 0.0)
-        traceback_info = run.get("traceback") or "None"
-
-        active_client = self._get_genai_client()
-        if not active_client:
-            return
-
-        prompt = OPTIMIZATION_PROMPT_TEMPLATE.format(
-            intent_description=intent,
-            execution_time_ms=f"{exec_ms:.1f}",
-            traceback=traceback_info,
-            original_code=orig_code
-        )
+            owns_db = True
 
         try:
-            config = self._build_generate_config(temperature=0.2)
-            response = active_client.models.generate_content(
-                model=self.heavy_model,
-                contents=prompt,
-                config=config
-            )
+            queued = db.get_queued_runs(limit=1)
+            if not queued:
+                return
+
             if not self._is_engine_idle():
-                logger.info(f"[REFLEXION] Engine became active during script optimization for '{run_id}'; yielding without committing.")
                 return
 
-            raw_resp = getattr(response, "text", "") or ""
-            clean_code = extract_python_code(raw_resp)
+            run = queued[0]
+            run_id = run.get("run_id")
+            intent = run.get("intent_description") or "Unspecified intent"
+            orig_code = run.get("original_code") or ""
+            exec_ms = run.get("execution_time_ms", 0.0)
+            traceback_info = run.get("traceback") or "None"
 
-            if not clean_code:
+            active_client = self._get_genai_client()
+            if not active_client:
                 return
 
-            from security.ast_gatekeeper import validate_python_script
-            is_safe, error_msg = validate_python_script(clean_code)
-            if not is_safe:
-                logger.warning(f"[REFLEXION] Generated code for '{run_id}' failed AST safety validation: {error_msg}")
-                return
+            prompt = OPTIMIZATION_PROMPT_TEMPLATE.format(
+                intent_description=intent,
+                execution_time_ms=f"{exec_ms:.1f}",
+                traceback=traceback_info,
+                original_code=orig_code
+            )
 
-            promoted_name = None
-            skill_library = getattr(self.engine, "skill_library", None)
-            if not skill_library and hasattr(self.engine, "dispatcher") and self.engine.dispatcher:
-                skill_library = getattr(self.engine.dispatcher, "skill_library", None)
+            try:
+                config = self._build_generate_config(temperature=0.2)
+                response = active_client.models.generate_content(
+                    model=self.heavy_model,
+                    contents=prompt,
+                    config=config
+                )
+                if not self._is_engine_idle():
+                    logger.info(f"[REFLEXION] Engine became active during script optimization for '{run_id}'; yielding without committing.")
+                    return
 
-            if skill_library:
-                try:
-                    existing_skill = skill_library.find_matching_skill_name(intent)
-                    if existing_skill:
-                        up_res = skill_library.update_skill_code(existing_skill, clean_code)
-                        if up_res.get("status") == "success":
-                            promoted_name = existing_skill
-                            logger.info(f"[PROMOTION] Updated skill '{existing_skill}' with optimized code.")
-                    else:
-                        raw_tokens = re.findall(r"[a-zA-Z0-9]+", intent.lower())
-                        norm_name = "_".join(raw_tokens[:5]) if raw_tokens else f"auto_skill_{run_id[-6:]}"
-                        save_res = skill_library.save_skill(norm_name, intent, clean_code)
-                        if save_res.get("status") == "success":
-                            promoted_name = norm_name
-                            logger.info(f"[PROMOTION] Auto-promoted novel skill '{norm_name}'.")
-                except Exception as promo_err:
-                    logger.warning(f"[PROMOTION ERROR] Could not auto-promote '{run_id}': {promo_err}")
+                raw_resp = getattr(response, "text", "") or ""
+                clean_code = extract_python_code(raw_resp)
 
-            final_status = "promoted_to_library" if promoted_name else "optimized"
-            db.update_optimized_code(run_id, clean_code, status=final_status)
-            logger.info(f"[REFLEXION SUCCESS] Script '{run_id}' refined with status='{final_status}'.")
+                if not clean_code:
+                    db.update_optimized_code(run_id, "", status="optimization_failed")
+                    return
 
-            if self.on_optimized:
-                try:
-                    self.on_optimized({
-                        "run_id": run_id,
-                        "intent_description": intent,
-                        "optimized_code": clean_code,
-                        "status": final_status,
-                        "promoted_skill": promoted_name
+                from security.ast_gatekeeper import validate_python_script
+                is_safe, error_msg = validate_python_script(clean_code)
+                if not is_safe:
+                    logger.warning(f"[REFLEXION] Generated code for '{run_id}' failed AST safety validation: {error_msg}")
+                    db.update_optimized_code(run_id, "", status="blocked_by_ast")
+                    return
+
+                promoted_name = None
+                skill_library = getattr(self.engine, "skill_library", None)
+                if not skill_library and hasattr(self.engine, "dispatcher") and self.engine.dispatcher:
+                    skill_library = getattr(self.engine.dispatcher, "skill_library", None)
+
+                # Only update an already-promoted skill in the library; do NOT auto-promote
+                # one-off user task scripts on their first run (promotion requires 3 clean runs via telemetry_db).
+                if skill_library:
+                    try:
+                        existing_skill = skill_library.find_matching_skill_name(intent, threshold=0.80)
+                        if existing_skill:
+                            up_res = skill_library.update_skill_code(existing_skill, clean_code)
+                            if up_res.get("status") == "success":
+                                promoted_name = existing_skill
+                                logger.info(f"[PROMOTION] Updated existing skill '{existing_skill}' with optimized code.")
+                    except Exception as promo_err:
+                        logger.warning(f"[PROMOTION ERROR] Could not update skill for '{run_id}': {promo_err}")
+
+                final_status = "promoted_to_library" if promoted_name else "optimized"
+                db.update_optimized_code(run_id, clean_code, status=final_status)
+                logger.info(f"[REFLEXION SUCCESS] Script '{run_id}' refined with status='{final_status}'.")
+
+                if self.on_optimized:
+                    try:
+                        self.on_optimized({
+                            "run_id": run_id,
+                            "intent_description": intent,
+                            "optimized_code": clean_code,
+                            "status": final_status,
+                            "promoted_skill": promoted_name
+                        })
+                    except Exception as cb_err:
+                        logger.warning(f"[REFLEXION] Error in on_optimized callback: {cb_err}")
+
+                if self.engine and hasattr(self.engine, "notify"):
+                    self.engine.notify("chat_event", {
+                        "type": "tool",
+                        "name": "Reflexion Self-Optimization",
+                        "content": f"✨ [OPTIMIZATION] Self-refined script for '{intent}'."
                     })
-                except Exception as cb_err:
-                    logger.warning(f"[REFLEXION] Error in on_optimized callback: {cb_err}")
 
-            if self.engine and hasattr(self.engine, "notify"):
-                self.engine.notify("chat_event", {
-                    "type": "tool",
-                    "name": "Reflexion Self-Optimization",
-                    "content": f"✨ [OPTIMIZATION] Self-refined script for '{intent}'."
-                })
-
-        except Exception as e:
-            print(f"[ERROR] [REFLEXION] Script optimization failed for '{run_id}': {e}")
-            logger.error(f"[REFLEXION] Script optimization failed for '{run_id}': {e}")
+            except Exception as e:
+                print(f"[ERROR] [REFLEXION] Script optimization failed for '{run_id}': {e}")
+                logger.error(f"[REFLEXION] Script optimization failed for '{run_id}': {e}")
+                try:
+                    db.update_optimized_code(run_id, "", status="optimization_error")
+                except Exception:
+                    pass
+        finally:
+            if owns_db and hasattr(db, "close"):
+                try:
+                    db.close()
+                except Exception:
+                    pass
 
     def _process_unindexed_sessions(self):
         """Scans data/chats for sessions requiring manifest extraction or memory synthesis."""

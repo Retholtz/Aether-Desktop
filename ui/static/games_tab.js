@@ -47,6 +47,15 @@ function renderGamesSidebar() {
         activeGameId = gameIds[0];
     }
 
+function escapeGameHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
     gameIds.forEach(gid => {
         const p = profiles[gid];
         const isOnline = running[gid] || false;
@@ -56,7 +65,7 @@ function renderGamesSidebar() {
         item.onclick = () => switchActiveGame(gid);
 
         item.innerHTML = `
-            <span class="game-item-name">${p.display_name || gid}</span>
+            <span class="game-item-name">${escapeGameHtml(p.display_name || gid)}</span>
             <span class="badge-status ${isOnline ? 'badge-online' : 'badge-offline'}">
                 ${isOnline ? 'RUNNING' : 'IDLE'}
             </span>
@@ -177,18 +186,32 @@ function renderActiveGameDetail() {
 
                 const modsText = (bind.modifiers && bind.modifiers.length > 0) ? bind.modifiers.join(' + ').toUpperCase() : 'None';
                 const keyText = (bind.key || '').toUpperCase();
-                const safePhrase = phrase.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
                 tr.innerHTML = `
-                    <td><strong>"${phrase}"</strong></td>
-                    <td><code>${modsText}</code></td>
-                    <td><code>${keyText}</code></td>
-                    <td>${bind.description || ''}</td>
-                    <td>
-                        <button type="button" class="btn-secondary-sm" onclick="testMacro('${safePhrase}')">Test</button>
-                        <button type="button" class="btn-danger-sm" onclick="deleteMacro('${safePhrase}')">Delete</button>
-                    </td>
+                    <td><strong>"${escapeGameHtml(phrase)}"</strong></td>
+                    <td><code>${escapeGameHtml(modsText)}</code></td>
+                    <td><code>${escapeGameHtml(keyText)}</code></td>
+                    <td>${escapeGameHtml(bind.description || '')}</td>
+                    <td class="macro-actions-cell"></td>
                 `;
+                const actionsCell = tr.querySelector('.macro-actions-cell');
+                if (actionsCell) {
+                    const testBtn = document.createElement('button');
+                    testBtn.type = 'button';
+                    testBtn.className = 'btn-secondary-sm';
+                    testBtn.textContent = 'Test';
+                    testBtn.onclick = () => testMacro(phrase);
+
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'btn-danger-sm';
+                    delBtn.style.marginLeft = '4px';
+                    delBtn.textContent = 'Delete';
+                    delBtn.onclick = () => deleteMacro(phrase);
+
+                    actionsCell.appendChild(testBtn);
+                    actionsCell.appendChild(delBtn);
+                }
                 tbody.appendChild(tr);
             });
         }
@@ -227,25 +250,34 @@ function renderCopilotLog(entries) {
     reversed.forEach(entry => {
         const item = document.createElement('div');
         item.className = 'copilot-entry-item';
-        const cat = (entry.category || 'intel').toLowerCase();
+        const cat = String(entry.category || 'intel').toLowerCase().replace(/[^a-z0-9_-]/g, '');
         const catClass = `cat-${cat}`;
-        const locText = entry.location ? `📍 ${entry.location}` : '';
-        const timeText = entry.time_str || '';
-        const entryId = entry.id || '';
+        const locText = entry.location ? `📍 ${escapeGameHtml(entry.location)}` : '';
+        const timeText = escapeGameHtml(entry.time_str || '');
+        const entryId = String(entry.id || '');
 
         item.innerHTML = `
             <div class="copilot-entry-header">
                 <div style="display: flex; align-items: center;">
-                    <span class="copilot-entry-cat ${catClass}">${cat}</span>
+                    <span class="copilot-entry-cat ${catClass}">${escapeGameHtml(cat)}</span>
                     ${locText ? `<span class="copilot-entry-loc">${locText}</span>` : ''}
                 </div>
-                <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="copilot-entry-right" style="display: flex; align-items: center; gap: 6px;">
                     <span style="font-size: 0.68rem; color: #64748b;">${timeText}</span>
-                    <button type="button" class="copilot-entry-del" title="Dismiss" onclick="deleteCopilotEntry('${entryId}')">✕</button>
                 </div>
             </div>
-            <div class="copilot-entry-summary">${entry.summary || ''}</div>
+            <div class="copilot-entry-summary">${escapeGameHtml(entry.summary || '')}</div>
         `;
+        const rightContainer = item.querySelector('.copilot-entry-right');
+        if (rightContainer) {
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'copilot-entry-del';
+            delBtn.title = 'Dismiss';
+            delBtn.textContent = '✕';
+            delBtn.onclick = () => deleteCopilotEntry(entryId);
+            rightContainer.appendChild(delBtn);
+        }
         listEl.appendChild(item);
     });
 }
@@ -390,8 +422,8 @@ function renderRunningProcessesList(data, filterText = '') {
             const item = document.createElement('div');
             item.className = 'proc-item';
             item.innerHTML = `
-                <span class="proc-item-title">🪟 ${app.title || app.name}</span>
-                <span class="proc-item-exe">${app.name}</span>
+                <span class="proc-item-title">🪟 ${escapeGameHtml(app.title || app.name)}</span>
+                <span class="proc-item-exe">${escapeGameHtml(app.name)}</span>
             `;
             item.onclick = () => selectRunningProcess(app.name, app.title);
             list.appendChild(item);
@@ -409,8 +441,8 @@ function renderRunningProcessesList(data, filterText = '') {
             const item = document.createElement('div');
             item.className = 'proc-item';
             item.innerHTML = `
-                <span class="proc-item-title" style="color: #cbd5e1;">⚡ ${pname}</span>
-                <span class="proc-item-exe">${pname}</span>
+                <span class="proc-item-title" style="color: #cbd5e1;">⚡ ${escapeGameHtml(pname)}</span>
+                <span class="proc-item-exe">${escapeGameHtml(pname)}</span>
             `;
             item.onclick = () => selectRunningProcess(pname);
             list.appendChild(item);
@@ -679,6 +711,8 @@ let telemetryPollInterval = null;
 function startTelemetryPolling() {
     if (telemetryPollInterval) clearInterval(telemetryPollInterval);
     telemetryPollInterval = setInterval(async () => {
+        const gamesPane = document.getElementById('tab-pane-games');
+        if (gamesPane && gamesPane.classList.contains('hidden')) return;
         if (activeGameId && window.pywebview && window.pywebview.api) {
             try {
                 const telemetry = await window.pywebview.api.get_game_telemetry();

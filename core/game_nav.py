@@ -837,3 +837,7 @@ If neither the landmark nor its containing region/anchor can be found, return {{
             use_gamepad=use_gamepad,
             target_process=target_process
         )
+
+
+# Backwards-compatible alias for tools/game_tools.py
+GameNavigator = UniversalGameNavigator

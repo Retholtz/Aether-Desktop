@@ -25,9 +25,17 @@ def parse_date_event(date_str: str) -> Optional[tuple]:
     m = re.match(r"^(\d{1,2})[-/](\d{1,2})$", s)
     if m:
         return int(m.group(1)), int(m.group(2))
-    for fmt in ["%c %d", "%b %d", "%B %d, ", "%b %d, %Y", "%Y-%m-%d"]:
+    for fmt in ["%B %d, %Y", "%b %d, %Y", "%Y-%m-%d"]:
         try:
             dt = datetime.datetime.strptime(s, fmt)
+            return dt.month, dt.day
+        except ValueError:
+            pass
+    # Handle yearless month-day strings using a leap year (2024) to avoid Python 3.12+ deprecation warnings
+    s_clean = s.rstrip(", ")
+    for fmt in ["%B %d %Y", "%b %d %Y"]:
+        try:
+            dt = datetime.datetime.strptime(f"{s_clean} 2024", fmt)
             return dt.month, dt.day
         except ValueError:
             pass
@@ -111,6 +119,31 @@ class ProactiveEngine:
 
         # Sort candidates: closest events first
         candidates.sort(key=lambda c: c.get("days_away", 999))
+
+        # 2. Connected OAuth Calendar & Unread Priority Inbox Check (only in live runtime, not unit tests)
+        if not os.environ.get("AETHER_TESTING") and "unittest" not in os.sys.modules:
+            try:
+                from core.oauth_manager import get_oauth_manager
+                oauth_mgr = get_oauth_manager()
+                active_prov = oauth_mgr.resolve_provider("auto")
+                if active_prov in ("google", "microsoft"):
+                    cal_res = oauth_mgr.list_calendar_events(provider=active_prov, days_ahead=1, max_results=3)
+                    for ev in cal_res.get("events", []):
+                        ev_summary = ev.get("summary") or "Calendar Event"
+                        ev_start = ev.get("start") or "today"
+                        candidates.append({
+                            "type": "oauth_calendar",
+                            "fact_id": None,
+                            "category": "calendar",
+                            "key": ev_summary,
+                            "value": ev_start,
+                            "days_away": 0,
+                            "timing_text": f"scheduled for {ev_start}",
+                            "description": f"Upcoming calendar event '{ev_summary}' at {ev_start}",
+                        })
+            except Exception as e:
+                logger.debug(f"[PROACTIVE] OAuth calendar check skipped: {e}")
+
         return candidates
 
     def _resolve_single_user_name(self, raw_name: Optional[str] = None) -> str:

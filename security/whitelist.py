@@ -253,7 +253,7 @@ class WhitelistValidator:
         final_target = target
         if final_target and target_exe.lower() in ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"):
             clean_t = str(final_target).strip()
-            if clean_t and not (clean_t.startswith("http://") or clean_t.startswith("https://") or clean_t.startswith("file://")) and not os.path.exists(clean_t):
+            if clean_t and not (clean_t.startswith("http://") or clean_t.startswith("https://")):
                 final_target = f"https://www.google.com/search?q={urllib.parse.quote_plus(clean_t)}"
 
         # 4. Handle browser profile flags & clean session flags
@@ -271,8 +271,9 @@ class WhitelistValidator:
                     extra_args.append(f"--profile-directory={prof_dir}")
                     resolved_profile_name = f"{profile} ({prof_dir})"
                 else:
-                    extra_args.append(f"--profile-directory={profile}")
-                    resolved_profile_name = profile
+                    safe_prof = re.sub(r"[^a-zA-Z0-9 _.-]", "", str(profile)).strip() or "Default"
+                    extra_args.append(f"--profile-directory={safe_prof}")
+                    resolved_profile_name = safe_prof
             else:
                 # Default to primary user profile to bypass the "Who's using Chrome?" profile picker dialog
                 extra_args.append("--profile-directory=Default")
@@ -289,7 +290,10 @@ class WhitelistValidator:
                 if extra_args:
                     cmd.extend(extra_args)
                 if final_target:
-                    cmd.append(str(final_target))
+                    target_str = str(final_target)
+                    if target_str.startswith("-"):
+                        cmd.append("--")
+                    cmd.append(target_str)
 
                 subprocess.Popen(cmd, creationflags=creation_flags, close_fds=True)
                 msg = f"Successfully launched {app_name}"
@@ -310,8 +314,8 @@ class WhitelistValidator:
                 }
             else:
                 if sys.platform == "win32":
-                    if final_target:
-                        os.startfile(final_target)
+                    if final_target and str(final_target).startswith(("http://", "https://")):
+                        os.startfile(str(final_target))
                     else:
                         os.startfile(target_exe)
                     return {

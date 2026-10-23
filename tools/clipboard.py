@@ -9,6 +9,7 @@ import os
 import time
 import re
 import html
+from collections import deque
 
 try:
     import win32clipboard
@@ -16,6 +17,32 @@ try:
     HAS_WIN32 = True
 except ImportError:
     HAS_WIN32 = False
+
+# In-memory ring buffer preserving the last 15 clipboard text items before overwrites
+_CLIPBOARD_HISTORY: deque = deque(maxlen=15)
+
+
+def _snapshot_current_clipboard():
+    """Saves the current plain-text clipboard value to the ring buffer before overwriting."""
+    try:
+        current = get_clipboard_text()
+        if current and (not _CLIPBOARD_HISTORY or _CLIPBOARD_HISTORY[-1]["text"] != current):
+            _CLIPBOARD_HISTORY.append({"text": current, "timestamp": time.time()})
+    except Exception:
+        pass
+
+
+def get_clipboard_history() -> list:
+    """Returns the in-memory clipboard history ring (oldest to newest)."""
+    return list(_CLIPBOARD_HISTORY)
+
+
+def restore_previous_clipboard() -> bool:
+    """Restores the most recent saved clipboard entry from the history ring."""
+    if not _CLIPBOARD_HISTORY:
+        return False
+    entry = _CLIPBOARD_HISTORY.pop()
+    return set_clipboard_text(entry["text"], record_history=False)
 
 
 def format_windows_html_clipboard(html_fragment: str) -> bytes:
@@ -46,10 +73,12 @@ def format_windows_html_clipboard(html_fragment: str) -> bytes:
     return (header + prefix + html_fragment + suffix).encode("utf-8")
 
 
-def set_clipboard_html(html_fragment: str, plain_text: str = "") -> bool:
+def set_clipboard_html(html_fragment: str, plain_text: str = "", record_history: bool = True) -> bool:
     """Sets the Windows clipboard to HTML format (with optional plain text fallback)."""
     if not HAS_WIN32:
         return False
+    if record_history:
+        _snapshot_current_clipboard()
     try:
         cf_html = win32clipboard.RegisterClipboardFormat("HTML Format")
         win32clipboard.OpenClipboard()
@@ -70,10 +99,12 @@ def set_clipboard_html(html_fragment: str, plain_text: str = "") -> bool:
         return False
 
 
-def set_clipboard_text(text: str) -> bool:
+def set_clipboard_text(text: str, record_history: bool = True) -> bool:
     """Sets plain text to the Windows clipboard."""
     if not HAS_WIN32:
         return False
+    if record_history:
+        _snapshot_current_clipboard()
     try:
         win32clipboard.OpenClipboard()
         try:
@@ -338,6 +369,17 @@ def markdown_to_html_for_clipboard(md_text: str) -> str:
         html_parts.append("</ol>")
 
     return "".join(html_parts)
+
+
+def copy_markdown_as_rich_html(markdown_content: str) -> bool:
+    """
+    Renders Markdown into styled HTML and loads both CF_HTML and plain-text
+    fallback into the Windows clipboard without changing window focus.
+    """
+    if not HAS_WIN32:
+        return False
+    html_payload = markdown_to_html_for_clipboard(markdown_content)
+    return set_clipboard_html(html_payload, plain_text=markdown_content)
 
 
 def paste_markdown_to_target_app(markdown_content: str, app_name: str = "chrome") -> dict:

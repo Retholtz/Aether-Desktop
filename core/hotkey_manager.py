@@ -292,7 +292,16 @@ class HotkeyManager:
         if focused and self._is_key_down and self.ptt_type == "hold":
             self._is_key_down = False
             if self.on_ptt_change:
-                self.on_ptt_change(False)
+                self._dispatch_callback(self.on_ptt_change, False)
+
+    def _dispatch_callback(self, fn: Callable, *args):
+        """Dispatches a hotkey callback off the low-level Win32 hook thread so WH_KEYBOARD_LL returns immediately."""
+        def _runner():
+            try:
+                fn(*args)
+            except Exception as cb_err:
+                logger.error(f"[HOTKEY CALLBACK ERROR] {cb_err}")
+        threading.Thread(target=_runner, daemon=True).start()
 
     def _is_aether_foreground(self) -> bool:
         """
@@ -372,7 +381,7 @@ class HotkeyManager:
                                 self._is_hud_key_down = True
                                 logger.info("[HUD HOTKEY] Key down -> Cycle HUD Mode")
                                 if self.on_hud_mode_cycle:
-                                    self.on_hud_mode_cycle()
+                                    self._dispatch_callback(self.on_hud_mode_cycle)
                     elif is_up:
                         self._is_hud_key_down = False
 
@@ -384,7 +393,7 @@ class HotkeyManager:
                                 self._is_game_mode_key_down = True
                                 logger.info("[GAME MODE HOTKEY] Key down -> Toggle Game Mode")
                                 if self.on_game_mode_toggle:
-                                    self.on_game_mode_toggle()
+                                    self._dispatch_callback(self.on_game_mode_toggle)
                     elif is_up:
                         self._is_game_mode_key_down = False
 
@@ -409,18 +418,18 @@ class HotkeyManager:
                                 if self.ptt_type == "hold":
                                     logger.info("[PTT] Hotkey pressed -> Hold Speak ON")
                                     if self.on_ptt_change:
-                                        self.on_ptt_change(True)
+                                        self._dispatch_callback(self.on_ptt_change, True)
                                 elif self.ptt_type == "toggle":
                                     logger.info("[PTT] Hotkey pressed -> Toggle Mic")
                                     if self.on_ptt_toggle:
-                                        self.on_ptt_toggle()
+                                        self._dispatch_callback(self.on_ptt_toggle)
                     elif is_up:
                         if self._is_key_down:
                             self._is_key_down = False
                             if self.ptt_type == "hold":
                                 logger.info("[PTT] Hotkey released -> Hold Speak OFF")
                                 if self.on_ptt_change:
-                                    self.on_ptt_change(False)
+                                    self._dispatch_callback(self.on_ptt_change, False)
             except Exception as ex:
                 logger.error(f"[HOTKEY PROC ERROR] {ex}")
 

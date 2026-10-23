@@ -7,9 +7,12 @@ from tools.clipboard import (
     set_clipboard_html,
     set_clipboard_text,
     get_clipboard_text,
+    get_clipboard_history,
+    restore_previous_clipboard,
     format_windows_html_clipboard,
     markdown_to_html_for_clipboard,
     clean_markdown_typography,
+    copy_markdown_as_rich_html,
     paste_markdown_to_target_app,
 )
 
@@ -17,9 +20,12 @@ __all__ = [
     "set_clipboard_html",
     "set_clipboard_text",
     "get_clipboard_text",
+    "get_clipboard_history",
+    "restore_previous_clipboard",
     "format_windows_html_clipboard",
     "markdown_to_html_for_clipboard",
     "clean_markdown_typography",
+    "copy_markdown_as_rich_html",
     "paste_markdown_to_target_app",
 ]
 

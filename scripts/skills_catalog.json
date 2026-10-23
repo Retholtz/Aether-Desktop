@@ -1,3 +1,59 @@
 {
-  "skills": []
+  "skills": [
+    {
+      "name": "create_table_google_docs",
+      "filename": "create_table_google_docs.py",
+      "path": "scripts\\library\\create_table_google_docs.py",
+      "intent": "Formats and pastes a rich HTML/TSV table directly into Google Docs or a web document in Chrome.",
+      "description": "Formats and pastes a rich HTML/TSV table directly into Google Docs or a web document in Chrome.",
+      "parameters": {
+        "headers": "List of string column titles (e.g. ['Model', 'Range', 'Price'])",
+        "rows": "2D list of row strings (e.g. [['Tesla 3', '341 mi', '$38,990']])",
+        "title": "Optional table title heading string",
+        "app_name": "Optional target window (default 'Google Docs')"
+      }
+    },
+    {
+      "name": "create_table_word",
+      "filename": "create_table_word.py",
+      "path": "scripts\\library\\create_table_word.py",
+      "intent": "Creates and populates a native formatted table in Microsoft Word via COM automation.",
+      "description": "Creates and populates a native formatted table in Microsoft Word via COM automation.",
+      "parameters": {
+        "headers": "List of string column titles",
+        "rows": "2D list of row strings",
+        "title": "Optional table title heading string"
+      }
+    },
+    {
+      "name": "tile_windows",
+      "filename": "tile_windows.py",
+      "path": "scripts\\library\\tile_windows.py",
+      "intent": "Tiles two open applications side-by-side (50% left, 50% right) on the screen.",
+      "description": "Tiles two open applications side-by-side (50% left, 50% right) on the screen.",
+      "parameters": {
+        "left_app": "Application name to position on the left (e.g. 'notepad')",
+        "right_app": "Application name to position on the right (e.g. 'chrome')"
+      }
+    },
+    {
+      "name": "tile_all_active_windows",
+      "filename": "tile_all_active_windows.py",
+      "path": "scripts\\library\\tile_all_active_windows.py",
+      "intent": "Detects all open, visible non-minimized application windows on the primary display and tiles them evenly side by side across the desktop work area.",
+      "description": "Detects all open, visible non-minimized application windows on the primary display and tiles them evenly side by side across the desktop work area.",
+      "parameters": {}
+    },
+    {
+      "name": "google_docs_writer",
+      "filename": "google_docs_writer.py",
+      "path": "scripts\\library\\google_docs_writer.py",
+      "intent": "Safely focuses Google Docs canvas in Chrome, stages formatted content to Windows clipboard, performs focus handshake, dispatches paste, and verifies visual outcome.",
+      "description": "Safely focuses Google Docs canvas in Chrome, stages formatted content to Windows clipboard, performs focus handshake, dispatches paste, and verifies visual outcome.",
+      "parameters": {
+        "text": "The text or document content to write into Google Docs",
+        "app_name": "Target application name (default 'chrome')"
+      }
+    }
+  ]
 }

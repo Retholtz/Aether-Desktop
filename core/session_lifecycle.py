@@ -8,6 +8,7 @@ silent WebSocket session re-anchoring without audio stream interruption.
 import asyncio
 import json
 import os
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -62,6 +63,7 @@ class SessionLifecycleManager:
         self.chats_dir = chats_dir or os.path.join(base_dir, "data", "chats")
         os.makedirs(self.chats_dir, exist_ok=True)
 
+        self._lock = threading.RLock()
         self.session_id: str = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
         self.raw_transcript: List[Dict[str, Any]] = []
 
@@ -98,32 +100,34 @@ class SessionLifecycleManager:
             return
 
         turn_timestamp = time.time()
-        turn_data = {
-            "turn_id": len(self.raw_transcript) + 1,
-            "timestamp": turn_timestamp,
-            "role": role,
-            "text": clean_content,
-            "tools_used": list(tools_used) if tools_used else []
-        }
-        self.raw_transcript.append(turn_data)
+        with self._lock:
+            turn_data = {
+                "turn_id": len(self.raw_transcript) + 1,
+                "timestamp": turn_timestamp,
+                "role": role,
+                "text": clean_content,
+                "tools_used": list(tools_used) if tools_used else []
+            }
+            self.raw_transcript.append(turn_data)
 
-        self.turn_history.append({
-            "role": role,
-            "content": clean_content,
-            "timestamp": turn_timestamp
-        })
+            self.turn_history.append({
+                "role": role,
+                "content": clean_content,
+                "timestamp": turn_timestamp
+            })
 
-        # Cap retained turns in memory to avoid unbounded growth
-        if len(self.turn_history) > 60:
-            self.turn_history = self.turn_history[-40:]
+            # Cap retained turns in memory to avoid unbounded growth
+            if len(self.turn_history) > 60:
+                self.turn_history = self.turn_history[-40:]
 
-        if role in ("user", "assistant", "model"):
-            self.turn_count += 1
-            logger.debug(f"[LIFECYCLE] Turn #{self.turn_count} ({role}): {clean_content[:80]}...")
+            if role in ("user", "assistant", "model"):
+                self.turn_count += 1
+                logger.debug(f"[LIFECYCLE] Turn #{self.turn_count} ({role}): {clean_content[:80]}...")
 
     def get_raw_turns(self) -> List[Dict[str, Any]]:
         """Returns the raw in-memory turn history for the current session."""
-        return list(self.turn_history)
+        with self._lock:
+            return list(self.turn_history)
 
     def get_active_context_turns(self) -> List[Dict[str, Any]]:
         """
@@ -135,7 +139,8 @@ class SessionLifecycleManager:
 
     def record_tool_chars(self, char_count: int):
         """Accumulates tool payload character count to gauge token consumption."""
-        self.tool_execution_chars += max(0, char_count)
+        with self._lock:
+            self.tool_execution_chars += max(0, char_count)
 
     def get_elapsed_seconds(self) -> float:
         """Returns seconds elapsed since current session started."""
@@ -341,52 +346,56 @@ class SessionLifecycleManager:
         and dispatches background manifest card extraction and indexing.
         Returns the flushed session_id, or None if no turns were recorded.
         """
-        if not self.raw_transcript:
-            return None
+        with self._lock:
+            if not self.raw_transcript:
+                return None
 
-        filepath = os.path.join(self.chats_dir, f"{self.session_id}.json")
-        start_t = self.raw_transcript[0]["timestamp"] if self.raw_transcript else self.session_start_time
-        end_t = self.raw_transcript[-1]["timestamp"] if self.raw_transcript else time.time()
-        payload = {
-            "session_id": self.session_id,
-            "start_time": start_t,
-            "end_time": end_t,
-            "turns": self.raw_transcript
-        }
+            filepath = os.path.join(self.chats_dir, f"{self.session_id}.json")
+            start_t = self.raw_transcript[0]["timestamp"] if self.raw_transcript else self.session_start_time
+            end_t = self.raw_transcript[-1]["timestamp"] if self.raw_transcript else time.time()
+            payload = {
+                "session_id": self.session_id,
+                "start_time": start_t,
+                "end_time": end_t,
+                "turns": list(self.raw_transcript)
+            }
 
-        try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-            logger.info(f"[SESSION] Persisted raw session transcript to {filepath}")
-        except Exception as e:
-            logger.error(f"[SESSION ERROR] Failed to save session transcript to {filepath}: {e}")
-            return None
+            try:
+                tmp_path = f"{filepath}.{os.getpid()}.tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                os.replace(tmp_path, filepath)
+                logger.info(f"[SESSION] Persisted raw session transcript to {filepath}")
+            except Exception as e:
+                logger.error(f"[SESSION ERROR] Failed to save session transcript to {filepath}: {e}")
+                return None
 
-        # Session transcript is persisted; the idle-aware ReflexionEngine processes manifest extraction
-        logger.debug(f"[MANIFEST] Session {filepath} queued for idle Reflexion extraction.")
+            # Session transcript is persisted; the idle-aware ReflexionEngine processes manifest extraction
+            logger.debug(f"[MANIFEST] Session {filepath} queued for idle Reflexion extraction.")
 
-        old_id = self.session_id
-        new_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
-        if new_id == old_id:
-            import datetime
-            new_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-        self.session_id = new_id
-        self.raw_transcript = []
-        return old_id
+            old_id = self.session_id
+            new_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
+            if new_id == old_id:
+                import datetime
+                new_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+            self.session_id = new_id
+            self.raw_transcript = []
+            return old_id
 
     def reset_metrics(self):
         """Resets turn count, elapsed time, and tool chars after successful silent reconnect."""
-        # Ensure any unpersisted transcript turns are flushed to disk before resetting
-        if self.raw_transcript:
-            self.flush_session_to_disk()
+        with self._lock:
+            # Ensure any unpersisted transcript turns are flushed to disk before resetting
+            if self.raw_transcript:
+                self.flush_session_to_disk()
 
-        self.turn_count = 0
-        self.session_start_time = time.time()
-        self.tool_execution_chars = 0
-        # Retain last 2 turns to bridge the prompt continuity (sanitized of any refusals)
-        self.turn_history = sanitize_turn_history(self.turn_history[-2:])
-        self.total_rotations += 1
-        self.rotation_in_progress = False
-        logger.info(f"[LIFECYCLE] Metrics reset. Total lifetime rotations: {self.total_rotations}")
+            self.turn_count = 0
+            self.session_start_time = time.time()
+            self.tool_execution_chars = 0
+            # Retain last 2 turns to bridge the prompt continuity (sanitized of any refusals)
+            self.turn_history = sanitize_turn_history(self.turn_history[-2:])
+            self.total_rotations += 1
+            self.rotation_in_progress = False
+            logger.info(f"[LIFECYCLE] Metrics reset. Total lifetime rotations: {self.total_rotations}")
 
 

@@ -603,7 +603,7 @@ def navigate_browser(
         except Exception as e:
             return {"status": "error", "message": f"Failed to navigate {app_name}: {str(e)}"}
     else:
-        wl = whitelist if whitelist is not None else ["*"]
+        wl = whitelist if whitelist is not None else ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"]
         launch_res = WhitelistValidator.validate_and_launch(app_name, wl, target=formatted_target)
         
         # If monitor specified, wait for window to appear and place it
@@ -777,8 +777,8 @@ class OSControls:
     def close_window(self, app_name: str) -> dict:
         return close_window(app_name)
 
-    def navigate_browser(self, url: str, monitor: Optional[int] = None) -> dict:
-        return navigate_browser(url, monitor=monitor)
+    def navigate_browser(self, url: str, monitor: Optional[int] = None, whitelist: Optional[list] = None) -> dict:
+        return navigate_browser(url, whitelist=whitelist, monitor=monitor)
 
     def move_window_to_monitor(self, app_name: str, monitor: int = 1, maximize: bool = False, no_activate: bool = False) -> dict:
         return move_window_to_monitor(app_name, monitor=monitor, maximize=maximize, no_activate=no_activate)
@@ -1172,13 +1172,15 @@ def pulse_key(key_name: str, duration_sec: float = 0.08) -> bool:
     return send_directinput_key(key_name, duration_sec=duration_sec)
 
 
-def move_cursor_to_point(x: int, y: int, screen_width: int = 1920, screen_height: int = 1080):
-    """Universal absolute cursor placement."""
+def move_cursor_to_point(x: int, y: int, screen_width: Optional[int] = None, screen_height: Optional[int] = None):
+    """Universal absolute cursor placement with dynamic display resolution querying."""
     if sys.platform != "win32":
         return
     ensure_thread_desktop()
-    norm_x = int(x * (65535.0 / screen_width))
-    norm_y = int(y * (65535.0 / screen_height))
+    sw = screen_width or max(1, ctypes.windll.user32.GetSystemMetrics(0))
+    sh = screen_height or max(1, ctypes.windll.user32.GetSystemMetrics(1))
+    norm_x = int(x * (65535.0 / sw))
+    norm_y = int(y * (65535.0 / sh))
     inp = INPUT(type=INPUT_MOUSE)
     inp.mi = MOUSEINPUT(norm_x, norm_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, 0)
     ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))

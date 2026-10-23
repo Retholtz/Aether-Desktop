@@ -280,6 +280,7 @@ class GuiBridge:
             if callable(orig_cb):
                 try:
                     orig_cb(enabled, game_id, game_name)
+                    return
                 except Exception:
                     pass
             self._on_engine_event("game_mode_changed", {
@@ -291,6 +292,9 @@ class GuiBridge:
                 "game_name": game_name
             })
         self.game_mgr.on_game_mode_changed = _bridge_on_game_mode_changed
+        from core.oauth_manager import get_oauth_manager
+        self._oauth_mgr = get_oauth_manager()
+        self._oauth_mgr.on_status_change = lambda status: self._on_engine_event("oauth_status_updated", status)
         register_ui_log_callback(self._on_log_record)
         self._last_audio_fp = get_windows_audio_fingerprint()
         self.start_audio_watcher()
@@ -469,6 +473,10 @@ class GuiBridge:
             if event_type == "hud_cycle_mode":
                 self.cycle_hud_mode()
                 return
+
+            if event_type == "config_updated" and isinstance(data, dict):
+                from core.config_manager import mask_sensitive_config
+                data = mask_sensitive_config(data)
 
             payload = json.dumps({"type": event_type, "data": data})
             
@@ -1339,7 +1347,6 @@ class GuiBridge:
                 apply_hud_window_shape(self._overlay_window, mode)
             except Exception as ex:
                 logger.warning(f"[OVERLAY RESIZE ERROR] {ex}")
-            self.on_hud_mode_changed(mode)
 
         self.on_hud_mode_changed(mode)
         self._on_engine_event("hud_mode_changed", {"mode": mode})
@@ -1363,13 +1370,17 @@ class GuiBridge:
 
     def on_hud_mode_changed(self, mode: str):
         """Notifies JavaScript in the floating overlay window of mode change."""
-        self._current_hud_mode = mode
+        clean_mode = str(mode or "normal").lower().strip()
+        if clean_mode not in ("mini", "normal", "max"):
+            clean_mode = "normal"
+        self._current_hud_mode = clean_mode
         if getattr(self, "_overlay_window", None):
-            try:
-                js_code = f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
-                self._overlay_window.evaluate_js(js_code)
-            except Exception:
-                pass
+            with self._js_lock:
+                try:
+                    js_code = f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode({json.dumps(clean_mode)}); }}"
+                    self._overlay_window.evaluate_js(js_code)
+                except Exception:
+                    pass
 
     def get_hud_mode(self) -> dict:
         """Returns the current HUD mode."""
@@ -2201,6 +2212,33 @@ class GuiBridge:
 
         logger.info("[BRIDGE] browse_program_executable cancelled or no file selected.")
         return {"success": False, "cancelled": True}
+
+    # =========================================================================
+    # OAuth 2.0 Connected Accounts (Gmail / Outlook / Hotmail / IMAP) RPC
+    # =========================================================================
+
+    def get_oauth_status(self) -> dict:
+        """Returns safe connection status for Google, Microsoft (Outlook/Hotmail), and IMAP accounts."""
+        return self._oauth_mgr.get_status()
+
+    def save_oauth_client_config(self, provider: str, config_data: Optional[dict] = None) -> dict:
+        """Saves OAuth 2.0 Client ID / Secret or IMAP/SMTP credentials to the DPAPI Token Vault."""
+        if isinstance(provider, dict) and config_data is None:
+            config_data = provider
+            provider = str(config_data.get("provider", "google"))
+        return self._oauth_mgr.save_client_config(str(provider), config_data or {})
+
+    def start_oauth_flow(self, provider: str) -> dict:
+        """Initiates the system browser OAuth 2.0 PKCE flow for 'google' or 'microsoft'."""
+        return self._oauth_mgr.start_oauth_flow(str(provider))
+
+    def disconnect_oauth_provider(self, provider: str) -> dict:
+        """Disconnects and revokes stored OAuth tokens for the specified provider."""
+        return self._oauth_mgr.disconnect_provider(str(provider))
+
+    def confirm_pending_email_send(self, draft_id: str, provider: str = "auto") -> dict:
+        """Confirms and dispatches a pending email draft from the UI."""
+        return self._oauth_mgr.send_draft(draft_id=str(draft_id), provider=str(provider), user_confirmed=True)
 
 
 GUIBridge = GuiBridge
