@@ -91,11 +91,16 @@ You are Aether's Tier 1 Conversational Front-End (Gemini 3.8 Flash Live), engine
 Your companion engine is Gemini 4 Argon, the Tier 2 Heavy Reasoning Engine with High Thinking depth.
 
 MANDATORY TIER 2 DELEGATION RULES:
-1. YOU MUST CALL `delegate_heavy_task` (NEVER attempt to author long-form text yourself) whenever the user asks to:
+0. RETRIEVING OR RE-USING PREVIOUSLY GENERATED DOSSIERS / GUIDES (CHECK DISK FIRST!):
+   - All previously generated guides and dossiers are stored locally as Markdown files in `data/dossiers/` (and the most recent one in `data/scratchpad/latest_dossier.md`).
+   - Whenever the user asks to pull up, re-open, read, or paste a **previously created** guide, document, or dossier from an earlier conversation (e.g., "pull up our previous sourdough document", "put that guide we worked on into Google Docs"):
+     * DO NOT call `delegate_heavy_task` to regenerate it from scratch!
+     * First call `search_past_sessions` OR use `execute_automation_script` to check `data/dossiers/` for the existing `.md` file, read it, and paste it directly into the target app using `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html`.
+1. YOU MUST CALL `delegate_heavy_task` (NEVER attempt to author long-form text yourself) whenever the user asks to create a **NEW**:
    - "use Argon", "switch to Argon", "use Tier 2", or "think deeply"
-   - Create or write an exhaustive guide, manual, instruction set, recipe from scratch, or tutorial (e.g., sourdough from scratch, system setup, workflows)
-   - Generate a comprehensive research dossier, multi-page report, or structured document with tables, schedules, and sections
-   - Author complex, robust Python automation scripts, multi-step macros, or data pipelines
+   - Exhaustive guide, manual, instruction set, recipe from scratch, or tutorial
+   - Comprehensive research dossier, multi-page report, or structured document with tables, schedules, and sections
+   - Complex, robust Python automation scripts, multi-step macros, or data pipelines
 2. IMMEDIATE SPOKEN CHECK-IN (AUDIO INDICATOR):
    - Whenever invoking `delegate_heavy_task`, ALWAYS speak a brief 1-sentence verbal check-in in the same turn (e.g., "Starting the deep sourdough guide with Gemini 4 Argon now. I will have the complete instructions ready in a moment.") so the user hears an immediate confirmation that work is actively underway.
 3. NEVER TYPE DOCUMENTS LINE-BY-LINE VIA `type_text`:
@@ -931,6 +936,7 @@ class AetherEngine:
 
             self.session = session
             self.live_session = session
+            self._reset_context_flag = False
             self.conn_mgr.set_connected()
             self._rehydrate_session_context()
             self._last_live_turn_completed_ts = time.time()
@@ -997,10 +1003,31 @@ class AetherEngine:
             asyncio.run_coroutine_threadsafe(self._disconnect_live_session(reason=reason), loop)
 
     async def _disconnect_live_session(self, reason: str = "Linger timeout"):
-        """Cleanly closes the Live WebSocket session and transitions to Standby."""
+        """Cleanly closes the Live WebSocket session, flushes raw transcript turns, and transitions to Standby."""
         if self.conn_mgr.state == ConnectionState.STANDBY and self.session is None:
             return
         logger.info(f"[LIVE ON-DEMAND] Closing Live session ({reason}) and entering Standby.")
+
+        # Flush any recorded or in-flight session turns to disk before disconnecting
+        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+            try:
+                pending_user = getattr(self, "current_user_speech", "").strip()
+                if pending_user:
+                    self.session_lifecycle.record_turn("user", pending_user)
+                    self.current_user_speech = ""
+                pending_assistant = getattr(self, "current_turn_text", "").strip()
+                if pending_assistant:
+                    self.session_lifecycle.record_turn(
+                        "assistant",
+                        pending_assistant,
+                        tools_used=getattr(self, "current_turn_tools", [])
+                    )
+                    self.current_turn_text = ""
+                    self.current_turn_tools = []
+                self.session_lifecycle.flush_session_to_disk()
+            except Exception as flush_err:
+                logger.warning(f"[LIVE ON-DEMAND] Transcript flush warning on disconnect: {flush_err}")
+
         old_session = self.session
         old_cm = getattr(self, "_active_cm", None)
         old_recv = getattr(self, "_active_recv_task", None)
@@ -1341,7 +1368,6 @@ class AetherEngine:
         self._session_resumption_handle = None
         if hasattr(self, "session_lifecycle") and self.session_lifecycle:
             self.session_lifecycle.turn_history.clear()
-            self.session_lifecycle.reset_metrics()
         logger.info("[SESSION] Reset context requested by user/UI.")
         self.notify("chat_event", {
             "type": "system",
@@ -1748,9 +1774,14 @@ class AetherEngine:
                 # 1. Check for any queued typed text messages
                 while not self._text_queue.empty():
                     typed_text = self._text_queue.get_nowait()
+                    if not typed_text or not str(typed_text).strip():
+                        continue
+                    clean_typed = str(typed_text).strip()
+                    if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+                        self.session_lifecycle.record_turn("user", clean_typed)
                     content = types.Content(
                         role="user",
-                        parts=[types.Part.from_text(text=typed_text)]
+                        parts=[types.Part.from_text(text=clean_typed)]
                     )
                     await active_session.send_client_content(turns=[content], turn_complete=True)
 
@@ -1883,6 +1914,15 @@ class AetherEngine:
                         self._is_transcribing = False
                         self.is_tool_executing = True
                         self._in_active_turn = True
+                        if self.current_user_speech.strip():
+                            clean_user_speech = self.current_user_speech.strip()
+                            self.notify("chat_event", {
+                                "type": "user",
+                                "content": clean_user_speech,
+                                "source": "voice"
+                            })
+                            self.session_lifecycle.record_turn("user", clean_user_speech)
+                            self.current_user_speech = ""
                         try:
                             function_responses = []
 
@@ -2037,14 +2077,16 @@ class AetherEngine:
                         self._in_active_turn = True
                         # Finalize user speech turn when model starts responding
                         if self.current_user_speech.strip():
+                            clean_user_speech = self.current_user_speech.strip()
                             self._kill_playback_flag = False
                             if hasattr(self, "audio_player") and self.audio_player:
                                 self.audio_player.reset_interrupt()
                             self.notify("chat_event", {
                                 "type": "user",
-                                "content": self.current_user_speech.strip(),
+                                "content": clean_user_speech,
                                 "source": "voice"
                             })
+                            self.session_lifecycle.record_turn("user", clean_user_speech)
                             self.current_user_speech = ""
 
                         for part in model_turn.parts or []:
@@ -2090,11 +2132,13 @@ class AetherEngine:
                         self.current_turn_text = ""
                         self.current_turn_tools = []
                         if self.current_user_speech.strip():
+                            clean_user_speech = self.current_user_speech.strip()
                             self.notify("chat_event", {
                                 "type": "user",
-                                "content": self.current_user_speech.strip(),
+                                "content": clean_user_speech,
                                 "source": "voice"
                             })
+                            self.session_lifecycle.record_turn("user", clean_user_speech)
                             self.current_user_speech = ""
 
                     # 6. Turn Complete
@@ -2295,11 +2339,17 @@ class AetherEngine:
             "  3. Immediately invoke `run_saved_script(skill_name='create_table_google_docs', args={'headers': ['Feature / Spec', 'Vehicle A', 'Vehicle B'], 'rows': [['Pros', '...', '...'], ['Cons', '...', '...']], 'title': 'Comparison Title'})` for Google Docs (or `create_table_word` for Word).\n"
             "  4. The saved skill automatically loads the clipboard with formatted HTML and pastes it cleanly into the active document.\n\n"
             "DYNAMIC EXECUTION & SELF-EXTENDING LEARNING (CORTEX):\n"
-            "- Dynamic Python Generation: For novel, multi-step, document, spreadsheet, data processing (pandas), Microsoft Office COM (Word/Excel via win32com.client), or window layout tasks without a pre-existing skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
+            "- Dynamic Python Generation ('Figure It Out' On-The-Fly): For ANY novel, multi-step, file/dossier lookup, document, spreadsheet, data processing (pandas), Microsoft Office COM (Word/Excel via win32com.client), or window layout task without a pre-existing built-in tool or skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
+            "- Workspace Data & Internal Python Helper APIs Available in `execute_automation_script`:\n"
+            "  * `data/dossiers/` — Directory containing all previously generated Markdown guides and dossiers (`YYYYMMDD_HHMMSS_Title.md`).\n"
+            "  * `data/scratchpad/latest_dossier.md` — The most recently generated dossier.\n"
+            "  * `data/chats/` — Raw JSON conversation session transcripts.\n"
+            "  * `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html` — Converts any Markdown string/file into styled HTML + plain text on the Windows clipboard and pastes it into Google Docs, Word, or an active editor.\n"
+            "  * `from tools.os_controls import bring_hwnd_to_foreground, focus_window` — Reliable Win32 foreground window focus.\n"
             "- Self-Correction on Error: If a script fails, you will receive the full Python stack trace / traceback in the tool response. Inspect the error, adjust your script or logic, and retry.\n"
-            "- Learning & Memory: Once you have dynamically generated and verified a successful script for a task that might be reused (e.g. formatting a report, manipulating files, custom layouts), save it permanently to the Skill Library via `save_script_to_library(skill_name, description, script_code, parameters)`. This persists it to disk and syncs it via Git so you never have to generate it again!\n"
+            "- Learning & Memory: Once you have dynamically generated and verified a successful parameterized script for a task that might be reused (e.g. searching and pasting a saved dossier, formatting a report, manipulating files, custom layouts), save it permanently to the Skill Library via `save_script_to_library(skill_name, description, script_code, parameters)`. This persists it to disk and syncs it via Git so you never have to generate it again!\n"
             "- ANTI-INTROSPECTION & CODE INTEGRITY DIRECTIVE (CRITICAL):\n"
-            "  * NEVER execute scripts via `execute_automation_script` to read source files from disk, scan directories (`os.walk`), or inspect internal Python classes/methods (`inspect.getsource`).\n"
+            "  * Do NOT execute scripts to modify or inspect Aether's internal engine source code (`core/`, `security/`) or internal Python classes (`inspect.getsource`). Scanning and reading user files or workspace data folders (`data/dossiers/`, `data/scratchpad/`, `Documents`, `Downloads`) via `os.listdir` / `glob` / `open` IS explicitly permitted and encouraged.\n"
             "  * If you need to see how an existing skill handles a task (e.g. images, tables, formatting), simply call `read_saved_skill(skill_name)` to view its code instantly in a single step.\n"
             "  * In dynamic scripts, NEVER call bare `win32gui.SetForegroundWindow(hwnd)` directly (which Windows blocks with a lock timeout error); instead, always import and use `from tools.os_controls import bring_hwnd_to_foreground`.\n"
             "- WEB EDITORS & GOOGLE DOCS CANVAS STABILITY:\n"

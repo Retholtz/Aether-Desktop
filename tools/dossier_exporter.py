@@ -56,6 +56,23 @@ def export_research_dossier(
         with open(LATEST_DOSSIER_LINK, "w", encoding="utf-8") as f:
             f.write(full_content)
 
+        # Also register the exported dossier in the session manifest index for instant historical lookup
+        try:
+            from core.manifest_indexer import index_manifest_card
+            abs_dossier_path = os.path.abspath(file_path)
+            card = {
+                "session_id": f"dossier_{date_str}_{safe_title[:24]}",
+                "date": time.strftime("%Y-%m-%d"),
+                "timestamp": time.time(),
+                "topics_discussed": [f"Research Dossier / Guide: {title} ({category})"],
+                "actions_executed": [f"Exported Markdown dossier to {file_path}"],
+                "unresolved_questions": [],
+                "key_entities": [title, filename, file_path]
+            }
+            index_manifest_card(card, abs_dossier_path)
+        except Exception as idx_err:
+            print(f"[DEBUG] [DOSSIER] Manifest index note: {idx_err}")
+
         # Optional open in default editor
         if open_immediately:
             try:

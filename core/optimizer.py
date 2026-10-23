@@ -372,7 +372,13 @@ class ReflexionEngine:
                 continue
 
             turns = session_data.get("turns", [])
-            if len(turns) < 2:
+            has_substantial_single_turn = (
+                len(turns) == 1 and (
+                    bool(turns[0].get("tools_used"))
+                    or len(str(turns[0].get("text") or turns[0].get("content") or "")) >= 60
+                )
+            )
+            if len(turns) < 2 and not has_substantial_single_turn:
                 # Mark minimal session as indexed so it is not repeatedly re-scanned
                 minimal_card = {
                     "session_id": session_data.get("session_id", os.path.splitext(os.path.basename(filepath))[0]),

@@ -351,8 +351,9 @@ class AudioPipeline:
         elif was_active and not active:
             # PTT released: finalize any speech immediately
             logger.info(f"[AUDIO] PTT released -> finalizing speech ({len(self._speech_frames)} speech frames collected)")
-            self._finalize_utterance()
-            self._queue_put(self.input_queue, b"__END_OF_TURN__")
+            emitted = self._finalize_utterance()
+            if not emitted:
+                self._queue_put(self.input_queue, b"__END_OF_TURN__")
 
     def set_mode(self, mode: str):
         self.mode = mode
@@ -697,6 +698,7 @@ class AudioPipeline:
         )
         self._queue_put(self.utterance_queue, wav_bytes)
         self._queue_put(self.input_queue, b"__END_OF_TURN__")
+        return True
 
     def _output_callback(self, outdata, frames, time_info, status):
         if not self._running:

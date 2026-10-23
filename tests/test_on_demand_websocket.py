@@ -236,12 +236,14 @@ class TestOnDemandWebSocket(unittest.TestCase):
         self.engine._active_cm = mock_cm
 
         async def run_test():
-            await self.engine._disconnect_live_session(reason="Test linger timeout")
-            self.assertEqual(self.engine.conn_mgr.state, ConnectionState.STANDBY)
-            self.assertIsNone(self.engine.session)
-            self.assertIsNone(self.engine.live_session)
-            self.assertIsNone(self.engine._active_cm)
-            mock_session.close.assert_awaited_once()
+            with patch.object(self.engine.session_lifecycle, "flush_session_to_disk") as mock_flush:
+                await self.engine._disconnect_live_session(reason="Test linger timeout")
+                self.assertEqual(self.engine.conn_mgr.state, ConnectionState.STANDBY)
+                self.assertIsNone(self.engine.session)
+                self.assertIsNone(self.engine.live_session)
+                self.assertIsNone(self.engine._active_cm)
+                mock_session.close.assert_awaited_once()
+                mock_flush.assert_called_once()
 
         self.engine._loop.run_until_complete(run_test())
 

@@ -2372,14 +2372,34 @@ class ToolDispatcher:
 
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: client.models.generate_content(
-                        model=heavy_model,
-                        contents=prompt,
-                        config=gen_config
+                t_start = time.monotonic()
+                stop_hb = asyncio.Event()
+
+                async def _argon_progress_heartbeat():
+                    while not stop_hb.is_set():
+                        await asyncio.sleep(15.0)
+                        if stop_hb.is_set():
+                            break
+                        elapsed_s = int(time.monotonic() - t_start)
+                        self.notify("status", {
+                            "state": "thinking",
+                            "action": f"🧠 Argon: {title} ({elapsed_s}s)...",
+                            "message": f"Gemini 4 Argon ({heavy_model}) is synthesizing '{title}' ({elapsed_s}s elapsed)..."
+                        })
+
+                hb_task = asyncio.create_task(_argon_progress_heartbeat())
+                try:
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: client.models.generate_content(
+                            model=heavy_model,
+                            contents=prompt,
+                            config=gen_config
+                        )
                     )
-                )
+                finally:
+                    stop_hb.set()
+                    hb_task.cancel()
                 markdown_content = getattr(response, "text", "") or ""
                 if not markdown_content.strip():
                     return {"status": "error", "message": "Heavy reasoning model returned empty content."}

@@ -96,16 +96,44 @@ def search_past_sessions(query: str, limit: int = 4, db_path: Optional[str] = No
     Search historical session manifest cards for topics, actions, unresolved tasks, or entities.
     Use this when the user asks about past conversations, previous decisions, or earlier tasks.
     """
+    import os
     from core.manifest_indexer import search_manifest_index, init_manifest_db
     init_manifest_db(db_path)
     results = search_manifest_index(query=query, limit=limit, db_path=db_path)
-    if not results:
+
+    # In normal runtime (db_path is None), also check data/dossiers/ for saved Markdown guides/dossiers
+    dossier_matches = []
+    if db_path is None and query and query.strip():
+        try:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            dossier_dir = os.path.join(base_dir, "data", "dossiers")
+            if os.path.exists(dossier_dir):
+                q_terms = [w.lower() for w in query.strip().split() if len(w) >= 3]
+                is_generic_doc_query = any(w in ("document", "dossier", "guide", "report", "recipe") for w in q_terms)
+                for fname in sorted(os.listdir(dossier_dir), reverse=True):
+                    if not fname.endswith(".md"):
+                        continue
+                    fpath = os.path.join(dossier_dir, fname)
+                    rel_path = os.path.join("data", "dossiers", fname).replace("\\", "/")
+                    fname_lower = fname.lower()
+                    if is_generic_doc_query or any(t in fname_lower for t in q_terms):
+                        dossier_matches.append(
+                            f"- [SAVED DOSSIER ON DISK] `{rel_path}` (Available right now: read this file and use `from tools.clipboard import paste_markdown_to_target_app` via `execute_automation_script` instead of regenerating!)"
+                        )
+                        if len(dossier_matches) >= limit:
+                            break
+        except Exception:
+            pass
+
+    if not results and not dossier_matches:
         return (
             f"No previous sessions matched query: '{query}'. "
             f"[Directive: No past sessions match '{query}'. If this inquiry concerns an external person, entity, or general topic, immediately execute google_search.]"
         )
 
     summaries = []
+    if dossier_matches:
+        summaries.extend(dossier_matches)
     for r in results:
         topics_str = ", ".join(r["topics"]) if r["topics"] else "None"
         actions_str = ", ".join(r["actions"]) if r["actions"] else "None"

@@ -19,8 +19,22 @@ def delegate_heavy_task(
     target_app: str = "chrome"
 ) -> Dict[str, Any]:
     """Synchronous entrypoint for automation scripts delegating heavy reasoning to Gemini 4 Argon."""
+    import json
+    import os
     from tools.dispatcher import ToolDispatcher
-    dispatcher = ToolDispatcher()
+
+    def _load_default_config() -> dict:
+        try:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cfg_path = os.path.join(base_dir, "config.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    dispatcher = ToolDispatcher(config_getter=_load_default_config)
 
     try:
         loop = asyncio.get_event_loop()
