@@ -1083,7 +1083,7 @@ try:
         (
             "list_upcoming_calendar_events",
             list_upcoming_calendar_events,
-            "Lists upcoming meetings and events from the user's connected Google Calendar or Microsoft Outlook Calendar.",
+            "Lists upcoming meetings, appointments, and events from the user's connected Google Calendar or Microsoft Outlook Calendar. Always invoke this tool when the user asks about their schedule, calendar, meetings, or agenda for today or upcoming days.",
             {
                 "type": "OBJECT",
                 "properties": {

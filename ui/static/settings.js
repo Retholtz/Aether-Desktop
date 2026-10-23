@@ -308,7 +308,7 @@ function renderOAuthStatus(statusMap) {
         label.textContent = `Connected as ${acct}`;
         label.style.color = '#34d399';
       } else {
-        label.textContent = info.has_client_id ? `Client ID saved (${info.client_id_preview || 'configured'}) — ready to sign in` : 'Not connected';
+        label.textContent = 'Not connected';
         label.style.color = '#94a3b8';
       }
     }
@@ -393,6 +393,11 @@ function wireOAuthAccountButtons() {
     if (res && res.success) {
       showOAuthFeedback(res.message || 'Complete Google sign-in in your browser...');
     } else {
+      const drawer = document.getElementById('oauthDeveloperSetupDrawer');
+      if (drawer && (res?.error || '').toLowerCase().includes('client id')) {
+        drawer.open = true;
+        document.getElementById('oauthGoogleClientId')?.focus();
+      }
       showOAuthFeedback(res?.error || 'Could not start Google OAuth flow.', true);
     }
   });
@@ -430,6 +435,11 @@ function wireOAuthAccountButtons() {
     if (res && res.success) {
       showOAuthFeedback(res.message || 'Complete Microsoft sign-in in your browser...');
     } else {
+      const drawer = document.getElementById('oauthDeveloperSetupDrawer');
+      if (drawer && (res?.error || '').toLowerCase().includes('client id')) {
+        drawer.open = true;
+        document.getElementById('oauthMicrosoftClientId')?.focus();
+      }
       showOAuthFeedback(res?.error || 'Could not start Microsoft OAuth flow.', true);
     }
   });

@@ -35,7 +35,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import requests
 
 from core.logger import get_logger
-from security.token_vault import OAuthTokenVault
+from security.token_vault import OAuthTokenVault, load_app_env
+
+load_app_env()
 
 logger = get_logger("OAuthManager")
 
@@ -152,6 +154,119 @@ def _decode_mime_words(header_val: Optional[str]) -> str:
         return str(header_val)
 
 
+def enrich_calendar_event(ev: Dict[str, Any], now_local: Optional[datetime.datetime] = None) -> Dict[str, Any]:
+    """Enriches a raw calendar event dictionary with relative human-friendly date/time markers."""
+    if now_local is None:
+        now_local = datetime.datetime.now()
+    today = now_local.date()
+
+    start_raw = ev.get("start") or ""
+    end_raw = ev.get("end") or ""
+
+    start_date = None
+    start_time_str = None
+    is_all_day = False
+    try:
+        if "T" in start_raw:
+            clean_s = start_raw.replace("Z", "+00:00")
+            dt = datetime.datetime.fromisoformat(clean_s)
+            if dt.tzinfo:
+                dt_local = dt.astimezone()
+                start_date = dt_local.date()
+                start_time_str = dt_local.strftime("%I:%M %p").lstrip("0")
+            else:
+                start_date = dt.date()
+                start_time_str = dt.strftime("%I:%M %p").lstrip("0")
+        elif start_raw:
+            start_date = datetime.date.fromisoformat(start_raw)
+            is_all_day = True
+    except Exception:
+        pass
+
+    end_date = None
+    try:
+        if "T" in end_raw:
+            clean_e = end_raw.replace("Z", "+00:00")
+            dt_e = datetime.datetime.fromisoformat(clean_e)
+            end_date = dt_e.astimezone().date() if dt_e.tzinfo else dt_e.date()
+        elif end_raw:
+            end_date = datetime.date.fromisoformat(end_raw)
+    except Exception:
+        pass
+
+    is_today = False
+    is_multi_day = False
+    if start_date:
+        if end_date and (end_date - start_date).days > 1:
+            is_multi_day = True
+            if start_date <= today < end_date:
+                is_today = True
+        elif start_date == today:
+            is_today = True
+
+    if start_date:
+        diff_days = (start_date - today).days
+        if is_today:
+            if is_multi_day:
+                s_lbl = start_date.strftime("%b %d")
+                e_lbl = (end_date - datetime.timedelta(days=1)).strftime("%b %d") if end_date else ""
+                rel = f"Today (Ongoing multi-day event: {s_lbl} - {e_lbl})"
+            else:
+                rel = "Today"
+        elif diff_days == 1:
+            rel = "Tomorrow"
+        elif diff_days == -1:
+            rel = "Yesterday"
+        elif 1 < diff_days < 7:
+            day_name = start_date.strftime("%A, %b %d")
+            rel = f"In {diff_days} days ({day_name})"
+        else:
+            rel = start_date.strftime("%A, %b %d, %Y")
+    else:
+        rel = "Unknown date"
+
+    time_desc = start_time_str if start_time_str else ("All Day" if (is_all_day and not is_multi_day) else "")
+    formatted_start = f"{rel} at {time_desc}" if (time_desc and not is_all_day) else (f"{rel} ({time_desc})" if time_desc else rel)
+
+    ev["is_today"] = is_today
+    ev["is_all_day"] = is_all_day
+    ev["is_multi_day"] = is_multi_day
+    ev["relative_day"] = rel
+    ev["formatted_time"] = time_desc
+    ev["schedule_label"] = formatted_start
+    return ev
+
+
+def summarize_calendar_events(events: List[Dict[str, Any]], days_ahead: int) -> str:
+    """Builds an executive spoken summary of the calendar events for the voice model."""
+    today_events = [e for e in events if e.get("is_today")]
+    upcoming_events = [e for e in events if not e.get("is_today")]
+
+    parts = []
+    if today_events:
+        items = []
+        for e in today_events:
+            title = e.get("summary", "Event")
+            time_lbl = e.get("formatted_time", "All Day")
+            if e.get("is_multi_day"):
+                items.append(f"'{title}' (ongoing all-day)")
+            elif time_lbl and time_lbl != "All Day":
+                items.append(f"'{title}' at {time_lbl}")
+            else:
+                items.append(f"'{title}' (all-day)")
+        parts.append(f"You have {len(today_events)} event(s) scheduled for today: {', '.join(items)}.")
+    else:
+        parts.append("You have no events scheduled for today.")
+
+    if upcoming_events:
+        next_ev = upcoming_events[0]
+        parts.append(f"Your next upcoming event is '{next_ev.get('summary')}' on {next_ev.get('schedule_label')}.")
+    elif not today_events:
+        parts.append(f"Your calendar is completely clear for the next {days_ahead} days.")
+
+    return " ".join(parts)
+
+
 class OAuthManager:
     """
     Coordinates OAuth 2.0 PKCE browser flows, automatic token refresh, and unified
@@ -201,7 +316,28 @@ class OAuthManager:
             imap_port = int(config_data.get("imap_port", 993) or 993)
             smtp_host = str(config_data.get("smtp_host", "")).strip()
             smtp_port = int(config_data.get("smtp_port", 587) or 587)
-            app_password = str(config_data.get("app_password", "")).strip()
+            app_password = str(config_data.get("app_password", "")).strip().replace(" ", "")
+
+            # Auto-detect common IMAP/SMTP servers from email domain when omitted
+            if email_addr and "@" in email_addr and (not imap_host or not smtp_host):
+                domain = email_addr.split("@", 1)[1].lower().strip()
+                domain_presets = {
+                    "gmail.com": ("imap.gmail.com", "smtp.gmail.com"),
+                    "googlemail.com": ("imap.gmail.com", "smtp.gmail.com"),
+                    "outlook.com": ("outlook.office365.com", "smtp.office365.com"),
+                    "hotmail.com": ("outlook.office365.com", "smtp.office365.com"),
+                    "live.com": ("outlook.office365.com", "smtp.office365.com"),
+                    "msn.com": ("outlook.office365.com", "smtp.office365.com"),
+                    "icloud.com": ("imap.mail.me.com", "smtp.mail.me.com"),
+                    "me.com": ("imap.mail.me.com", "smtp.mail.me.com"),
+                    "mac.com": ("imap.mail.me.com", "smtp.mail.me.com"),
+                    "yahoo.com": ("imap.mail.yahoo.com", "smtp.mail.yahoo.com"),
+                    "fastmail.com": ("imap.fastmail.com", "smtp.fastmail.com"),
+                }
+                if domain in domain_presets:
+                    def_imap, def_smtp = domain_presets[domain]
+                    imap_host = imap_host or def_imap
+                    smtp_host = smtp_host or def_smtp
 
             if not email_addr or not imap_host:
                 return {"success": False, "error": "Email address and IMAP host are required for IMAP setup."}
@@ -288,9 +424,10 @@ class OAuthManager:
         port = sock.getsockname()[1]
         sock.close()
 
-        # Use http://localhost:{port}/oauth/callback so both Google Desktop OAuth and
-        # Microsoft Native/Public Client redirect URIs accept the dynamic loopback port.
-        redirect_uri = f"http://localhost:{port}/oauth/callback"
+        # Use http://localhost:{port} so both Google Desktop OAuth ("redirect_uris": ["http://localhost"])
+        # and Microsoft Native/Public Client redirect URIs ("http://localhost") match the exact path
+        # with a dynamic loopback port per RFC 8252 Section 7.3.
+        redirect_uri = f"http://localhost:{port}"
 
         class _CallbackHandler(http.server.BaseHTTPRequestHandler):
             def log_message(self, format, *args):
@@ -298,7 +435,7 @@ class OAuthManager:
 
             def do_GET(self):
                 parsed = urllib.parse.urlparse(self.path)
-                if parsed.path != "/oauth/callback":
+                if parsed.path not in ("/", "/oauth/callback", ""):
                     self.send_response(404)
                     self.end_headers()
                     return
@@ -991,10 +1128,11 @@ class OAuthManager:
         if not headers:
             return {"success": False, "error": "Google access token unavailable."}
 
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        end_utc = now_utc + datetime.timedelta(days=days_ahead)
+        start_of_today_local = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone()
+        start_of_today_utc = start_of_today_local.astimezone(datetime.timezone.utc)
+        end_utc = start_of_today_utc + datetime.timedelta(days=days_ahead)
         params = {
-            "timeMin": now_utc.isoformat(),
+            "timeMin": start_of_today_utc.isoformat(),
             "timeMax": end_utc.isoformat(),
             "singleEvents": "true",
             "orderBy": "startTime",
@@ -1024,7 +1162,17 @@ class OAuthManager:
                         "description": strip_html_to_plain_text(ev.get("description", ""), max_chars=500),
                     }
                 )
-            return {"success": True, "provider": "google", "count": len(events), "events": events}
+            enriched_events = [enrich_calendar_event(ev) for ev in events]
+            summary_text = summarize_calendar_events(enriched_events, days_ahead)
+            today_count = sum(1 for e in enriched_events if e.get("is_today"))
+            return {
+                "success": True,
+                "provider": "google",
+                "count": len(enriched_events),
+                "today_count": today_count,
+                "calendar_summary": summary_text,
+                "events": enriched_events,
+            }
         except Exception as e:
             return {"success": False, "error": f"Google Calendar lookup failed: {e}"}
 
@@ -1234,10 +1382,11 @@ class OAuthManager:
         if not headers:
             return {"success": False, "error": "Microsoft access token unavailable."}
 
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        end_utc = now_utc + datetime.timedelta(days=days_ahead)
+        start_of_today_local = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone()
+        start_of_today_utc = start_of_today_local.astimezone(datetime.timezone.utc)
+        end_utc = start_of_today_utc + datetime.timedelta(days=days_ahead)
         params = {
-            "startDateTime": now_utc.isoformat(),
+            "startDateTime": start_of_today_utc.isoformat(),
             "endDateTime": end_utc.isoformat(),
             "$top": max_results,
             "$orderby": "start/dateTime",
@@ -1259,7 +1408,17 @@ class OAuthManager:
                         "description": strip_html_to_plain_text(ev.get("bodyPreview", ""), max_chars=500),
                     }
                 )
-            return {"success": True, "provider": "microsoft", "count": len(events), "events": events}
+            enriched_events = [enrich_calendar_event(ev) for ev in events]
+            summary_text = summarize_calendar_events(enriched_events, days_ahead)
+            today_count = sum(1 for e in enriched_events if e.get("is_today"))
+            return {
+                "success": True,
+                "provider": "microsoft",
+                "count": len(enriched_events),
+                "today_count": today_count,
+                "calendar_summary": summary_text,
+                "events": enriched_events,
+            }
         except Exception as e:
             return {"success": False, "error": f"Outlook Calendar lookup failed: {e}"}
 

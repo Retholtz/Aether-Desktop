@@ -22,6 +22,85 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_VAULT_PATH = os.path.join(BASE_DIR, "data", "oauth_tokens.json")
 
 
+def _parse_dotenv_fallback(file_path: str) -> None:
+    """Lightweight fallback parser for .env files when python-dotenv is not installed."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip()
+                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                        val = val[1:-1]
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+    except Exception:
+        pass
+
+
+def load_app_env() -> None:
+    """
+    Loads environment variables from .env or .env.local with support for
+    local development, CI/CD, and PyInstaller bundled environments.
+    """
+    candidates = []
+    # 1. PyInstaller frozen / bundle awareness
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(os.path.join(sys._MEIPASS, ".env"))
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, ".env.local"))
+        candidates.append(os.path.join(exe_dir, ".env"))
+
+    # 2. Local repository / working directory
+    candidates.append(os.path.join(BASE_DIR, ".env.local"))
+    candidates.append(os.path.join(BASE_DIR, ".env"))
+    candidates.append(os.path.join(os.getcwd(), ".env.local"))
+    candidates.append(os.path.join(os.getcwd(), ".env"))
+
+    loaded = False
+    try:
+        from dotenv import load_dotenv
+        for path in candidates:
+            if os.path.isfile(path):
+                load_dotenv(dotenv_path=path, override=False)
+                loaded = True
+    except ImportError:
+        pass
+
+    if not loaded:
+        for path in candidates:
+            if os.path.isfile(path):
+                _parse_dotenv_fallback(path)
+
+
+# Pre-seed environment from .env / .env.local before reading credentials
+load_app_env()
+
+# Default Application OAuth 2.0 Credentials for Aether Desktop (loaded from environment or .env).
+# In production, secrets are injected via .env, environment variables, or CI/CD build scripts.
+DEFAULT_GOOGLE_CLIENT_ID = os.getenv("AETHER_GOOGLE_CLIENT_ID", "").strip()
+DEFAULT_GOOGLE_CLIENT_SECRET = os.getenv("AETHER_GOOGLE_CLIENT_SECRET", "").strip()
+DEFAULT_MICROSOFT_CLIENT_ID = os.getenv(
+    "AETHER_MICROSOFT_CLIENT_ID",
+    "5242daeb-e095-43c7-9979-57694e6983aa",
+).strip()
+DEFAULT_MICROSOFT_TENANT_ID = os.getenv("AETHER_MICROSOFT_TENANT_ID", "consumers").strip() or "consumers"
+
+DEFAULT_CLIENT_IDS = {
+    "google": DEFAULT_GOOGLE_CLIENT_ID,
+    "microsoft": DEFAULT_MICROSOFT_CLIENT_ID,
+}
+DEFAULT_CLIENT_SECRETS = {
+    "google": DEFAULT_GOOGLE_CLIENT_SECRET,
+    "microsoft": "",
+}
+
+
 def _dpapi_encrypt(plaintext: str) -> str:
     """Encrypts a string using Windows DPAPI tied to the current Windows user session."""
     if not plaintext:
@@ -128,7 +207,7 @@ class OAuthTokenVault:
             existing = vault["client_configs"].get(provider_key, {})
 
             client_id = str(client_config.get("client_id", existing.get("client_id", ""))).strip()
-            tenant_id = str(client_config.get("tenant_id", existing.get("tenant_id", "common"))).strip() or "common"
+            tenant_id = str(client_config.get("tenant_id", existing.get("tenant_id", DEFAULT_MICROSOFT_TENANT_ID))).strip() or DEFAULT_MICROSOFT_TENANT_ID
 
             record: Dict[str, Any] = {
                 "client_id": client_id,
@@ -159,13 +238,24 @@ class OAuthTokenVault:
             return self._write_raw_vault(vault)
 
     def get_client_config(self, provider: str) -> Dict[str, Any]:
-        """Retrieves decrypted client configuration for the given provider."""
+        """Retrieves decrypted client configuration for the given provider, falling back to built-in app defaults."""
         provider_key = provider.lower().strip()
         with self._lock:
             vault = self._read_raw_vault()
             raw = dict(vault.get("client_configs", {}).get(provider_key, {}))
             secret_enc = raw.pop("client_secret_enc", "")
             raw["client_secret"] = _dpapi_decrypt(secret_enc) if secret_enc else ""
+            if not raw.get("client_id"):
+                raw["client_id"] = (
+                    os.getenv(f"AETHER_{provider_key.upper()}_CLIENT_ID", "").strip()
+                    or DEFAULT_CLIENT_IDS.get(provider_key, "")
+                )
+            if not raw.get("client_secret"):
+                raw["client_secret"] = (
+                    os.getenv(f"AETHER_{provider_key.upper()}_CLIENT_SECRET", "").strip()
+                    or DEFAULT_CLIENT_SECRETS.get(provider_key, "")
+                )
+            raw.setdefault("tenant_id", DEFAULT_MICROSOFT_TENANT_ID if provider_key == "microsoft" else "common")
             return raw
 
     def save_provider_tokens(self, provider: str, token_data: Dict[str, Any]) -> bool:
@@ -279,11 +369,12 @@ class OAuthTokenVault:
                     or p_rec.get("refresh_token_enc")
                     or p_rec.get("app_password_enc")
                 )
-                client_id = c_rec.get("client_id", "")
+                custom_client_id = c_rec.get("client_id", "")
+                effective_client_id = custom_client_id or DEFAULT_CLIENT_IDS.get(prov, "")
                 client_id_preview = (
-                    f"{client_id[:12]}...{client_id[-6:]}"
-                    if len(client_id) > 20
-                    else client_id
+                    f"{effective_client_id[:12]}...{effective_client_id[-6:]}"
+                    if len(effective_client_id) > 20
+                    else effective_client_id
                 )
 
                 statuses[prov] = {
@@ -294,11 +385,12 @@ class OAuthTokenVault:
                     "scopes": p_rec.get("scopes", []) if has_tokens else [],
                     "expires_at": p_rec.get("expires_at", 0.0) if has_tokens else 0.0,
                     "updated_at": p_rec.get("updated_at", 0.0) if has_tokens else 0.0,
-                    "has_client_id": bool(client_id),
-                    "client_id": client_id,
+                    "has_client_id": bool(effective_client_id),
+                    "using_builtin_client_id": bool(not custom_client_id and DEFAULT_CLIENT_IDS.get(prov)),
+                    "client_id": custom_client_id,
                     "client_id_preview": client_id_preview,
-                    "has_client_secret": bool(c_rec.get("client_secret_enc")),
-                    "tenant_id": c_rec.get("tenant_id", "common"),
+                    "has_client_secret": bool(c_rec.get("client_secret_enc") or DEFAULT_CLIENT_SECRETS.get(prov)),
+                    "tenant_id": c_rec.get("tenant_id", DEFAULT_MICROSOFT_TENANT_ID),
                     "imap_host": p_rec.get("imap_host") or c_rec.get("imap_host", ""),
                     "imap_port": p_rec.get("imap_port") or c_rec.get("imap_port", 993),
                     "smtp_host": p_rec.get("smtp_host") or c_rec.get("smtp_host", ""),

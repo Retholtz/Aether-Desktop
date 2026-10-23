@@ -52,7 +52,10 @@ logs/
 *.sqlite
 *.sqlite3
 
-# Configuration and local credentials
+# Configuration, environment secrets and local credentials
+.env
+.env.local
+.env.*.local
 config.json
 data/oauth_tokens.json
 data/chats/*.json
