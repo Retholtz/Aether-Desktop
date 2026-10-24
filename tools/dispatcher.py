@@ -1083,12 +1083,13 @@ try:
         (
             "list_upcoming_calendar_events",
             list_upcoming_calendar_events,
-            "Lists upcoming meetings, appointments, and events from the user's connected Google Calendar or Microsoft Outlook Calendar. Always invoke this tool when the user asks about their schedule, calendar, meetings, or agenda for today or upcoming days.",
+            "Lists upcoming meetings, appointments, and events from the user's connected Google Calendar or Microsoft Outlook Calendar across all personal, secondary, and shared calendars. Always invoke this tool when the user asks about their schedule, calendar, meetings, or agenda for today, upcoming days, or a specific date.",
             {
                 "type": "OBJECT",
                 "properties": {
-                    "days_ahead": {"type": "INTEGER", "description": "Number of days ahead to inspect (1 to 60, default 7)."},
-                    "max_results": {"type": "INTEGER", "description": "Maximum number of events to return (default 15)."},
+                    "days_ahead": {"type": "INTEGER", "description": "Number of days ahead to inspect (1 to 90, default 30)."},
+                    "max_results": {"type": "INTEGER", "description": "Maximum number of events to return (default 50)."},
+                    "target_date": {"type": "STRING", "description": "Optional specific date or day to query (e.g. 'November 12', '2026-11-12', 'tomorrow', 'next Tuesday')."},
                     "provider": {"type": "STRING", "description": "Calendar provider: 'auto', 'google', or 'microsoft'."},
                 },
                 "required": [],

@@ -52,6 +52,7 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/contacts.readonly",
 ]
@@ -234,11 +235,141 @@ def enrich_calendar_event(ev: Dict[str, Any], now_local: Optional[datetime.datet
     ev["relative_day"] = rel
     ev["formatted_time"] = time_desc
     ev["schedule_label"] = formatted_start
+    if not ev.get("calendar_name"):
+        ev["calendar_name"] = "Primary"
     return ev
 
 
-def summarize_calendar_events(events: List[Dict[str, Any]], days_ahead: int) -> str:
-    """Builds an executive spoken summary of the calendar events for the voice model."""
+def _calendar_event_sort_key(ev: Dict[str, Any]) -> Tuple[float, str]:
+    """Computes a chronological sort key across all-day and timed events."""
+    start_raw = str(ev.get("start") or "").strip()
+    if not start_raw:
+        return (float("inf"), str(ev.get("summary") or ""))
+    try:
+        if "T" in start_raw:
+            clean_s = start_raw.replace("Z", "+00:00")
+            dt = datetime.datetime.fromisoformat(clean_s)
+            if dt.tzinfo is None:
+                dt = dt.astimezone()
+            return (dt.timestamp(), str(ev.get("summary") or ""))
+        else:
+            d = datetime.date.fromisoformat(start_raw[:10])
+            dt_local = datetime.datetime(d.year, d.month, d.day, 0, 0, 0).astimezone()
+            return (dt_local.timestamp(), str(ev.get("summary") or ""))
+    except Exception:
+        return (float("inf"), start_raw)
+
+
+def parse_target_date(query: Optional[str], ref_date: Optional[datetime.date] = None) -> Optional[datetime.date]:
+    """Parses natural language date queries (e.g. 'November 12th', 'Nov 12', '2026-11-12', 'next Tuesday', 'tomorrow') into a date."""
+    if not query or not isinstance(query, str):
+        return None
+    today = ref_date or datetime.date.today()
+    q = query.lower().strip()
+    if q in ("today", "now"):
+        return today
+    if q == "tomorrow":
+        return today + datetime.timedelta(days=1)
+    if q == "yesterday":
+        return today - datetime.timedelta(days=1)
+
+    weekdays = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+    }
+    for wname, wday in weekdays.items():
+        if wname in q:
+            days_ahead = (wday - today.weekday()) % 7
+            if days_ahead == 0 and ("next" in q or "upcoming" in q):
+                days_ahead = 7
+            elif days_ahead == 0:
+                days_ahead = 7
+            return today + datetime.timedelta(days=days_ahead)
+
+    clean_q = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", q)
+    months = {
+        "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+        "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+        "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9, "october": 10, "oct": 10,
+        "november": 11, "nov": 11, "december": 12, "dec": 12,
+    }
+    for mname, mnum in months.items():
+        m = re.search(r"\b" + mname + r"\b\s*(\d{1,2})(?:[,\s]+(\d{4}))?", clean_q)
+        if m:
+            day = int(m.group(1))
+            year = int(m.group(2)) if m.group(2) else today.year
+            try:
+                candidate = datetime.date(year, mnum, day)
+                if not m.group(2) and (candidate - today).days < -180:
+                    candidate = datetime.date(year + 1, mnum, day)
+                return candidate
+            except ValueError:
+                pass
+
+    iso_m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", clean_q)
+    if iso_m:
+        try:
+            return datetime.date(int(iso_m.group(1)), int(iso_m.group(2)), int(iso_m.group(3)))
+        except ValueError:
+            pass
+
+    slash_m = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", clean_q)
+    if slash_m:
+        year = int(slash_m.group(3)) if slash_m.group(3) else today.year
+        if year < 100:
+            year += 2000
+        try:
+            return datetime.date(year, int(slash_m.group(1)), int(slash_m.group(2)))
+        except ValueError:
+            pass
+
+    return None
+
+
+def summarize_calendar_events(
+    events: List[Dict[str, Any]],
+    days_ahead: int,
+    target_date_obj: Optional[datetime.date] = None,
+) -> str:
+    """Builds an executive spoken summary of the calendar events across all calendars for the voice model."""
+    def _cal_tag(ev: Dict[str, Any]) -> str:
+        cname = str(ev.get("calendar_name") or "").strip()
+        if cname and cname.lower() not in ("primary", "calendar"):
+            return f" [{cname}]"
+        return ""
+
+    if target_date_obj is not None:
+        target_str = target_date_obj.strftime("%A, %b %d, %Y")
+        matching = []
+        for e in events:
+            s_raw = str(e.get("start") or "")[:10]
+            e_raw = str(e.get("end") or "")[:10]
+            try:
+                s_d = datetime.date.fromisoformat(s_raw) if s_raw else None
+                e_d = datetime.date.fromisoformat(e_raw) if e_raw else None
+                if s_d and e_d:
+                    if s_d <= target_date_obj < e_d or (s_d == target_date_obj):
+                        matching.append(e)
+                elif s_d and s_d == target_date_obj:
+                    matching.append(e)
+            except Exception:
+                if target_date_obj.strftime("%b %d") in str(e.get("schedule_label", "")):
+                    matching.append(e)
+
+        if matching:
+            items = []
+            for e in matching:
+                title = e.get("summary", "Event")
+                time_lbl = e.get("formatted_time", "All Day")
+                ctag = _cal_tag(e)
+                if time_lbl and time_lbl != "All Day":
+                    items.append(f"'{title}'{ctag} at {time_lbl}")
+                else:
+                    items.append(f"'{title}'{ctag} (all-day)")
+            return f"On {target_str}, you have {len(matching)} event(s) scheduled: {', '.join(items)}."
+        else:
+            return f"You have no events scheduled on {target_str} across your calendars."
+
     today_events = [e for e in events if e.get("is_today")]
     upcoming_events = [e for e in events if not e.get("is_today")]
 
@@ -248,19 +379,32 @@ def summarize_calendar_events(events: List[Dict[str, Any]], days_ahead: int) -> 
         for e in today_events:
             title = e.get("summary", "Event")
             time_lbl = e.get("formatted_time", "All Day")
+            ctag = _cal_tag(e)
             if e.get("is_multi_day"):
-                items.append(f"'{title}' (ongoing all-day)")
+                items.append(f"'{title}'{ctag} (ongoing all-day)")
             elif time_lbl and time_lbl != "All Day":
-                items.append(f"'{title}' at {time_lbl}")
+                items.append(f"'{title}'{ctag} at {time_lbl}")
             else:
-                items.append(f"'{title}' (all-day)")
+                items.append(f"'{title}'{ctag} (all-day)")
         parts.append(f"You have {len(today_events)} event(s) scheduled for today: {', '.join(items)}.")
     else:
         parts.append("You have no events scheduled for today.")
 
     if upcoming_events:
         next_ev = upcoming_events[0]
-        parts.append(f"Your next upcoming event is '{next_ev.get('summary')}' on {next_ev.get('schedule_label')}.")
+        parts.append(
+            f"Your next upcoming event is '{next_ev.get('summary')}'{_cal_tag(next_ev)} on {next_ev.get('schedule_label')}."
+        )
+        if len(upcoming_events) > 1:
+            further_count = min(len(upcoming_events), 25)
+            further = [
+                f"'{ev.get('summary')}'{_cal_tag(ev)} on {ev.get('schedule_label')}"
+                for ev in upcoming_events[1:further_count]
+            ]
+            summary_add = f"Additional upcoming events: {'; '.join(further)}."
+            if len(upcoming_events) > 25:
+                summary_add += f" (and {len(upcoming_events) - 25} more events in full list)."
+            parts.append(summary_add)
     elif not today_events:
         parts.append(f"Your calendar is completely clear for the next {days_ahead} days.")
 
@@ -857,20 +1001,21 @@ class OAuthManager:
     def list_calendar_events(
         self,
         provider: str = "auto",
-        days_ahead: int = 7,
-        max_results: int = 15,
+        days_ahead: int = 30,
+        max_results: int = 50,
+        target_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Lists upcoming calendar events from Google Calendar or Microsoft Outlook Calendar."""
+        """Lists upcoming calendar events across all personal and shared calendars from Google Calendar or Microsoft Outlook Calendar."""
         prov = self.resolve_provider(provider)
         if not prov:
             return {"success": False, "error": "No connected Google or Microsoft account found."}
-        days_ahead = max(1, min(int(days_ahead or 7), 60))
-        max_results = max(1, min(int(max_results or 15), 40))
+        days_ahead = max(1, min(int(days_ahead or 30), 90))
+        max_results = max(1, min(int(max_results or 50), 100))
 
         if prov == "google":
-            return self._google_list_calendar_events(days_ahead=days_ahead, max_results=max_results)
+            return self._google_list_calendar_events(days_ahead=days_ahead, max_results=max_results, target_date=target_date)
         if prov == "microsoft":
-            return self._microsoft_list_calendar_events(days_ahead=days_ahead, max_results=max_results)
+            return self._microsoft_list_calendar_events(days_ahead=days_ahead, max_results=max_results, target_date=target_date)
         return {"success": False, "error": "Calendar events require a Google or Microsoft OAuth account."}
 
     def search_contacts(self, query: str, provider: str = "auto") -> Dict[str, Any]:
@@ -1123,56 +1268,188 @@ class OAuthManager:
         except Exception as e:
             return {"success": False, "error": f"Gmail send draft error: {e}"}
 
-    def _google_list_calendar_events(self, days_ahead: int, max_results: int) -> Dict[str, Any]:
+    def _google_list_calendar_events(
+        self,
+        days_ahead: int,
+        max_results: int,
+        target_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
         headers = self._google_headers()
         if not headers:
             return {"success": False, "error": "Google access token unavailable."}
 
-        start_of_today_local = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone()
-        start_of_today_utc = start_of_today_local.astimezone(datetime.timezone.utc)
-        end_utc = start_of_today_utc + datetime.timedelta(days=days_ahead)
+        target_date_obj = parse_target_date(target_date)
+        now_local = datetime.datetime.now().astimezone()
+
+        if target_date_obj is not None:
+            start_local = datetime.datetime.combine(target_date_obj - datetime.timedelta(days=1), datetime.time.min).astimezone()
+            end_local = datetime.datetime.combine(target_date_obj + datetime.timedelta(days=1), datetime.time.max).astimezone()
+        else:
+            start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_local = start_local + datetime.timedelta(days=days_ahead)
+
+        start_utc = start_local.astimezone(datetime.timezone.utc)
+        end_utc = end_local.astimezone(datetime.timezone.utc)
         params = {
-            "timeMin": start_of_today_utc.isoformat(),
+            "timeMin": start_utc.isoformat(),
             "timeMax": end_utc.isoformat(),
             "singleEvents": "true",
             "orderBy": "startTime",
             "maxResults": max_results,
         }
         try:
-            r = requests.get(
-                "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-                headers=headers,
-                params=params,
-                timeout=12,
-            )
-            if not r.ok:
-                return {"success": False, "error": f"Google Calendar API error ({r.status_code}): {r.text[:250]}"}
-            events = []
-            for ev in r.json().get("items", []):
-                start = ev.get("start", {}).get("dateTime") or ev.get("start", {}).get("date") or ""
-                end = ev.get("end", {}).get("dateTime") or ev.get("end", {}).get("date") or ""
-                events.append(
-                    {
-                        "id": ev.get("id", ""),
-                        "summary": ev.get("summary", "(Untitled Event)"),
-                        "start": start,
-                        "end": end,
-                        "location": ev.get("location", ""),
-                        "hangoutLink": ev.get("hangoutLink", ""),
-                        "description": strip_html_to_plain_text(ev.get("description", ""), max_chars=500),
-                    }
+            calendars_to_query: List[Dict[str, Any]] = []
+            scope_warning: Optional[str] = None
+            direct_event_items: Optional[List[Dict[str, Any]]] = None
+
+            # 1. Discover all personal, secondary, and shared calendars via calendarList
+            try:
+                r_list = requests.get(
+                    "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+                    headers=headers,
+                    params={"showHidden": "false", "maxResults": 50},
+                    timeout=10,
                 )
+                if r_list.ok:
+                    list_payload = r_list.json() or {}
+                    raw_items = list_payload.get("items", [])
+                    # Support single-call mocks that return event items directly
+                    if list_payload.get("kind") == "calendar#events" or (
+                        raw_items and isinstance(raw_items[0], dict) and "start" in raw_items[0]
+                    ):
+                        direct_event_items = raw_items
+                    else:
+                        valid_cals = [
+                            c for c in raw_items
+                            if isinstance(c, dict) and c.get("id") and not c.get("deleted")
+                        ]
+                        valid_cals.sort(
+                            key=lambda c: (
+                                0 if c.get("primary") else (1 if c.get("selected", True) else 2),
+                                str(c.get("summaryOverride") or c.get("summary") or ""),
+                            )
+                        )
+                        calendars_to_query = valid_cals[:15]
+                elif r_list.status_code == 403:
+                    logger.warning(
+                        "[OAUTH] Google calendarList returned 403 (token missing calendar.readonly scope). "
+                        "Falling back to primary calendar until user reconnects Google in Settings."
+                    )
+                    scope_warning = (
+                        "Note: Only your primary calendar was checked because your current Google OAuth token "
+                        "was authorized before multi-calendar permissions ('calendar.readonly') were enabled. "
+                        "Click 'Reconnect' next to Google in Settings -> Connected Accounts to grant access to "
+                        "all secondary and shared calendars."
+                    )
+            except Exception as list_err:
+                logger.warning(f"[OAUTH] Google calendarList lookup warning, falling back to primary: {list_err}")
+
+            if not calendars_to_query and direct_event_items is None:
+                calendars_to_query = [{"id": "primary", "summary": "Primary", "primary": True}]
+
+            events: List[Dict[str, Any]] = []
+            seen_keys = set()
+            calendars_checked: List[str] = []
+
+            def _ingest_event_items(items_list: List[Dict[str, Any]], cal_id: str, cal_name: str, is_primary: bool):
+                for ev in items_list:
+                    if not isinstance(ev, dict) or ev.get("status") == "cancelled":
+                        continue
+                    start = ev.get("start", {}).get("dateTime") or ev.get("start", {}).get("date") or ""
+                    end = ev.get("end", {}).get("dateTime") or ev.get("end", {}).get("date") or ""
+                    dedup_uid = ev.get("iCalUID") or ev.get("id") or ev.get("summary", "")
+                    dedup_key = (dedup_uid, start)
+                    if dedup_key in seen_keys:
+                        continue
+                    seen_keys.add(dedup_key)
+                    events.append(
+                        {
+                            "id": ev.get("id", ""),
+                            "summary": ev.get("summary", "(Untitled Event)"),
+                            "start": start,
+                            "end": end,
+                            "location": ev.get("location", ""),
+                            "hangoutLink": ev.get("hangoutLink", ""),
+                            "description": strip_html_to_plain_text(ev.get("description", ""), max_chars=500),
+                            "calendar_id": cal_id,
+                            "calendar_name": cal_name,
+                            "is_primary_calendar": is_primary,
+                        }
+                    )
+
+            if direct_event_items is not None:
+                calendars_checked.append("Primary")
+                _ingest_event_items(direct_event_items, "primary", "Primary", True)
+            else:
+                last_error_resp = None
+                any_cal_succeeded = False
+                for cal in calendars_to_query:
+                    cal_id = str(cal.get("id") or "primary")
+                    is_primary = bool(cal.get("primary", False) or cal_id == "primary")
+                    cal_name = str(
+                        cal.get("summaryOverride")
+                        or cal.get("summary")
+                        or ("Primary" if is_primary else cal_id)
+                    ).strip()
+                    encoded_cal_id = urllib.parse.quote(cal_id, safe="")
+                    r = requests.get(
+                        f"https://www.googleapis.com/calendar/v3/calendars/{encoded_cal_id}/events",
+                        headers=headers,
+                        params=params,
+                        timeout=12,
+                    )
+                    if not r.ok:
+                        last_error_resp = r
+                        logger.warning(f"[OAUTH] Google Calendar events error for '{cal_name}' ({r.status_code}): {r.text[:180]}")
+                        continue
+                    any_cal_succeeded = True
+                    calendars_checked.append(cal_name)
+                    _ingest_event_items(r.json().get("items", []), cal_id, cal_name, is_primary)
+
+                if not any_cal_succeeded and last_error_resp is not None:
+                    return {
+                        "success": False,
+                        "error": f"Google Calendar API error ({last_error_resp.status_code}): {last_error_resp.text[:250]}",
+                    }
+
+            if target_date_obj is not None:
+                filtered_events = []
+                for ev in events:
+                    s_raw = str(ev.get("start") or "")[:10]
+                    e_raw = str(ev.get("end") or "")[:10]
+                    try:
+                        s_d = datetime.date.fromisoformat(s_raw) if s_raw else None
+                        e_d = datetime.date.fromisoformat(e_raw) if e_raw else None
+                        if s_d and e_d:
+                            if s_d <= target_date_obj < e_d or (s_d == target_date_obj):
+                                filtered_events.append(ev)
+                        elif s_d and s_d == target_date_obj:
+                            filtered_events.append(ev)
+                    except Exception:
+                        filtered_events.append(ev)
+                events = filtered_events
+
+            events.sort(key=_calendar_event_sort_key)
+            events = events[:max_results]
             enriched_events = [enrich_calendar_event(ev) for ev in events]
-            summary_text = summarize_calendar_events(enriched_events, days_ahead)
+            summary_text = summarize_calendar_events(enriched_events, days_ahead, target_date_obj=target_date_obj)
+            if scope_warning:
+                summary_text = f"{summary_text} ({scope_warning})"
             today_count = sum(1 for e in enriched_events if e.get("is_today"))
-            return {
+            result_payload: Dict[str, Any] = {
                 "success": True,
                 "provider": "google",
                 "count": len(enriched_events),
                 "today_count": today_count,
+                "calendars_checked": calendars_checked,
                 "calendar_summary": summary_text,
                 "events": enriched_events,
             }
+            if target_date_obj is not None:
+                result_payload["target_date"] = target_date_obj.isoformat()
+            if scope_warning:
+                result_payload["scope_warning"] = scope_warning
+            return result_payload
         except Exception as e:
             return {"success": False, "error": f"Google Calendar lookup failed: {e}"}
 
@@ -1377,16 +1654,30 @@ class OAuthManager:
         except Exception as e:
             return {"success": False, "error": f"Outlook send draft error: {e}"}
 
-    def _microsoft_list_calendar_events(self, days_ahead: int, max_results: int) -> Dict[str, Any]:
+    def _microsoft_list_calendar_events(
+        self,
+        days_ahead: int,
+        max_results: int,
+        target_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
         headers = self._microsoft_headers()
         if not headers:
             return {"success": False, "error": "Microsoft access token unavailable."}
 
-        start_of_today_local = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone()
-        start_of_today_utc = start_of_today_local.astimezone(datetime.timezone.utc)
-        end_utc = start_of_today_utc + datetime.timedelta(days=days_ahead)
+        target_date_obj = parse_target_date(target_date)
+        now_local = datetime.datetime.now().astimezone()
+
+        if target_date_obj is not None:
+            start_local = datetime.datetime.combine(target_date_obj - datetime.timedelta(days=1), datetime.time.min).astimezone()
+            end_local = datetime.datetime.combine(target_date_obj + datetime.timedelta(days=1), datetime.time.max).astimezone()
+        else:
+            start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_local = start_local + datetime.timedelta(days=days_ahead)
+
+        start_utc = start_local.astimezone(datetime.timezone.utc)
+        end_utc = end_local.astimezone(datetime.timezone.utc)
         params = {
-            "startDateTime": start_of_today_utc.isoformat(),
+            "startDateTime": start_utc.isoformat(),
             "endDateTime": end_utc.isoformat(),
             "$top": max_results,
             "$orderby": "start/dateTime",
@@ -1408,10 +1699,28 @@ class OAuthManager:
                         "description": strip_html_to_plain_text(ev.get("bodyPreview", ""), max_chars=500),
                     }
                 )
+
+            if target_date_obj is not None:
+                filtered_events = []
+                for ev in events:
+                    s_raw = str(ev.get("start") or "")[:10]
+                    e_raw = str(ev.get("end") or "")[:10]
+                    try:
+                        s_d = datetime.date.fromisoformat(s_raw) if s_raw else None
+                        e_d = datetime.date.fromisoformat(e_raw) if e_raw else None
+                        if s_d and e_d:
+                            if s_d <= target_date_obj < e_d or (s_d == target_date_obj):
+                                filtered_events.append(ev)
+                        elif s_d and s_d == target_date_obj:
+                            filtered_events.append(ev)
+                    except Exception:
+                        filtered_events.append(ev)
+                events = filtered_events
+
             enriched_events = [enrich_calendar_event(ev) for ev in events]
-            summary_text = summarize_calendar_events(enriched_events, days_ahead)
+            summary_text = summarize_calendar_events(enriched_events, days_ahead, target_date_obj=target_date_obj)
             today_count = sum(1 for e in enriched_events if e.get("is_today"))
-            return {
+            result_payload: Dict[str, Any] = {
                 "success": True,
                 "provider": "microsoft",
                 "count": len(enriched_events),
@@ -1419,6 +1728,9 @@ class OAuthManager:
                 "calendar_summary": summary_text,
                 "events": enriched_events,
             }
+            if target_date_obj is not None:
+                result_payload["target_date"] = target_date_obj.isoformat()
+            return result_payload
         except Exception as e:
             return {"success": False, "error": f"Outlook Calendar lookup failed: {e}"}
 

@@ -140,7 +140,21 @@ def _extract_primary_text_payload(result: Dict[str, Any]) -> tuple[str, bool]:
     return "", False
 
 
-EXEMPT_TOOLS = {"get_user_profile", "query_user_memory", "inspect_screen_context"}
+EXEMPT_TOOLS = {
+    "get_user_profile",
+    "query_user_memory",
+    "inspect_screen_context",
+    "list_upcoming_calendar_events",
+    "list_inbox_messages",
+    "search_emails",
+    "read_email_thread",
+    "lookup_contact_email",
+    "create_email_draft",
+    "send_email_draft",
+    "search_past_sessions",
+    "list_available_skills",
+    "read_saved_skill",
+}
 
 
 def sanitize_tool_result(

@@ -81,13 +81,19 @@ def send_email_draft(
 
 
 def list_upcoming_calendar_events(
-    days_ahead: int = 7,
-    max_results: int = 15,
+    days_ahead: int = 30,
+    max_results: int = 50,
+    target_date: str = "",
     provider: str = "auto",
 ) -> Dict[str, Any]:
-    """Lists upcoming calendar events from Google Calendar or Microsoft Outlook Calendar."""
+    """Lists upcoming calendar events across all personal, secondary, and shared calendars from Google Calendar or Microsoft Outlook Calendar."""
     mgr = get_oauth_manager()
-    return mgr.list_calendar_events(provider=provider, days_ahead=days_ahead, max_results=max_results)
+    return mgr.list_calendar_events(
+        provider=provider,
+        days_ahead=days_ahead,
+        max_results=max_results,
+        target_date=target_date if target_date else None,
+    )
 
 
 def lookup_contact_email(
@@ -243,19 +249,24 @@ def get_email_tool_declarations() -> List[types.FunctionDeclaration]:
         types.FunctionDeclaration(
             name="list_upcoming_calendar_events",
             description=(
-                "Lists upcoming meetings, appointments, and events from the user's connected Google Calendar or Microsoft Outlook Calendar. "
-                "Always invoke this tool when the user asks about their schedule, calendar, meetings, or agenda for today or upcoming days."
+                "Lists upcoming meetings, appointments, and events across ALL of the user's connected Google Calendars "
+                "(primary, personal secondary calendars, and shared calendars) or Microsoft Outlook Calendar. "
+                "Always invoke this tool when the user asks about their schedule, calendar, meetings, or agenda for today, upcoming days, or a specific date."
             ),
             parameters=types.Schema(
                 type="OBJECT",
                 properties={
                     "days_ahead": types.Schema(
                         type="INTEGER",
-                        description="Number of days ahead to inspect (1 to 60, default 7).",
+                        description="Number of days ahead to inspect (1 to 90, default 30).",
                     ),
                     "max_results": types.Schema(
                         type="INTEGER",
-                        description="Maximum number of events to return (default 15).",
+                        description="Maximum number of events to return (default 50).",
+                    ),
+                    "target_date": types.Schema(
+                        type="STRING",
+                        description="Optional specific date or day to query (e.g. 'November 12', '2026-11-12', 'tomorrow', 'next Tuesday'). If provided, the calendar checks and returns events specifically for that date.",
                     ),
                     "provider": types.Schema(
                         type="STRING",
