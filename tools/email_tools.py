@@ -96,13 +96,16 @@ def list_upcoming_calendar_events(
     )
 
 
-def lookup_contact_email(
+def search_contacts(
     name_or_query: str,
     provider: str = "auto",
 ) -> Dict[str, Any]:
-    """Looks up a contact's email address by name or organization from Google Contacts or Outlook Contacts."""
+    """Looks up a person's contact details (postal/home address, phone numbers, email address, birthday, notes) from Google Contacts or Outlook Contacts."""
     mgr = get_oauth_manager()
     return mgr.search_contacts(query=name_or_query, provider=provider)
+
+
+lookup_contact_email = search_contacts
 
 
 def get_email_tool_declarations() -> List[types.FunctionDeclaration]:
@@ -276,9 +279,31 @@ def get_email_tool_declarations() -> List[types.FunctionDeclaration]:
             ),
         ),
         types.FunctionDeclaration(
+            name="search_contacts",
+            description=(
+                "Searches the user's Google Contacts or Microsoft Outlook Contacts by name, nickname, relation (e.g. 'brother'), or company. "
+                "Retrieves complete contact details including physical postal/home/work addresses, phone numbers, email addresses, birthdays, and notes. "
+                "Always invoke this tool when the user asks where someone lives, for someone's address, phone number, email, or contact info."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "name_or_query": types.Schema(
+                        type="STRING",
+                        description="Person's name, nickname, or company to search for.",
+                    ),
+                    "provider": types.Schema(
+                        type="STRING",
+                        description="Provider: 'auto', 'google', or 'microsoft'.",
+                    ),
+                },
+                required=["name_or_query"],
+            ),
+        ),
+        types.FunctionDeclaration(
             name="lookup_contact_email",
             description=(
-                "Searches the user's Google Contacts or Microsoft Outlook Contacts by name to resolve an email address."
+                "Searches the user's Google Contacts or Microsoft Outlook Contacts by name to resolve contact details (address, phone number, email address)."
             ),
             parameters=types.Schema(
                 type="OBJECT",

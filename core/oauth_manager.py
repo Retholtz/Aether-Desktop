@@ -1463,16 +1463,88 @@ class OAuthManager:
             r = requests.get(
                 "https://people.googleapis.com/v1/people:searchContacts",
                 headers=headers,
-                params={"query": query, "readMask": "names,emailAddresses", "pageSize": 10},
+                params={
+                    "query": query,
+                    "readMask": "names,emailAddresses,addresses,phoneNumbers,birthdays,relations,organizations,biographies",
+                    "pageSize": 10,
+                },
                 timeout=10,
             )
             if r.ok:
                 for res in r.json().get("results", []):
                     person = res.get("person", {})
                     names = [n.get("displayName", "") for n in person.get("names", []) if n.get("displayName")]
+                    name = names[0] if names else "Contact"
+
                     emails = [e.get("value", "") for e in person.get("emailAddresses", []) if e.get("value")]
+
+                    phones = []
+                    for ph in person.get("phoneNumbers", []):
+                        val = ph.get("value", "").strip()
+                        ptype = ph.get("formattedType") or ph.get("type", "")
+                        if val:
+                            phones.append(f"{val} ({ptype})" if ptype else val)
+
+                    addresses = []
+                    primary_address = ""
+                    for a in person.get("addresses", []):
+                        fmt = a.get("formattedValue") or ""
+                        clean_fmt = ", ".join([part.strip() for part in fmt.splitlines() if part.strip()])
+                        atype = a.get("formattedType") or a.get("type", "")
+                        addr_str = f"{clean_fmt} ({atype})" if atype else clean_fmt
+                        if addr_str:
+                            addresses.append(addr_str)
+                            if not primary_address:
+                                primary_address = clean_fmt
+
+                    birthdays = []
+                    for b in person.get("birthdays", []):
+                        b_text = b.get("text", "")
+                        b_date = b.get("date", {})
+                        if b_date.get("month") and b_date.get("day"):
+                            y = b_date.get("year")
+                            m = b_date.get("month")
+                            d = b_date.get("day")
+                            try:
+                                dt_b = datetime.date(y or 2000, m, d)
+                                bdays_fmt = dt_b.strftime("%B %d, %Y") if y else dt_b.strftime("%B %d")
+                                birthdays.append(bdays_fmt)
+                            except Exception:
+                                birthdays.append(f"{m}/{d}/{y}" if y else f"{m}/{d}")
+                        elif b_text:
+                            birthdays.append(b_text)
+
+                    notes = []
+                    for bio in person.get("biographies", []):
+                        val = bio.get("value", "").strip()
+                        if val:
+                            notes.append(val)
+
+                    contact_data = {
+                        "name": name,
+                        "emails": emails,
+                        "phones": phones,
+                        "addresses": addresses,
+                    }
+                    if primary_address:
+                        contact_data["primary_address"] = primary_address
+                    if birthdays:
+                        contact_data["birthday"] = birthdays[0]
+                    if notes:
+                        contact_data["notes"] = "\n".join(notes)
+
+                    card_parts = [name]
+                    if addresses:
+                        card_parts.append(f"Address: {addresses[0]}")
+                    if phones:
+                        card_parts.append(f"Phone: {', '.join(phones)}")
                     if emails:
-                        matches.append({"name": names[0] if names else emails[0], "emails": emails})
+                        card_parts.append(f"Email: {', '.join(emails)}")
+                    if birthdays:
+                        card_parts.append(f"Birthday: {birthdays[0]}")
+                    contact_data["summary"] = " | ".join(card_parts)
+
+                    matches.append(contact_data)
 
             # Fallback: search recent Gmail messages for matching From/To headers if People API found nothing
             if not matches:
@@ -1482,9 +1554,28 @@ class OAuthManager:
                     for field in (m.get("from", ""), m.get("to", "")):
                         if query.lower() in field.lower() and field not in seen_addrs:
                             seen_addrs.add(field)
-                            matches.append({"name": field, "emails": [field]})
+                            matches.append({
+                                "name": field,
+                                "emails": [field],
+                                "phones": [],
+                                "addresses": [],
+                                "summary": f"{field} (from recent email)"
+                            })
 
-            return {"success": True, "provider": "google", "matches": matches}
+            contacts_summary = ""
+            if matches:
+                cards = [m.get("summary", m.get("name", "Contact")) for m in matches[:5]]
+                contacts_summary = f"Found {len(matches)} contact(s): {'; '.join(cards)}."
+            else:
+                contacts_summary = f"No contacts found matching '{query}'."
+
+            return {
+                "success": True,
+                "provider": "google",
+                "count": len(matches),
+                "matches": matches,
+                "contacts_summary": contacts_summary,
+            }
         except Exception as e:
             return {"success": False, "error": f"Google contact search failed: {e}"}
 
@@ -1742,7 +1833,10 @@ class OAuthManager:
             r = requests.get(
                 f"{MICROSOFT_GRAPH_BASE}/me/contacts",
                 headers=headers,
-                params={"$top": 25, "$select": "displayName,emailAddresses"},
+                params={
+                    "$top": 25,
+                    "$select": "displayName,emailAddresses,homeAddress,businessAddress,otherAddress,mobilePhone,homePhones,businessPhones,birthday,personalNotes,jobTitle,companyName",
+                },
                 timeout=10,
             )
             matches = []
@@ -1751,9 +1845,79 @@ class OAuthManager:
                 for c in r.json().get("value", []):
                     name = c.get("displayName") or ""
                     emails = [e.get("address", "") for e in c.get("emailAddresses", []) if e.get("address")]
-                    if q_low in name.lower() or any(q_low in em.lower() for em in emails):
-                        matches.append({"name": name, "emails": emails})
-            return {"success": True, "provider": "microsoft", "matches": matches}
+
+                    phones = []
+                    for ph_key in ("mobilePhone", "homePhones", "businessPhones"):
+                        val = c.get(ph_key)
+                        if isinstance(val, list):
+                            phones.extend([str(p) for p in val if p])
+                        elif val:
+                            phones.append(str(val))
+
+                    addresses = []
+                    primary_address = ""
+                    for addr_key in ("homeAddress", "businessAddress", "otherAddress"):
+                        addr_obj = c.get(addr_key) or {}
+                        parts = [
+                            addr_obj.get("street", "").strip(),
+                            addr_obj.get("city", "").strip(),
+                            addr_obj.get("state", "").strip(),
+                            addr_obj.get("postalCode", "").strip(),
+                        ]
+                        valid_parts = [p for p in parts if p]
+                        if valid_parts:
+                            clean_addr = ", ".join(valid_parts)
+                            label = "Home" if "home" in addr_key.lower() else ("Work" if "business" in addr_key.lower() else "Other")
+                            addr_entry = f"{clean_addr} ({label})"
+                            addresses.append(addr_entry)
+                            if not primary_address:
+                                primary_address = clean_addr
+
+                    birthday_raw = str(c.get("birthday") or "")[:10]
+                    card_parts = [name]
+                    if addresses:
+                        card_parts.append(f"Address: {addresses[0]}")
+                    if phones:
+                        card_parts.append(f"Phone: {', '.join(phones)}")
+                    if emails:
+                        card_parts.append(f"Email: {', '.join(emails)}")
+                    if birthday_raw:
+                        card_parts.append(f"Birthday: {birthday_raw}")
+
+                    contact_data = {
+                        "name": name,
+                        "emails": emails,
+                        "phones": phones,
+                        "addresses": addresses,
+                    }
+                    if primary_address:
+                        contact_data["primary_address"] = primary_address
+                    if birthday_raw:
+                        contact_data["birthday"] = birthday_raw
+                    contact_data["summary"] = " | ".join(card_parts)
+
+                    if (
+                        q_low in name.lower()
+                        or any(q_low in em.lower() for em in emails)
+                        or any(q_low in ph.lower() for ph in phones)
+                        or any(q_low in ad.lower() for ad in addresses)
+                    ):
+                        matches.append(contact_data)
+
+            contacts_summary = ""
+            if matches:
+                cards = [m.get("summary", m.get("name", "Contact")) for m in matches[:5]]
+                contacts_summary = f"Found {len(matches)} contact(s): {'; '.join(cards)}."
+            else:
+                contacts_summary = f"No contacts found matching '{query}'."
+
+            return {
+                "success": True,
+                "provider": "microsoft",
+                "count": len(matches),
+                "matches": matches,
+                "contacts_summary": contacts_summary,
+            }
         except Exception as e:
             return {"success": False, "error": f"Outlook contact search failed: {e}"}
 

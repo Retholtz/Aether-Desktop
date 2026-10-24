@@ -149,6 +149,7 @@ EXEMPT_TOOLS = {
     "search_emails",
     "read_email_thread",
     "lookup_contact_email",
+    "search_contacts",
     "create_email_draft",
     "send_email_draft",
     "search_past_sessions",

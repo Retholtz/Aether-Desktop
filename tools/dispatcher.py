@@ -1004,6 +1004,7 @@ try:
         send_email_draft,
         list_upcoming_calendar_events,
         lookup_contact_email,
+        search_contacts,
     )
 
     _EMAIL_TOOL_SPECS = [
@@ -1096,9 +1097,22 @@ try:
             },
         ),
         (
+            "search_contacts",
+            search_contacts,
+            "Searches the user's Google Contacts or Microsoft Outlook Contacts by name, nickname, relation (e.g. 'brother'), or company. Retrieves complete contact details including physical postal/home/work addresses, phone numbers, email addresses, birthdays, and notes. Always invoke this tool when the user asks where someone lives, for someone's address, phone number, email, or contact info.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "name_or_query": {"type": "STRING", "description": "Person's name, nickname, or company to search for."},
+                    "provider": {"type": "STRING", "description": "Provider: 'auto', 'google', or 'microsoft'."},
+                },
+                "required": ["name_or_query"],
+            },
+        ),
+        (
             "lookup_contact_email",
             lookup_contact_email,
-            "Searches the user's Google Contacts or Microsoft Outlook Contacts by name to resolve an email address.",
+            "Searches the user's Google Contacts or Microsoft Outlook Contacts by name to resolve contact details (address, phone number, email address).",
             {
                 "type": "OBJECT",
                 "properties": {
