@@ -59,6 +59,7 @@ class GameEngine:
         "close_window",
         "close_application",
         "delegate_heavy_task",
+        "paste_to_document",
         "export_research_dossier",
     }
 

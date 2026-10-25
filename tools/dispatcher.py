@@ -900,8 +900,9 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
     "name": "delegate_heavy_task",
     "description": (
         "Delegates complex multi-step tasks, comprehensive guides/manuals/recipes from scratch, deep research document generation, "
-        "or intricate Python automation coding to the Tier 2 Heavy Reasoning Model (Gemini 4 Argon with High Thinking). "
-        "ALWAYS invoke this tool whenever the user asks to 'use Argon', 'use Tier 2', 'think deeply', create a detailed document or guide, "
+        "high-stakes calibrated correspondence (resignation letters, formal speeches, executive announcements), or intricate Python automation coding "
+        "to the Tier 2 Heavy Reasoning Model (Gemini 4 Argon with High Thinking). "
+        "ALWAYS invoke this tool whenever the user asks to 'use Argon', 'use Tier 2', 'think deeply', create an exhaustive document or guide, "
         "or requires multi-page structured reports with tables, diagrams, and meticulous detail."
     ),
     "parameters": {
@@ -909,8 +910,12 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
         "properties": {
             "task_type": {
                 "type": "STRING",
-                "enum": ["research_dossier", "python_automation", "deep_analysis"],
-                "description": "The category of heavy task to delegate to Tier 2."
+                "enum": ["research_dossier", "correspondence", "python_automation", "deep_analysis"],
+                "description": (
+                    "The category of heavy task to delegate to Tier 2: 'research_dossier' for exhaustive guides, manuals, recipes, or research reports; "
+                    "'correspondence' for high-stakes letters, speeches, emails, or memos where deep calibration is requested without executive summaries; "
+                    "'python_automation' for robust scripts; 'deep_analysis' for system or strategic audits."
+                )
             },
             "title": {
                 "type": "STRING",
@@ -947,6 +952,30 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
             }
         },
         "required": ["task_type", "title", "instructions"]
+    }
+}
+
+PASTE_TO_DOCUMENT_DECLARATION = {
+    "name": "paste_to_document",
+    "description": (
+        "Pastes formatted text or markdown directly into an open document or application canvas "
+        "(such as Google Docs in Chrome, Word, Notepad, or an email editor) via rich HTML clipboard. "
+        "Use this for fast direct drafting of letters, emails, notes, and short articles from Tier 1 "
+        "without delegating to Tier 2."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "content_markdown": {
+                "type": "STRING",
+                "description": "The complete formatted text or markdown content to paste into the active document."
+            },
+            "target_app": {
+                "type": "STRING",
+                "description": "The target application name (e.g. 'chrome', 'google docs', 'winword', 'notepad'). Defaults to 'chrome'."
+            }
+        },
+        "required": ["content_markdown"]
     }
 }
 
@@ -1172,6 +1201,7 @@ def get_all_tool_declarations() -> List[dict]:
         SEND_DESKTOP_NOTIFICATION_DECLARATION,
         EXPORT_DOSSIER_DECLARATION,
         DELEGATE_HEAVY_TASK_DECLARATION,
+        PASTE_TO_DOCUMENT_DECLARATION,
     ]
     for d in _CUSTOM_TOOL_DECLARATIONS.values():
         if d not in decls:
@@ -2361,6 +2391,36 @@ class ToolDispatcher:
                 })
                 return result
 
+            elif fn_name == "paste_to_document":
+                content_markdown = str(args.get("content_markdown", "")).strip()
+                target_app = str(args.get("target_app", "chrome")).strip() or "chrome"
+                if not content_markdown:
+                    return {"status": "error", "message": "content_markdown cannot be empty."}
+
+                try:
+                    export_research_dossier(
+                        title="Document_Draft",
+                        content_markdown=content_markdown,
+                        category="general"
+                    )
+                except Exception:
+                    pass
+
+                paste_res = await asyncio.to_thread(paste_markdown_to_target_app, content_markdown, app_name=target_app)
+                if paste_res.get("status") == "success":
+                    self.notify("chat_event", {
+                        "type": "tool",
+                        "name": "Document Paste",
+                        "content": f"📋 [PASTED] Draft ({len(content_markdown)} chars) pasted into {target_app} via HTML clipboard."
+                    })
+                    try:
+                        jpeg_bytes, _ = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
+                        if jpeg_bytes:
+                            paste_res["_jpeg_bytes"] = jpeg_bytes
+                    except Exception as se:
+                        logger.debug(f"[PASTE] Vision capture skipped: {se}")
+                return paste_res
+
             elif fn_name in self._custom_handlers or fn_name in _CUSTOM_TOOL_HANDLERS:
                 handler = self._custom_handlers.get(fn_name) or _CUSTOM_TOOL_HANDLERS.get(fn_name)
                 import inspect
@@ -2532,7 +2592,136 @@ class ToolDispatcher:
                 temperature=0.3
             )
 
-        if task_type == "research_dossier":
+        is_correspondence = (
+            task_type in ("correspondence", "letter", "email", "document_draft")
+            or any(
+                kw in title.lower() or kw in instructions.lower()
+                for kw in (
+                    "resignation", "resignation letter", "cover letter", "formal letter",
+                    "draft email", "draft letter", "farewell note", "thank you note",
+                    "speech", "announcement"
+                )
+            )
+        )
+
+        if is_correspondence:
+            prompt = (
+                f"You are Aether's Tier 2 Reasoning Engine (Gemini 4 Argon). Draft high-caliber, polished, ready-to-use "
+                f"written correspondence for: '{title}'.\n\n"
+                f"Instructions:\n{instructions}\n\n"
+            )
+            if context_data:
+                prompt += f"Context & Background Data:\n{context_data}\n\n"
+            prompt += (
+                "Formatting & Tone Requirements:\n"
+                "- Produce ONLY the requested correspondence (e.g. letter, email draft, speech, or announcement) formatted cleanly in Markdown.\n"
+                "- STRICT PROHIBITION: DO NOT include an Executive Summary, Granular Findings, Key Entities table, Offboarding Pipelines, psychological analyses, or metadata sections.\n"
+                "- Write directly to the intended recipient with impeccable tone, empathy, clarity, and professionalism.\n"
+                "- If providing variations (e.g. standard vs. warm/personal), provide at most 2 distinct, complete options clearly labeled, with the recommended one first.\n"
+                "- Do NOT use unnecessary placeholder brackets if information is known from the context or instructions. If placeholders are necessary, make them clean and standard (e.g. [Date], [Your Name]).\n"
+                "- Clean typography: Use native Unicode and clean layout optimized for pasting into Google Docs, Word, or an email composer.\n"
+            )
+
+            try:
+                loop = asyncio.get_running_loop()
+                t_start = time.monotonic()
+                stop_hb = asyncio.Event()
+
+                async def _argon_progress_heartbeat():
+                    while not stop_hb.is_set():
+                        await asyncio.sleep(15.0)
+                        if stop_hb.is_set():
+                            break
+                        elapsed_s = int(time.monotonic() - t_start)
+                        self.notify("status", {
+                            "state": "thinking",
+                            "action": f"🧠 Argon: {title} ({elapsed_s}s)...",
+                            "message": f"Gemini 4 Argon ({heavy_model}) is drafting '{title}' ({elapsed_s}s elapsed)..."
+                        })
+
+                hb_task = asyncio.create_task(_argon_progress_heartbeat())
+                try:
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: client.models.generate_content(
+                            model=heavy_model,
+                            contents=prompt,
+                            config=gen_config
+                        )
+                    )
+                finally:
+                    stop_hb.set()
+                    hb_task.cancel()
+                markdown_content = getattr(response, "text", "") or ""
+                if not markdown_content.strip():
+                    return {"status": "error", "message": "Heavy reasoning model returned empty content."}
+
+                dossier_res = export_research_dossier(
+                    title=title,
+                    content_markdown=markdown_content,
+                    category=category,
+                    open_immediately=open_immediately
+                )
+
+                pasted_info = ""
+                should_paste = paste_to_active_doc or any(
+                    kw in instructions.lower() or kw in title.lower()
+                    for kw in ("doc", "google doc", "docs", "document canvas", "active doc", "paste")
+                )
+                if should_paste:
+                    try:
+                        paste_res = await asyncio.to_thread(
+                            paste_markdown_to_target_app, markdown_content, app_name=target_app
+                        )
+                        if paste_res.get("status") == "success":
+                            pasted_info = f" The draft was automatically pasted into {target_app}."
+                            self.notify("chat_event", {
+                                "type": "tool",
+                                "name": "Document Paste",
+                                "content": f"📋 [PASTED] Draft ({len(markdown_content)} chars) pasted into {target_app} via HTML clipboard."
+                            })
+                    except Exception as pe:
+                        logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
+
+                is_pasted = bool(pasted_info)
+                jpeg_bytes = None
+                if is_pasted:
+                    directive = (
+                        f"Draft '{title}' successfully generated via Tier 2 ({heavy_model}) and pasted into {target_app}.{pasted_info} "
+                        "Double-check with a quick capture_screen_snapshot to verify the text appears on screen, then deliver a warm, "
+                        "crisp 1-to-2 sentence confirmation over voice."
+                    )
+                    try:
+                        jpeg_bytes, _ = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
+                    except Exception as se:
+                        logger.debug(f"[HEAVY_TASK] Closed-loop snapshot capture skipped: {se}")
+                else:
+                    directive = (
+                        f"Draft '{title}' successfully generated via Tier 2 ({heavy_model}) and saved to disk. "
+                        f"WARNING: Content has NOT been pasted into {target_app} yet because the document window was not open. "
+                        "You MUST navigate to or focus the document (e.g. navigate_browser('https://docs.new')), wait for the canvas to load, "
+                        "click into the canvas, press Ctrl+V, and perform a quick double-check with capture_screen_snapshot to verify text is present "
+                        "before telling the user the document is ready."
+                    )
+
+                res_data = {
+                    "status": "success",
+                    "task_type": "correspondence",
+                    "file_path": dossier_res.get("file_path"),
+                    "filename": dossier_res.get("filename"),
+                    "char_count": len(markdown_content),
+                    "pasted": is_pasted,
+                    "pasted_to_doc": is_pasted,
+                    "directive": directive
+                }
+                if jpeg_bytes:
+                    res_data["_jpeg_bytes"] = jpeg_bytes
+                return res_data
+            except Exception as e:
+                logger.error(f"[HEAVY_TASK] Correspondence drafting failed: {e}")
+                return {"status": "error", "message": str(e)}
+
+        elif task_type == "research_dossier":
             prompt = (
                 f"You are Aether's Tier 2 Deep Reasoning Engine. Synthesize an exhaustive, publication-grade "
                 f"Markdown research dossier for: '{title}'.\n\n"
@@ -2613,12 +2802,17 @@ class ToolDispatcher:
                         logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
 
                 is_pasted = bool(pasted_info)
+                jpeg_bytes = None
                 if is_pasted:
                     directive = (
                         f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and pasted into {target_app}.{pasted_info} "
                         "Double-check with a quick capture_screen_snapshot to verify the content appears on screen, then deliver a crisp "
                         "2-to-3 sentence conversational executive summary of the key findings over voice."
                     )
+                    try:
+                        jpeg_bytes, _ = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
+                    except Exception as se:
+                        logger.debug(f"[HEAVY_TASK] Closed-loop snapshot capture skipped: {se}")
                 else:
                     directive = (
                         f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and saved to disk. "
@@ -2628,7 +2822,7 @@ class ToolDispatcher:
                         "before telling the user the document is ready."
                     )
 
-                return {
+                res_data = {
                     "status": "success",
                     "task_type": "research_dossier",
                     "file_path": dossier_res.get("file_path"),
@@ -2638,6 +2832,9 @@ class ToolDispatcher:
                     "pasted_to_doc": is_pasted,
                     "directive": directive
                 }
+                if jpeg_bytes:
+                    res_data["_jpeg_bytes"] = jpeg_bytes
+                return res_data
             except Exception as e:
                 logger.error(f"[HEAVY_TASK] Research dossier synthesis failed: {e}")
                 return {"status": "error", "message": str(e)}

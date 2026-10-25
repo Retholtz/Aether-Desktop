@@ -14,8 +14,10 @@ from collections import deque
 try:
     import win32clipboard
     import win32con
+    import win32gui
     HAS_WIN32 = True
 except ImportError:
+    win32gui = None
     HAS_WIN32 = False
 
 # In-memory ring buffer preserving the last 15 clipboard text items before overwrites
@@ -382,15 +384,22 @@ def copy_markdown_as_rich_html(markdown_content: str) -> bool:
     return set_clipboard_html(html_payload, plain_text=markdown_content)
 
 
-def paste_markdown_to_target_app(markdown_content: str, app_name: str = "chrome") -> dict:
+def paste_markdown_to_target_app(
+    markdown_content: str,
+    app_name: str = "chrome",
+    target_app: Optional[str] = None,
+    **kwargs
+) -> dict:
     """
     Renders markdown as styled HTML, loads it into the Windows clipboard,
-    brings the target app (e.g., Google Docs in Chrome) to the foreground,
-    and pastes it via Ctrl+V.
+    brings the target app (e.g., Google Docs in Chrome, Word, Notepad) to the foreground,
+    ensures the document editing canvas has input focus, and pastes it via Ctrl+V.
+    If Google Docs is targeted but not yet open, automatically launches https://docs.new.
     """
     if not HAS_WIN32:
         return {"status": "error", "message": "Windows clipboard APIs not available on this platform."}
 
+    effective_app = str(target_app or app_name or "chrome").strip()
     html_payload = markdown_to_html_for_clipboard(markdown_content)
     success = set_clipboard_html(html_payload, plain_text=markdown_content)
     if not success:
@@ -398,31 +407,67 @@ def paste_markdown_to_target_app(markdown_content: str, app_name: str = "chrome"
 
     try:
         from tools.os_controls import find_hwnd_by_query, focus_window
-        hwnd = find_hwnd_by_query(app_name)
-        if not hwnd and app_name.lower() in ("chrome", "google docs", "docs"):
+        app_lower = effective_app.lower()
+        is_web_doc = any(k in app_lower for k in ("chrome", "google docs", "google doc", "docs", "document", "docs.new"))
+
+        hwnd = find_hwnd_by_query(effective_app)
+        if not hwnd and is_web_doc:
             hwnd = find_hwnd_by_query("google docs") or find_hwnd_by_query("chrome")
+
+        # Auto-launch or navigate to docs.new if Google Docs is targeted but not present
+        if is_web_doc:
+            needs_nav = False
+            if not hwnd:
+                needs_nav = True
+            elif HAS_WIN32 and win32gui:
+                try:
+                    title = win32gui.GetWindowText(hwnd).lower()
+                    if "google docs" not in title and ("docs" in app_lower or "google doc" in app_lower or "docs.new" in app_lower):
+                        needs_nav = True
+                except Exception:
+                    pass
+
+            if needs_nav:
+                try:
+                    from tools.os_controls import navigate_browser
+                    navigate_browser("https://docs.new")
+                    time.sleep(2.5)
+                    hwnd = find_hwnd_by_query("google docs") or find_hwnd_by_query("chrome")
+                except Exception:
+                    pass
 
         if not hwnd:
             return {
                 "status": "error",
-                "message": f"Window for '{app_name}' was not found. Please ensure Google Docs or your target app is open before pasting."
+                "message": f"Window for '{effective_app}' was not found. Please ensure Google Docs or your target app is open before pasting."
             }
 
-        focus_window(app_name)
-        time.sleep(0.2)
+        focus_window(hwnd or effective_app)
+        time.sleep(0.25)
 
         from tools.gui_primitives import GuiPrimitivesController
         gui = GuiPrimitivesController()
+
+        if is_web_doc:
+            # In Google Docs and browser-based editors, focusing the window does NOT
+            # establish active cursor focus inside the white document canvas.
+            # We explicitly click into the center of the document body area.
+            try:
+                gui.click(x=500, y=350, normalized=True, app_name=effective_app, window_relative=True)
+                time.sleep(0.2)
+            except Exception:
+                pass
+
         gui.press_key("ctrl+v")
-        time.sleep(0.15)
+        time.sleep(0.25)
 
         return {
             "status": "success",
-            "app_name": app_name,
+            "app_name": effective_app,
             "char_count": len(markdown_content),
-            "message": f"Successfully pasted rich formatted document ({len(markdown_content)} chars) into {app_name}."
+            "message": f"Successfully pasted rich formatted document ({len(markdown_content)} chars) into {effective_app}."
         }
     except Exception as e:
-        return {"status": "error", "message": f"Pasting to {app_name} failed: {e}"}
+        return {"status": "error", "message": f"Pasting to {effective_app} failed: {e}"}
 
 

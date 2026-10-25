@@ -196,6 +196,48 @@ class TestTwoTierDelegation(unittest.IsolatedAsyncioTestCase):
             call_kwargs = mock_client.models.generate_content.call_args[1]
             self.assertEqual(call_kwargs["model"], "gemini-4-argon")
 
+    async def test_delegate_correspondence_omits_executive_summary(self):
+        """Verifies that letters/resignation tasks route to correspondence prompt without executive summaries."""
+        mock_client = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = "# Resignation Letter\n\nDear Stanley,\n\nPlease accept this letter as formal notice of my resignation...\n"
+        mock_client.models.generate_content.return_value = mock_resp
+        self.dispatcher.genai_client = mock_client
+
+        with patch("tools.dispatcher.export_research_dossier") as mock_export:
+            mock_export.return_value = {
+                "status": "success",
+                "file_path": "/fake/path/resignation.md",
+                "filename": "resignation.md",
+                "char_count": len(mock_resp.text)
+            }
+
+            result = await self.dispatcher.dispatch("delegate_heavy_task", {
+                "task_type": "correspondence",
+                "title": "Resignation Letter to Stanley Orlop",
+                "instructions": "Let Stanley know he was a great mentor and friend.",
+                "paste_to_active_doc": False
+            })
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(result["task_type"], "correspondence")
+            mock_client.models.generate_content.assert_called_once()
+            call_kwargs = mock_client.models.generate_content.call_args[1]
+            prompt = call_kwargs["contents"]
+            self.assertIn("STRICT PROHIBITION: DO NOT include an Executive Summary", prompt)
+            self.assertIn("resignation", result["filename"].lower())
+
+    async def test_paste_to_document_tool_dispatch(self):
+        """Verifies paste_to_document dispatches to paste_markdown_to_target_app."""
+        with patch("tools.dispatcher.paste_markdown_to_target_app") as mock_paste:
+            mock_paste.return_value = {"status": "success", "message": "Pasted successfully"}
+            result = await self.dispatcher.dispatch("paste_to_document", {
+                "content_markdown": "# Quick Resignation\n\nDear Team, I am resigning effective Nov 1.",
+                "target_app": "chrome"
+            })
+            self.assertEqual(result["status"], "success")
+            mock_paste.assert_called_once()
+
 
 class TestReflexionArgonConfig(unittest.TestCase):
     def test_reflexion_engine_argon_thinking_config(self):
@@ -278,6 +320,37 @@ class TestClipboardUtilities(unittest.TestCase):
         self.assertIn("±0.5°C", cleaned)
         self.assertNotIn("\\circ", cleaned)
         self.assertNotIn("\\text", cleaned)
+
+    def test_paste_markdown_to_target_app_accepts_target_app_kwarg(self):
+        """Verifies paste_markdown_to_target_app accepts target_app without TypeError."""
+        from tools.clipboard import paste_markdown_to_target_app
+        with patch("tools.clipboard.set_clipboard_html", return_value=True), \
+             patch("tools.os_controls.find_hwnd_by_query", return_value=12345), \
+             patch("tools.os_controls.focus_window", return_value=True), \
+             patch("tools.gui_primitives.GuiPrimitivesController.click", return_value={}), \
+             patch("tools.gui_primitives.GuiPrimitivesController.press_key", return_value={}):
+            res = paste_markdown_to_target_app("# Test Doc", target_app="chrome")
+            self.assertEqual(res["status"], "success")
+            self.assertEqual(res["app_name"], "chrome")
+
+    def test_paste_markdown_auto_navigates_when_docs_not_open(self):
+        """Verifies paste_markdown_to_target_app auto-navigates to docs.new when window is missing."""
+        from tools.clipboard import paste_markdown_to_target_app
+        call_seq = [None, 99999]  # First lookup returns None, second lookup after nav returns hwnd
+        def fake_find_hwnd(*args, **kwargs):
+            return call_seq.pop(0) if call_seq else 99999
+
+        with patch("tools.clipboard.set_clipboard_html", return_value=True), \
+             patch("tools.os_controls.find_hwnd_by_query", side_effect=fake_find_hwnd), \
+             patch("tools.os_controls.navigate_browser") as mock_nav, \
+             patch("tools.os_controls.focus_window", return_value=True), \
+             patch("tools.gui_primitives.GuiPrimitivesController.click") as mock_click, \
+             patch("tools.gui_primitives.GuiPrimitivesController.press_key", return_value={}), \
+             patch("time.sleep", return_value=None):
+            res = paste_markdown_to_target_app("# New Document", app_name="google docs")
+            self.assertEqual(res["status"], "success")
+            mock_nav.assert_called_with("https://docs.new")
+            mock_click.assert_called_once()
 
 
 class TestCompatibilityModules(unittest.TestCase):

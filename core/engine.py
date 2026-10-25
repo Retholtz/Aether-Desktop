@@ -102,21 +102,29 @@ MANDATORY TIER 2 DELEGATION RULES:
    - Exhaustive guide, manual, instruction set, recipe from scratch, or tutorial
    - Comprehensive research dossier, multi-page report, or structured document with tables, schedules, and sections
    - Complex, robust Python automation scripts, multi-step macros, or data pipelines
-2. IMMEDIATE SPOKEN CHECK-IN (AUDIO INDICATOR):
+2. CORRESPONDENCE, LETTERS & SHORT-FORM DRAFTS (FAST TIER 1 DRAFTING vs ARGON):
+   - For standard letters (e.g. resignation letters, cover letters, thank-you notes), emails, memos, or announcements:
+     * You (Tier 1) CAN draft and write them directly into Google Docs or the active editor using `paste_to_document(content_markdown=..., target_app=...)` or via `create_email_draft` for Gmail. This ensures instant, natural, sub-second turnaround without delay.
+     * If the user specifically asks to "use Argon", "have Argon write it", "think deeply", or requests a complex, multi-option strategy:
+       call `delegate_heavy_task(task_type="correspondence", title=..., instructions=..., paste_to_active_doc=True)`.
+     * If a request is open-ended or high-stakes (e.g. "Prepare my resignation package and transition strategy"), you may ask conversationally:
+       "I can draft a straightforward letter into Docs right away, or I can have Argon build out a deeper document. Which would you prefer?"
+3. IMMEDIATE SPOKEN CHECK-IN (AUDIO INDICATOR):
    - Whenever invoking `delegate_heavy_task`, ALWAYS speak a brief 1-sentence verbal check-in in the same turn (e.g., "Starting the deep sourdough guide with Gemini 4 Argon now. I will have the complete instructions ready in a moment.") so the user hears an immediate confirmation that work is actively underway.
-3. NEVER TYPE DOCUMENTS LINE-BY-LINE VIA `type_text`:
+4. NEVER TYPE DOCUMENTS LINE-BY-LINE VIA `type_text`:
    - NEVER use `type_text` to type out guides, recipes, manuals, or documents into applications line-by-line. It is slow and stalls out.
-   - Set `paste_to_active_doc=True` in `delegate_heavy_task` if Google Docs, Word, or an editor is open or requested; `delegate_heavy_task` will automatically paste the full publication-grade document with rich tables into the app instantly via HTML clipboard.
-4. NEVER DRAFT SHALLOW SUMMARIES INSTEAD OF CALLING ARGON:
-   - Do NOT attempt to write a 3-paragraph summary or a tiny 3-row table yourself in voice or via basic tools.
-   - Do NOT call `export_research_dossier` directly for new comprehensive requests; ALWAYS call `delegate_heavy_task(task_type="research_dossier", title=..., instructions=..., paste_to_active_doc=...)` so that Gemini 4 Argon generates the exhaustive, publication-grade document with deep tables and meticulous detail.
-5. MANDATORY VERIFICATION BEFORE DECLARING TASK COMPLETION (THE DOUBLE-CHECK PEEK):
+   - For Tier 1 direct drafting, ALWAYS use `paste_to_document(content_markdown=..., target_app="chrome")`.
+   - For Tier 2 Argon, set `paste_to_active_doc=True` in `delegate_heavy_task`; `delegate_heavy_task` will automatically paste the full publication-grade document into the app instantly via HTML clipboard.
+5. NEVER DRAFT SHALLOW SUMMARIES INSTEAD OF CALLING ARGON FOR EXHAUSTIVE GUIDES:
+   - Do NOT attempt to write a 3-paragraph summary or a tiny 3-row table yourself in voice or via basic tools for comprehensive research requests.
+   - ALWAYS call `delegate_heavy_task(task_type="research_dossier", title=..., instructions=..., paste_to_active_doc=...)` so that Gemini 4 Argon generates the exhaustive, publication-grade document with deep tables and meticulous detail.
+6. MANDATORY VERIFICATION BEFORE DECLARING TASK COMPLETION (THE DOUBLE-CHECK PEEK):
    - NEVER tell the user a document has been placed into Google Docs or an editor without verifying that the content was actually pasted into the canvas.
-   - If Google Docs was not already open when Argon ran: open `https://docs.new`, wait for the canvas to load, click into the canvas, and press `Ctrl+V` (via `press_key("ctrl+v")`).
+   - If Google Docs was not already open when drafting: open `https://docs.new`, wait for the canvas to load, click into the canvas, and paste.
    - Take a quick visual peek with `capture_screen_snapshot()` to confirm the document has non-empty text before stating "I've created your document and placed it into Google Docs."
-6. CONCISE VERBAL RESPONSE AFTER VERIFIED DELEGATION:
-   - When `delegate_heavy_task` completes and you have visually verified the paste, speak ONLY a crisp 2-to-3 sentence executive summary of the highlights over voice.
-   - Confirm clearly that Argon has synthesized and saved the full exhaustive document to disk and placed it into their open document.
+7. CONCISE VERBAL RESPONSE AFTER VERIFIED COMPLETION:
+   - When a document, report, or letter has been placed into Google Docs, speak ONLY a crisp 1-to-2 sentence confirmation over voice.
+   - Confirm clearly that the draft or dossier is ready in their open document.
 
 ### CONNECTED EMAIL, CALENDAR & CONTACTS (OAUTH 2.0) DIRECTIVE:
 - Whenever the user asks to check their email, search their inbox, read an email thread, draft/send an email, check their upcoming calendar schedule, or look up a contact's email address:
@@ -2087,7 +2095,7 @@ class AetherEngine:
                                         )
                                     except Exception as e:
                                         print(f"[VISION CONTEXT SEND ERROR] {e}")
-                                elif fn_name == "capture_screen_snapshot" and isinstance(result, dict) and "_jpeg_bytes" in result:
+                                elif isinstance(result, dict) and "_jpeg_bytes" in result:
                                     raw_jpeg = result.pop("_jpeg_bytes")
                                     try:
                                         await session.send_realtime_input(
@@ -3387,7 +3395,7 @@ class AetherEngine:
                                 tool_parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
                             else:
                                 raw_jpeg = None
-                                if fn_name == "capture_screen_snapshot" and isinstance(result, dict) and "_jpeg_bytes" in result:
+                                if isinstance(result, dict) and "_jpeg_bytes" in result:
                                     raw_jpeg = result.pop("_jpeg_bytes")
 
                                 func_resp = types.Part.from_function_response(
