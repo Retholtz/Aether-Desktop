@@ -387,6 +387,19 @@ function renderOAuthStatus(statusMap) {
   if (steamAutoDetect && steamInfo.auto_detect_active_appid !== undefined) {
     steamAutoDetect.checked = Boolean(steamInfo.auto_detect_active_appid);
   }
+
+  const pollRadio = document.getElementById('steamFriendPollRadio');
+  const pollInterval = document.getElementById('steamFriendPollInterval');
+  if (pollRadio) {
+    pollRadio.checked = Boolean(steamInfo.poll_friends_status);
+    pollRadio.disabled = !steamConnected;
+  }
+  if (pollInterval) {
+    if (steamInfo.poll_interval_minutes) {
+      pollInterval.value = String(steamInfo.poll_interval_minutes);
+    }
+    pollInterval.disabled = !steamConnected;
+  }
 }
 
 async function loadOAuthStatusUI() {
@@ -569,7 +582,9 @@ function wireOAuthAccountButtons() {
     if (saveBtn) saveBtn.textContent = 'Connecting...';
 
     try {
-      const res = await window.pywebview.api.save_steam_config(apiKey, steamId, autoDetect);
+      const pollFriends = Boolean(document.getElementById('steamFriendPollRadio')?.checked);
+      const pollInterval = parseInt(document.getElementById('steamFriendPollInterval')?.value || '5', 10) || 5;
+      const res = await window.pywebview.api.save_steam_config(apiKey, steamId, autoDetect, pollFriends, pollInterval);
       if (res && res.connected) {
         renderOAuthStatus({ steam: res });
         const drawer = document.getElementById('steamConfigDrawer');
@@ -587,6 +602,34 @@ function wireOAuthAccountButtons() {
       if (saveBtn) saveBtn.textContent = 'Save & Connect Steam';
     }
   });
+
+  const onPollSettingChanged = async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.set_steam_friend_polling) return;
+    const pollRadio = document.getElementById('steamFriendPollRadio');
+    const pollInterval = document.getElementById('steamFriendPollInterval');
+    const enabled = Boolean(pollRadio && pollRadio.checked);
+    const intervalMins = parseInt(pollInterval ? pollInterval.value : '5', 10) || 5;
+
+    try {
+      const res = await window.pywebview.api.set_steam_friend_polling(enabled, intervalMins);
+      if (res && res.success) {
+        showSteamFeedback(enabled ? `Friend status polling enabled (every ${intervalMins}m).` : 'Friend status polling disabled.');
+      }
+    } catch (e) {
+      console.error('Failed to update Steam friend polling setting:', e);
+      showSteamFeedback(`Failed to update friend polling: ${e.message || e}`, true);
+    }
+  };
+
+  bindOnce('steamFriendPollRadio', () => {
+    onPollSettingChanged();
+  });
+
+  const pollIntervalEl = document.getElementById('steamFriendPollInterval');
+  if (pollIntervalEl && !pollIntervalEl.dataset.wired) {
+    pollIntervalEl.dataset.wired = '1';
+    pollIntervalEl.addEventListener('change', onPollSettingChanged);
+  }
 
   bindOnce('btnDisconnectSteam', async () => {
     if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.disconnect_steam) return;

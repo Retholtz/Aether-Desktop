@@ -2261,6 +2261,8 @@ class GuiBridge:
         enabled = steam_cfg.get("enabled", True)
         auto_detect = steam_cfg.get("auto_detect_active_appid", True)
         persona_name = steam_cfg.get("persona_name", "")
+        poll_friends_status = bool(steam_cfg.get("poll_friends_status", False))
+        poll_interval_minutes = int(steam_cfg.get("poll_interval_minutes", 5) or 5)
 
         connected = bool(api_key and steam_id64)
         masked_key = ""
@@ -2276,10 +2278,19 @@ class GuiBridge:
             "steam_id64": steam_id64,
             "auto_detect_active_appid": auto_detect,
             "persona_name": persona_name,
+            "poll_friends_status": poll_friends_status,
+            "poll_interval_minutes": poll_interval_minutes,
             "account_label": f"Connected as {persona_name} (SteamID: {steam_id64})" if persona_name else (f"SteamID: {steam_id64}" if steam_id64 else "Not connected")
         }
 
-    def save_steam_config(self, api_key: str = "", steam_id64: str = "", auto_detect: bool = True) -> dict:
+    def save_steam_config(
+        self,
+        api_key: str = "",
+        steam_id64: str = "",
+        auto_detect: bool = True,
+        poll_friends_status: bool = False,
+        poll_interval_minutes: int = 5
+    ) -> dict:
         """Saves Steam API credentials, fetches persona name, and updates the running SteamService."""
         from core.config import load_settings, save_settings
         settings = load_settings()
@@ -2313,6 +2324,8 @@ class GuiBridge:
         steam_cfg["api_key"] = clean_key
         steam_cfg["steam_id64"] = clean_id
         steam_cfg["auto_detect_active_appid"] = bool(auto_detect)
+        steam_cfg["poll_friends_status"] = bool(poll_friends_status)
+        steam_cfg["poll_interval_minutes"] = max(1, int(poll_interval_minutes or 5))
         if persona_name:
             steam_cfg["persona_name"] = persona_name
 
@@ -2324,6 +2337,32 @@ class GuiBridge:
         # Update running engine steam service if available
         if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "steam_service"):
             self._engine.steam_service.configure(api_key=clean_key, steam_id64=clean_id)
+            if hasattr(self._engine, "set_steam_friend_polling"):
+                self._engine.set_steam_friend_polling(poll_friends_status, poll_interval_minutes)
+
+        status = self.get_steam_status()
+        self.notify("steam_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        return status
+
+    def set_steam_friend_polling(self, enabled: bool, interval_minutes: int = 5) -> dict:
+        """Enables or disables periodic Steam friend status polling and saves preference."""
+        from core.config import load_settings, save_settings
+        settings = load_settings()
+        steam_cfg = settings.setdefault("integrations", {}).setdefault("steam", {})
+        steam_cfg["poll_friends_status"] = bool(enabled)
+        steam_cfg["poll_interval_minutes"] = max(1, int(interval_minutes or 5))
+        save_settings(settings)
+
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_steam_friend_polling"):
+            self._engine.set_steam_friend_polling(bool(enabled), int(interval_minutes or 5))
+        elif hasattr(self, "_engine") and self._engine and hasattr(self._engine, "steam_service"):
+            self._engine.steam_service.set_friend_polling(
+                enabled=bool(enabled),
+                interval_minutes=int(interval_minutes or 5),
+                callback=getattr(self._engine, "_on_steam_friend_status_change", None),
+                loop=getattr(self._engine, "_loop", None)
+            )
 
         status = self.get_steam_status()
         self.notify("steam_status_changed", status)
@@ -2338,12 +2377,14 @@ class GuiBridge:
         steam_cfg["api_key"] = ""
         steam_cfg["steam_id64"] = ""
         steam_cfg["persona_name"] = ""
+        steam_cfg["poll_friends_status"] = False
         settings["steam_api_key"] = ""
         settings["steam_id64"] = ""
         save_settings(settings)
 
         if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "steam_service"):
             self._engine.steam_service.configure(api_key="", steam_id64="")
+            self._engine.steam_service.stop_friend_polling()
 
         status = self.get_steam_status()
         self.notify("steam_status_changed", status)

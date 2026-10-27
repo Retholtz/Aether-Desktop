@@ -63,6 +63,8 @@ class GameEngine:
         "paste_to_document",
         "export_research_dossier",
         "get_steam_friends_activity",
+        "get_steam_friend_games",
+        "get_steam_owned_games",
         "get_steam_game_achievements",
         "get_steam_patch_notes",
     }

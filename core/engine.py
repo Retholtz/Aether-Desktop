@@ -542,10 +542,17 @@ class AetherEngine:
             except Exception:
                 pass
 
+        steam_cfg = self.settings.get("integrations", {}).get("steam", {})
+        poll_friends_status = steam_cfg.get("poll_friends_status", False)
+        poll_interval_minutes = steam_cfg.get("poll_interval_minutes", 5)
+
         self.steam_service = SteamService(
             api_key=self.settings.get("steam_api_key"),
-            steam_id64=self.settings.get("steam_id64")
+            steam_id64=self.settings.get("steam_id64"),
+            poll_friends_status=poll_friends_status,
+            poll_interval_minutes=poll_interval_minutes
         )
+        self.steam_service._status_change_callback = self._on_steam_friend_status_change
         register_steam_tools(self.dispatcher, self.steam_service, game_engine=self.game_engine)
 
         # Check Windows Administrator privilege for gaming input reliability
@@ -1604,6 +1611,24 @@ class AetherEngine:
             })
         except Exception as e:
             logger.error(f"[PROACTIVE EVENT ERROR] {e}")
+
+    def _on_steam_friend_status_change(self, change: dict):
+        """Dispatches a proactive notification when a Steam friend changes status or in-game presence."""
+        msg = change.get("message")
+        if not msg:
+            return
+        logger.info(f"[STEAM FRIEND ALERT] {msg}")
+        self.post_proactive_event(alert_text=msg, source="Steam")
+
+    def set_steam_friend_polling(self, enabled: bool, interval_minutes: int = 5):
+        """Configures Steam friend polling at runtime."""
+        if hasattr(self, "steam_service") and self.steam_service:
+            self.steam_service.set_friend_polling(
+                enabled=enabled,
+                interval_minutes=interval_minutes,
+                callback=self._on_steam_friend_status_change,
+                loop=getattr(self, "_loop", None)
+            )
 
     def kill_audio(self):
         """Immediately halts audio playback, cancels in-flight synthesis, and purges all output buffers."""
@@ -4861,6 +4886,11 @@ class AetherEngine:
                 self.reflexion_engine.start()
             except Exception as e:
                 logger.warning(f"[START] Reflexion engine start warning: {e}")
+        if hasattr(self, "steam_service") and self.steam_service and getattr(self.steam_service, "poll_friends_status", False):
+            try:
+                self.steam_service.start_friend_polling(loop=loop)
+            except Exception as e:
+                logger.warning(f"[START] Steam friend polling start warning: {e}")
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
@@ -4943,6 +4973,7 @@ class AetherEngine:
 
         if hasattr(self, "steam_service") and self.steam_service:
             try:
+                self.steam_service.stop_friend_polling()
                 if hasattr(self, "loop") and self.loop and self.loop.is_running():
                     asyncio.run_coroutine_threadsafe(self.steam_service.close(), self.loop)
             except Exception as e:

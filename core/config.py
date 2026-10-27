@@ -32,6 +32,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             "api_key": "",
             "steam_id64": "",
             "auto_detect_active_appid": True,
+            "poll_friends_status": False,
+            "poll_interval_minutes": 5,
         }
     }
 }
@@ -61,8 +63,10 @@ class Settings(dict):
         return default if val is None else val
 
 
-def load_settings(settings_path: str = SETTINGS_PATH) -> Settings:
+def load_settings(settings_path: Optional[str] = None) -> Settings:
     """Loads settings from data/settings.json, falling back to defaults and env vars."""
+    if settings_path is None:
+        settings_path = SETTINGS_PATH
     settings_data: Dict[str, Any] = {}
     if os.path.exists(settings_path):
         try:
@@ -82,6 +86,8 @@ def load_settings(settings_path: str = SETTINGS_PATH) -> Settings:
     steam_cfg.setdefault("api_key", os.getenv("STEAM_API_KEY", ""))
     steam_cfg.setdefault("steam_id64", os.getenv("STEAM_ID64", ""))
     steam_cfg.setdefault("auto_detect_active_appid", True)
+    steam_cfg.setdefault("poll_friends_status", False)
+    steam_cfg.setdefault("poll_interval_minutes", 5)
 
     # Top-level helper accessors
     if "steam_api_key" not in settings_data:
@@ -92,8 +98,10 @@ def load_settings(settings_path: str = SETTINGS_PATH) -> Settings:
     return Settings(settings_data)
 
 
-def save_settings(settings: Dict[str, Any], settings_path: str = SETTINGS_PATH) -> None:
+def save_settings(settings: Dict[str, Any], settings_path: Optional[str] = None) -> None:
     """Safely saves settings dictionary to JSON file atomically."""
+    if settings_path is None:
+        settings_path = SETTINGS_PATH
     dirname = os.path.dirname(settings_path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)

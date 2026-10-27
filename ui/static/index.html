@@ -1443,6 +1443,24 @@
                     <span id="oauthSteamStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
                   </div>
                   <div id="oauthSteamAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+                  <!-- Periodic Friend Online Status Polling -->
+                  <div id="steamFriendPollContainer" style="margin-top: 10px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: #cbd5e1; font-size: 0.82rem; user-select: none;">
+                      <input type="checkbox" id="steamFriendPollRadio" style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                      <span>Check Friend's Online status:</span>
+                    </label>
+                    <div style="display: inline-flex; align-items: center; gap: 6px;">
+                      <select id="steamFriendPollInterval" class="hud-select" style="padding: 2px 8px; font-size: 0.78rem; height: 26px; border-radius: 4px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(56, 189, 248, 0.25); color: #e2e8f0; cursor: pointer;">
+                        <option value="1">1 minute</option>
+                        <option value="2">2 minutes</option>
+                        <option value="5" selected>5 minutes</option>
+                        <option value="10">10 minutes</option>
+                        <option value="15">15 minutes</option>
+                        <option value="30">30 minutes</option>
+                        <option value="60">60 minutes</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center;">
                   <button type="button" id="btnConnectSteam" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign into Steam</button>

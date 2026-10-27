@@ -52,9 +52,15 @@ class TestSteamGuiBridge(unittest.TestCase):
         self.assertIn("steam", oauth_status)
         self.assertTrue(oauth_status["steam"]["connected"])
 
+        # Set friend polling
+        poll_res = self.bridge.set_steam_friend_polling(enabled=True, interval_minutes=15)
+        self.assertTrue(poll_res["poll_friends_status"])
+        self.assertEqual(poll_res["poll_interval_minutes"], 15)
+
         # Disconnect
         disc_res = self.bridge.disconnect_steam()
         self.assertFalse(disc_res["connected"])
+        self.assertFalse(disc_res["poll_friends_status"])
         self.bridge._engine.steam_service.configure.assert_called_with(api_key="", steam_id64="")
 
 
