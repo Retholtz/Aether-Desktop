@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-from core.game_telemetry import EliteTelemetryWatcher
+from core.telemetry import EliteTelemetryAdapter as EliteTelemetryWatcher
 from core.game_manager import GameManager
 from tools.dispatcher import ToolDispatcher
 from tools.game_tools import register_game_tools

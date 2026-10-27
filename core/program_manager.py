@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger("Aether.ProgramManager")
 
 PROGRAMS_PATH = os.path.join("data", "programs.json")
+GAMES_DIR = os.path.join("data", "games")
 GAMES_PROFILES_PATH = os.path.join("data", "games_profiles.json")
 
 DEFAULT_PROGRAMS = {
@@ -171,41 +172,57 @@ class ProgramManager:
             logger.debug(f"[PROGRAM_MGR] Could not import config whitelist: {e}")
 
     def _import_from_games(self, payload: Dict[str, Any]):
-        """Imports game titles (e.g. Crimson Desert) from games_profiles.json into programs."""
-        if os.path.exists(GAMES_PROFILES_PATH):
-            try:
-                with open(GAMES_PROFILES_PATH, "r", encoding="utf-8") as f:
-                    gdata = json.load(f)
-                profiles = gdata.get("profiles", {})
-                for gid, p in profiles.items():
-                    pname = p.get("process_name") or ""
-                    dname = p.get("display_name") or gid
-                    pid = re.sub(r'[^a-zA-Z0-9]+', '_', dname.lower()).strip('_') or gid
-                    resolved = self.resolve_program_path(pname or dname) or pname
-                    cwd = os.path.dirname(resolved) if resolved and os.path.isabs(resolved) else ""
+        """Imports game titles (e.g. Crimson Desert, Elite Dangerous) from games directory into programs."""
+        try:
+            profiles = {}
+            if os.path.exists(GAMES_DIR):
+                for fname in os.listdir(GAMES_DIR):
+                    if fname.endswith(".json") and fname != "active_state.json":
+                        try:
+                            with open(os.path.join(GAMES_DIR, fname), "r", encoding="utf-8") as f:
+                                p = json.load(f)
+                                if isinstance(p, dict):
+                                    gid = os.path.splitext(fname)[0]
+                                    profiles[gid] = p
+                        except Exception:
+                            pass
+            elif os.path.exists(GAMES_PROFILES_PATH):
+                try:
+                    with open(GAMES_PROFILES_PATH, "r", encoding="utf-8") as f:
+                        gdata = json.load(f)
+                    profiles = gdata.get("profiles", {})
+                except Exception:
+                    pass
 
-                    # Check if already present under another id (e.g. crimsondesert)
-                    matched_id = None
-                    for existing_id, ep in list(payload["programs"].items()):
-                        e_path = os.path.basename(ep.get("path", "")).lower()
-                        e_name = ep.get("name", "").lower()
-                        if existing_id == pid or existing_id == gid or (pname and pname.lower() == e_path) or (dname and dname.lower() == e_name) or (re.sub(r'[^a-zA-Z0-9]+', '', dname.lower()) == re.sub(r'[^a-zA-Z0-9]+', '', existing_id)):
-                            matched_id = existing_id
-                            break
+            for gid, p in profiles.items():
+                pname = p.get("process_name") or ""
+                dname = p.get("display_name") or gid
+                pid = re.sub(r'[^a-zA-Z0-9]+', '_', dname.lower()).strip('_') or gid
+                resolved = self.resolve_program_path(pname or dname) or pname
+                cwd = os.path.dirname(resolved) if resolved and os.path.isabs(resolved) else ""
 
-                    target_id = pid
-                    if matched_id and matched_id != pid and matched_id in payload["programs"]:
-                        del payload["programs"][matched_id]
-                    payload["programs"][target_id] = {
-                        "id": target_id,
-                        "name": dname,
-                        "path": resolved or pname,
-                        "arguments": payload["programs"].get(target_id, {}).get("arguments", ""),
-                        "elevate": payload["programs"].get(target_id, {}).get("elevate", False),
-                        "working_dir": cwd or payload["programs"].get(target_id, {}).get("working_dir", "")
-                    }
-            except Exception as e:
-                logger.debug(f"[PROGRAM_MGR] Could not import from games profiles: {e}")
+                # Check if already present under another id (e.g. crimsondesert)
+                matched_id = None
+                for existing_id, ep in list(payload["programs"].items()):
+                    e_path = os.path.basename(ep.get("path", "")).lower()
+                    e_name = ep.get("name", "").lower()
+                    if existing_id == pid or existing_id == gid or (pname and pname.lower() == e_path) or (dname and dname.lower() == e_name) or (re.sub(r'[^a-zA-Z0-9]+', '', dname.lower()) == re.sub(r'[^a-zA-Z0-9]+', '', existing_id)):
+                        matched_id = existing_id
+                        break
+
+                target_id = pid
+                if matched_id and matched_id != pid and matched_id in payload["programs"]:
+                    del payload["programs"][matched_id]
+                payload["programs"][target_id] = {
+                    "id": target_id,
+                    "name": dname,
+                    "path": resolved or pname,
+                    "arguments": payload["programs"].get(target_id, {}).get("arguments", ""),
+                    "elevate": payload["programs"].get(target_id, {}).get("elevate", False),
+                    "working_dir": cwd or payload["programs"].get(target_id, {}).get("working_dir", "")
+                }
+        except Exception as e:
+            logger.debug(f"[PROGRAM_MGR] Could not import from games profiles: {e}")
 
     def _save_programs(self, payload: Dict[str, Any]):
         """Persists programs payload to disk and syncs with config.json whitelist."""
@@ -334,27 +351,40 @@ class ProgramManager:
                     return p
 
             # 3. Check games profiles fallback
-            if os.path.exists(GAMES_PROFILES_PATH):
+            games_profiles = {}
+            if os.path.exists(GAMES_DIR):
+                for fname in os.listdir(GAMES_DIR):
+                    if fname.endswith(".json") and fname != "active_state.json":
+                        try:
+                            with open(os.path.join(GAMES_DIR, fname), "r", encoding="utf-8") as f:
+                                gp = json.load(f)
+                                if isinstance(gp, dict):
+                                    games_profiles[os.path.splitext(fname)[0]] = gp
+                        except Exception:
+                            pass
+            elif os.path.exists(GAMES_PROFILES_PATH):
                 try:
                     with open(GAMES_PROFILES_PATH, "r", encoding="utf-8") as f:
                         gdata = json.load(f)
-                    for gid, gp in gdata.get("profiles", {}).items():
-                        g_name = (gp.get("display_name") or "").strip().lower()
-                        g_proc = (gp.get("process_name") or "").strip().lower()
-                        g_stem = g_proc[:-4] if g_proc.endswith(".exe") else g_proc
-                        if target in (gid, g_name, g_proc, g_stem) or (target_norm and target_norm in re.sub(r'[^a-zA-Z0-9]+', '', g_name)):
-                            # Return pseudo program dict
-                            resolved = self.resolve_program_path(g_proc or g_name) or g_proc
-                            return {
-                                "id": gid,
-                                "name": gp.get("display_name", gid),
-                                "path": resolved,
-                                "arguments": "",
-                                "elevate": False,
-                                "working_dir": os.path.dirname(resolved) if resolved and os.path.isabs(resolved) else ""
-                            }
+                    games_profiles = gdata.get("profiles", {})
                 except Exception:
                     pass
+
+            for gid, gp in games_profiles.items():
+                g_name = (gp.get("display_name") or "").strip().lower()
+                g_proc = (gp.get("process_name") or "").strip().lower()
+                g_stem = g_proc[:-4] if g_proc.endswith(".exe") else g_proc
+                if target in (gid, g_name, g_proc, g_stem) or (target_norm and target_norm in re.sub(r'[^a-zA-Z0-9]+', '', g_name)):
+                    # Return pseudo program dict
+                    resolved = self.resolve_program_path(g_proc or g_name) or g_proc
+                    return {
+                        "id": gid,
+                        "name": gp.get("display_name", gid),
+                        "path": resolved,
+                        "arguments": "",
+                        "elevate": False,
+                        "working_dir": os.path.dirname(resolved) if resolved and os.path.isabs(resolved) else ""
+                    }
 
         return None
 

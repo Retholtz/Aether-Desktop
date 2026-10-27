@@ -1840,8 +1840,9 @@ class GuiBridge:
         """Returns live in-game telemetry snapshot for the active profile."""
         active_id = self.game_mgr.data.get("active_profile", "")
         copilot_entries = self.game_mgr.get_copilot_log(active_id) if active_id else []
-        if active_id == "elite_dangerous" and self.game_mgr.ed_watcher:
-            res = dict(self.game_mgr.ed_watcher.state)
+        adapter = getattr(self.game_mgr, "active_telemetry_adapter", None) or getattr(self.game_mgr, "ed_watcher", None)
+        if adapter and hasattr(adapter, "state") and getattr(adapter, "state", None):
+            res = dict(adapter.state)
             res["copilot_entries"] = copilot_entries
             return res
         profile = self.game_mgr.get_profile(active_id)

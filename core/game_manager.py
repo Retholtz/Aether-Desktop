@@ -16,8 +16,12 @@ import threading
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, Optional, List, Callable
 
-from core.game_telemetry import EliteTelemetryWatcher
+from core.telemetry import create_telemetry_adapter, BaseTelemetryAdapter
+from core.binds_scanners import scan_profile_bindings
+from core.game_macro_runner import MacroRunner
 
+GAMES_DIR = os.path.join("data", "games")
+GAMES_STATE_FILE = "active_state.json"
 GAMES_PROFILES_PATH = os.path.join("data", "games_profiles.json")
 
 DEFAULT_PROFILES = {
@@ -26,14 +30,42 @@ DEFAULT_PROFILES = {
 }
 
 
+def _save_atomic(file_path: str, data: Any):
+    """Atomically writes JSON data to disk using process-specific temp file."""
+    dirname = os.path.dirname(file_path)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
+    tmp_path = f"{file_path}.{os.getpid()}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, file_path)
+    except Exception as e:
+        print(f"[WARN] [GAME_MGR] Failed saving {file_path}: {e}")
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
 class GameManager:
     """Manages game profiles, bindings synchronization, and voice/trigger macro execution."""
 
-    def __init__(self, profiles_path: str = GAMES_PROFILES_PATH):
-        self.profiles_path = profiles_path
+    def __init__(self, profiles_path: Optional[str] = None, games_dir: Optional[str] = None):
         self._lock = threading.RLock()
+        if profiles_path and profiles_path != GAMES_PROFILES_PATH:
+            self.is_dir_mode = False
+            self.profiles_path = profiles_path
+            self.games_dir = ""
+        else:
+            self.is_dir_mode = True
+            self.games_dir = games_dir or GAMES_DIR
+            self.profiles_path = profiles_path or GAMES_PROFILES_PATH
+
         self.data = self._load_profiles()
-        self.ed_watcher: Optional[EliteTelemetryWatcher] = None
+        self.active_telemetry_adapter: Optional[BaseTelemetryAdapter] = None
+        self.macro_runner = MacroRunner()
         self._init_telemetry_watchers()
 
         # Dedicated Game Mode state & automatic foreground window watcher
@@ -54,61 +86,157 @@ class GameManager:
             self.game_mode_enabled = False
             self._last_detected_game = None
 
-    def _init_telemetry_watchers(self):
-        """Initializes and starts background telemetry watchers for supported games."""
-        ed_prof = self.get_profile("elite_dangerous")
-        if ed_prof:
-            j_dir = ed_prof.get("journal_dir") or ed_prof.get("telemetry_dir")
-            if self.ed_watcher:
-                if self.ed_watcher.is_running and (j_dir is None or self.ed_watcher.journal_dir == os.path.expandvars(j_dir)):
-                    return
-                try:
-                    self.ed_watcher.stop()
-                except Exception:
-                    pass
-            self.ed_watcher = EliteTelemetryWatcher(journal_dir=j_dir, on_milestone=self._on_telemetry_milestone)
-            self.ed_watcher.start()
+    @property
+    def ed_watcher(self) -> Optional[BaseTelemetryAdapter]:
+        """Backward-compatibility alias for self.active_telemetry_adapter."""
+        return self.active_telemetry_adapter
 
-    def _on_telemetry_milestone(self, category: str, summary: str, location: str = "", details: str = ""):
-        """Auto-records game milestone events into the Elite Dangerous Co-Pilot log."""
-        self.add_copilot_log_entry(
-            game_id="elite_dangerous",
-            summary=summary,
-            category=category,
-            location=location,
-            details=details
+    @ed_watcher.setter
+    def ed_watcher(self, val: Optional[BaseTelemetryAdapter]):
+        """Backward-compatibility setter for self.active_telemetry_adapter."""
+        self.active_telemetry_adapter = val
+
+    def _init_telemetry_watchers(self):
+        """Initializes and starts background telemetry adapter for the currently active game."""
+        active_id = self.data.get("active_profile", "")
+        self._update_telemetry_adapter(active_id)
+
+    def _update_telemetry_adapter(self, game_id: str):
+        """Switches or restarts the telemetry adapter for the specified game."""
+        if self.active_telemetry_adapter:
+            try:
+                self.active_telemetry_adapter.stop()
+            except Exception:
+                pass
+            self.active_telemetry_adapter = None
+
+        if not game_id:
+            return
+
+        prof = self.get_profile(game_id)
+        if not prof:
+            return
+
+        def on_milestone(cat: str, summary: str, loc: str = "", det: str = ""):
+            self.add_copilot_log_entry(
+                game_id=game_id,
+                summary=summary,
+                category=cat,
+                location=loc,
+                details=det
+            )
+
+        self.active_telemetry_adapter = create_telemetry_adapter(
+            game_id=game_id,
+            profile=prof,
+            on_milestone=on_milestone
         )
+        self.active_telemetry_adapter.start()
+
+    def _migrate_monolithic_to_dir(self) -> Dict[str, Any]:
+        """Migrates monolithic games_profiles.json to individual data/games/<id>.json files."""
+        os.makedirs(self.games_dir, exist_ok=True)
+        try:
+            with open(self.profiles_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[WARN] [GAME_MGR] Migration read error for {self.profiles_path}: {e}")
+            data = copy.deepcopy(DEFAULT_PROFILES)
+
+        active = data.get("active_profile", "")
+        profiles = data.get("profiles", {})
+
+        state_path = os.path.join(self.games_dir, GAMES_STATE_FILE)
+        _save_atomic(state_path, {"active_profile": active})
+
+        for gid, prof in profiles.items():
+            gpath = os.path.join(self.games_dir, f"{gid}.json")
+            _save_atomic(gpath, prof)
+
+        print(f"[INFO] [GAME_MGR] Successfully migrated {len(profiles)} game profile(s) to {self.games_dir}/")
+        return {"active_profile": active, "profiles": profiles}
 
     def _load_profiles(self) -> Dict[str, Any]:
-        """Loads profiles from JSON disk cache or initializes defaults if not present."""
-        if os.path.exists(self.profiles_path):
-            try:
-                with open(self.profiles_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"[WARN] [GAME_MGR] Failed reading {self.profiles_path}: {e}")
-        initial = copy.deepcopy(DEFAULT_PROFILES)
-        self._save_profiles(initial)
-        return initial
+        """Loads profiles from data/games/*.json or migrates from games_profiles.json."""
+        if not self.is_dir_mode:
+            if os.path.exists(self.profiles_path):
+                try:
+                    with open(self.profiles_path, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception as e:
+                    print(f"[WARN] [GAME_MGR] Failed reading {self.profiles_path}: {e}")
+            initial = copy.deepcopy(DEFAULT_PROFILES)
+            _save_atomic(self.profiles_path, initial)
+            return initial
 
-    def _save_profiles(self, payload: Dict[str, Any]):
-        """Persists profile payload to disk atomically with lock protection."""
-        with self._lock:
-            dirname = os.path.dirname(self.profiles_path)
-            if dirname:
-                os.makedirs(dirname, exist_ok=True)
-            tmp_path = f"{self.profiles_path}.{os.getpid()}.tmp"
+        # Directory mode: check if migration needed
+        if not os.path.exists(self.games_dir) or not any(f.endswith(".json") and f != GAMES_STATE_FILE for f in os.listdir(self.games_dir)):
+            if os.path.exists(self.profiles_path):
+                return self._migrate_monolithic_to_dir()
+
+        os.makedirs(self.games_dir, exist_ok=True)
+        profiles = {}
+        active_profile = ""
+        state_path = os.path.join(self.games_dir, GAMES_STATE_FILE)
+        if os.path.exists(state_path):
             try:
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2)
-                os.replace(tmp_path, self.profiles_path)
+                with open(state_path, "r", encoding="utf-8") as f:
+                    sdata = json.load(f)
+                    active_profile = sdata.get("active_profile", "")
             except Exception as e:
-                print(f"[WARN] [GAME_MGR] Failed saving {self.profiles_path}: {e}")
-                if os.path.exists(tmp_path):
-                    try:
-                        os.remove(tmp_path)
-                    except Exception:
-                        pass
+                print(f"[WARN] [GAME_MGR] Failed reading {state_path}: {e}")
+
+        for fname in os.listdir(self.games_dir):
+            if fname.endswith(".json") and fname != GAMES_STATE_FILE:
+                fpath = os.path.join(self.games_dir, fname)
+                gid = os.path.splitext(fname)[0]
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        prof = json.load(f)
+                        if isinstance(prof, dict):
+                            profiles[gid] = prof
+                except Exception as e:
+                    print(f"[WARN] [GAME_MGR] Failed loading profile {fpath}: {e}")
+
+        if not active_profile and profiles:
+            active_profile = list(profiles.keys())[0]
+
+        return {
+            "active_profile": active_profile,
+            "profiles": profiles
+        }
+
+    def save_profile(self, game_id: str):
+        """Persists a single game's profile to disk."""
+        with self._lock:
+            prof = self.get_profile(game_id)
+            if not prof:
+                return
+            if self.is_dir_mode:
+                gpath = os.path.join(self.games_dir, f"{game_id}.json")
+                _save_atomic(gpath, prof)
+            else:
+                self._save_profiles(self.data)
+
+    def _save_profiles(self, payload: Dict[str, Any], target_game_id: Optional[str] = None):
+        """Persists profiles to disk. In dir mode, writes individual files."""
+        with self._lock:
+            if not self.is_dir_mode:
+                _save_atomic(self.profiles_path, payload)
+                return
+
+            os.makedirs(self.games_dir, exist_ok=True)
+            state_path = os.path.join(self.games_dir, GAMES_STATE_FILE)
+            _save_atomic(state_path, {"active_profile": payload.get("active_profile", "")})
+
+            profiles = payload.get("profiles", {})
+            if target_game_id and target_game_id in profiles:
+                gpath = os.path.join(self.games_dir, f"{target_game_id}.json")
+                _save_atomic(gpath, profiles[target_game_id])
+            else:
+                for gid, prof in profiles.items():
+                    gpath = os.path.join(self.games_dir, f"{gid}.json")
+                    _save_atomic(gpath, prof)
 
     def add_game(
         self,
@@ -162,8 +290,8 @@ class GameManager:
         if not self.data.get("active_profile"):
             self.data["active_profile"] = game_id
 
-        if game_id == "elite_dangerous":
-            self._init_telemetry_watchers()
+        if self.data.get("active_profile") == game_id:
+            self._update_telemetry_adapter(game_id)
 
         self._save_profiles(self.data)
         return {
@@ -180,14 +308,22 @@ class GameManager:
             del profiles[game_id]
             if self.data.get("active_profile") == game_id:
                 remaining = list(profiles.keys())
-                self.data["active_profile"] = remaining[0] if remaining else ""
-            if game_id == "elite_dangerous" and self.ed_watcher:
-                try:
-                    self.ed_watcher.stop()
-                except Exception:
-                    pass
-                self.ed_watcher = None
-            self._save_profiles(self.data)
+                new_active = remaining[0] if remaining else ""
+                self.data["active_profile"] = new_active
+                self._update_telemetry_adapter(new_active)
+
+            if self.is_dir_mode:
+                gpath = os.path.join(self.games_dir, f"{game_id}.json")
+                if os.path.exists(gpath):
+                    try:
+                        os.remove(gpath)
+                    except Exception as e:
+                        print(f"[WARN] [GAME_MGR] Failed removing {gpath}: {e}")
+                state_path = os.path.join(self.games_dir, GAMES_STATE_FILE)
+                _save_atomic(state_path, {"active_profile": self.data.get("active_profile", "")})
+            else:
+                self._save_profiles(self.data)
+
             return {
                 "success": True,
                 "deleted_id": game_id,
@@ -213,6 +349,7 @@ class GameManager:
             self.data["active_profile"] = ""
             self.game_mode_enabled = False
             self.user_override_game_mode = None
+            self._update_telemetry_adapter("")
             self._save_profiles(self.data)
             self._notify_mode_changed()
             return True
@@ -221,8 +358,7 @@ class GameManager:
             if self.user_override_game_mode is not False:
                 self.game_mode_enabled = True
                 self.user_override_game_mode = True
-            if game_id == "elite_dangerous" and (not self.ed_watcher or not self.ed_watcher.is_running):
-                self._init_telemetry_watchers()
+            self._update_telemetry_adapter(game_id)
             self._save_profiles(self.data)
             self._notify_mode_changed()
             return True
@@ -593,8 +729,8 @@ class GameManager:
             parts.append("AVAILABLE IN-GAME VOICE MACROS (You can trigger these via the trigger_game_action tool):\n" + "\n".join(macro_lines))
 
         # 3. Live Telemetry
-        if active_id == "elite_dangerous" and self.ed_watcher:
-            telemetry_ctx = self.ed_watcher.get_summary_prompt_context()
+        if self.active_telemetry_adapter and self.active_telemetry_adapter.is_active():
+            telemetry_ctx = self.active_telemetry_adapter.get_summary_prompt_context()
             if telemetry_ctx:
                 parts.append(telemetry_ctx)
 
@@ -653,9 +789,9 @@ class GameManager:
             f"   - If web wiki information is incomplete, unreleased, or conflicting, call `inspect_screen_context` to read the active quest tracker, map labels, or HUD directly from the user's game screen.\n"
             f"   - If a quest or location is ambiguous on screen, ask the player for visual clarification rather than guessing.\n"
             f"5. AUXILIARY CONSOLES & COMPANION FLIGHT-DECK TOOLS:\n"
-            f"   - Auxiliary displays and companion apps (Inara market feeds, EDCoPilot, material trackers, tactical maps) are treated in-universe as auxiliary flight-deck terminals or cockpit MFDs.\n"
+            f"   - Auxiliary displays and companion apps (tactical maps, database terminals, companion web tools) are treated in-universe as auxiliary flight-deck terminals or cockpit MFDs.\n"
             f"   - You can launch, position, or navigate them across connected monitors (1 to N) using `launch_application`, `navigate_browser`, and `move_window_to_monitor` without breaking character.\n"
-            f"   - Maintain player immersion while fulfilling display requests (e.g. 'Opening Inara market uplink on auxiliary console Monitor 2.').\n"
+            f"   - Maintain player immersion while fulfilling display requests.\n"
             f"   - Game Shield: You are strictly prevented from closing the active game itself, but you may manage auxiliary windows and companion consoles."
         )
 
@@ -804,12 +940,12 @@ class GameManager:
     def close(self):
         """Shuts down background telemetry watchers and foreground process watcher."""
         self.stop_foreground_watcher()
-        if self.ed_watcher:
+        if self.active_telemetry_adapter:
             try:
-                self.ed_watcher.stop()
+                self.active_telemetry_adapter.stop()
             except Exception:
                 pass
-            self.ed_watcher = None
+            self.active_telemetry_adapter = None
 
     def list_profiles(self) -> Dict[str, Any]:
         """Returns metadata for all configured game profiles and the active profile indicator."""
@@ -856,69 +992,9 @@ class GameManager:
         return False
 
     def scan_elite_dangerous_binds(self) -> Dict[str, dict]:
-        """Scans and extracts active keybinds from Elite Dangerous XML binds files."""
-        ed_cfg = self.get_profile("elite_dangerous") or {}
-        binds_dir = ed_cfg.get("bindings_dir")
-        if not binds_dir:
-            return {}
-
-        binds_dir = os.path.expandvars(binds_dir)
-        if not os.path.exists(binds_dir):
-            return {}
-
-        bind_files = glob.glob(os.path.join(binds_dir, "*.binds"))
-        if not bind_files:
-            return {}
-
-        # Pick the most recently modified binds file
-        latest_file = max(bind_files, key=os.path.getmtime)
-        discovered = {}
-
-        try:
-            tree = ET.parse(latest_file)
-            root = tree.getroot()
-
-            # Target key mapping tags
-            target_actions = {
-                "DeployHeatSink": ("deploy heat sink", "Deploy Heat Sink"),
-                "ToggleFlightAssist": ("toggle flight assist", "Toggle Flight Assist"),
-                "ChargeECM": ("charge ecm", "Charge ECM"),
-                "IncreaseEnginesPower": ("divert power to engines", "Power to Engines"),
-                "IncreaseWeaponsPower": ("divert power to weapons", "Power to Weapons"),
-                "IncreaseSystemsPower": ("divert power to systems", "Power to Systems"),
-                "ResetPowerDistribution": ("balance power", "Balance Power"),
-                "ToggleCargoScoop": ("toggle cargo scoop", "Toggle Cargo Scoop"),
-                "LandingGearToggle": ("deploy landing gear", "Toggle Landing Gear"),
-                "DeployHardpointToggle": ("deploy hardpoints", "Toggle Hardpoints"),
-                "FireChaffLauncher": ("fire chaff", "Fire Chaff"),
-                "SelectTarget": ("target ahead", "Target Ahead"),
-                "CycleNextTarget": ("next target", "Target Next"),
-                "SelectHighestThreat": ("target highest threat", "Target Highest Threat"),
-                "HyperSuperCombination": ("frame shift drive", "Toggle Frame Shift Drive"),
-            }
-
-            for xml_elem, (phrase, desc) in target_actions.items():
-                node = root.find(xml_elem)
-                if node is not None:
-                    # Prefer Primary binding, fallback to Secondary
-                    slot = node.find("Primary")
-                    if slot is None or slot.get("Device") != "Keyboard":
-                        slot = node.find("Secondary")
-
-                    if slot is not None and slot.get("Device") == "Keyboard":
-                        raw_key = slot.get("Key", "").replace("Key_", "").lower()
-                        mods = [m.get("Key", "").replace("Key_", "").lower() for m in slot.findall("Modifier")]
-                        if raw_key:
-                            discovered[phrase] = {
-                                "key": raw_key,
-                                "modifiers": mods,
-                                "description": desc,
-                                "source": "auto_detected"
-                            }
-            return discovered
-        except Exception as e:
-            print(f"[WARN] [GAME_MGR] Failed parsing Elite Dangerous binds: {e}")
-            return {}
+        """Backward-compatibility alias delegating to modular binds_scanners."""
+        prof = self.get_profile("elite_dangerous") or {}
+        return scan_profile_bindings({"binds_config": {"type": "elite_xml"}, **prof})
 
     def detect_heuristic_config(self, game_id: str) -> Dict[str, dict]:
         """
@@ -1051,19 +1127,14 @@ Format strictly as valid JSON.
         if not profile:
             return {"success": False, "reason": "Profile not found"}
 
-        # 1. Local file scan attempt
-        if game_id == "elite_dangerous":
-            detected = self.scan_elite_dangerous_binds()
-            if detected:
-                profile.setdefault("keybinds", {}).update(detected)
-                self._save_profiles(self.data)
-                return {"success": True, "count": len(detected), "source": "local_files", "keybinds": profile["keybinds"]}
-        else:
+        # 1. Local file scan attempt (modular scanner or heuristic fallback)
+        detected = scan_profile_bindings(profile)
+        if not detected:
             detected = self.detect_heuristic_config(game_id)
-            if detected:
-                profile.setdefault("keybinds", {}).update(detected)
-                self._save_profiles(self.data)
-                return {"success": True, "count": len(detected), "source": "local_files", "keybinds": profile["keybinds"]}
+        if detected:
+            profile.setdefault("keybinds", {}).update(detected)
+            self._save_profiles(self.data)
+            return {"success": True, "count": len(detected), "source": "local_files", "keybinds": profile["keybinds"]}
 
         # 2. Web Reference Fallback
         if client:
@@ -1082,20 +1153,29 @@ Format strictly as valid JSON.
     def trigger_action(self, phrase: str) -> dict:
         """
         Looks up spoken phrase in the active game profile and executes the action.
-        Supports DirectInput keyboard combos, mouse clicks, and virtual gamepad buttons/triggers.
+        Supports state-conditioned actions, composite sequences, DirectInput combos,
+        and virtual gamepad/mouse inputs.
         """
+        active_id = self.data.get("active_profile")
+        profile = self.get_profile(active_id)
+        if not profile:
+            return {"status": "error", "message": "No active game profile."}
+
+        # 1. State-Aware MacroRunner (Checks preconditions, executes sequences or keybinds)
+        macro_res = self.macro_runner.execute_action(
+            phrase=phrase,
+            profile=profile,
+            telemetry_adapter=self.active_telemetry_adapter
+        )
+        if macro_res.get("status") in ("executed", "condition_skipped"):
+            return macro_res
+
         from tools.os_controls import (
-            send_directinput_combo,
-            send_directinput_key,
             click_mouse,
             zoom_viewport,
             send_gamepad_button,
             send_gamepad_trigger,
         )
-        active_id = self.data.get("active_profile")
-        profile = self.get_profile(active_id)
-        if not profile:
-            return {"status": "error", "message": "No active game profile."}
 
         keybinds = profile.get("keybinds", {})
         phrase_clean = phrase.lower().strip()

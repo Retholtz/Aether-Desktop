@@ -1365,7 +1365,7 @@ class ToolDispatcher:
         game_only_tools = {
             "get_current_game_telemetry",
             "trigger_game_action",
-            "lookup_inara_market",
+            "query_game_intel",
             "record_copilot_observation",
             "get_copilot_observations",
             "set_copilot_guidance_level",

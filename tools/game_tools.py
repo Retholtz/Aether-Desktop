@@ -15,7 +15,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
     - get_current_game_telemetry: Real-time telemetry snapshot
     - get_current_game_status: Alias/companion for status inspection
     - trigger_game_action: DirectInput hardware macro trigger
-    - lookup_inara_market: Market and trade commodity locator
+    - query_game_intel: Generalized in-game market, outfitting, route, and database intel locator
     - record_copilot_observation: Log landmarks, clues, or points of interest
     - update_game_scratchpad: Verbal updates to player personal notes
     - pan_and_mark_map_location: Visual map drag-pan and waypoint placement
@@ -99,30 +99,56 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         return res
 
     @dispatcher.register(
-        name="lookup_inara_market",
-        description="Query nearest star systems and stations for commodities, outfitting, or trade services in Elite Dangerous.",
+        name="query_game_intel",
+        description="Query in-game commodities, market prices, outfitting, trade routes, or database intel for the currently active game.",
         parameters={
             "type": "object",
             "properties": {
-                "commodity": {
+                "query": {
                     "type": "string",
-                    "description": "Commodity or item name to search (e.g. 'Tritium', 'Painite', 'Modular Terminals')."
+                    "description": "Item, commodity, route, station, or intel subject to look up (e.g. 'Tritium', 'Painite', 'Modular Terminals', 'FSD Grade 5')."
                 },
-                "star_system": {
+                "category": {
                     "type": "string",
-                    "description": "Reference star system (defaults to current system if omitted)."
+                    "enum": ["market", "navigation", "outfitting", "lore", "crafting"],
+                    "description": "Category of intel to look up (default: 'market')."
+                },
+                "location": {
+                    "type": "string",
+                    "description": "Reference star system or in-game zone (defaults to player's current telemetry location if omitted)."
                 }
             },
-            "required": ["commodity"]
+            "required": ["query"]
         }
     )
-    def lookup_inara_market(commodity: str, star_system: Optional[str] = None) -> dict:
-        ref_system = star_system
-        if not ref_system and game_manager and game_manager.ed_watcher:
-            s = game_manager.ed_watcher.state.get("star_system")
-            if s and s != "Unknown":
-                ref_system = s
-        ref_system = ref_system or "Sol"
+    def query_game_intel(query: str, category: str = "market", location: Optional[str] = None) -> dict:
+        profile = game_manager.get_active_profile() if game_manager else {}
+        game_title = (profile.get("display_name") if profile else None) or "Active Game"
+
+        # 1. Resolve Reference Location from Telemetry Adapter if omitted
+        ref_location = location
+        if not ref_location and game_manager:
+            adapter = getattr(game_manager, "active_telemetry_adapter", None) or getattr(game_manager, "ed_watcher", None)
+            if adapter:
+                loc_dict = adapter.get_location() if hasattr(adapter, "get_location") else {}
+                ref_location = loc_dict.get("system") or loc_dict.get("station")
+                if not ref_location and hasattr(adapter, "state"):
+                    ref_location = adapter.state.get("star_system")
+
+        if not ref_location:
+            ref_location = "Current Location"
+
+        # 2. Extract Configured Companion Domain
+        companion_resources = profile.get("companion_resources", {}) if profile else {}
+        cat_resource = companion_resources.get(category, {})
+        domain = cat_resource.get("domain") or cat_resource.get("url")
+        if not domain and profile:
+            # Fallback to interactive_map or first companion app
+            comp_apps = profile.get("companion_apps", {})
+            if comp_apps:
+                first_app = next(iter(comp_apps.values()))
+                domain = first_app.get("url") or first_app.get("domain")
+
         client = (
             getattr(engine, "genai_client", None)
             or getattr(engine, "client", None)
@@ -134,13 +160,17 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 model_endpoint = "gemini-3.8-flash"
                 if engine and hasattr(engine, "config") and isinstance(engine.config, dict):
                     model_endpoint = engine.config.get("primary_model_endpoint", "gemini-3.8-flash")
+
+                search_scope = f"'{domain}' and {game_title}" if domain else f"'{game_title}'"
+                prompt_content = (
+                    f"Search {search_scope} for {category} intel on '{query}' near reference location '{ref_location}'. "
+                    f"Return relevant buying/selling stations or vendors, approximate prices or requirements, "
+                    f"landing pad or zone constraints, and distance from '{ref_location}' if applicable."
+                )
+
                 resp = client.models.generate_content(
                     model=model_endpoint,
-                    contents=(
-                        f"Search Inara.cz (inara.cz/elite/commodities) and Elite Dangerous market databases for "
-                        f"the commodity or module '{commodity}' near star system '{ref_system}'. "
-                        f"Return nearest buying/selling stations, approximate prices, pad sizes, and system distances if available."
-                    ),
+                    contents=prompt_content,
                     config=types.GenerateContentConfig(
                         tools=[types.Tool(google_search=types.GoogleSearch())],
                         temperature=0.1,
@@ -148,23 +178,50 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 )
                 return {
                     "status": "success",
-                    "commodity": commodity,
-                    "reference_system": ref_system,
-                    "market_intel": (resp.text or "").strip(),
+                    "game": game_title,
+                    "category": category,
+                    "query": query,
+                    "reference_location": ref_location,
+                    "intel": (resp.text or "").strip(),
                 }
             except Exception as e:
                 return {
                     "status": "partial",
-                    "commodity": commodity,
-                    "reference_system": ref_system,
-                    "message": f"Live Inara lookup encountered an error ({e}). Use Google Search grounding to check inara.cz for '{commodity}' near {ref_system}."
+                    "game": game_title,
+                    "category": category,
+                    "query": query,
+                    "reference_location": ref_location,
+                    "message": f"Live intel search encountered an error ({e}). Use Google Search grounding for '{query}' near {ref_location} in {game_title}."
                 }
+
         return {
             "status": "info",
-            "commodity": commodity,
-            "reference_system": ref_system,
-            "message": f"Reference star system resolved to '{ref_system}'. Use Google Search grounding to look up current Inara.cz market data for '{commodity}' near {ref_system}."
+            "game": game_title,
+            "category": category,
+            "query": query,
+            "reference_location": ref_location,
+            "message": f"Reference location resolved to '{ref_location}'. Querying {game_title} databases for '{query}'."
         }
+
+    @dispatcher.register(
+        name="lookup_inara_market",
+        description="Backward-compatibility alias delegating to query_game_intel.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "commodity": {"type": "string", "description": "Commodity name to search."},
+                "star_system": {"type": "string", "description": "Reference star system."}
+            },
+            "required": ["commodity"]
+        }
+    )
+    def lookup_inara_market(commodity: str, star_system: Optional[str] = None) -> dict:
+        res = query_game_intel(query=commodity, category="market", location=star_system)
+        res["commodity"] = commodity
+        res["reference_system"] = star_system or res.get("reference_location")
+        if res.get("status") == "info":
+            res["status"] = "success"
+        return res
 
     @dispatcher.register(
         name="record_copilot_observation",
@@ -615,6 +672,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "get_current_game_status": get_current_game_status,
         "trigger_game_action": trigger_game_action,
         "toggle_game_mode": toggle_game_mode,
+        "query_game_intel": query_game_intel,
         "lookup_inara_market": lookup_inara_market,
         "record_copilot_observation": record_copilot_observation,
         "update_game_scratchpad": update_game_scratchpad,

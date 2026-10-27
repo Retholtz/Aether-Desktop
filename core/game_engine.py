@@ -40,6 +40,7 @@ class GameEngine:
         "get_current_game_status",
         "trigger_game_action",
         "toggle_game_mode",
+        "query_game_intel",
         "record_copilot_observation",
         "update_game_scratchpad",
         "get_game_scratchpad",
@@ -240,27 +241,37 @@ class GameEngine:
                     details={"game_id": active_id, "navigation_mode": canonical_mode}
                 )
 
-        # 5. Fast-Path DirectInput Macro Dispatch
+        # 5. Fast-Path DirectInput Macro & Sequence Dispatch
         active_game = self.manager.data.get("active_profile")
         if active_game:
             clean_macro = re.sub(r'^[,\.\s]+|[,\.\s]+$', '', lower_prompt).strip()
             if clean_macro.startswith(agent_name.lower()):
                 clean_macro = clean_macro[len(agent_name):].strip().lstrip(",. ")
 
-            prof = self.manager.get_profile(active_game) or {}
-            profile_binds = prof.get("keybinds", {})
-            if clean_macro in profile_binds:
-                macro_res = self.manager.trigger_action(clean_macro)
-                if macro_res.get("status") == "executed":
-                    return GameInterceptionResult(
-                        handled=True,
-                        action_type="fast_path_macro",
-                        user_message=f"⚡ [In-Game Macro] Executed: {macro_res.get('action')}",
-                        tts_message=None,
-                        requires_context_reset=False,
-                        skip_llm=True,
-                        details=macro_res
-                    )
+            macro_res = self.manager.trigger_action(clean_macro)
+            status = macro_res.get("status")
+            if status == "executed":
+                ack_msg = macro_res.get("ack") or f"Executed: {macro_res.get('action')}"
+                return GameInterceptionResult(
+                    handled=True,
+                    action_type="fast_path_macro",
+                    user_message=f"⚡ [In-Game Macro] {ack_msg}",
+                    tts_message=macro_res.get("ack"),
+                    requires_context_reset=False,
+                    skip_llm=True,
+                    details=macro_res
+                )
+            elif status == "condition_skipped":
+                skip_msg = macro_res.get("ack") or f"Skipped: {macro_res.get('action')}"
+                return GameInterceptionResult(
+                    handled=True,
+                    action_type="fast_path_macro",
+                    user_message=f"⚡ [In-Game Macro] {skip_msg}",
+                    tts_message=skip_msg,
+                    requires_context_reset=False,
+                    skip_llm=True,
+                    details=macro_res
+                )
 
         return GameInterceptionResult(handled=False)
 
@@ -330,8 +341,8 @@ class GameEngine:
             f"   - Record discoveries with `record_copilot_observation` and update player notes with `update_game_scratchpad`.\n"
             f"4. AUXILIARY CONSOLES & COMPANION FLIGHT-DECK TOOLS:\n"
             f"   - You have direct access to auxiliary displays and companion utilities: `launch_application`, `navigate_browser`, `move_window_to_monitor`, `focus_window`, `close_window`.\n"
-            f"   - Treat companion apps (e.g. Inara market uplinks, EDCoPilot, material managers, interactive maps, database terminals) as in-universe auxiliary flight-deck consoles, cockpit MFDs, or tactical datalinks.\n"
-            f"   - If the player asks to open or move a companion tool or database to a secondary monitor (e.g., 'Open Inara in Chrome on Monitor 2'), do so immediately using `navigate_browser` or `launch_application` with the target `monitor` parameter, while keeping your voice and persona fully in-character.\n"
+            f"   - Treat companion apps, tactical maps, database terminals, and market consoles as in-universe auxiliary flight-deck consoles, cockpit MFDs, or tactical datalinks.\n"
+            f"   - If the player asks to open or move a companion tool or database to a secondary monitor (e.g., 'Open companion map in Chrome on Monitor 2'), do so immediately using `navigate_browser` or `launch_application` with the target `monitor` parameter, while keeping your voice and persona fully in-character.\n"
             f"   - Game Shield: You are strictly prevented from closing the active game itself, but you may manage auxiliary windows and companion consoles.\n"
             f"================================================================================\n"
         )
@@ -349,8 +360,6 @@ class GameEngine:
             extra_tools = prof.get("extra_tools", [])
             if isinstance(extra_tools, (list, set, tuple)):
                 tools.update(extra_tools)
-            if active_id == "elite_dangerous":
-                tools.add("lookup_inara_market")
         return tools
 
     def filter_tools(self, declarations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
