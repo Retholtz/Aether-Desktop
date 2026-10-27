@@ -344,6 +344,49 @@ function renderOAuthStatus(statusMap) {
   if (iEmail && iInfo.account_email && !iEmail.value) iEmail.value = iInfo.account_email;
   if (iHost && iInfo.imap_host && !iHost.value) iHost.value = iInfo.imap_host;
   if (sHost && iInfo.smtp_host && !sHost.value) sHost.value = iInfo.smtp_host;
+
+  // Steam (Gaming & Presence) Status
+  const steamInfo = statusMap.steam || {};
+  const steamConnected = Boolean(steamInfo.connected);
+  const steamBadge = document.getElementById('oauthSteamStatusBadge');
+  const steamLabel = document.getElementById('oauthSteamAccountLabel');
+  const steamConnectBtn = document.getElementById('btnConnectSteam');
+  const steamDisconnectBtn = document.getElementById('btnDisconnectSteam');
+  const steamKeyInput = document.getElementById('steamApiKeyInput');
+  const steamIdInput = document.getElementById('steamId64Input');
+  const steamAutoDetect = document.getElementById('steamAutoDetectAppId');
+
+  if (steamBadge) {
+    steamBadge.textContent = steamConnected ? 'CONNECTED' : 'DISCONNECTED';
+    steamBadge.className = `step-status-pill ${steamConnected ? 'done' : 'pending'}`;
+  }
+  if (steamLabel) {
+    if (steamConnected) {
+      const name = steamInfo.persona_name
+        ? `${steamInfo.persona_name} (SteamID: ${steamInfo.steam_id64 || ''})`
+        : (steamInfo.steam_id64 ? `SteamID: ${steamInfo.steam_id64}` : 'Connected Account');
+      steamLabel.textContent = `Connected as ${name}`;
+      steamLabel.style.color = '#34d399';
+    } else {
+      steamLabel.textContent = 'Not connected';
+      steamLabel.style.color = '#94a3b8';
+    }
+  }
+  if (steamConnectBtn) {
+    steamConnectBtn.textContent = steamConnected ? 'Configure Steam' : 'Sign into Steam';
+  }
+  if (steamDisconnectBtn) {
+    steamDisconnectBtn.style.display = steamConnected ? 'inline-block' : 'none';
+  }
+  if (steamKeyInput && steamInfo.has_api_key && (!steamKeyInput.value || steamKeyInput.value === '••••••••')) {
+    steamKeyInput.value = steamInfo.api_key_masked || '••••••••';
+  }
+  if (steamIdInput && steamInfo.steam_id64 && !steamIdInput.value) {
+    steamIdInput.value = steamInfo.steam_id64;
+  }
+  if (steamAutoDetect && steamInfo.auto_detect_active_appid !== undefined) {
+    steamAutoDetect.checked = Boolean(steamInfo.auto_detect_active_appid);
+  }
 }
 
 async function loadOAuthStatusUI() {
@@ -480,6 +523,83 @@ function wireOAuthAccountButtons() {
     if (res && res.success) {
       renderOAuthStatus(res.status);
       showOAuthFeedback('Disconnected IMAP account.');
+    }
+  });
+
+  // Steam (Gaming & Presence) Event Handlers
+  const showSteamFeedback = (msg, isErr = false) => {
+    const el = document.getElementById('steamFeedbackBanner');
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.color = isErr ? '#f87171' : '#38bdf8';
+    el.textContent = msg;
+    setTimeout(() => { if (el) el.style.display = 'none'; }, 6000);
+  };
+
+  bindOnce('btnConnectSteam', () => {
+    const drawer = document.getElementById('steamConfigDrawer');
+    if (!drawer) return;
+    const isClosed = drawer.style.display === 'none' || !drawer.style.display;
+    drawer.style.display = isClosed ? 'block' : 'none';
+    if (isClosed) {
+      const keyInput = document.getElementById('steamApiKeyInput');
+      if (keyInput && (!keyInput.value || keyInput.value.includes('•'))) {
+        keyInput.focus();
+      }
+    }
+  });
+
+  bindOnce('btnCancelSteamConfig', () => {
+    const drawer = document.getElementById('steamConfigDrawer');
+    if (drawer) drawer.style.display = 'none';
+  });
+
+  bindOnce('btnSaveSteamConfig', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_steam_config) return;
+    const apiKey = (document.getElementById('steamApiKeyInput')?.value || '').trim();
+    const steamId = (document.getElementById('steamId64Input')?.value || '').trim();
+    const autoDetect = Boolean(document.getElementById('steamAutoDetectAppId')?.checked);
+
+    if (!apiKey && !steamId) {
+      showSteamFeedback('Please provide a Steam Web API Key and SteamID64.', true);
+      return;
+    }
+
+    const saveBtn = document.getElementById('btnSaveSteamConfig');
+    if (saveBtn) saveBtn.textContent = 'Connecting...';
+
+    try {
+      const res = await window.pywebview.api.save_steam_config(apiKey, steamId, autoDetect);
+      if (res && res.connected) {
+        renderOAuthStatus({ steam: res });
+        const drawer = document.getElementById('steamConfigDrawer');
+        if (drawer) drawer.style.display = 'none';
+        const msg = res.persona_name
+          ? `Connected as ${res.persona_name} (SteamID: ${res.steam_id64})!`
+          : 'Steam credentials saved and connected successfully!';
+        showSteamFeedback(msg);
+      } else {
+        showSteamFeedback(res?.error || 'Could not verify Steam credentials.', true);
+      }
+    } catch (e) {
+      showSteamFeedback(`Error saving Steam config: ${e}`, true);
+    } finally {
+      if (saveBtn) saveBtn.textContent = 'Save & Connect Steam';
+    }
+  });
+
+  bindOnce('btnDisconnectSteam', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.disconnect_steam) return;
+    try {
+      const res = await window.pywebview.api.disconnect_steam();
+      renderOAuthStatus({ steam: res });
+      const keyInput = document.getElementById('steamApiKeyInput');
+      const idInput = document.getElementById('steamId64Input');
+      if (keyInput) keyInput.value = '';
+      if (idInput) idInput.value = '';
+      showSteamFeedback('Disconnected Steam account.');
+    } catch (e) {
+      showSteamFeedback(`Error disconnecting Steam: ${e}`, true);
     }
   });
 }

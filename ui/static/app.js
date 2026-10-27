@@ -144,6 +144,9 @@ window.aetherUI = {
             this.loadUserPreferences();
             this.loadUserFacts();
             this.loadDictionaryTerms();
+            if (typeof loadOAuthStatusUI === "function") {
+              loadOAuthStatusUI();
+            }
           } else if (tabKey === "chats" || tabKey === "stored") {
             targetPane.focus();
             this.loadStoredSessions();
@@ -2044,6 +2047,10 @@ window.aetherUI = {
     } else if (type === "oauth_status_updated") {
       if (typeof window.renderOAuthStatus === "function") {
         window.renderOAuthStatus(data);
+      }
+    } else if (type === "steam_status_changed") {
+      if (typeof window.renderOAuthStatus === "function") {
+        window.renderOAuthStatus({ steam: data });
       }
     } else if (type === "mic_status") {
       this.isPttActive = !!data.ptt_active;

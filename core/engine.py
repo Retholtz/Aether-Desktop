@@ -38,6 +38,8 @@ from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 from core.game_engine import GameEngine
 from core.game_manager import GameManager
 from tools.game_tools import register_game_tools
+from core.steam_service import SteamService
+from tools.steam_tools import register_steam_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -524,6 +526,27 @@ class AetherEngine:
         from core.program_manager import ProgramManager
         self.program_mgr = ProgramManager()
         self.game_engine.start(foreground_interval=2.0)
+
+        # Steam Web API Integration & Credentials
+        from core.config import load_settings
+        self.settings = load_settings()
+        if callable(self.config_getter):
+            try:
+                cfg = self.config_getter() or {}
+                if "steam_api_key" in cfg:
+                    self.settings["steam_api_key"] = cfg["steam_api_key"]
+                if "steam_id64" in cfg:
+                    self.settings["steam_id64"] = cfg["steam_id64"]
+                if "integrations" in cfg and "steam" in cfg["integrations"]:
+                    self.settings.setdefault("integrations", {})["steam"] = cfg["integrations"]["steam"]
+            except Exception:
+                pass
+
+        self.steam_service = SteamService(
+            api_key=self.settings.get("steam_api_key"),
+            steam_id64=self.settings.get("steam_id64")
+        )
+        register_steam_tools(self.dispatcher, self.steam_service, game_engine=self.game_engine)
 
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
@@ -4917,6 +4940,13 @@ class AetherEngine:
                 self.game_mgr.close()
             except Exception as e:
                 logger.warning(f"[STOP] Game manager close warning: {e}")
+
+        if hasattr(self, "steam_service") and self.steam_service:
+            try:
+                if hasattr(self, "loop") and self.loop and self.loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.steam_service.close(), self.loop)
+            except Exception as e:
+                logger.warning(f"[STOP] Steam service close warning: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 

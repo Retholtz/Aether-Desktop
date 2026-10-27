@@ -1,3 +1,4 @@
+aiohttp==3.14.5
 annotated-types==0.8.0
 anyio==4.15.1
 bottle==0.13.4

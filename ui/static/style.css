@@ -1378,7 +1378,8 @@ label {
   border: 1px solid rgba(232, 17, 35, 0.4);
 }
 
-.step-status-pill.completed {
+.step-status-pill.completed,
+.step-status-pill.done {
   background: rgba(52, 199, 89, 0.15);
   color: #34c759;
   border: 1px solid rgba(52, 199, 89, 0.4);

@@ -499,6 +499,10 @@ class GuiBridge:
         except Exception as err:
             logger.warning(f"[BRIDGE DISPATCH ERROR] {err}")
 
+    def notify(self, event_type: str, data: dict):
+        """Dispatches an event payload to attached pywebview windows."""
+        self._on_engine_event(event_type, data)
+
     # =========================================================================
     # Methods exposed to JavaScript (via window.pywebview.api)
     # =========================================================================
@@ -2219,8 +2223,10 @@ class GuiBridge:
     # =========================================================================
 
     def get_oauth_status(self) -> dict:
-        """Returns safe connection status for Google, Microsoft (Outlook/Hotmail), and IMAP accounts."""
-        return self._oauth_mgr.get_status()
+        """Returns safe connection status for Google, Microsoft (Outlook/Hotmail), IMAP, and Steam accounts."""
+        res = self._oauth_mgr.get_status()
+        res["steam"] = self.get_steam_status()
+        return res
 
     def save_oauth_client_config(self, provider: str, config_data: Optional[dict] = None) -> dict:
         """Saves OAuth 2.0 Client ID / Secret or IMAP/SMTP credentials to the DPAPI Token Vault."""
@@ -2240,6 +2246,109 @@ class GuiBridge:
     def confirm_pending_email_send(self, draft_id: str, provider: str = "auto") -> dict:
         """Confirms and dispatches a pending email draft from the UI."""
         return self._oauth_mgr.send_draft(draft_id=str(draft_id), provider=str(provider), user_confirmed=True)
+
+    # =========================================================================
+    # Steam Web API Integration RPC
+    # =========================================================================
+
+    def get_steam_status(self) -> dict:
+        """Returns the current connection and configuration status of Steam Web API."""
+        from core.config import load_settings
+        settings = load_settings()
+        steam_cfg = settings.get("integrations", {}).get("steam", {})
+        api_key = steam_cfg.get("api_key") or os.getenv("STEAM_API_KEY", "")
+        steam_id64 = steam_cfg.get("steam_id64") or os.getenv("STEAM_ID64", "")
+        enabled = steam_cfg.get("enabled", True)
+        auto_detect = steam_cfg.get("auto_detect_active_appid", True)
+        persona_name = steam_cfg.get("persona_name", "")
+
+        connected = bool(api_key and steam_id64)
+        masked_key = ""
+        if api_key:
+            masked_key = api_key[:4] + "••••••••" + api_key[-4:] if len(api_key) > 8 else "••••••••"
+
+        return {
+            "success": True,
+            "connected": connected,
+            "enabled": enabled,
+            "api_key_masked": masked_key,
+            "has_api_key": bool(api_key),
+            "steam_id64": steam_id64,
+            "auto_detect_active_appid": auto_detect,
+            "persona_name": persona_name,
+            "account_label": f"Connected as {persona_name} (SteamID: {steam_id64})" if persona_name else (f"SteamID: {steam_id64}" if steam_id64 else "Not connected")
+        }
+
+    def save_steam_config(self, api_key: str = "", steam_id64: str = "", auto_detect: bool = True) -> dict:
+        """Saves Steam API credentials, fetches persona name, and updates the running SteamService."""
+        from core.config import load_settings, save_settings
+        settings = load_settings()
+        steam_cfg = settings.setdefault("integrations", {}).setdefault("steam", {})
+
+        clean_key = str(api_key or "").strip()
+        clean_id = str(steam_id64 or "").strip()
+
+        # If user left the masked key unchanged, keep existing key
+        if "••••" in clean_key:
+            clean_key = steam_cfg.get("api_key") or os.getenv("STEAM_API_KEY", "")
+
+        # Try to resolve Steam persona name if credentials provided
+        persona_name = steam_cfg.get("persona_name", "")
+        if clean_key and clean_id:
+            try:
+                import urllib.request
+                import json
+                url = f"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key={clean_key}&steamids={clean_id}"
+                req = urllib.request.Request(url, headers={"User-Agent": "Aether-Desktop"})
+                with urllib.request.urlopen(req, timeout=4.0) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        players = data.get("response", {}).get("players", [])
+                        if players:
+                            persona_name = players[0].get("personaname", "")
+            except Exception as e:
+                logger.warning(f"[STEAM] Could not verify persona name: {e}")
+
+        steam_cfg["enabled"] = True
+        steam_cfg["api_key"] = clean_key
+        steam_cfg["steam_id64"] = clean_id
+        steam_cfg["auto_detect_active_appid"] = bool(auto_detect)
+        if persona_name:
+            steam_cfg["persona_name"] = persona_name
+
+        settings["steam_api_key"] = clean_key
+        settings["steam_id64"] = clean_id
+
+        save_settings(settings)
+
+        # Update running engine steam service if available
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "steam_service"):
+            self._engine.steam_service.configure(api_key=clean_key, steam_id64=clean_id)
+
+        status = self.get_steam_status()
+        self.notify("steam_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        return status
+
+    def disconnect_steam(self) -> dict:
+        """Disconnects and clears Steam Web API credentials."""
+        from core.config import load_settings, save_settings
+        settings = load_settings()
+        steam_cfg = settings.setdefault("integrations", {}).setdefault("steam", {})
+        steam_cfg["api_key"] = ""
+        steam_cfg["steam_id64"] = ""
+        steam_cfg["persona_name"] = ""
+        settings["steam_api_key"] = ""
+        settings["steam_id64"] = ""
+        save_settings(settings)
+
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "steam_service"):
+            self._engine.steam_service.configure(api_key="", steam_id64="")
+
+        status = self.get_steam_status()
+        self.notify("steam_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        return status
 
 
 GUIBridge = GuiBridge

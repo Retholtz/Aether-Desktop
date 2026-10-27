@@ -1262,12 +1262,22 @@ class ToolDispatcher:
             return fn
         return decorator
 
-    def register_tool(self, name: str, declaration: dict, handler: Callable):
+    def register_tool(self, name: str, declaration: Optional[dict] = None, handler: Optional[Callable] = None, **kwargs):
         """Registers a custom tool declaration and handler directly onto this dispatcher."""
+        actual_handler = handler or kwargs.get("handler")
+        if declaration is None:
+            desc = kwargs.get("description") or (actual_handler.__doc__ if actual_handler else "") or ""
+            params = kwargs.get("parameters") or {"type": "OBJECT", "properties": {}, "required": []}
+            declaration = {
+                "name": name,
+                "description": desc.strip(),
+                "parameters": params
+            }
         self._custom_declarations[name] = declaration
-        self._custom_handlers[name] = handler
+        self._custom_handlers[name] = actual_handler
         _CUSTOM_TOOL_DECLARATIONS[name] = declaration
-        _CUSTOM_TOOL_HANDLERS[name] = handler
+        if actual_handler:
+            _CUSTOM_TOOL_HANDLERS[name] = actual_handler
 
     def _refresh_skill_index(self):
         """Loads and indexes promoted skills from skills_catalog.json."""
