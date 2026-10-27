@@ -105,6 +105,20 @@ class TestSteamService(unittest.TestCase):
         achievements = asyncio.run(unconfigured.get_player_achievements(359320))
         self.assertIsNone(achievements)
 
+    def test_resolve_appid_by_title_from_owned(self):
+        import asyncio
+        with patch.object(self.service, "get_owned_games", new_callable=AsyncMock) as mock_owned:
+            mock_owned.return_value = [
+                {"appid": 359320, "name": "Elite Dangerous"},
+                {"appid": 526870, "name": "Satisfactory"}
+            ]
+            # Exact match
+            appid = asyncio.run(self.service.resolve_appid_by_title("Elite Dangerous"))
+            self.assertEqual(appid, 359320)
+            # Case-insensitive substring match
+            appid2 = asyncio.run(self.service.resolve_appid_by_title("satisfactory"))
+            self.assertEqual(appid2, 526870)
+
     def test_game_engine_core_tools_contain_steam_tools(self):
         self.assertIn("get_steam_friends_activity", GameEngine.CORE_GAME_TOOL_NAMES)
         self.assertIn("get_steam_friend_games", GameEngine.CORE_GAME_TOOL_NAMES)
@@ -155,6 +169,21 @@ class TestSteamService(unittest.TestCase):
         mock_service.get_recent_news.assert_called_with(359320, count=2)
         self.assertEqual(res["status"], "success")
         self.assertEqual(res["appid"], 359320)
+
+        # Call patch notes with game title -> should resolve via resolve_appid_by_title
+        mock_service.resolve_appid_by_title = AsyncMock(return_value=3321460)
+        res_title = asyncio.run(tools["get_steam_patch_notes"](game="Crimson Desert"))
+        mock_service.resolve_appid_by_title.assert_called_with("Crimson Desert")
+        mock_service.get_recent_news.assert_called_with(3321460, count=2)
+        self.assertEqual(res_title["status"], "success")
+        self.assertEqual(res_title["appid"], 3321460)
+
+        # Call patch notes when game has no updates -> should return friendly success message
+        mock_service.get_recent_news = AsyncMock(return_value=[])
+        res_empty = asyncio.run(tools["get_steam_patch_notes"](appid=2373000))
+        self.assertEqual(res_empty["status"], "success")
+        self.assertEqual(res_empty["updates"], [])
+        self.assertIn("No recent patch notes", res_empty["message"])
 
         # Call get_steam_friend_games for Rainmaker -> should return Rainmaker's owned games
         fg_res = asyncio.run(tools["get_steam_friend_games"](friend="Rainmaker"))

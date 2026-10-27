@@ -515,3 +515,50 @@ class SteamService:
             logger.error(f"[STEAM] News error for app {appid}: {e}")
             return []
 
+    # --- 5. Game Title & Store AppID Resolution ---
+    async def resolve_appid_by_title(self, title: str) -> Optional[int]:
+        """Resolves a game title to a Steam AppID using user's owned games and Steam Store Search."""
+        if not title:
+            return None
+
+        clean_title = str(title).strip()
+        if not clean_title:
+            return None
+
+        # 1. Check if user already owns this game (quick local check against owned library)
+        try:
+            if self.is_configured():
+                owned = await self.get_owned_games(self.steam_id64)
+                for g in owned:
+                    if g.get("name", "").strip().lower() == clean_title.lower():
+                        return int(g["appid"])
+                for g in owned:
+                    if clean_title.lower() in g.get("name", "").strip().lower():
+                        return int(g["appid"])
+        except Exception as e:
+            logger.debug(f"[STEAM] Error checking owned games for title '{clean_title}': {e}")
+
+        # 2. Query Valve Store Search (public unauthenticated API)
+        session = await self._get_session()
+        url = "https://store.steampowered.com/api/storesearch/"
+        params = {
+            "term": clean_title,
+            "l": "english",
+            "cc": "US"
+        }
+        try:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    items = data.get("items", [])
+                    if items:
+                        for it in items:
+                            if it.get("name", "").strip().lower() == clean_title.lower():
+                                return int(it.get("id"))
+                        return int(items[0].get("id"))
+        except Exception as e:
+            logger.warning(f"[STEAM] Store search error for '{clean_title}': {e}")
+
+        return None
+
+

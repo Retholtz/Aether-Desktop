@@ -9,14 +9,14 @@ from core.steam_service import SteamService
 def register_steam_tools(dispatcher, steam_service: SteamService, game_engine=None):
     """Registers Steam tools onto Aether's ToolDispatcher."""
 
-    def _resolve_active_appid(explicit_appid: Optional[int] = None) -> Optional[int]:
+    def _resolve_active_appid(explicit_appid: Optional[Any] = None) -> Optional[int]:
         if explicit_appid:
             try:
                 val = int(explicit_appid)
                 if val > 0:
                     return val
             except (ValueError, TypeError):
-                return explicit_appid
+                pass
         if game_engine:
             mgr = getattr(game_engine, "manager", game_engine)
             data = getattr(mgr, "data", {})
@@ -29,7 +29,64 @@ def register_steam_tools(dispatcher, steam_service: SteamService, game_engine=No
                         ival = int(val)
                         return ival if ival > 0 else None
                     except (ValueError, TypeError):
-                        return val
+                        pass
+        return None
+
+    async def _resolve_game_appid(game: Optional[str] = None, appid: Optional[Any] = None) -> Optional[int]:
+        # 1. Direct explicit appid check (if numeric integer or numeric string)
+        if appid is not None:
+            try:
+                val = int(appid)
+                if val > 0:
+                    return val
+            except (ValueError, TypeError):
+                # Non-numeric string passed into appid (e.g. appid="Crimson Desert")
+                if not game and isinstance(appid, str) and appid.strip():
+                    game = appid.strip()
+
+        # 2. If a game title/name was passed
+        if game and isinstance(game, str) and game.strip():
+            # Check if active profile matches this title
+            if game_engine:
+                mgr = getattr(game_engine, "manager", game_engine)
+                data = getattr(mgr, "data", {})
+                active_id = data.get("active_profile") if isinstance(data, dict) else None
+                if active_id and hasattr(mgr, "get_profile"):
+                    prof = mgr.get_profile(active_id) or {}
+                    disp = prof.get("display_name", "")
+                    if disp and (disp.lower() == game.strip().lower() or game.strip().lower() in disp.lower()):
+                        val = prof.get("steam_appid")
+                        if val:
+                            try:
+                                ival = int(val)
+                                if ival > 0:
+                                    return ival
+                            except (ValueError, TypeError):
+                                pass
+
+            # Resolve using SteamService (owned games or Store Search)
+            resolved = await steam_service.resolve_appid_by_title(game)
+            if resolved:
+                return resolved
+
+        # 3. Fallback to active game profile in game_engine
+        active_appid = _resolve_active_appid(None)
+        if active_appid:
+            return active_appid
+
+        # 4. If active profile has no numeric steam_appid configured yet, try resolving its display_name
+        if game_engine:
+            mgr = getattr(game_engine, "manager", game_engine)
+            data = getattr(mgr, "data", {})
+            active_id = data.get("active_profile") if isinstance(data, dict) else None
+            if active_id and hasattr(mgr, "get_profile"):
+                prof = mgr.get_profile(active_id) or {}
+                disp = prof.get("display_name") or active_id.replace("_", " ")
+                if disp:
+                    resolved = await steam_service.resolve_appid_by_title(disp)
+                    if resolved:
+                        return resolved
+
         return None
 
     # 1. Friends presence tool
@@ -117,7 +174,7 @@ def register_steam_tools(dispatcher, steam_service: SteamService, game_engine=No
         }
 
     # 4. Achievement tracker tool
-    async def get_steam_game_achievements(appid: Optional[int] = None, friend: Optional[str] = None) -> Dict[str, Any]:
+    async def get_steam_game_achievements(game: Optional[str] = None, appid: Optional[Any] = None, friend: Optional[str] = None) -> Dict[str, Any]:
         """Returns player achievement completion stats for the current or specified game, for yourself or for a Steam friend."""
         target_steamid = None
         target_name = "You"
@@ -127,13 +184,13 @@ def register_steam_tools(dispatcher, steam_service: SteamService, game_engine=No
                 return {"status": "error", "message": f"Could not find friend '{friend}'."}
             target_steamid = friend_obj.steamid
             target_name = friend_obj.persona_name
-            if not appid and friend_obj.game_id:
+            if not appid and not game and friend_obj.game_id:
                 try:
                     appid = int(friend_obj.game_id)
                 except (ValueError, TypeError):
                     pass
 
-        target_appid = _resolve_active_appid(appid)
+        target_appid = await _resolve_game_appid(game=game, appid=appid)
         if not target_appid:
             return {"status": "error", "message": "No Steam AppID specified and no active Steam game detected."}
 
@@ -156,19 +213,27 @@ def register_steam_tools(dispatcher, steam_service: SteamService, game_engine=No
         }
 
     # 5. Patch notes & news tool
-    async def get_steam_patch_notes(appid: Optional[int] = None, count: int = 2) -> Dict[str, Any]:
+    async def get_steam_patch_notes(game: Optional[str] = None, appid: Optional[Any] = None, count: int = 2) -> Dict[str, Any]:
         """Returns recent patch notes and updates for the active or specified game."""
-        target_appid = _resolve_active_appid(appid)
+        target_appid = await _resolve_game_appid(game=game, appid=appid)
         if not target_appid:
-            return {"status": "error", "message": "No AppID specified and no active Steam game detected."}
+            target_desc = f"'{game}'" if game else "active game"
+            return {"status": "error", "message": f"Could not resolve Steam AppID for {target_desc}. Please specify a valid Steam game name or AppID."}
 
         news = await steam_service.get_recent_news(target_appid, count=count)
         if not news:
-            return {"status": "error", "message": f"No recent patch notes found for AppID {target_appid}."}
+            return {
+                "status": "success",
+                "appid": target_appid,
+                "game": game or "Active Game",
+                "updates": [],
+                "message": f"No recent patch notes or news found on Steam for AppID {target_appid}."
+            }
 
         return {
             "status": "success",
             "appid": target_appid,
+            "game": game or "Active Game",
             "updates": news
         }
 
@@ -228,11 +293,12 @@ def register_steam_tools(dispatcher, steam_service: SteamService, game_engine=No
 
     _safe_register(
         name="get_steam_game_achievements",
-        description="Gets achievement progress for the active game or specified Steam AppID, either for yourself or for a specified Steam friend.",
+        description="Gets achievement progress for the active game or specified game name/Steam AppID, either for yourself or for a specified Steam friend.",
         parameters={
             "type": "object",
             "properties": {
-                "appid": {"type": "integer", "description": "Optional Steam AppID. Inferred automatically if omitted."},
+                "game": {"type": "string", "description": "Optional game title or search query (e.g. 'Crimson Desert', 'Satisfactory', 'Elite Dangerous'). Inferred automatically if omitted."},
+                "appid": {"type": "integer", "description": "Optional Steam AppID integer. Inferred automatically if omitted."},
                 "friend": {"type": "string", "description": "Optional friend name or SteamID to check their achievements instead of yours."}
             }
         },
@@ -241,11 +307,12 @@ def register_steam_tools(dispatcher, steam_service: SteamService, game_engine=No
 
     _safe_register(
         name="get_steam_patch_notes",
-        description="Retrieves the latest update notes or patch changelogs for the active game or specified Steam AppID.",
+        description="Retrieves the latest update notes or patch changelogs for the active game or specified game name/Steam AppID.",
         parameters={
             "type": "object",
             "properties": {
-                "appid": {"type": "integer", "description": "Optional Steam AppID. Inferred automatically if omitted."},
+                "game": {"type": "string", "description": "Optional game title or search query (e.g. 'Crimson Desert', 'Satisfactory', 'Elite Dangerous'). Inferred automatically if omitted."},
+                "appid": {"type": "integer", "description": "Optional Steam AppID integer. Inferred automatically if omitted."},
                 "count": {"type": "integer", "description": "Number of news items to fetch (default 2)."}
             }
         },
