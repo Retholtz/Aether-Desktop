@@ -157,13 +157,18 @@ window.aetherUI = {
             if (typeof loadProgramsUI === "function") {
               loadProgramsUI();
             }
+          } else if (tabKey === "accounts") {
+            targetPane.focus();
+            if (typeof loadOAuthStatusUI === "function") {
+              loadOAuthStatusUI();
+            }
           }
         }
       });
     });
 
-    // Smooth wheel scrolling for Settings, User Preferences, Stored Chats, Games, and Programs tab panes
-    ["tab-settings", "tab-preferences", "tab-chats", "tab-games", "tab-programs"].forEach(paneId => {
+    // Smooth wheel scrolling for Settings, User Preferences, Stored Chats, Games, Programs, and Accounts tab panes
+    ["tab-settings", "tab-preferences", "tab-chats", "tab-games", "tab-programs", "tab-accounts"].forEach(paneId => {
       const pane = document.getElementById(paneId);
       if (pane) {
         pane.addEventListener("wheel", (e) => {

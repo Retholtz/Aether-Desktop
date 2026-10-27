@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aether Desktop</title>
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -22,28 +22,36 @@
       </div>
 
       <!-- Navigation Tabs -->
-      <nav class="hud-tabs app-nav">
-        <button type="button" class="hud-tab nav-btn active" data-tab="tab-chat" id="btn-tab-chat">
-          <span class="tab-icon icon">💬</span> CHATS
-        </button>
-        <button type="button" class="hud-tab nav-btn" data-tab="tab-games" id="btn-tab-games">
-          <span class="tab-icon icon">🎮</span> GAMES
-        </button>
-        <button type="button" class="hud-tab nav-btn" data-tab="tab-programs" id="btn-tab-programs">
-          <span class="tab-icon icon">💻</span> PROGRAMS
-        </button>
-        <button type="button" class="hud-tab nav-btn" data-tab="tab-settings" id="btn-tab-settings">
-          <span class="tab-icon icon">⚙️</span> SETTINGS
-        </button>
-        <button type="button" class="hud-tab nav-btn" data-tab="tab-preferences" id="btn-tab-preferences">
-          <span class="tab-icon icon">🧠</span> USER PREFERENCES
-        </button>
-        <button type="button" class="hud-tab nav-btn" data-tab="tab-stored" id="btn-tab-stored">
-          <span class="tab-icon icon">📁</span> STORED CHATS
-        </button>
-        <button type="button" class="hud-tab nav-btn" data-tab="tab-logs" id="btn-tab-logs">
-          <span class="tab-icon icon">📄</span> LOGS
-        </button>
+      <nav class="hud-tabs app-nav" aria-label="Main Navigation">
+        <div class="hud-tabs-row hud-tabs-primary">
+          <button type="button" class="hud-tab nav-btn active" data-tab="tab-chat" id="btn-tab-chat">
+            <span class="tab-icon icon">💬</span> CHATS
+          </button>
+          <button type="button" class="hud-tab nav-btn" data-tab="tab-stored" id="btn-tab-stored">
+            <span class="tab-icon icon">📁</span> STORED CHATS
+          </button>
+          <button type="button" class="hud-tab nav-btn" data-tab="tab-programs" id="btn-tab-programs">
+            <span class="tab-icon icon">💻</span> PROGRAMS
+          </button>
+          <button type="button" class="hud-tab nav-btn" data-tab="tab-games" id="btn-tab-games">
+            <span class="tab-icon icon">🎮</span> GAMES
+          </button>
+        </div>
+        <div class="hud-tabs-divider" role="separator"></div>
+        <div class="hud-tabs-row hud-tabs-secondary">
+          <button type="button" class="hud-tab nav-btn" data-tab="tab-settings" id="btn-tab-settings">
+            <span class="tab-icon icon">⚙️</span> SETTINGS
+          </button>
+          <button type="button" class="hud-tab nav-btn" data-tab="tab-preferences" id="btn-tab-preferences">
+            <span class="tab-icon icon">🧠</span> USER PREFERENCES
+          </button>
+          <button type="button" class="hud-tab nav-btn" data-tab="tab-accounts" id="btn-tab-accounts">
+            <span class="tab-icon icon">👤</span> USER ACCOUNTS
+          </button>
+          <button type="button" class="hud-tab nav-btn" data-tab="tab-logs" id="btn-tab-logs">
+            <span class="tab-icon icon">📄</span> LOGS
+          </button>
+        </div>
       </nav>
 
       <!-- Real-time Status Badge & Mic Meter -->
@@ -90,6 +98,131 @@
                 Assistant initialized. Click <strong class="text-accent" id="startHintText">START ASSISTANT</strong> below or speak into your microphone once connected.
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
           </div>
         </div>
       </section>
@@ -200,6 +333,131 @@
                 </table>
               </section>
 
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
               <!-- Hybrid Split Layout: Player Goals vs Co-Pilot Intel & Log -->
               <div class="game-companion-grid" style="margin-top: 20px;">
                 <!-- Left Side: Player Scratchpad & Goals -->
@@ -211,6 +469,131 @@
                   <p class="field-hint">Your personal notes and shopping lists. Say <em>"Aether, note down..."</em> or edit directly.</p>
                   <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints..."></textarea>
                 </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
 
                 <!-- Right Side: Co-Pilot Intel & Milestone Log -->
                 <section class="game-card copilot-card">
@@ -226,6 +609,131 @@
                     <!-- Populated dynamically -->
                   </div>
                 </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
               </div>
             </div>
 
@@ -341,6 +849,131 @@
                   </div>
                 </div>
               </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
             </div>
           </main>
         </div>
@@ -919,126 +1552,6 @@
             </div>
           </div>
 
-          <!-- CONNECTED ACCOUNTS (GMAIL / OUTLOOK / HOTMAIL / IMAP OAUTH 2.0) -->
-          <div class="settings-card hud-card" id="connectedAccountsCard">
-            <div class="settings-card-header card-header">
-              <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
-              <span class="card-tag">DPAPI VAULT</span>
-            </div>
-            <div class="card-body">
-              <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
-                Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
-              </p>
-
-              <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
-              <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-                <div>
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
-                    <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
-                  </div>
-                  <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
-                </div>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                  <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
-                  <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
-                </div>
-              </div>
-
-              <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
-              <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-                <div>
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
-                    <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
-                  </div>
-                  <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
-                </div>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                  <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
-                  <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
-                </div>
-              </div>
-
-              <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
-
-              <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
-              <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
-                <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
-                  ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
-                </summary>
-                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
-                  <p class="input-hint" style="margin: 0 0 12px 0;">
-                    Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
-                  </p>
-
-                  <!-- Developer Google OAuth Config -->
-                  <div class="form-grid" style="margin-bottom: 10px;">
-                    <div class="form-group">
-                      <label for="oauthGoogleClientId">Google OAuth Client ID</label>
-                      <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
-                    </div>
-                    <div class="form-group">
-                      <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
-                      <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
-                    </div>
-                  </div>
-                  <div style="margin-bottom: 16px;">
-                    <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
-                  </div>
-
-                  <!-- Developer Microsoft OAuth Config -->
-                  <div class="form-grid" style="margin-bottom: 10px;">
-                    <div class="form-group">
-                      <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
-                      <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
-                    </div>
-                    <div class="form-group">
-                      <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
-                      <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
-                    </div>
-                  </div>
-                  <div style="margin-bottom: 16px;">
-                    <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
-                  </div>
-
-                  <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
-                  <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                      <div>
-                        <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
-                        <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
-                      </div>
-                      <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
-                    </div>
-                    <div class="form-grid" style="margin-bottom: 10px;">
-                      <div class="form-group">
-                        <label for="oauthImapEmail">Email Address</label>
-                        <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
-                      </div>
-                      <div class="form-group">
-                        <label for="oauthImapPassword">App Password</label>
-                        <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
-                      </div>
-                      <div class="form-group">
-                        <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
-                        <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
-                      </div>
-                      <div class="form-group">
-                        <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
-                        <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
-                      </div>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                      <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
-                      <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
-                    </div>
-                  </div>
-                </div>
-              </details>
-            </div>
-          </div>
-
           <!-- APPLICATION & STARTUP BEHAVIOR -->
           <div class="settings-card hud-card">
             <div class="settings-card-header card-header">
@@ -1079,6 +1592,131 @@
             <button type="button" class="hud-btn-primary" id="saveSettingsBtn">SAVE ALL SETTINGS</button>
           </div>
 
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
       </section>
 
       <!-- ============================================================= -->
@@ -1413,6 +2051,256 @@
 
       </section>
 
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+          <!-- CONNECTED ACCOUNTS (GMAIL / OUTLOOK / HOTMAIL / IMAP OAUTH 2.0) -->
+          <div class="settings-card hud-card" id="connectedAccountsCard">
+            <div class="settings-card-header card-header">
+              <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+              <span class="card-tag">DPAPI VAULT</span>
+            </div>
+            <div class="card-body">
+              <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+                Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+              </p>
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+              <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+              <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                    <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                  <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+                </div>
+              </div>
+
+              <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+              <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                    <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                  <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+                </div>
+              </div>
+
+              <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+              <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+              <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+                <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                  ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+                </summary>
+                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <p class="input-hint" style="margin: 0 0 12px 0;">
+                    Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                  </p>
+
+                  <!-- Developer Google OAuth Config -->
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                      <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                      <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                    </div>
+                  </div>
+                  <div style="margin-bottom: 16px;">
+                    <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                  </div>
+
+                  <!-- Developer Microsoft OAuth Config -->
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                      <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                      <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                    </div>
+                  </div>
+                  <div style="margin-bottom: 16px;">
+                    <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                  </div>
+
+                  <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                  <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                      <div>
+                        <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                        <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                      </div>
+                      <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                    </div>
+                    <div class="form-grid" style="margin-bottom: 10px;">
+                      <div class="form-group">
+                        <label for="oauthImapEmail">Email Address</label>
+                        <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                      </div>
+                      <div class="form-group">
+                        <label for="oauthImapPassword">App Password</label>
+                        <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                      </div>
+                      <div class="form-group">
+                        <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                        <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                      </div>
+                      <div class="form-group">
+                        <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                        <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                      </div>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                      <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                      <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </div>
+      </section>
+
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
 
       <!-- ============================================================= -->
       <!-- TAB: STORED CHATS & MANIFEST BROWSER                         -->
@@ -1525,6 +2413,256 @@
               </div>
             </div>
           </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+        </div>
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
         </div>
       </section>
 
@@ -1548,6 +2686,131 @@
             </div>
           </div>
           <div id="logConsole" class="log-console"></div>
+        </div>
+      </section>
+
+      <!-- ============================================================= -->
+      <!-- TAB: USER ACCOUNTS                                            -->
+      <!-- ============================================================= -->
+      <section id="tab-accounts" class="tab-pane hidden" tabindex="0">
+        <!-- CONNECTED EMAIL & CALENDAR ACCOUNTS -->
+        <div class="settings-card hud-card" id="connectedAccountsCard">
+          <div class="settings-card-header card-header">
+            <h3 class="card-title">CONNECTED EMAIL &amp; CALENDAR ACCOUNTS</h3>
+            <span class="card-tag">DPAPI VAULT</span>
+          </div>
+          <div class="card-body">
+            <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+              Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+            </p>
+
+            <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                  <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthGoogleAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectGoogleOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Google</button>
+                <button type="button" id="btnDisconnectGoogleOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <!-- 2. Microsoft (Outlook, Hotmail, Live, Office 365) - 1-Click Sign In -->
+            <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="color: #e2e8f0; font-size: 0.94rem;">Microsoft (Outlook, Hotmail &amp; Live)</strong>
+                  <span id="oauthMicrosoftStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                </div>
+                <div id="oauthMicrosoftAccountLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Not connected</div>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="btnConnectMicrosoftOAuth" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Sign in with Microsoft (Outlook / Hotmail)</button>
+                <button type="button" id="btnDisconnectMicrosoftOAuth" class="hud-btn-ghost sm" style="display: none; color: #f87171;">Disconnect</button>
+              </div>
+            </div>
+
+            <div id="oauthFeedbackBanner" style="margin: 8px 0 12px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+
+            <!-- Tucked-away Developer Setup & Optional IMAP Toggle -->
+            <details id="oauthDeveloperSetupDrawer" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 8px; padding: 10px 14px; margin-top: 8px;">
+              <summary style="cursor: pointer; color: #94a3b8; font-size: 0.82rem; font-weight: 600; user-select: none;">
+                ⚙️ Developer Setup (OAuth Client IDs &amp; Optional IMAP / App Password)
+              </summary>
+              <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Configure the OAuth 2.0 Application Client IDs for Google Cloud (Desktop App) and Microsoft Entra (Mobile &amp; desktop application with <code>http://localhost</code> redirect), or connect a custom IMAP/App-Password account.
+                </p>
+
+                <!-- Developer Google OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthGoogleClientId">Google OAuth Client ID</label>
+                    <input type="text" id="oauthGoogleClientId" class="hud-input" placeholder="xxxx.apps.googleusercontent.com" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthGoogleClientSecret">Google Client Secret (Optional)</label>
+                    <input type="password" id="oauthGoogleClientSecret" class="hud-input" placeholder="Optional GOCSPX-..." />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveGoogleOAuth" class="hud-btn-secondary sm">SAVE GOOGLE CLIENT ID</button>
+                </div>
+
+                <!-- Developer Microsoft OAuth Config -->
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="oauthMicrosoftClientId">Microsoft Application (Client) ID</label>
+                    <input type="text" id="oauthMicrosoftClientId" class="hud-input" placeholder="00000000-0000-0000-0000-000000000000" />
+                  </div>
+                  <div class="form-group">
+                    <label for="oauthMicrosoftTenantId">Directory Tenant ID (Default: consumers)</label>
+                    <input type="text" id="oauthMicrosoftTenantId" class="hud-input" value="consumers" placeholder="consumers (or common)" />
+                  </div>
+                </div>
+                <div style="margin-bottom: 16px;">
+                  <button type="button" id="btnSaveMicrosoftOAuth" class="hud-btn-secondary sm">SAVE MICROSOFT CLIENT ID</button>
+                </div>
+
+                <!-- Optional Standard IMAP / SMTP (iCloud, Yahoo, Fastmail, App Password) -->
+                <div style="padding-top: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                      <strong style="color: #cbd5e1; font-size: 0.85rem;">Other Email / App Password (iCloud, Yahoo, Custom IMAP)</strong>
+                      <div id="oauthImapAccountLabel" style="color: #94a3b8; font-size: 0.78rem;">Not connected</div>
+                    </div>
+                    <span id="oauthImapStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
+                  </div>
+                  <div class="form-grid" style="margin-bottom: 10px;">
+                    <div class="form-group">
+                      <label for="oauthImapEmail">Email Address</label>
+                      <input type="email" id="oauthImapEmail" class="hud-input" placeholder="you@icloud.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapPassword">App Password</label>
+                      <input type="password" id="oauthImapPassword" class="hud-input" placeholder="App-specific password" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthImapHost">IMAP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthImapHost" class="hud-input" placeholder="Optional override (e.g. imap.mail.me.com)" />
+                    </div>
+                    <div class="form-group">
+                      <label for="oauthSmtpHost">SMTP Host (Auto-detected for Gmail/Outlook/iCloud/Yahoo)</label>
+                      <input type="text" id="oauthSmtpHost" class="hud-input" placeholder="Optional override (e.g. smtp.mail.me.com)" />
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button type="button" id="btnConnectImap" class="hud-btn-secondary sm">VERIFY &amp; CONNECT IMAP</button>
+                    <button type="button" id="btnDisconnectImap" class="hud-btn-ghost sm" style="display: none; color: #f87171;">DISCONNECT IMAP</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </div>
         </div>
       </section>
     </main>

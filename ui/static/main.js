@@ -38,5 +38,16 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
+
+    const accountsBtn = document.getElementById("btn-tab-accounts") ||
+                        document.querySelector('[data-tab="tab-accounts"]') ||
+                        document.querySelector('[data-tab="accounts"]');
+    if (accountsBtn && accountsBtn.dataset.tabWired !== "1") {
+        accountsBtn.addEventListener("click", () => {
+            if (typeof loadOAuthStatusUI === "function") {
+                loadOAuthStatusUI();
+            }
+        });
+    }
 });
 
