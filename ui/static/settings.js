@@ -400,6 +400,65 @@ function renderOAuthStatus(statusMap) {
     }
     pollInterval.disabled = !steamConnected;
   }
+
+  // Desktop Notifications Status (Discord, Slack, Teams, etc.)
+  const notifInfo = statusMap.desktop_notifications || {};
+  const notifBadge = document.getElementById('discordNotifStatusBadge');
+  const notifLabel = document.getElementById('discordNotifStatusLabel');
+  const notifEnabledChk = document.getElementById('chkDiscordNotifEnabled');
+  const notifVerbalChk = document.getElementById('chkDiscordNotifVerbal');
+  const notifPollInterval = document.getElementById('discordNotifPollInterval');
+  const notifTargetApps = document.getElementById('discordNotifTargetAppsInput');
+
+  if (notifBadge && notifInfo.enabled !== undefined) {
+    if (!notifInfo.supported) {
+      notifBadge.textContent = 'UNAVAILABLE';
+      notifBadge.className = 'step-status-pill pending';
+    } else if (notifInfo.enabled) {
+      notifBadge.textContent = notifInfo.running ? 'LISTENING' : 'ACTIVE';
+      notifBadge.className = 'step-status-pill done';
+    } else {
+      notifBadge.textContent = 'DISABLED';
+      notifBadge.className = 'step-status-pill pending';
+    }
+  }
+  if (notifLabel && notifInfo.status_label) {
+    notifLabel.textContent = notifInfo.status_label;
+    notifLabel.style.color = (notifInfo.enabled && notifInfo.supported) ? '#38bdf8' : '#94a3b8';
+  }
+  if (notifEnabledChk && notifInfo.enabled !== undefined) {
+    notifEnabledChk.checked = Boolean(notifInfo.enabled);
+  }
+  if (notifVerbalChk && notifInfo.verbal_announcement !== undefined) {
+    notifVerbalChk.checked = Boolean(notifInfo.verbal_announcement);
+  }
+  if (notifPollInterval && notifInfo.poll_interval_seconds !== undefined) {
+    notifPollInterval.value = String(notifInfo.poll_interval_seconds);
+  }
+  if (notifTargetApps && Array.isArray(notifInfo.target_apps) && notifInfo.target_apps.length > 0) {
+    notifTargetApps.value = notifInfo.target_apps.join(', ');
+  }
+
+  const notifIncludeWl = document.getElementById('chkDiscordIncludeWhitelist');
+  const notifIncludeWlDrawer = document.getElementById('chkDiscordIncludeWhitelistDrawer');
+  if (notifInfo.include_whitelist_apps !== undefined) {
+    if (notifIncludeWl) notifIncludeWl.checked = Boolean(notifInfo.include_whitelist_apps);
+    if (notifIncludeWlDrawer) notifIncludeWlDrawer.checked = Boolean(notifInfo.include_whitelist_apps);
+  }
+
+  const wlBadgeList = document.getElementById('discordWhitelistBadgeList');
+  if (wlBadgeList) {
+    const apps = notifInfo.whitelist_apps || [];
+    if (!apps.length) {
+      wlBadgeList.innerHTML = '<span style="color: #64748b; font-size: 0.75rem; font-style: italic;">No programs added to whitelist yet.</span>';
+    } else {
+      wlBadgeList.innerHTML = apps.map(app => `
+        <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.25); color: #38bdf8; font-size: 0.74rem;">
+          🛡️ ${app}
+        </span>
+      `).join('');
+    }
+  }
 }
 
 async function loadOAuthStatusUI() {
@@ -643,6 +702,124 @@ function wireOAuthAccountButtons() {
       showSteamFeedback('Disconnected Steam account.');
     } catch (e) {
       showSteamFeedback(`Error disconnecting Steam: ${e}`, true);
+    }
+  });
+
+  // Discord & Desktop Notifications Event Handlers
+  const showDiscordNotifFeedback = (msg, isErr = false) => {
+    const el = document.getElementById('discordNotifFeedbackBanner');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = isErr ? '#f87171' : '#38bdf8';
+    el.style.display = 'block';
+    setTimeout(() => { if (el) el.style.display = 'none'; }, 4000);
+  };
+
+  bindOnce('btnConfigureDiscordNotif', () => {
+    const drawer = document.getElementById('discordNotifConfigDrawer');
+    if (drawer) {
+      drawer.style.display = (drawer.style.display === 'none' || !drawer.style.display) ? 'block' : 'none';
+    }
+  });
+
+  bindOnce('btnCancelDiscordNotifConfig', () => {
+    const drawer = document.getElementById('discordNotifConfigDrawer');
+    if (drawer) drawer.style.display = 'none';
+  });
+
+  const saveDiscordNotifSettings = async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_desktop_notifications_config) return;
+    const enabled = Boolean(document.getElementById('chkDiscordNotifEnabled')?.checked);
+    const verbal = Boolean(document.getElementById('chkDiscordNotifVerbal')?.checked);
+    const includeWl = Boolean(document.getElementById('chkDiscordIncludeWhitelist')?.checked ?? document.getElementById('chkDiscordIncludeWhitelistDrawer')?.checked ?? true);
+    const pollInterval = parseFloat(document.getElementById('discordNotifPollInterval')?.value || '1.5') || 1.5;
+    const targetAppsStr = document.getElementById('discordNotifTargetAppsInput')?.value || 'Discord, Slack, Microsoft Teams, WhatsApp, Telegram';
+    const targetApps = targetAppsStr.split(',').map(s => s.trim()).filter(Boolean);
+
+    try {
+      const res = await window.pywebview.api.save_desktop_notifications_config(enabled, verbal, pollInterval, targetApps, includeWl);
+      renderOAuthStatus({ desktop_notifications: res });
+      showDiscordNotifFeedback('Desktop notification settings saved.');
+      const drawer = document.getElementById('discordNotifConfigDrawer');
+      if (drawer) drawer.style.display = 'none';
+    } catch (e) {
+      showDiscordNotifFeedback(`Error saving settings: ${e.message || e}`, true);
+    }
+  };
+
+  bindOnce('btnSaveDiscordNotifConfig', saveDiscordNotifSettings);
+
+  const chkNotifEn = document.getElementById('chkDiscordNotifEnabled');
+  if (chkNotifEn && !chkNotifEn.dataset.wired) {
+    chkNotifEn.dataset.wired = '1';
+    chkNotifEn.addEventListener('change', saveDiscordNotifSettings);
+  }
+
+  const chkNotifVerb = document.getElementById('chkDiscordNotifVerbal');
+  if (chkNotifVerb && !chkNotifVerb.dataset.wired) {
+    chkNotifVerb.dataset.wired = '1';
+    chkNotifVerb.addEventListener('change', saveDiscordNotifSettings);
+  }
+
+  const pollIntervalSel = document.getElementById('discordNotifPollInterval');
+  if (pollIntervalSel && !pollIntervalSel.dataset.wired) {
+    pollIntervalSel.dataset.wired = '1';
+    pollIntervalSel.addEventListener('change', saveDiscordNotifSettings);
+  }
+
+  const syncWlCheckboxes = (sourceId, targetId) => {
+    const src = document.getElementById(sourceId);
+    const tgt = document.getElementById(targetId);
+    if (src && !src.dataset.wired) {
+      src.dataset.wired = '1';
+      src.addEventListener('change', () => {
+        if (tgt) tgt.checked = src.checked;
+        saveDiscordNotifSettings();
+      });
+    }
+  };
+  syncWlCheckboxes('chkDiscordIncludeWhitelist', 'chkDiscordIncludeWhitelistDrawer');
+  syncWlCheckboxes('chkDiscordIncludeWhitelistDrawer', 'chkDiscordIncludeWhitelist');
+
+  bindOnce('btnCheckRecentDiscordNotifs', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_recent_desktop_notifications) return;
+    const container = document.getElementById('discordRecentNotifsContainer');
+    const listEl = document.getElementById('discordRecentNotifsList');
+    if (!container || !listEl) return;
+
+    try {
+      const res = await window.pywebview.api.get_recent_desktop_notifications(null, 10);
+      container.style.display = 'block';
+      const items = res.notifications || [];
+      if (!items.length) {
+        listEl.innerHTML = '<div style="color: #94a3b8; font-size: 0.8rem; font-style: italic;">No recent notifications recorded.</div>';
+      } else {
+        listEl.innerHTML = items.map(n => `
+          <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.15); border-radius: 6px; padding: 8px 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+              <span style="color: #38bdf8; font-weight: 600; font-size: 0.8rem;">[${n.app_name}] ${n.title || ''}</span>
+              <span style="color: #64748b; font-size: 0.72rem;">${n.timestamp ? new Date(n.timestamp).toLocaleTimeString() : ''}</span>
+            </div>
+            <div style="color: #cbd5e1; font-size: 0.78rem; word-break: break-word;">${n.body || ''}</div>
+          </div>
+        `).join('');
+      }
+    } catch (e) {
+      showDiscordNotifFeedback(`Could not fetch notifications: ${e.message || e}`, true);
+    }
+  });
+
+  bindOnce('btnClearDiscordNotifs', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.clear_desktop_notifications) return;
+    try {
+      await window.pywebview.api.clear_desktop_notifications();
+      const listEl = document.getElementById('discordRecentNotifsList');
+      if (listEl) {
+        listEl.innerHTML = '<div style="color: #94a3b8; font-size: 0.8rem; font-style: italic;">Notification log cleared.</div>';
+      }
+      showDiscordNotifFeedback('Cleared recent notification history.');
+    } catch (e) {
+      showDiscordNotifFeedback(`Error clearing log: ${e.message || e}`, true);
     }
   });
 }

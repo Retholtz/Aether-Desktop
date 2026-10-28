@@ -2104,13 +2104,20 @@ class GuiBridge:
             args_val = str(data.get("launch_args") or data.get("arguments") or data.get("args") or "").strip()
             elev_val = bool(data.get("elevate", False))
             cwd_val = str(data.get("working_dir") or data.get("cwd") or "").strip()
-            return self.program_mgr.add_program(
+            res = self.program_mgr.add_program(
                 name=name_val,
                 path=path_val,
                 arguments=args_val,
                 elevate=elev_val,
                 working_dir=cwd_val
             )
+            if res.get("success"):
+                try:
+                    self.notify("oauth_status_updated", self.get_oauth_status())
+                    self.notify("desktop_notifications_status_changed", self.get_desktop_notifications_status())
+                except Exception:
+                    pass
+            return res
 
         name_val = str(display_name or "").strip()
         path_val = str(path or "").strip()
@@ -2121,13 +2128,20 @@ class GuiBridge:
         if not name_val:
             return {"success": False, "error": "Program display name cannot be empty."}
 
-        return self.program_mgr.add_program(
+        res = self.program_mgr.add_program(
             name=name_val,
             path=path_val,
             arguments=args_val,
             elevate=elev_val,
             working_dir=cwd_val
         )
+        if res.get("success"):
+            try:
+                self.notify("oauth_status_updated", self.get_oauth_status())
+                self.notify("desktop_notifications_status_changed", self.get_desktop_notifications_status())
+            except Exception:
+                pass
+        return res
 
     def update_program(
         self,
@@ -2176,7 +2190,14 @@ class GuiBridge:
 
     def delete_program(self, prog_id: str) -> dict:
         """Deletes a program from the whitelist."""
-        return self.program_mgr.delete_program(prog_id)
+        res = self.program_mgr.delete_program(prog_id)
+        if res.get("success"):
+            try:
+                self.notify("oauth_status_updated", self.get_oauth_status())
+                self.notify("desktop_notifications_status_changed", self.get_desktop_notifications_status())
+            except Exception:
+                pass
+        return res
 
     def set_active_program(self, prog_id: str) -> dict:
         """Sets the currently selected program in the UI."""
@@ -2223,9 +2244,10 @@ class GuiBridge:
     # =========================================================================
 
     def get_oauth_status(self) -> dict:
-        """Returns safe connection status for Google, Microsoft (Outlook/Hotmail), IMAP, and Steam accounts."""
+        """Returns safe connection status for Google, Microsoft (Outlook/Hotmail), IMAP, Steam, and Desktop Notifications."""
         res = self._oauth_mgr.get_status()
         res["steam"] = self.get_steam_status()
+        res["desktop_notifications"] = self.get_desktop_notifications_status()
         return res
 
     def save_oauth_client_config(self, provider: str, config_data: Optional[dict] = None) -> dict:
@@ -2390,6 +2412,107 @@ class GuiBridge:
         self.notify("steam_status_changed", status)
         self.notify("oauth_status_updated", self.get_oauth_status())
         return status
+
+    # =========================================================================
+    # Desktop Notification Watcher (Discord, Slack, Teams, etc.) RPC
+    # =========================================================================
+
+    def get_desktop_notifications_status(self) -> dict:
+        """Returns the current configuration and operational status of the desktop notification watcher."""
+        from core.config import load_settings
+        settings = load_settings()
+        notif_cfg = settings.get("integrations", {}).get("desktop_notifications", {})
+        enabled = bool(notif_cfg.get("enabled", True))
+        poll_interval = float(notif_cfg.get("poll_interval_seconds", 1.5))
+        target_apps = list(notif_cfg.get("target_apps", ["Discord", "Slack", "Microsoft Teams", "WhatsApp", "Telegram"]))
+        verbal = bool(notif_cfg.get("verbal_announcement", False))
+        include_wl = bool(notif_cfg.get("include_whitelist_apps", True))
+
+        watcher = getattr(self._engine, "notification_watcher", None) if hasattr(self, "_engine") and self._engine else None
+        supported = watcher.is_supported() if watcher else True
+        running = bool(watcher and getattr(watcher, "_running", False))
+
+        whitelist_apps = []
+        if include_wl:
+            try:
+                if hasattr(self, "program_mgr") and self.program_mgr and hasattr(self.program_mgr, "get_whitelist_names"):
+                    raw_wl = self.program_mgr.get_whitelist_names()
+                    whitelist_apps = sorted(list({
+                        name.title() for name in raw_wl
+                        if name and name != "*" and not name.lower().endswith(".exe")
+                    }))
+            except Exception:
+                pass
+
+        extra_str = f" + {len(whitelist_apps)} whitelisted apps" if (include_wl and whitelist_apps) else ""
+        status_label = f"Monitoring {', '.join(target_apps[:3])}{extra_str}" if enabled and supported else ("Disabled" if not enabled else "Unavailable")
+
+        return {
+            "success": True,
+            "enabled": enabled,
+            "supported": supported,
+            "running": running,
+            "verbal_announcement": verbal,
+            "poll_interval_seconds": poll_interval,
+            "target_apps": target_apps,
+            "include_whitelist_apps": include_wl,
+            "whitelist_apps": whitelist_apps,
+            "effective_targets": list(watcher.get_effective_targets()) if watcher else target_apps,
+            "status_label": status_label
+        }
+
+    def save_desktop_notifications_config(
+        self,
+        enabled: bool = True,
+        verbal_announcement: bool = False,
+        poll_interval_seconds: float = 1.5,
+        target_apps: Optional[Any] = None,
+        include_whitelist_apps: bool = True
+    ) -> dict:
+        """Updates and persists desktop notification watcher configuration."""
+        from core.config import load_settings, save_settings
+        settings = load_settings()
+        notif_cfg = settings.setdefault("integrations", {}).setdefault("desktop_notifications", {})
+
+        notif_cfg["enabled"] = bool(enabled)
+        notif_cfg["verbal_announcement"] = bool(verbal_announcement)
+        notif_cfg["poll_interval_seconds"] = max(0.5, float(poll_interval_seconds or 1.5))
+        notif_cfg["include_whitelist_apps"] = bool(include_whitelist_apps)
+        if target_apps is not None:
+            if isinstance(target_apps, str):
+                target_apps = [a.strip() for a in target_apps.split(",") if a.strip()]
+            notif_cfg["target_apps"] = list(target_apps)
+
+        save_settings(settings)
+
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_desktop_notifications_config"):
+            self._engine.set_desktop_notifications_config(
+                enabled=bool(enabled),
+                verbal_announcement=bool(verbal_announcement),
+                poll_interval_seconds=max(0.5, float(poll_interval_seconds or 1.5)),
+                target_apps=notif_cfg["target_apps"],
+                include_whitelist_apps=bool(include_whitelist_apps)
+            )
+
+        status = self.get_desktop_notifications_status()
+        self.notify("desktop_notifications_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        return status
+
+    def get_recent_desktop_notifications(self, app_name: Optional[str] = None, limit: int = 10) -> dict:
+        """Returns captured notifications from memory."""
+        watcher = getattr(self._engine, "notification_watcher", None) if hasattr(self, "_engine") and self._engine else None
+        if not watcher:
+            return {"success": True, "count": 0, "notifications": []}
+        notifs = watcher.get_recent(app_filter=app_name, limit=int(limit or 10))
+        return {"success": True, "count": len(notifs), "notifications": notifs}
+
+    def clear_desktop_notifications(self) -> dict:
+        """Clears recent notification log from watcher memory."""
+        watcher = getattr(self._engine, "notification_watcher", None) if hasattr(self, "_engine") and self._engine else None
+        if watcher:
+            watcher.clear_history()
+        return {"success": True, "message": "Notification history cleared."}
 
 
 GUIBridge = GuiBridge

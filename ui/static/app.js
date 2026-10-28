@@ -2052,9 +2052,46 @@ window.aetherUI = {
       if (typeof window.renderOAuthStatus === "function") {
         window.renderOAuthStatus({ steam: data });
       }
+    } else if (type === "desktop_notifications_status_changed") {
+      if (typeof window.renderOAuthStatus === "function") {
+        window.renderOAuthStatus({ desktop_notifications: data });
+      }
+    } else if (type === "desktop_notification") {
+      this.handleDesktopNotification(data);
     } else if (type === "mic_status") {
       this.isPttActive = !!data.ptt_active;
       this.updatePttButtonUI();
+    }
+  },
+
+handleDesktopNotification: function(notif) {
+    if (!notif) return;
+    const title = notif.title || "";
+    const body = notif.body || "";
+    const app = notif.app_name || "Desktop";
+    this.appendLogEntry({
+      timestamp: notif.timestamp || new Date().toISOString(),
+      level: "INFO",
+      category: "notification",
+      message: `[${app}] ${title}: ${body}`
+    });
+    const listEl = document.getElementById('discordRecentNotifsList');
+    if (listEl) {
+      const emptyNotice = listEl.querySelector('div');
+      if (emptyNotice && emptyNotice.textContent.includes('No recent notifications')) {
+        listEl.innerHTML = '';
+      }
+      const itemEl = document.createElement('div');
+      itemEl.style.cssText = 'background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.15); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;';
+      const timeStr = new Date().toLocaleTimeString();
+      itemEl.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+          <span style="color: #38bdf8; font-weight: 600; font-size: 0.8rem;">[${app}] ${title}</span>
+          <span style="color: #64748b; font-size: 0.72rem;">${timeStr}</span>
+        </div>
+        <div style="color: #cbd5e1; font-size: 0.78rem; word-break: break-word;">${body}</div>
+      `;
+      listEl.insertBefore(itemEl, listEl.firstChild);
     }
   },
 

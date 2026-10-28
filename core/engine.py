@@ -40,6 +40,8 @@ from core.game_manager import GameManager
 from tools.game_tools import register_game_tools
 from core.steam_service import SteamService
 from tools.steam_tools import register_steam_tools
+from core.notification_watcher import DesktopNotificationWatcher, DesktopNotification
+from tools.notification_tools import register_notification_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -541,6 +543,8 @@ class AetherEngine:
                     self.settings["steam_id64"] = cfg["steam_id64"]
                 if "integrations" in cfg and "steam" in cfg["integrations"]:
                     self.settings.setdefault("integrations", {})["steam"] = cfg["integrations"]["steam"]
+                if "integrations" in cfg and "desktop_notifications" in cfg["integrations"]:
+                    self.settings.setdefault("integrations", {})["desktop_notifications"] = cfg["integrations"]["desktop_notifications"]
             except Exception:
                 pass
 
@@ -556,6 +560,20 @@ class AetherEngine:
         )
         self.steam_service._status_change_callback = self._on_steam_friend_status_change
         register_steam_tools(self.dispatcher, self.steam_service, game_engine=self.game_engine)
+
+        # Desktop Notifications Integration (Discord, Slack, Microsoft Teams, etc.)
+        notif_settings = self.settings.get("integrations", {}).get("desktop_notifications", {})
+        if notif_settings.get("enabled", True):
+            include_wl = notif_settings.get("include_whitelist_apps", True)
+            self.notification_watcher = DesktopNotificationWatcher(
+                poll_interval=float(notif_settings.get("poll_interval_seconds", 1.5)),
+                target_apps=notif_settings.get("target_apps", ["Discord", "Slack", "Microsoft Teams", "WhatsApp", "Telegram"]),
+                on_notification=self._handle_desktop_notification,
+                whitelist_getter=self._get_whitelist if include_wl else None
+            )
+            register_notification_tools(self.dispatcher, self.notification_watcher)
+        else:
+            self.notification_watcher = None
 
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
@@ -1632,6 +1650,70 @@ class AetherEngine:
                 loop=getattr(self, "_loop", None)
             )
 
+    def _handle_desktop_notification(self, notif: DesktopNotification):
+        """Dispatches desktop notifications to GUI HUD / Event log and triggers optional verbal whisper."""
+        self.notify("desktop_notification", notif.to_dict())
+
+        # Optional verbal announce if enabled in settings
+        announce_verbally = self.settings.get("integrations", {}).get("desktop_notifications", {}).get("verbal_announcement", False)
+        if announce_verbally and not self.is_speaking:
+            clean_sender = notif.title or notif.app_name
+            self.queue_whisper(f"New {notif.app_name} message from {clean_sender}.")
+
+    def queue_whisper(self, text: str):
+        """Queues a short verbal whisper/proactive announcement."""
+        try:
+            self.post_proactive_event(alert_text=text, source="Notification")
+        except Exception as e:
+            logger.warning(f"[ENGINE] Failed to queue whisper: {e}")
+
+    def set_desktop_notifications_config(
+        self,
+        enabled: bool = True,
+        verbal_announcement: bool = False,
+        poll_interval_seconds: float = 1.5,
+        target_apps: Optional[list] = None,
+        include_whitelist_apps: bool = True
+    ):
+        """Updates desktop notification watcher configuration at runtime."""
+        notif_cfg = self.settings.setdefault("integrations", {}).setdefault("desktop_notifications", {})
+        notif_cfg["enabled"] = bool(enabled)
+        notif_cfg["verbal_announcement"] = bool(verbal_announcement)
+        notif_cfg["poll_interval_seconds"] = float(poll_interval_seconds)
+        notif_cfg["include_whitelist_apps"] = bool(include_whitelist_apps)
+        if target_apps is not None:
+            notif_cfg["target_apps"] = list(target_apps)
+
+        if not enabled:
+            if hasattr(self, "notification_watcher") and self.notification_watcher:
+                loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.notification_watcher.stop(), loop)
+                else:
+                    asyncio.create_task(self.notification_watcher.stop())
+        else:
+            if hasattr(self, "notification_watcher") and self.notification_watcher:
+                self.notification_watcher.poll_interval = float(poll_interval_seconds)
+                self.notification_watcher.whitelist_getter = self._get_whitelist if include_whitelist_apps else None
+                if target_apps is not None:
+                    self.notification_watcher.target_apps = {app.lower() for app in target_apps}
+                if not self.notification_watcher._running and self.is_running:
+                    loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                    if loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(self.notification_watcher.start(), loop)
+            else:
+                self.notification_watcher = DesktopNotificationWatcher(
+                    poll_interval=float(poll_interval_seconds),
+                    target_apps=notif_cfg.get("target_apps", ["Discord", "Slack", "Microsoft Teams"]),
+                    on_notification=self._handle_desktop_notification,
+                    whitelist_getter=self._get_whitelist if include_whitelist_apps else None
+                )
+                register_notification_tools(self.dispatcher, self.notification_watcher)
+                if self.is_running:
+                    loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                    if loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(self.notification_watcher.start(), loop)
+
     def kill_audio(self):
         """Immediately halts audio playback, cancels in-flight synthesis, and purges all output buffers."""
         self._kill_playback_flag = True
@@ -2470,6 +2552,11 @@ class AetherEngine:
 
     async def _run(self):
         self.is_running = True
+        if hasattr(self, "notification_watcher") and self.notification_watcher and not self.notification_watcher._running:
+            try:
+                await self.notification_watcher.start()
+            except Exception as e:
+                logger.warning(f"[START] Notification watcher async start warning: {e}")
         config = self.config_getter()
         api_cfg = config.get("api", {})
         audio_cfg = config.get("audio", {})
@@ -4893,6 +4980,11 @@ class AetherEngine:
                 self.steam_service.start_friend_polling(loop=loop)
             except Exception as e:
                 logger.warning(f"[START] Steam friend polling start warning: {e}")
+        if hasattr(self, "notification_watcher") and self.notification_watcher:
+            try:
+                asyncio.run_coroutine_threadsafe(self.notification_watcher.start(), loop)
+            except Exception as e:
+                logger.warning(f"[START] Desktop notification watcher start warning: {e}")
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
@@ -4980,6 +5072,16 @@ class AetherEngine:
                     asyncio.run_coroutine_threadsafe(self.steam_service.close(), self.loop)
             except Exception as e:
                 logger.warning(f"[STOP] Steam service close warning: {e}")
+
+        if hasattr(self, "notification_watcher") and self.notification_watcher:
+            try:
+                loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.notification_watcher.stop(), loop)
+                else:
+                    asyncio.create_task(self.notification_watcher.stop())
+            except Exception as e:
+                logger.warning(f"[STOP] Notification watcher stop warning: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 

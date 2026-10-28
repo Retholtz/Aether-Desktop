@@ -1501,6 +1501,108 @@
             </div>
           </div>
 
+          <!-- CONNECTED CHAT & NOTIFICATIONS (DISCORD & UNIVERSAL DESKTOP WATCHER) -->
+          <div class="settings-card hud-card" id="connectedDiscordCard" style="margin-top: 16px;">
+            <div class="settings-card-header card-header">
+              <h3 class="card-title">DISCORD &amp; DESKTOP NOTIFICATIONS</h3>
+              <span class="card-tag">WINRT LISTENER</span>
+            </div>
+            <div class="card-body">
+              <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+                Intercept Windows toast notifications locally for <strong>Discord</strong> direct messages, mentions, and server pings, as well as <strong>Slack, Microsoft Teams, WhatsApp, and Telegram</strong> without requiring bot tokens, user-token automation, or external webhooks.
+              </p>
+
+              <!-- Discord & Desktop Notification Watcher Status Row -->
+              <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <strong style="color: #e2e8f0; font-size: 0.94rem;">Discord &amp; Desktop Message Watcher</strong>
+                    <span id="discordNotifStatusBadge" class="step-status-pill done">ACTIVE</span>
+                  </div>
+                  <div id="discordNotifStatusLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Monitoring Discord, Slack, Microsoft Teams, WhatsApp, Telegram</div>
+                  
+                  <!-- Options / Toggles -->
+                  <div style="margin-top: 10px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: #cbd5e1; font-size: 0.82rem; user-select: none;">
+                      <input type="checkbox" id="chkDiscordNotifEnabled" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                      <span>Enable Notification Listener</span>
+                    </label>
+
+                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: #cbd5e1; font-size: 0.82rem; user-select: none;">
+                      <input type="checkbox" id="chkDiscordNotifVerbal" style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                      <span>Verbal Announcement (Whisper on message)</span>
+                    </label>
+
+                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: #cbd5e1; font-size: 0.82rem; user-select: none;">
+                      <input type="checkbox" id="chkDiscordIncludeWhitelist" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                      <span>Include Whitelist Programs</span>
+                    </label>
+
+                    <div style="display: inline-flex; align-items: center; gap: 6px;">
+                      <span style="color: #94a3b8; font-size: 0.82rem;">Poll Rate:</span>
+                      <select id="discordNotifPollInterval" class="hud-select" style="padding: 2px 8px; font-size: 0.78rem; height: 26px; border-radius: 4px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(56, 189, 248, 0.25); color: #e2e8f0; cursor: pointer;">
+                        <option value="1.0">1.0s (Fast)</option>
+                        <option value="1.5" selected>1.5s (Default)</option>
+                        <option value="2.0">2.0s</option>
+                        <option value="3.0">3.0s</option>
+                        <option value="5.0">5.0s (Power saver)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button type="button" id="btnConfigureDiscordNotif" class="hud-btn-secondary sm" style="padding: 8px 14px; font-weight: 600;">Configure Apps</button>
+                  <button type="button" id="btnCheckRecentDiscordNotifs" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Check Messages</button>
+                </div>
+              </div>
+
+              <!-- Configuration Drawer -->
+              <div id="discordNotifConfigDrawer" style="display: none; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 14px 16px; margin-top: 10px;">
+                <h4 style="margin: 0 0 10px 0; color: #38bdf8; font-size: 0.88rem; font-weight: 600;">MONITORED APPLICATIONS &amp; SETTINGS</h4>
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Comma-separated list of application names to monitor from Windows toast alerts (e.g. Discord, Slack, Microsoft Teams, WhatsApp, Telegram).
+                </p>
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group" style="grid-column: span 2;">
+                    <label for="discordNotifTargetAppsInput">Monitored Target Apps</label>
+                    <input type="text" id="discordNotifTargetAppsInput" class="hud-input" placeholder="Discord, Slack, Microsoft Teams, WhatsApp, Telegram" value="Discord, Slack, Microsoft Teams, WhatsApp, Telegram" />
+                    <span class="input-hint" style="font-size: 0.75rem; margin-top: 4px;">Matches against Windows toast sender title or process display name.</span>
+                  </div>
+                  <div class="form-group" style="grid-column: span 2; margin-top: 6px;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #38bdf8; cursor: pointer; font-weight: 600;">
+                      <input type="checkbox" id="chkDiscordIncludeWhitelistDrawer" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                      <span>Automatically monitor all programs in Allowed Whitelist</span>
+                    </label>
+                    <span class="input-hint" style="font-size: 0.75rem; margin-top: 4px;">
+                      When enabled, any application added to your whitelist (via voice or the Programs tab) is automatically tracked for desktop notifications.
+                    </span>
+                    <div id="discordWhitelistBadgeList" style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px;">
+                      <!-- Populated dynamically with active whitelist programs -->
+                    </div>
+                  </div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 12px; gap: 10px;">
+                  <button type="button" id="btnCancelDiscordNotifConfig" class="hud-btn-ghost sm">Cancel</button>
+                  <button type="button" id="btnSaveDiscordNotifConfig" class="btn-primary-sm" style="padding: 6px 14px; font-weight: 600;">Save Settings</button>
+                </div>
+              </div>
+
+              <!-- Recent Notifications Container -->
+              <div id="discordRecentNotifsContainer" style="display: none; margin-top: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 12px 14px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 0.82rem; font-weight: 600; color: #38bdf8;">RECENT NOTIFICATIONS</span>
+                  <button type="button" id="btnClearDiscordNotifs" class="hud-btn-ghost sm" style="font-size: 0.75rem; padding: 2px 8px;">Clear Log</button>
+                </div>
+                <div id="discordRecentNotifsList" style="display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto;">
+                  <div style="color: #94a3b8; font-size: 0.8rem; font-style: italic;">No recent notifications recorded.</div>
+                </div>
+              </div>
+
+              <div id="discordNotifFeedbackBanner" style="margin: 8px 0 4px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+            </div>
+          </div>
+
       </section>
 
       <!-- ============================================================= -->

@@ -39,3 +39,8 @@ typing_extensions==4.16.0
 urllib3==2.8.0
 websockets==16.1.1
 vgamepad>=0.1.0
+winsdk
+winrt-Windows.UI.Notifications
+winrt-Windows.UI.Notifications.Management
+winrt-Windows.ApplicationModel
+

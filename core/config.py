@@ -34,7 +34,21 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             "auto_detect_active_appid": True,
             "poll_friends_status": False,
             "poll_interval_minutes": 5,
-        }
+        },
+        "desktop_notifications": {
+            "enabled": True,
+            "poll_interval_seconds": 1.5,
+            "target_apps": [
+                "Discord",
+                "Slack",
+                "Microsoft Teams",
+                "WhatsApp",
+                "Telegram",
+            ],
+            "include_whitelist_apps": True,
+            "verbal_announcement": False,
+            "ignore_empty": True,
+        },
     }
 }
 
@@ -94,6 +108,21 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
         settings_data["steam_api_key"] = steam_cfg.get("api_key") or os.getenv("STEAM_API_KEY", "")
     if "steam_id64" not in settings_data:
         settings_data["steam_id64"] = steam_cfg.get("steam_id64") or os.getenv("STEAM_ID64", "")
+
+    # Ensure nested integrations.desktop_notifications structure is populated
+    notif_cfg = integrations.setdefault("desktop_notifications", {})
+    notif_cfg.setdefault("enabled", True)
+    notif_cfg.setdefault("poll_interval_seconds", 1.5)
+    notif_cfg.setdefault("target_apps", [
+        "Discord",
+        "Slack",
+        "Microsoft Teams",
+        "WhatsApp",
+        "Telegram",
+    ])
+    notif_cfg.setdefault("include_whitelist_apps", True)
+    notif_cfg.setdefault("verbal_announcement", False)
+    notif_cfg.setdefault("ignore_empty", True)
 
     return Settings(settings_data)
 
