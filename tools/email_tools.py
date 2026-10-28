@@ -8,7 +8,7 @@ Safety & Prompt-Injection Defenses:
   - Sending any email requires a two-step workflow: create_email_draft -> explicit user confirmation -> send_email_draft.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from google.genai import types
 from core.oauth_manager import get_oauth_manager
 
@@ -106,6 +106,52 @@ def search_contacts(
 
 
 lookup_contact_email = search_contacts
+
+
+def update_contact(
+    name_or_query: str,
+    address: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    notes: Optional[str] = None,
+    address_type: str = "home",
+    create_if_missing: bool = False,
+    provider: str = "auto",
+) -> Dict[str, Any]:
+    """Updates an existing contact's address, phone, email, or notes in Google Contacts or Outlook Contacts."""
+    mgr = get_oauth_manager()
+    return mgr.update_contact(
+        name_or_query=name_or_query,
+        address=address,
+        phone=phone,
+        email=email,
+        notes=notes,
+        address_type=address_type,
+        create_if_missing=create_if_missing,
+        provider=provider,
+    )
+
+
+def create_contact(
+    name: str,
+    address: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
+    notes: Optional[str] = None,
+    address_type: str = "home",
+    provider: str = "auto",
+) -> Dict[str, Any]:
+    """Creates a new contact record with name, address, phone, email, and notes in Google Contacts or Outlook Contacts."""
+    mgr = get_oauth_manager()
+    return mgr.create_contact(
+        name=name,
+        address=address,
+        phone=phone,
+        email=email,
+        notes=notes,
+        address_type=address_type,
+        provider=provider,
+    )
 
 
 def get_email_tool_declarations() -> List[types.FunctionDeclaration]:
@@ -318,6 +364,91 @@ def get_email_tool_declarations() -> List[types.FunctionDeclaration]:
                     ),
                 },
                 required=["name_or_query"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="update_contact",
+            description=(
+                "Updates an existing contact's physical postal/home address, phone number, email address, or notes in Google Contacts or Microsoft Outlook Contacts. "
+                "Always invoke this tool when the user asks to add or update an address, phone number, email, or notes for an existing contact record."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "name_or_query": types.Schema(
+                        type="STRING",
+                        description="The name of the contact to update (e.g. 'Michelle Sands', 'Scott Sands').",
+                    ),
+                    "address": types.Schema(
+                        type="STRING",
+                        description="The physical / postal address to add or update (e.g. '112 Long Meadow Hill Road, Brookfield, CT').",
+                    ),
+                    "phone": types.Schema(
+                        type="STRING",
+                        description="Phone number to set or update.",
+                    ),
+                    "email": types.Schema(
+                        type="STRING",
+                        description="Email address to set or update.",
+                    ),
+                    "notes": types.Schema(
+                        type="STRING",
+                        description="Notes or biographical remarks to add to the contact.",
+                    ),
+                    "address_type": types.Schema(
+                        type="STRING",
+                        description="Type of address: 'home' (default), 'work', or 'other'.",
+                    ),
+                    "create_if_missing": types.Schema(
+                        type="BOOLEAN",
+                        description="If true, creates the contact if no matching contact is found.",
+                    ),
+                    "provider": types.Schema(
+                        type="STRING",
+                        description="Provider: 'auto' (default), 'google', or 'microsoft'.",
+                    ),
+                },
+                required=["name_or_query"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="create_contact",
+            description=(
+                "Creates a new contact entry in Google Contacts or Microsoft Outlook Contacts with name, address, phone number, email, and notes."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "name": types.Schema(
+                        type="STRING",
+                        description="The full name of the new contact.",
+                    ),
+                    "address": types.Schema(
+                        type="STRING",
+                        description="The physical / postal address for the new contact.",
+                    ),
+                    "phone": types.Schema(
+                        type="STRING",
+                        description="Phone number.",
+                    ),
+                    "email": types.Schema(
+                        type="STRING",
+                        description="Email address.",
+                    ),
+                    "notes": types.Schema(
+                        type="STRING",
+                        description="Notes or biographical details.",
+                    ),
+                    "address_type": types.Schema(
+                        type="STRING",
+                        description="Type of address: 'home' (default), 'work', or 'other'.",
+                    ),
+                    "provider": types.Schema(
+                        type="STRING",
+                        description="Provider: 'auto' (default), 'google', or 'microsoft'.",
+                    ),
+                },
+                required=["name"],
             ),
         ),
     ]

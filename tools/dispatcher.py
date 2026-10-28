@@ -1034,6 +1034,8 @@ try:
         list_upcoming_calendar_events,
         lookup_contact_email,
         search_contacts,
+        update_contact,
+        create_contact,
     )
 
     _EMAIL_TOOL_SPECS = [
@@ -1149,6 +1151,43 @@ try:
                     "provider": {"type": "STRING", "description": "Provider: 'auto', 'google', or 'microsoft'."},
                 },
                 "required": ["name_or_query"],
+            },
+        ),
+        (
+            "update_contact",
+            update_contact,
+            "Updates an existing contact's address, phone number, email address, or notes in Google Contacts or Microsoft Outlook Contacts. Always invoke this tool when the user asks to add or update an address, phone number, email, or notes for an existing contact record.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "name_or_query": {"type": "STRING", "description": "The name of the contact to update (e.g. 'Michelle Sands', 'Scott Sands')."},
+                    "address": {"type": "STRING", "description": "The physical/postal address to add or update (e.g. '112 Long Meadow Hill Road, Brookfield, CT')."},
+                    "phone": {"type": "STRING", "description": "Phone number to set or update."},
+                    "email": {"type": "STRING", "description": "Email address to set or update."},
+                    "notes": {"type": "STRING", "description": "Notes or biographical remarks to add."},
+                    "address_type": {"type": "STRING", "description": "Address type: 'home' (default), 'work', or 'other'."},
+                    "create_if_missing": {"type": "BOOLEAN", "description": "If true, creates the contact if no matching record is found."},
+                    "provider": {"type": "STRING", "description": "Provider: 'auto', 'google', or 'microsoft'."},
+                },
+                "required": ["name_or_query"],
+            },
+        ),
+        (
+            "create_contact",
+            create_contact,
+            "Creates a new contact record in Google Contacts or Microsoft Outlook Contacts with name, address, phone number, email, and notes.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "name": {"type": "STRING", "description": "The full name of the new contact."},
+                    "address": {"type": "STRING", "description": "The physical/postal address."},
+                    "phone": {"type": "STRING", "description": "Phone number."},
+                    "email": {"type": "STRING", "description": "Email address."},
+                    "notes": {"type": "STRING", "description": "Notes or biographical details."},
+                    "address_type": {"type": "STRING", "description": "Address type: 'home' (default), 'work', or 'other'."},
+                    "provider": {"type": "STRING", "description": "Provider: 'auto', 'google', or 'microsoft'."},
+                },
+                "required": ["name"],
             },
         ),
     ]

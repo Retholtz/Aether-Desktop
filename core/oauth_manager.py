@@ -54,7 +54,7 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
-    "https://www.googleapis.com/auth/contacts.readonly",
+    "https://www.googleapis.com/auth/contacts",
 ]
 
 MICROSOFT_AUTH_TEMPLATE = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
@@ -69,7 +69,7 @@ MICROSOFT_SCOPES = [
     "Mail.ReadWrite",
     "Mail.Send",
     "Calendars.ReadWrite",
-    "Contacts.Read",
+    "Contacts.ReadWrite",
 ]
 
 
@@ -79,6 +79,32 @@ def _generate_pkce_pair() -> Tuple[str, str]:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return verifier, challenge
+
+
+def parse_address_components(address_str: str) -> Dict[str, str]:
+    """
+    Parses a formatted address string (e.g. '112 Long Meadow Hill Road, Brookfield, CT 06804')
+    into basic components: street, city, region, postal_code.
+    """
+    if not address_str:
+        return {}
+    parts = [p.strip() for p in str(address_str).split(",") if p.strip()]
+    if not parts:
+        return {}
+    if len(parts) == 1:
+        return {"street": parts[0]}
+    if len(parts) == 2:
+        return {"street": parts[0], "city": parts[1]}
+
+    street = parts[0]
+    city = parts[1]
+    last_part = parts[2]
+    tokens = last_part.split()
+    if len(tokens) >= 2 and tokens[-1].replace("-", "").isdigit():
+        postal_code = tokens[-1]
+        region = " ".join(tokens[:-1])
+        return {"street": street, "city": city, "region": region, "postal_code": postal_code}
+    return {"street": street, "city": city, "region": last_part}
 
 
 def strip_html_to_plain_text(raw_html: str, max_chars: int = 12000) -> str:
@@ -1032,6 +1058,81 @@ class OAuthManager:
             return self._microsoft_search_contacts(q)
         return {"success": False, "error": "Contact lookup requires a Google or Microsoft OAuth account."}
 
+    def update_contact(
+        self,
+        name_or_query: str,
+        address: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        notes: Optional[str] = None,
+        address_type: str = "home",
+        create_if_missing: bool = False,
+        provider: str = "auto",
+    ) -> Dict[str, Any]:
+        """Updates contact details (address, phone, email, notes) in Google Contacts or Microsoft Outlook."""
+        prov = self.resolve_provider(provider)
+        if not prov:
+            return {"success": False, "error": "No connected account found."}
+        if not name_or_query:
+            return {"success": False, "error": "Contact name is required to update."}
+        if prov == "google":
+            return self._google_update_contact(
+                name_or_query=name_or_query,
+                address=address,
+                phone=phone,
+                email=email,
+                notes=notes,
+                address_type=address_type,
+                create_if_missing=create_if_missing,
+            )
+        if prov == "microsoft":
+            return self._microsoft_update_contact(
+                name_or_query=name_or_query,
+                address=address,
+                phone=phone,
+                email=email,
+                notes=notes,
+                address_type=address_type,
+                create_if_missing=create_if_missing,
+            )
+        return {"success": False, "error": "Contact management requires a Google or Microsoft OAuth account."}
+
+    def create_contact(
+        self,
+        name: str,
+        address: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        notes: Optional[str] = None,
+        address_type: str = "home",
+        provider: str = "auto",
+    ) -> Dict[str, Any]:
+        """Creates a new contact in Google Contacts or Microsoft Outlook."""
+        prov = self.resolve_provider(provider)
+        if not prov:
+            return {"success": False, "error": "No connected account found."}
+        if not name:
+            return {"success": False, "error": "Contact name is required."}
+        if prov == "google":
+            return self._google_create_contact(
+                name=name,
+                address=address,
+                phone=phone,
+                email=email,
+                notes=notes,
+                address_type=address_type,
+            )
+        if prov == "microsoft":
+            return self._microsoft_create_contact(
+                name=name,
+                address=address,
+                phone=phone,
+                email=email,
+                notes=notes,
+                address_type=address_type,
+            )
+        return {"success": False, "error": "Contact management requires a Google or Microsoft OAuth account."}
+
     # =========================================================================
     # Google (Gmail REST API v1, Calendar v3, People v1) Implementation
     # =========================================================================
@@ -1526,6 +1627,10 @@ class OAuthManager:
                         "phones": phones,
                         "addresses": addresses,
                     }
+                    if person.get("resourceName"):
+                        contact_data["resource_name"] = person.get("resourceName")
+                    if person.get("etag"):
+                        contact_data["etag"] = person.get("etag")
                     if primary_address:
                         contact_data["primary_address"] = primary_address
                     if birthdays:
@@ -1578,6 +1683,229 @@ class OAuthManager:
             }
         except Exception as e:
             return {"success": False, "error": f"Google contact search failed: {e}"}
+
+    def _google_update_contact(
+        self,
+        name_or_query: str,
+        address: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        notes: Optional[str] = None,
+        address_type: str = "home",
+        create_if_missing: bool = False,
+    ) -> Dict[str, Any]:
+        headers = self._google_headers()
+        if not headers:
+            return {"success": False, "error": "Google access token unavailable."}
+
+        target_resource = None
+        target_name = name_or_query
+        if str(name_or_query).startswith("people/"):
+            target_resource = name_or_query
+        else:
+            search_res = self._google_search_contacts(name_or_query)
+            matches = [m for m in search_res.get("matches", []) if m.get("resource_name")]
+            if matches:
+                exact = [m for m in matches if m.get("name", "").strip().lower() == name_or_query.strip().lower()]
+                best = exact[0] if exact else matches[0]
+                target_resource = best.get("resource_name")
+                target_name = best.get("name") or name_or_query
+
+        if not target_resource:
+            if create_if_missing:
+                return self._google_create_contact(
+                    name=name_or_query,
+                    address=address,
+                    phone=phone,
+                    email=email,
+                    notes=notes,
+                    address_type=address_type,
+                )
+            return {
+                "success": False,
+                "error": f"No existing contact record found in Google Contacts for '{name_or_query}'. If you would like to create a new contact, call create_contact or set create_if_missing=True.",
+            }
+
+        try:
+            r_get = requests.get(
+                f"https://people.googleapis.com/v1/{target_resource}",
+                headers=headers,
+                params={"personFields": "names,emailAddresses,addresses,phoneNumbers,biographies,metadata"},
+                timeout=10,
+            )
+            if r_get.status_code == 403:
+                return {
+                    "success": False,
+                    "error": (
+                        "Permission denied by Google Contacts (403 Forbidden). "
+                        "Your Google account was connected before contact write permissions ('contacts') were enabled. "
+                        "Please click 'Reconnect' next to Google in Settings -> Connected Accounts to grant full Contacts read/write access."
+                    ),
+                }
+            if not r_get.ok:
+                return {"success": False, "error": f"Failed to retrieve Google contact details (HTTP {r_get.status_code}): {r_get.text}"}
+
+            person = r_get.json()
+            etag = person.get("etag")
+            fields_to_update = []
+            update_body: Dict[str, Any] = {"etag": etag}
+
+            parsed_addr = parse_address_components(address) if address else {}
+
+            if address is not None:
+                fields_to_update.append("addresses")
+                addresses = person.get("addresses", [])
+                addr_updated = False
+                for a in addresses:
+                    if a.get("type", "").lower() == address_type.lower():
+                        a["formattedValue"] = address
+                        if parsed_addr.get("street"):
+                            a["streetAddress"] = parsed_addr["street"]
+                        if parsed_addr.get("city"):
+                            a["city"] = parsed_addr["city"]
+                        if parsed_addr.get("region"):
+                            a["region"] = parsed_addr["region"]
+                        if parsed_addr.get("postal_code"):
+                            a["postalCode"] = parsed_addr["postal_code"]
+                        addr_updated = True
+                        break
+                if not addr_updated:
+                    new_entry: Dict[str, Any] = {"formattedValue": address, "type": address_type}
+                    if parsed_addr.get("street"):
+                        new_entry["streetAddress"] = parsed_addr["street"]
+                    if parsed_addr.get("city"):
+                        new_entry["city"] = parsed_addr["city"]
+                    if parsed_addr.get("region"):
+                        new_entry["region"] = parsed_addr["region"]
+                    if parsed_addr.get("postal_code"):
+                        new_entry["postalCode"] = parsed_addr["postal_code"]
+                    addresses.append(new_entry)
+                update_body["addresses"] = addresses
+
+            if phone is not None:
+                fields_to_update.append("phoneNumbers")
+                phones = person.get("phoneNumbers", [])
+                if phones:
+                    phones[0]["value"] = phone
+                else:
+                    phones.append({"value": phone, "type": "mobile"})
+                update_body["phoneNumbers"] = phones
+
+            if email is not None:
+                fields_to_update.append("emailAddresses")
+                emails = person.get("emailAddresses", [])
+                if emails:
+                    emails[0]["value"] = email
+                else:
+                    emails.append({"value": email, "type": "home"})
+                update_body["emailAddresses"] = emails
+
+            if notes is not None:
+                fields_to_update.append("biographies")
+                bios = person.get("biographies", [])
+                if bios:
+                    bios[0]["value"] = notes
+                    bios[0]["contentType"] = "TEXT_PLAIN"
+                else:
+                    bios.append({"value": notes, "contentType": "TEXT_PLAIN"})
+                update_body["biographies"] = bios
+
+            if not fields_to_update:
+                return {"success": True, "message": f"No fields specified for update on '{target_name}'."}
+
+            patch_headers = dict(headers)
+            patch_headers["Content-Type"] = "application/json"
+            patch_url = f"https://people.googleapis.com/v1/{target_resource}:updateContact?updatePersonFields={','.join(fields_to_update)}"
+            r_patch = requests.patch(patch_url, headers=patch_headers, json=update_body, timeout=10)
+
+            if r_patch.status_code == 403:
+                return {
+                    "success": False,
+                    "error": (
+                        "Permission denied by Google Contacts (403 Forbidden). "
+                        "Your Google account was connected before contact write permissions ('contacts') were enabled. "
+                        "Please click 'Reconnect' next to Google in Settings -> Connected Accounts to grant full Contacts read/write access."
+                    ),
+                }
+            if not r_patch.ok:
+                return {"success": False, "error": f"Google contact update failed (HTTP {r_patch.status_code}): {r_patch.text}"}
+
+            return {
+                "success": True,
+                "provider": "google",
+                "name": target_name,
+                "resource_name": target_resource,
+                "message": f"Successfully updated contact record for '{target_name}'.",
+                "updated_fields": {k: v for k, v in [("address", address), ("phone", phone), ("email", email), ("notes", notes)] if v is not None},
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to update Google contact: {e}"}
+
+    def _google_create_contact(
+        self,
+        name: str,
+        address: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        notes: Optional[str] = None,
+        address_type: str = "home",
+    ) -> Dict[str, Any]:
+        headers = self._google_headers()
+        if not headers:
+            return {"success": False, "error": "Google access token unavailable."}
+
+        parsed_addr = parse_address_components(address) if address else {}
+        name_parts = str(name or "New Contact").strip().split()
+        first_name = name_parts[0] if name_parts else "Contact"
+        family_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+
+        body: Dict[str, Any] = {
+            "names": [{"givenName": first_name, "familyName": family_name, "unstructuredName": name}],
+        }
+        if address:
+            addr_obj: Dict[str, Any] = {"formattedValue": address, "type": address_type}
+            if parsed_addr.get("street"):
+                addr_obj["streetAddress"] = parsed_addr["street"]
+            if parsed_addr.get("city"):
+                addr_obj["city"] = parsed_addr["city"]
+            if parsed_addr.get("region"):
+                addr_obj["region"] = parsed_addr["region"]
+            if parsed_addr.get("postal_code"):
+                addr_obj["postalCode"] = parsed_addr["postal_code"]
+            body["addresses"] = [addr_obj]
+        if phone:
+            body["phoneNumbers"] = [{"value": phone, "type": "mobile"}]
+        if email:
+            body["emailAddresses"] = [{"value": email, "type": "home"}]
+        if notes:
+            body["biographies"] = [{"value": notes, "contentType": "TEXT_PLAIN"}]
+
+        try:
+            post_headers = dict(headers)
+            post_headers["Content-Type"] = "application/json"
+            r = requests.post("https://people.googleapis.com/v1/people:createContact", headers=post_headers, json=body, timeout=10)
+            if r.status_code == 403:
+                return {
+                    "success": False,
+                    "error": (
+                        "Permission denied by Google Contacts (403 Forbidden). "
+                        "Your Google account was connected before contact write permissions ('contacts') were enabled. "
+                        "Please click 'Reconnect' next to Google in Settings -> Connected Accounts to grant full Contacts read/write access."
+                    ),
+                }
+            if not r.ok:
+                return {"success": False, "error": f"Google contact creation failed (HTTP {r.status_code}): {r.text}"}
+
+            created_person = r.json()
+            return {
+                "success": True,
+                "provider": "google",
+                "name": name,
+                "resource_name": created_person.get("resourceName"),
+                "message": f"Successfully created new contact record for '{name}'.",
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to create Google contact: {e}"}
 
     # =========================================================================
     # Microsoft Graph v1.0 (Outlook / Hotmail / Live / M365) Implementation
@@ -1890,6 +2218,8 @@ class OAuthManager:
                         "phones": phones,
                         "addresses": addresses,
                     }
+                    if c.get("id"):
+                        contact_data["id"] = c.get("id")
                     if primary_address:
                         contact_data["primary_address"] = primary_address
                     if birthday_raw:
@@ -1920,6 +2250,162 @@ class OAuthManager:
             }
         except Exception as e:
             return {"success": False, "error": f"Outlook contact search failed: {e}"}
+
+    def _microsoft_update_contact(
+        self,
+        name_or_query: str,
+        address: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        notes: Optional[str] = None,
+        address_type: str = "home",
+        create_if_missing: bool = False,
+    ) -> Dict[str, Any]:
+        headers = self._microsoft_headers()
+        if not headers:
+            return {"success": False, "error": "Microsoft access token unavailable."}
+
+        target_id = None
+        target_name = name_or_query
+
+        if len(name_or_query) > 30 and " " not in name_or_query and "/" not in name_or_query:
+            target_id = name_or_query
+        else:
+            search_res = self._microsoft_search_contacts(name_or_query)
+            matches = [m for m in search_res.get("matches", []) if m.get("id")]
+            if matches:
+                exact = [m for m in matches if m.get("name", "").strip().lower() == name_or_query.strip().lower()]
+                best = exact[0] if exact else matches[0]
+                target_id = best.get("id")
+                target_name = best.get("name") or name_or_query
+
+        if not target_id:
+            if create_if_missing:
+                return self._microsoft_create_contact(
+                    name=name_or_query,
+                    address=address,
+                    phone=phone,
+                    email=email,
+                    notes=notes,
+                    address_type=address_type,
+                )
+            return {
+                "success": False,
+                "error": f"No existing contact record found in Outlook Contacts for '{name_or_query}'. If you would like to create a new contact, call create_contact or set create_if_missing=True.",
+            }
+
+        try:
+            parsed_addr = parse_address_components(address) if address else {}
+            patch_body: Dict[str, Any] = {}
+
+            if address is not None:
+                addr_field = "homeAddress" if address_type.lower() == "home" else ("businessAddress" if address_type.lower() == "work" else "otherAddress")
+                patch_body[addr_field] = {
+                    "street": parsed_addr.get("street", address),
+                    "city": parsed_addr.get("city", ""),
+                    "state": parsed_addr.get("region", ""),
+                    "postalCode": parsed_addr.get("postal_code", ""),
+                }
+            if phone is not None:
+                patch_body["mobilePhone"] = phone
+            if email is not None:
+                patch_body["emailAddresses"] = [{"address": email, "name": target_name}]
+            if notes is not None:
+                patch_body["personalNotes"] = notes
+
+            if not patch_body:
+                return {"success": True, "message": f"No fields specified for update on '{target_name}'."}
+
+            headers["Content-Type"] = "application/json"
+            r_patch = requests.patch(f"{MICROSOFT_GRAPH_BASE}/me/contacts/{target_id}", headers=headers, json=patch_body, timeout=10)
+
+            if r_patch.status_code == 403:
+                return {
+                    "success": False,
+                    "error": (
+                        "Permission denied by Microsoft Outlook (403 Forbidden). "
+                        "Your Microsoft account was connected before contact write permissions ('Contacts.ReadWrite') were enabled. "
+                        "Please click 'Reconnect' next to Microsoft in Settings -> Connected Accounts to grant full Contacts read/write access."
+                    ),
+                }
+
+            if not r_patch.ok:
+                return {"success": False, "error": f"Outlook contact update failed (HTTP {r_patch.status_code}): {r_patch.text}"}
+
+            return {
+                "success": True,
+                "provider": "microsoft",
+                "name": target_name,
+                "id": target_id,
+                "message": f"Successfully updated Outlook contact record for '{target_name}'.",
+                "updated_fields": {k: v for k, v in [("address", address), ("phone", phone), ("email", email), ("notes", notes)] if v is not None},
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to update Outlook contact: {e}"}
+
+    def _microsoft_create_contact(
+        self,
+        name: str,
+        address: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        notes: Optional[str] = None,
+        address_type: str = "home",
+    ) -> Dict[str, Any]:
+        headers = self._microsoft_headers()
+        if not headers:
+            return {"success": False, "error": "Microsoft access token unavailable."}
+
+        parsed_addr = parse_address_components(address) if address else {}
+        name_parts = str(name or "New Contact").strip().split()
+        first_name = name_parts[0] if name_parts else "Contact"
+        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+
+        body: Dict[str, Any] = {
+            "givenName": first_name,
+            "surname": last_name,
+            "displayName": name,
+        }
+        if address:
+            addr_field = "homeAddress" if address_type.lower() == "home" else ("businessAddress" if address_type.lower() == "work" else "otherAddress")
+            body[addr_field] = {
+                "street": parsed_addr.get("street", address),
+                "city": parsed_addr.get("city", ""),
+                "state": parsed_addr.get("region", ""),
+                "postalCode": parsed_addr.get("postal_code", ""),
+            }
+        if phone:
+            body["mobilePhone"] = phone
+        if email:
+            body["emailAddresses"] = [{"address": email, "name": name}]
+        if notes:
+            body["personalNotes"] = notes
+
+        try:
+            headers["Content-Type"] = "application/json"
+            r = requests.post(f"{MICROSOFT_GRAPH_BASE}/me/contacts", headers=headers, json=body, timeout=10)
+            if r.status_code == 403:
+                return {
+                    "success": False,
+                    "error": (
+                        "Permission denied by Microsoft Outlook (403 Forbidden). "
+                        "Your Microsoft account was connected before contact write permissions ('Contacts.ReadWrite') were enabled. "
+                        "Please click 'Reconnect' next to Microsoft in Settings -> Connected Accounts to grant full Contacts read/write access."
+                    ),
+                }
+            if not r.ok:
+                return {"success": False, "error": f"Outlook contact creation failed (HTTP {r.status_code}): {r.text}"}
+
+            created_c = r.json()
+            return {
+                "success": True,
+                "provider": "microsoft",
+                "name": name,
+                "id": created_c.get("id"),
+                "message": f"Successfully created new Outlook contact for '{name}'.",
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Failed to create Outlook contact: {e}"}
 
     # =========================================================================
     # Standard IMAP / SMTP Implementation
