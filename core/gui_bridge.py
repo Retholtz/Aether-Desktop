@@ -2310,6 +2310,7 @@ class GuiBridge:
         res = self._oauth_mgr.get_status()
         res["steam"] = self.get_steam_status()
         res["desktop_notifications"] = self.get_desktop_notifications_status()
+        res["streaming"] = self.get_streaming_status()
         return res
 
     def save_oauth_client_config(self, provider: str, config_data: Optional[dict] = None) -> dict:
@@ -2575,6 +2576,320 @@ class GuiBridge:
         if watcher:
             watcher.clear_history()
         return {"success": True, "message": "Notification history cleared."}
+
+    # =========================================================================
+    # Live Streaming & Broadcaster Watchlist RPC
+    # =========================================================================
+
+    def get_streaming_status(self) -> dict:
+        """Returns the current connection, configuration, and watchlist status of the LiveStream service."""
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+        stream_cfg = settings.get("integrations", {}).get("streaming", {})
+        enabled = bool(stream_cfg.get("enabled", True))
+        poll_interval = int(stream_cfg.get("poll_interval_seconds", 120))
+        verbal = bool(stream_cfg.get("verbal_alerts", False))
+
+        tw_cfg = stream_cfg.get("twitch", {})
+        tw_enabled = bool(tw_cfg.get("enabled", True))
+        tw_id = str(tw_cfg.get("client_id", "") or os.getenv("TWITCH_CLIENT_ID", "")).strip()
+        tw_sec = str(tw_cfg.get("client_secret", "") or os.getenv("TWITCH_CLIENT_SECRET", "")).strip()
+        tw_channels = list(tw_cfg.get("channels", []))
+        tw_tokens = self._oauth_mgr.vault.get_provider_tokens("twitch") if self._oauth_mgr else None
+        tw_oauth_connected = bool(tw_tokens and tw_tokens.get("access_token"))
+        tw_account_name = tw_tokens.get("account_name", "") if tw_tokens else ""
+        tw_connected = bool((tw_id and tw_sec) or tw_oauth_connected)
+
+        tw_id_masked = ""
+        if tw_id:
+            tw_id_masked = tw_id[:3] + "••••" + tw_id[-3:] if len(tw_id) > 6 else "••••••••"
+
+        yt_cfg = stream_cfg.get("youtube", {})
+        yt_enabled = bool(yt_cfg.get("enabled", True))
+        yt_key = str(yt_cfg.get("api_key", "") or os.getenv("YOUTUBE_API_KEY", "")).strip()
+        yt_channels = list(yt_cfg.get("channels", []))
+        google_tokens = self._oauth_mgr.vault.get_provider_tokens("google") if self._oauth_mgr else None
+        google_has_yt = bool(google_tokens and any("youtube" in s for s in google_tokens.get("scopes", [])))
+        yt_oauth_connected = bool(google_tokens and google_has_yt)
+        yt_connected = bool(yt_key or yt_oauth_connected)
+
+        yt_key_masked = ""
+        if yt_key:
+            yt_key_masked = yt_key[:4] + "••••" + yt_key[-4:] if len(yt_key) > 8 else "••••••••"
+
+        running = bool(hasattr(self._engine, "livestream_service") and self._engine.livestream_service)
+
+        return {
+            "success": True,
+            "enabled": enabled,
+            "poll_interval_seconds": poll_interval,
+            "verbal_alerts": verbal,
+            "running": running,
+            "twitch_enabled": tw_enabled,
+            "twitch_connected": tw_connected,
+            "twitch_oauth_connected": tw_oauth_connected,
+            "twitch_account_name": tw_account_name,
+            "twitch_client_id": tw_id,
+            "twitch_client_id_masked": tw_id_masked,
+            "has_twitch_id": bool(tw_id),
+            "has_twitch_secret": bool(tw_sec),
+            "twitch_channels": tw_channels,
+            "youtube_enabled": yt_enabled,
+            "youtube_connected": yt_connected,
+            "youtube_oauth_connected": yt_oauth_connected,
+            "youtube_api_key": yt_key,
+            "youtube_api_key_masked": yt_key_masked,
+            "has_youtube_key": bool(yt_key),
+            "youtube_channels": yt_channels,
+            "total_channels": len(tw_channels) + len(yt_channels)
+        }
+
+    def save_streaming_config(
+        self,
+        enabled: Optional[bool] = None,
+        poll_interval_seconds: Optional[int] = None,
+        verbal_alerts: Optional[bool] = None,
+        twitch_client_id: Optional[str] = None,
+        twitch_client_secret: Optional[str] = None,
+        youtube_api_key: Optional[str] = None
+    ) -> dict:
+        """Saves Live Streaming configuration and credentials."""
+        from core.config import save_settings
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+        stream_cfg = settings.setdefault("integrations", {}).setdefault("streaming", {})
+
+        if enabled is not None:
+            stream_cfg["enabled"] = bool(enabled)
+        if poll_interval_seconds is not None:
+            stream_cfg["poll_interval_seconds"] = max(10, int(poll_interval_seconds or 120))
+        if verbal_alerts is not None:
+            stream_cfg["verbal_alerts"] = bool(verbal_alerts)
+
+        tw_cfg = stream_cfg.setdefault("twitch", {})
+        if twitch_client_id is not None:
+            clean_tw_id = str(twitch_client_id).strip()
+            if "••••" not in clean_tw_id:
+                tw_cfg["client_id"] = clean_tw_id
+
+        if twitch_client_secret is not None:
+            clean_tw_sec = str(twitch_client_secret).strip()
+            if "••••" not in clean_tw_sec:
+                tw_cfg["client_secret"] = clean_tw_sec
+
+        yt_cfg = stream_cfg.setdefault("youtube", {})
+        if youtube_api_key is not None:
+            clean_yt_key = str(youtube_api_key).strip()
+            if "••••" not in clean_yt_key:
+                yt_cfg["api_key"] = clean_yt_key
+
+        save_settings(settings)
+
+        if hasattr(self, "_engine") and self._engine:
+            if hasattr(self._engine, "set_streaming_config"):
+                self._engine.set_streaming_config(
+                    enabled=stream_cfg.get("enabled"),
+                    poll_interval_seconds=stream_cfg.get("poll_interval_seconds"),
+                    verbal_alerts=stream_cfg.get("verbal_alerts"),
+                    twitch=tw_cfg,
+                    youtube=yt_cfg
+                )
+            if hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+                self._engine.settings.setdefault("integrations", {})["streaming"] = stream_cfg
+
+        status = self.get_streaming_status()
+        self.notify("streaming_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        return status
+
+    def add_stream_channel(self, platform: str, channel_name: str, display_name: str = "") -> dict:
+        """Adds a channel or creator to the streaming watchlist."""
+        plat = (platform or "").lower().strip()
+        ch = (channel_name or "").strip()
+        if not ch or plat not in ("twitch", "youtube"):
+            return {"success": False, "error": "Invalid platform or channel name."}
+
+        from core.config import save_settings
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+        stream_cfg = settings.setdefault("integrations", {}).setdefault("streaming", {})
+
+        if plat == "twitch":
+            tw_channels = stream_cfg.setdefault("twitch", {}).setdefault("channels", [])
+            clean_ch = ch.lower()
+            if clean_ch not in [c.lower() for c in tw_channels]:
+                tw_channels.append(clean_ch)
+        else:
+            yt_channels = stream_cfg.setdefault("youtube", {}).setdefault("channels", [])
+            exists = any(
+                entry.get("channel_id") == ch or (entry.get("name") and entry.get("name", "").lower() == ch.lower())
+                for entry in yt_channels
+            )
+            if not exists:
+                yt_channels.append({"name": display_name or ch, "channel_id": ch})
+
+        save_settings(settings)
+
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings"):
+            self._engine.settings.setdefault("integrations", {})["streaming"] = stream_cfg
+
+        status = self.get_streaming_status()
+        self.notify("streaming_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        return {"success": True, "status": status}
+
+    def remove_stream_channel(self, platform: str, channel_name: str) -> dict:
+        """Removes a channel or creator from the streaming watchlist."""
+        plat = (platform or "").lower().strip()
+        ch = (channel_name or "").strip()
+        if not ch or plat not in ("twitch", "youtube"):
+            return {"success": False, "error": "Invalid platform or channel name."}
+
+        from core.config import save_settings
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+        stream_cfg = settings.setdefault("integrations", {}).setdefault("streaming", {})
+
+        if plat == "twitch":
+            tw_channels = stream_cfg.setdefault("twitch", {}).setdefault("channels", [])
+            tw_channels[:] = [c for c in tw_channels if c.lower() != ch.lower()]
+        else:
+            yt_channels = stream_cfg.setdefault("youtube", {}).setdefault("channels", [])
+            yt_channels[:] = [
+                entry for entry in yt_channels
+                if entry.get("channel_id") != ch and entry.get("name", "").lower() != ch.lower()
+            ]
+
+        save_settings(settings)
+
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings"):
+            self._engine.settings.setdefault("integrations", {})["streaming"] = stream_cfg
+
+        status = self.get_streaming_status()
+        self.notify("streaming_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        return {"success": True, "status": status}
+
+    def check_live_streams_now(self, platform: Optional[str] = None) -> dict:
+        """Polls current live status across watchlist creators immediately."""
+        service = getattr(self._engine, "livestream_service", None) if hasattr(self, "_engine") and self._engine else None
+        if not service:
+            return {"success": False, "error": "Live streaming service is not initialized."}
+
+        import asyncio
+        loop = getattr(self._engine, "_loop", None) or getattr(self, "_loop", None)
+
+        settings = self.get_streaming_status()
+        plat = (platform or "").lower().strip()
+
+        async def _query():
+            results = []
+            if plat in ("", "twitch") and service.has_twitch():
+                channels = settings.get("twitch_channels", [])
+                if channels:
+                    tw_res = await service.get_twitch_streams(channels)
+                    results.extend([t.to_dict() for t in tw_res])
+            if plat in ("", "youtube") and service.has_youtube():
+                for entry in settings.get("youtube_channels", []):
+                    cid = entry.get("channel_id")
+                    cname = entry.get("name", "")
+                    if cid:
+                        yt_res = await service.check_youtube_channel_live(cid, cname)
+                        results.append(yt_res.to_dict())
+            return results
+
+        try:
+            if isinstance(loop, asyncio.AbstractEventLoop) and loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(_query(), loop)
+                res = future.result(timeout=10.0)
+            else:
+                res = asyncio.run(_query())
+            return {
+                "success": True,
+                "streams": res,
+                "live_streams": [r for r in res if r.get("is_live")],
+                "offline_streams": [r for r in res if not r.get("is_live")]
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def sync_twitch_follows(self) -> dict:
+        """Syncs creators followed on Twitch into Aether's watchlist."""
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "sync_twitch_follows_to_watchlist"):
+            res = self._engine.sync_twitch_follows_to_watchlist()
+        else:
+            from core.oauth_manager import get_oauth_manager
+            mgr = get_oauth_manager()
+            channels = mgr.fetch_twitch_followed_channels()
+            if not channels:
+                return {"success": False, "error": "No followed channels found or Twitch not connected."}
+            from core.config import load_settings, save_settings
+            settings = load_settings()
+            stream_cfg = settings.setdefault("integrations", {}).setdefault("streaming", {})
+            tw_cfg = stream_cfg.setdefault("twitch", {})
+            current = list(tw_cfg.get("channels", []))
+            current_lower = {c.lower() for c in current}
+            added = 0
+            for ch in channels:
+                login = ch.get("login") or ch.get("name", "")
+                if login and login.lower() not in current_lower:
+                    current.append(login)
+                    current_lower.add(login.lower())
+                    added += 1
+            tw_cfg["channels"] = current
+            save_settings(settings)
+            res = {"success": True, "added_count": added, "total_count": len(current)}
+
+        status = self.get_streaming_status()
+        self.notify("streaming_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        res["status"] = status
+        return res
+
+    def sync_youtube_subscriptions(self) -> dict:
+        """Syncs subscribed YouTube channels into Aether's watchlist."""
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "sync_youtube_subscriptions_to_watchlist"):
+            res = self._engine.sync_youtube_subscriptions_to_watchlist()
+        else:
+            from core.oauth_manager import get_oauth_manager
+            mgr = get_oauth_manager()
+            channels = mgr.fetch_youtube_subscriptions()
+            if not channels:
+                return {"success": False, "error": "No subscribed channels found or Google YouTube not connected."}
+            from core.config import load_settings, save_settings
+            settings = load_settings()
+            stream_cfg = settings.setdefault("integrations", {}).setdefault("streaming", {})
+            yt_cfg = stream_cfg.setdefault("youtube", {})
+            current = list(yt_cfg.get("channels", []))
+            existing_ids = {c.get("channel_id") for c in current if isinstance(c, dict)}
+            added = 0
+            for ch in channels:
+                cid = ch.get("channel_id")
+                if cid and cid not in existing_ids:
+                    current.append({"name": ch.get("name", cid), "channel_id": cid})
+                    existing_ids.add(cid)
+                    added += 1
+            yt_cfg["channels"] = current
+            save_settings(settings)
+            res = {"success": True, "added_count": added, "total_count": len(current)}
+
+        status = self.get_streaming_status()
+        self.notify("streaming_status_changed", status)
+        self.notify("oauth_status_updated", self.get_oauth_status())
+        res["status"] = status
+        return res
 
 
 GUIBridge = GuiBridge

@@ -90,14 +90,18 @@ DEFAULT_MICROSOFT_CLIENT_ID = os.getenv(
     "5242daeb-e095-43c7-9979-57694e6983aa",
 ).strip()
 DEFAULT_MICROSOFT_TENANT_ID = os.getenv("AETHER_MICROSOFT_TENANT_ID", "consumers").strip() or "consumers"
+DEFAULT_TWITCH_CLIENT_ID = os.getenv("AETHER_TWITCH_CLIENT_ID", "").strip()
+DEFAULT_TWITCH_CLIENT_SECRET = os.getenv("AETHER_TWITCH_CLIENT_SECRET", "").strip()
 
 DEFAULT_CLIENT_IDS = {
     "google": DEFAULT_GOOGLE_CLIENT_ID,
     "microsoft": DEFAULT_MICROSOFT_CLIENT_ID,
+    "twitch": DEFAULT_TWITCH_CLIENT_ID,
 }
 DEFAULT_CLIENT_SECRETS = {
     "google": DEFAULT_GOOGLE_CLIENT_SECRET,
     "microsoft": "",
+    "twitch": DEFAULT_TWITCH_CLIENT_SECRET,
 }
 
 
@@ -155,7 +159,7 @@ class OAuthTokenVault:
     Isolated in data/oauth_tokens.json and blocked from child script sandboxes by ASTSecurityGatekeeper.
     """
 
-    SUPPORTED_PROVIDERS = ("google", "microsoft", "imap")
+    SUPPORTED_PROVIDERS = ("google", "microsoft", "imap", "twitch")
 
     def __init__(self, vault_path: str = DEFAULT_VAULT_PATH):
         self.vault_path = vault_path
@@ -292,6 +296,7 @@ class OAuthTokenVault:
                 "provider": provider_key,
                 "account_email": str(token_data.get("account_email") or existing.get("account_email") or "").strip(),
                 "account_name": str(token_data.get("account_name") or existing.get("account_name") or "").strip(),
+                "user_id": str(token_data.get("user_id") or existing.get("user_id") or "").strip(),
                 "access_token_enc": _dpapi_encrypt(access_token) if access_token else existing.get("access_token_enc", ""),
                 "refresh_token_enc": _dpapi_encrypt(refresh_token) if refresh_token else existing.get("refresh_token_enc", ""),
                 "app_password_enc": _dpapi_encrypt(app_password) if app_password else existing.get("app_password_enc", ""),
@@ -327,6 +332,7 @@ class OAuthTokenVault:
                 "provider": provider_key,
                 "account_email": raw.get("account_email", ""),
                 "account_name": raw.get("account_name", ""),
+                "user_id": raw.get("user_id", ""),
                 "access_token": access_token,
                 "refresh_token": refresh_token,
                 "app_password": app_password,
@@ -382,6 +388,7 @@ class OAuthTokenVault:
                     "connected": has_tokens,
                     "account_email": p_rec.get("account_email", "") if has_tokens else "",
                     "account_name": p_rec.get("account_name", "") if has_tokens else "",
+                    "user_id": p_rec.get("user_id", "") if has_tokens else "",
                     "scopes": p_rec.get("scopes", []) if has_tokens else [],
                     "expires_at": p_rec.get("expires_at", 0.0) if has_tokens else 0.0,
                     "updated_at": p_rec.get("updated_at", 0.0) if has_tokens else 0.0,

@@ -1613,6 +1613,147 @@
             </div>
           </div>
 
+          <!-- LIVE STREAMING & BROADCASTER WATCHLIST (TWITCH & YOUTUBE) -->
+          <div class="settings-card hud-card" id="connectedStreamingCard" style="margin-top: 16px;">
+            <div class="settings-card-header card-header">
+              <h3 class="card-title">LIVE STREAMING &amp; BROADCASTER WATCHLIST</h3>
+              <span class="card-tag">TWITCH &amp; YOUTUBE</span>
+            </div>
+            <div class="card-body">
+              <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
+                Monitor your favorite content creators and streamers across <strong>Twitch and YouTube</strong>. Aether watches broadcast channels in the background and announces when they go live.
+              </p>
+
+              <!-- Streaming Service Status Row -->
+              <div style="background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <strong style="color: #e2e8f0; font-size: 0.94rem;">Broadcast Monitor</strong>
+                    <span id="streamingStatusBadge" class="step-status-pill done">ACTIVE</span>
+                  </div>
+                  <div id="streamingStatusLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 4px;">Tracking 0 creators across Twitch &amp; YouTube</div>
+
+                  <!-- Options / Toggles -->
+                  <div style="margin-top: 10px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: #cbd5e1; font-size: 0.82rem; user-select: none;">
+                      <input type="checkbox" id="chkStreamingEnabled" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                      <span>Enable Stream Watcher</span>
+                    </label>
+
+                    <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: #cbd5e1; font-size: 0.82rem; user-select: none;">
+                      <input type="checkbox" id="chkStreamingVerbal" style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                      <span>Verbal Announcement (Whisper on stream live)</span>
+                    </label>
+
+                    <div style="display: inline-flex; align-items: center; gap: 6px;">
+                      <span style="color: #94a3b8; font-size: 0.82rem;">Poll Rate:</span>
+                      <select id="streamingPollInterval" class="hud-select" style="padding: 2px 8px; font-size: 0.78rem; height: 26px; border-radius: 4px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(56, 189, 248, 0.25); color: #e2e8f0; cursor: pointer;">
+                        <option value="60">60s (Frequent)</option>
+                        <option value="120" selected>2 min (Default)</option>
+                        <option value="300">5 min</option>
+                        <option value="600">10 min (Quota Saver)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <!-- OAuth Sign-In & Account Linking Status Row -->
+                  <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(56, 189, 248, 0.12); display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+                    <!-- Twitch OAuth -->
+                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 10px; display: inline-flex; align-items: center; gap: 8px;">
+                      <span style="font-size: 0.78rem; font-weight: 700; color: #c084fc;">Twitch</span>
+                      <span id="twitchOAuthStatusPill" class="step-status-pill pending" style="font-size: 0.68rem; padding: 2px 6px;">DISCONNECTED</span>
+                      <button type="button" id="btnConnectTwitchOAuth" class="btn-primary-sm" style="padding: 3px 9px; font-size: 0.74rem; background: #9333ea; border-color: #a855f7;">Sign in with Twitch</button>
+                      <button type="button" id="btnDisconnectTwitchOAuth" class="hud-btn-ghost sm" style="padding: 2px 6px; font-size: 0.72rem; display: none; color: #f87171;">✕</button>
+                    </div>
+
+                    <!-- YouTube OAuth -->
+                    <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 5px 10px; display: inline-flex; align-items: center; gap: 8px;">
+                      <span style="font-size: 0.78rem; font-weight: 700; color: #f87171;">YouTube</span>
+                      <span id="youtubeOAuthStatusPill" class="step-status-pill pending" style="font-size: 0.68rem; padding: 2px 6px;">DISCONNECTED</span>
+                      <button type="button" id="btnConnectYouTubeOAuth" class="btn-primary-sm" style="padding: 3px 9px; font-size: 0.74rem; background: #dc2626; border-color: #ef4444;">Sign in with Google</button>
+                      <button type="button" id="btnDisconnectYouTubeOAuth" class="hud-btn-ghost sm" style="padding: 2px 6px; font-size: 0.72rem; display: none; color: #f87171;">✕</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button type="button" id="btnConfigureStreaming" class="hud-btn-secondary sm" style="padding: 8px 14px; font-weight: 600;">API Keys</button>
+                  <button type="button" id="btnCheckStreamingNow" class="btn-primary-sm" style="padding: 8px 16px; font-weight: 600;">Check Streams</button>
+                </div>
+              </div>
+
+              <!-- API Credentials Drawer -->
+              <div id="streamingConfigDrawer" style="display: none; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 14px 16px; margin-top: 10px; margin-bottom: 12px;">
+                <h4 style="margin: 0 0 8px 0; color: #38bdf8; font-size: 0.88rem; font-weight: 600;">STREAMING API CREDENTIALS</h4>
+                <p class="input-hint" style="margin: 0 0 12px 0;">
+                  Enter Twitch Developer App credentials and a Google YouTube Data API Key to query live streams.
+                </p>
+                <div class="form-grid" style="margin-bottom: 10px;">
+                  <div class="form-group">
+                    <label for="twitchClientIdInput">Twitch Client ID</label>
+                    <input type="text" id="twitchClientIdInput" class="hud-input" placeholder="Twitch Application Client ID" />
+                  </div>
+                  <div class="form-group">
+                    <label for="twitchClientSecretInput">Twitch Client Secret</label>
+                    <input type="password" id="twitchClientSecretInput" class="hud-input" placeholder="Twitch Application Client Secret" />
+                  </div>
+                  <div class="form-group" style="grid-column: span 2;">
+                    <label for="youtubeApiKeyInput">YouTube Data API v3 Key</label>
+                    <input type="password" id="youtubeApiKeyInput" class="hud-input" placeholder="Google Cloud YouTube Data API Key" />
+                  </div>
+                </div>
+                <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 12px; gap: 10px;">
+                  <button type="button" id="btnCancelStreamingConfig" class="hud-btn-ghost sm">Cancel</button>
+                  <button type="button" id="btnSaveStreamingConfig" class="btn-primary-sm" style="padding: 6px 14px; font-weight: 600;">Save Credentials</button>
+                </div>
+              </div>
+
+              <!-- Watchlist Manager Panel -->
+              <div style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 14px 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                  <div>
+                    <span style="font-size: 0.82rem; font-weight: 600; color: #38bdf8; letter-spacing: 0.04em;">MONITORED CREATORS &amp; CHANNELS</span>
+                    <div style="font-size: 0.74rem; color: #94a3b8; margin-top: 2px;">Manage via the form below or simply say "Aether, add CohhCarnage to my watchlist"</div>
+                  </div>
+                  <div style="display: flex; gap: 6px; align-items: center;">
+                    <button type="button" id="btnSyncTwitchFollows" class="hud-btn-secondary sm" style="padding: 4px 10px; font-size: 0.74rem;" title="Import creators you follow on Twitch">📥 Sync Twitch Follows</button>
+                    <button type="button" id="btnSyncYouTubeSubscriptions" class="hud-btn-secondary sm" style="padding: 4px 10px; font-size: 0.74rem;" title="Import your YouTube channel subscriptions">📥 Sync YouTube Subs</button>
+                    <span id="streamingWatchlistCount" class="card-tag">0 CHANNELS</span>
+                  </div>
+                </div>
+
+                <!-- Inline Add Channel Form -->
+                <div style="display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center;">
+                  <select id="newStreamPlatform" class="hud-select" style="padding: 6px 10px; font-size: 0.8rem; height: 34px; border-radius: 4px; background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(56, 189, 248, 0.3); color: #e2e8f0; cursor: pointer; min-width: 110px;">
+                    <option value="twitch">Twitch</option>
+                    <option value="youtube">YouTube</option>
+                  </select>
+                  <input type="text" id="newStreamChannelInput" class="hud-input" placeholder="Twitch username or YouTube Channel ID" style="flex: 1; min-width: 220px; height: 34px; font-size: 0.82rem;" />
+                  <input type="text" id="newStreamDisplayInput" class="hud-input" placeholder="Display name (optional)" style="width: 170px; height: 34px; font-size: 0.82rem;" />
+                  <button type="button" id="btnAddStreamChannel" class="btn-primary-sm" style="padding: 7px 14px; font-weight: 600; height: 34px;">+ Add Creator</button>
+                </div>
+
+                <!-- Chips Container -->
+                <div id="streamingChipsList" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 32px; align-items: center;">
+                  <!-- Dynamically populated with interactive creator chips -->
+                </div>
+              </div>
+
+              <!-- Live Streams Status Drawer (Results of checking live status) -->
+              <div id="streamingLiveResultsContainer" style="display: none; margin-top: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 12px 14px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span style="font-size: 0.82rem; font-weight: 600; color: #38bdf8;">CURRENT BROADCAST STATUS</span>
+                  <button type="button" id="btnCloseStreamingResults" class="hud-btn-ghost sm" style="font-size: 0.75rem; padding: 2px 8px;">Close</button>
+                </div>
+                <div id="streamingLiveResultsList" style="display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto;">
+                  <!-- Populated dynamically with stream status -->
+                </div>
+              </div>
+
+              <div id="streamingFeedbackBanner" style="margin: 8px 0 4px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+            </div>
+          </div>
+
       </section>
 
       <!-- ============================================================= -->

@@ -49,6 +49,27 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             "verbal_announcement": False,
             "ignore_empty": True,
         },
+        "streaming": {
+            "enabled": True,
+            "poll_interval_seconds": 120,
+            "verbal_alerts": False,
+            "twitch": {
+                "enabled": True,
+                "client_id": "",
+                "client_secret": "",
+                "channels": ["shroud", "cohhcarnage"],
+            },
+            "youtube": {
+                "enabled": True,
+                "api_key": "",
+                "channels": [
+                    {
+                        "name": "Team YouTube",
+                        "channel_id": "UCBR8-60-B28hp2BmDPdntcQ",
+                    }
+                ],
+            },
+        },
     }
 }
 
@@ -123,6 +144,26 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
     notif_cfg.setdefault("include_whitelist_apps", True)
     notif_cfg.setdefault("verbal_announcement", False)
     notif_cfg.setdefault("ignore_empty", True)
+
+    # Ensure nested integrations.streaming structure is populated
+    stream_cfg = integrations.setdefault("streaming", {})
+    stream_cfg.setdefault("enabled", True)
+    stream_cfg.setdefault("poll_interval_seconds", 120)
+    stream_cfg.setdefault("verbal_alerts", False)
+    tw_cfg = stream_cfg.setdefault("twitch", {})
+    tw_cfg.setdefault("enabled", True)
+    tw_cfg.setdefault("client_id", os.getenv("TWITCH_CLIENT_ID", ""))
+    tw_cfg.setdefault("client_secret", os.getenv("TWITCH_CLIENT_SECRET", ""))
+    tw_cfg.setdefault("channels", ["shroud", "cohhcarnage"])
+    yt_cfg = stream_cfg.setdefault("youtube", {})
+    yt_cfg.setdefault("enabled", True)
+    yt_cfg.setdefault("api_key", os.getenv("YOUTUBE_API_KEY", ""))
+    yt_cfg.setdefault("channels", [
+        {
+            "name": "Team YouTube",
+            "channel_id": "UCBR8-60-B28hp2BmDPdntcQ"
+        }
+    ])
 
     return Settings(settings_data)
 

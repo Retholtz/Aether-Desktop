@@ -55,6 +55,7 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/contacts",
+    "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
 MICROSOFT_AUTH_TEMPLATE = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
@@ -71,6 +72,16 @@ MICROSOFT_SCOPES = [
     "Calendars.ReadWrite",
     "Contacts.ReadWrite",
 ]
+
+# Twitch Helix OAuth 2.0 & Follows Endpoints
+TWITCH_AUTH_URL = "https://id.twitch.tv/oauth2/authorize"
+TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
+TWITCH_USERS_URL = "https://api.twitch.tv/helix/users"
+TWITCH_FOLLOWED_URL = "https://api.twitch.tv/helix/channels/followed"
+TWITCH_SCOPES = ["user:read:follows"]
+
+# YouTube Data API v3 Endpoints
+YOUTUBE_SUBSCRIPTIONS_URL = "https://www.googleapis.com/youtube/v3/subscriptions"
 
 
 def _generate_pkce_pair() -> Tuple[str, str]:
@@ -454,6 +465,7 @@ class OAuthManager:
             "google": threading.Lock(),
             "microsoft": threading.Lock(),
             "imap": threading.Lock(),
+            "twitch": threading.Lock(),
         }
         self._active_flow_lock = threading.Lock()
         self._pending_drafts: Dict[str, Dict[str, Any]] = {}
@@ -472,7 +484,7 @@ class OAuthManager:
     def save_client_config(self, provider: str, config_data: Dict[str, Any]) -> Dict[str, Any]:
         """Saves OAuth client configuration or IMAP settings."""
         provider_key = provider.lower().strip()
-        if provider_key not in ("google", "microsoft", "imap"):
+        if provider_key not in ("google", "microsoft", "imap", "twitch"):
             return {"success": False, "error": f"Unsupported provider: {provider}"}
 
         ok = self.vault.save_client_config(provider_key, config_data)
@@ -563,21 +575,36 @@ class OAuthManager:
         with an ephemeral 127.0.0.1 loopback callback server.
         """
         provider_key = provider.lower().strip()
-        if provider_key not in ("google", "microsoft"):
-            return {"success": False, "error": f"OAuth browser flow is only supported for google or microsoft (got {provider})."}
+        if provider_key not in ("google", "microsoft", "twitch"):
+            return {"success": False, "error": f"OAuth browser flow is only supported for google, microsoft, or twitch (got {provider})."}
 
         client_cfg = self.vault.get_client_config(provider_key)
         client_id = client_cfg.get("client_id", "").strip()
         client_secret = client_cfg.get("client_secret", "").strip()
         tenant_id = client_cfg.get("tenant_id", "common").strip() or "common"
 
+        # If twitch and client_id is not yet in vault, check settings.json
+        if provider_key == "twitch" and not client_id:
+            try:
+                from core.config import load_settings
+                tw = load_settings().get("integrations", {}).get("streaming", {}).get("twitch", {})
+                client_id = tw.get("client_id", "").strip()
+                if not client_secret:
+                    client_secret = tw.get("client_secret", "").strip()
+            except Exception:
+                pass
+
         if not client_id:
-            provider_label = "Google Cloud" if provider_key == "google" else "Microsoft Entra (Azure)"
+            provider_label = (
+                "Google Cloud" if provider_key == "google"
+                else "Microsoft Entra (Azure)" if provider_key == "microsoft"
+                else "Twitch Developer"
+            )
             return {
                 "success": False,
                 "error": (
                     f"No {provider_label} OAuth Client ID configured. "
-                    f"Please enter your Client ID in Settings -> Connected Accounts first."
+                    f"Please enter your Client ID in Settings first."
                 ),
             }
 
@@ -696,6 +723,18 @@ class OAuthManager:
                 "prompt": "consent",
             }
             auth_url = f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
+        elif provider_key == "twitch":
+            params = {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "scope": " ".join(TWITCH_SCOPES),
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+                "state": expected_state,
+                "force_verify": "true",
+            }
+            auth_url = f"{TWITCH_AUTH_URL}?{urllib.parse.urlencode(params)}"
         else:
             ms_auth_base = MICROSOFT_AUTH_TEMPLATE.format(tenant=tenant_id)
             params = {
@@ -766,11 +805,13 @@ class OAuthManager:
         tenant_id: str = "common",
     ) -> bool:
         """Exchanges an OAuth 2.0 authorization code + PKCE verifier for access and refresh tokens."""
-        token_url = (
-            GOOGLE_TOKEN_URL
-            if provider == "google"
-            else MICROSOFT_TOKEN_TEMPLATE.format(tenant=tenant_id)
-        )
+        if provider == "google":
+            token_url = GOOGLE_TOKEN_URL
+        elif provider == "twitch":
+            token_url = TWITCH_TOKEN_URL
+        else:
+            token_url = MICROSOFT_TOKEN_TEMPLATE.format(tenant=tenant_id)
+
         data = {
             "client_id": client_id,
             "grant_type": "authorization_code",
@@ -792,40 +833,55 @@ class OAuthManager:
         expires_in = token_payload.get("expires_in", 3600)
         scope_str = token_payload.get("scope", "")
 
-        account_email, account_name = self._fetch_user_profile(provider, access_token)
+        account_email, account_name, user_id = self._fetch_user_profile(provider, access_token, client_id=client_id)
 
-        self.vault.save_provider_tokens(
-            provider,
-            {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "expires_in": expires_in,
-                "scopes": scope_str.split() if isinstance(scope_str, str) else scope_str,
-                "account_email": account_email,
-                "account_name": account_name,
-            },
-        )
-        logger.info(f"[OAUTH] Successfully linked {provider} account: {account_email}")
+        token_record = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": expires_in,
+            "scopes": scope_str.split() if isinstance(scope_str, str) else scope_str,
+            "account_email": account_email,
+            "account_name": account_name,
+        }
+        if user_id:
+            token_record["user_id"] = user_id
+
+        self.vault.save_provider_tokens(provider, token_record)
+        display_label = account_name or account_email or provider
+        logger.info(f"[OAUTH] Successfully linked {provider} account: {display_label}")
         return True
 
-    def _fetch_user_profile(self, provider: str, access_token: str) -> Tuple[str, str]:
-        """Fetches the authenticated user's email address and display name."""
+    def _fetch_user_profile(self, provider: str, access_token: str, client_id: str = "") -> Tuple[str, str, str]:
+        """Fetches the authenticated user's email address, display name, and optional platform user ID."""
         headers = {"Authorization": f"Bearer {access_token}"}
         try:
             if provider == "google":
                 r = requests.get(GOOGLE_USERINFO_URL, headers=headers, timeout=10)
                 if r.ok:
                     info = r.json()
-                    return info.get("email", ""), info.get("name", "")
+                    return info.get("email", ""), info.get("name", ""), str(info.get("id", ""))
             elif provider == "microsoft":
                 r = requests.get(f"{MICROSOFT_GRAPH_BASE}/me", headers=headers, timeout=10)
                 if r.ok:
                     info = r.json()
                     email_addr = info.get("mail") or info.get("userPrincipalName") or ""
-                    return email_addr, info.get("displayName", "")
+                    return email_addr, info.get("displayName", ""), str(info.get("id", ""))
+            elif provider == "twitch":
+                h = {"Authorization": f"Bearer {access_token}"}
+                if client_id:
+                    h["Client-Id"] = client_id
+                r = requests.get(TWITCH_USERS_URL, headers=h, timeout=10)
+                if r.ok:
+                    data = r.json().get("data", [])
+                    if data:
+                        u = data[0]
+                        email_addr = u.get("email", "")
+                        display_name = u.get("display_name") or u.get("login", "")
+                        user_id = str(u.get("id", ""))
+                        return email_addr, display_name, user_id
         except Exception as e:
             logger.warning(f"[OAUTH] Profile lookup warning for {provider}: {e}")
-        return "", ""
+        return "", "", ""
 
     def get_valid_access_token(self, provider: str) -> Optional[str]:
         """
@@ -857,11 +913,12 @@ class OAuthManager:
             if not client_id:
                 return access_token or None
 
-            token_url = (
-                GOOGLE_TOKEN_URL
-                if provider_key == "google"
-                else MICROSOFT_TOKEN_TEMPLATE.format(tenant=tenant_id)
-            )
+            if provider_key == "google":
+                token_url = GOOGLE_TOKEN_URL
+            elif provider_key == "twitch":
+                token_url = TWITCH_TOKEN_URL
+            else:
+                token_url = MICROSOFT_TOKEN_TEMPLATE.format(tenant=tenant_id)
             data = {
                 "client_id": client_id,
                 "grant_type": "refresh_token",
@@ -892,6 +949,108 @@ class OAuthManager:
             except Exception as e:
                 logger.error(f"[OAUTH] Exception refreshing token for {provider_key}: {e}")
             return None
+
+    def fetch_twitch_followed_channels(self) -> List[Dict[str, Any]]:
+        """
+        Fetches the channels followed by the connected Twitch account.
+        Returns list of {'name': display_name, 'login': login, 'id': broadcaster_id}.
+        """
+        access_token = self.get_valid_access_token("twitch")
+        if not access_token:
+            return []
+
+        client_cfg = self.vault.get_client_config("twitch")
+        client_id = client_cfg.get("client_id", "").strip()
+        if not client_id:
+            try:
+                from core.config import load_settings
+                client_id = load_settings().get("integrations", {}).get("streaming", {}).get("twitch", {}).get("client_id", "").strip()
+            except Exception:
+                pass
+        if not client_id:
+            return []
+
+        tokens = self.vault.get_provider_tokens("twitch") or {}
+        user_id = tokens.get("user_id", "").strip()
+
+        headers = {
+            "Client-Id": client_id,
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        # If user_id wasn't stored, query /helix/users to obtain it
+        if not user_id:
+            try:
+                u_resp = requests.get(TWITCH_USERS_URL, headers=headers, timeout=10)
+                if u_resp.ok:
+                    u_data = u_resp.json().get("data", [])
+                    if u_data:
+                        user_id = str(u_data[0].get("id", ""))
+                        tokens["user_id"] = user_id
+                        self.vault.save_provider_tokens("twitch", tokens)
+            except Exception as ex:
+                logger.warning(f"[OAUTH] Failed to fetch Twitch user ID: {ex}")
+
+        if not user_id:
+            logger.warning("[OAUTH] Cannot fetch followed channels without Twitch user_id.")
+            return []
+
+        try:
+            params = {"user_id": user_id, "first": 100}
+            resp = requests.get(TWITCH_FOLLOWED_URL, headers=headers, params=params, timeout=10)
+            if not resp.ok:
+                logger.warning(f"[OAUTH] Twitch followed channels fetch failed: HTTP {resp.status_code}")
+                return []
+            data = resp.json().get("data", [])
+            results = []
+            for item in data:
+                results.append({
+                    "name": item.get("broadcaster_name", ""),
+                    "login": item.get("broadcaster_login", ""),
+                    "id": item.get("broadcaster_id", "")
+                })
+            return results
+        except Exception as e:
+            logger.error(f"[OAUTH] Exception fetching Twitch followed channels: {e}")
+            return []
+
+    def fetch_youtube_subscriptions(self, max_results: int = 50) -> List[Dict[str, Any]]:
+        """
+        Fetches the subscribed channels for the connected Google account via YouTube Data API v3.
+        Returns list of {'name': title, 'channel_id': channel_id}.
+        """
+        access_token = self.get_valid_access_token("google")
+        if not access_token:
+            return []
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params = {
+            "part": "snippet",
+            "mine": "true",
+            "maxResults": min(max_results, 50)
+        }
+
+        try:
+            resp = requests.get(YOUTUBE_SUBSCRIPTIONS_URL, headers=headers, params=params, timeout=10)
+            if not resp.ok:
+                logger.warning(f"[OAUTH] YouTube subscriptions fetch failed: HTTP {resp.status_code} ({resp.text[:200]})")
+                return []
+            items = resp.json().get("items", [])
+            results = []
+            for item in items:
+                snippet = item.get("snippet", {})
+                res_id = snippet.get("resourceId", {})
+                ch_id = res_id.get("channelId", "")
+                title = snippet.get("title", "")
+                if ch_id:
+                    results.append({
+                        "name": title or ch_id,
+                        "channel_id": ch_id
+                    })
+            return results
+        except Exception as e:
+            logger.error(f"[OAUTH] Exception fetching YouTube subscriptions: {e}")
+            return []
 
     def resolve_provider(self, requested: str = "auto") -> Optional[str]:
         """Resolves 'auto' (or aliases like 'gmail', 'outlook', 'hotmail') to an active provider key."""

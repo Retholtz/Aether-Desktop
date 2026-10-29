@@ -42,6 +42,8 @@ from core.steam_service import SteamService
 from tools.steam_tools import register_steam_tools
 from core.notification_watcher import DesktopNotificationWatcher, DesktopNotification
 from tools.notification_tools import register_notification_tools
+from core.livestream_service import LiveStreamService, LiveStreamInfo
+from tools.livestream_tools import register_livestream_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -545,6 +547,8 @@ class AetherEngine:
                     self.settings.setdefault("integrations", {})["steam"] = cfg["integrations"]["steam"]
                 if "integrations" in cfg and "desktop_notifications" in cfg["integrations"]:
                     self.settings.setdefault("integrations", {})["desktop_notifications"] = cfg["integrations"]["desktop_notifications"]
+                if "integrations" in cfg and "streaming" in cfg["integrations"]:
+                    self.settings.setdefault("integrations", {})["streaming"] = cfg["integrations"]["streaming"]
             except Exception:
                 pass
 
@@ -574,6 +578,35 @@ class AetherEngine:
             register_notification_tools(self.dispatcher, self.notification_watcher)
         else:
             self.notification_watcher = None
+
+        # Live Streaming & Broadcaster Integration (Twitch Helix & YouTube Live)
+        stream_cfg = self.settings.get("integrations", {}).get("streaming", {})
+        if stream_cfg.get("enabled", True):
+            tw_cfg = stream_cfg.get("twitch", {})
+            yt_cfg = stream_cfg.get("youtube", {})
+
+            from core.oauth_manager import get_oauth_manager
+            oauth_mgr = get_oauth_manager()
+
+            self.livestream_service = LiveStreamService(
+                twitch_client_id=tw_cfg.get("client_id", ""),
+                twitch_client_secret=tw_cfg.get("client_secret", ""),
+                youtube_api_key=yt_cfg.get("api_key", ""),
+                on_stream_went_live=self._handle_stream_went_live,
+                google_token_provider=lambda: oauth_mgr.get_valid_access_token("google"),
+                twitch_token_provider=lambda: oauth_mgr.get_valid_access_token("twitch"),
+            )
+            register_livestream_tools(
+                self.dispatcher,
+                self.livestream_service,
+                engine=self,
+                watched_twitch=tw_cfg.get("channels", []),
+                watched_youtube=yt_cfg.get("channels", [])
+            )
+            self._stream_poller_task: Optional[asyncio.Task] = None
+        else:
+            self.livestream_service = None
+            self._stream_poller_task = None
 
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
@@ -1240,9 +1273,9 @@ class AetherEngine:
     @property
     def is_speaking(self) -> bool:
         return bool(
-            self._is_speaking
-            or (self.audio and getattr(self.audio, "is_speaking", False))
-            or (hasattr(self, "audio_player") and self.audio_player and getattr(self.audio_player, "is_playing", False))
+            getattr(self, "_is_speaking", False)
+            or (getattr(self, "audio", None) and getattr(self.audio, "is_speaking", False))
+            or (getattr(self, "audio_player", None) and getattr(self.audio_player, "is_playing", False))
         )
 
     @is_speaking.setter
@@ -1713,6 +1746,121 @@ class AetherEngine:
                     loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
                     if loop and loop.is_running():
                         asyncio.run_coroutine_threadsafe(self.notification_watcher.start(), loop)
+
+    def _handle_stream_went_live(self, stream: LiveStreamInfo):
+        self.notify("livestream_alert", stream.to_dict())
+
+        stream_cfg = self.settings.get("integrations", {}).get("streaming", {})
+        if stream_cfg.get("verbal_alerts", False) and not self.is_speaking:
+            category_msg = f" playing {stream.game_or_category}" if stream.game_or_category else ""
+            self.queue_whisper(f"{stream.channel_name} is now live on {stream.platform.title()}{category_msg}.")
+
+    async def _livestream_poll_worker(self):
+        cfg = self.settings.get("integrations", {}).get("streaming", {})
+        interval = cfg.get("poll_interval_seconds", 120)
+        tw_channels = cfg.get("twitch", {}).get("channels", [])
+        yt_channels = cfg.get("youtube", {}).get("channels", [])
+
+        while True:
+            try:
+                if self.livestream_service and self.livestream_service.has_twitch() and tw_channels:
+                    await self.livestream_service.get_twitch_streams(tw_channels)
+
+                if self.livestream_service and self.livestream_service.has_youtube() and yt_channels:
+                    for entry in yt_channels:
+                        cid = entry.get("channel_id")
+                        cname = entry.get("name", "")
+                        if cid:
+                            await self.livestream_service.check_youtube_channel_live(cid, cname)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[STREAM] Background polling cycle error: {e}")
+
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
+
+    def set_streaming_config(
+        self,
+        enabled: Optional[bool] = None,
+        poll_interval_seconds: Optional[int] = None,
+        verbal_alerts: Optional[bool] = None,
+        twitch: Optional[dict] = None,
+        youtube: Optional[dict] = None
+    ):
+        """Updates live streaming watcher configuration at runtime."""
+        stream_cfg = self.settings.setdefault("integrations", {}).setdefault("streaming", {})
+        if enabled is not None:
+            stream_cfg["enabled"] = bool(enabled)
+        if poll_interval_seconds is not None:
+            stream_cfg["poll_interval_seconds"] = int(poll_interval_seconds)
+        if verbal_alerts is not None:
+            stream_cfg["verbal_alerts"] = bool(verbal_alerts)
+        if twitch is not None:
+            stream_cfg.setdefault("twitch", {}).update(twitch)
+        if youtube is not None:
+            stream_cfg.setdefault("youtube", {}).update(youtube)
+
+        if hasattr(self, "livestream_service") and self.livestream_service:
+            tw = stream_cfg.get("twitch", {})
+            yt = stream_cfg.get("youtube", {})
+            self.livestream_service.configure(
+                twitch_client_id=tw.get("client_id"),
+                twitch_client_secret=tw.get("client_secret"),
+                youtube_api_key=yt.get("api_key")
+            )
+
+    def sync_twitch_follows_to_watchlist(self) -> Dict[str, Any]:
+        """Imports channels followed on Twitch into Aether's streaming watchlist."""
+        from core.oauth_manager import get_oauth_manager
+        mgr = get_oauth_manager()
+        channels = mgr.fetch_twitch_followed_channels()
+        if not channels:
+            return {"success": False, "added_count": 0, "message": "No followed channels found or Twitch not connected."}
+
+        stream_cfg = self.settings.setdefault("integrations", {}).setdefault("streaming", {})
+        tw_cfg = stream_cfg.setdefault("twitch", {})
+        current = list(tw_cfg.get("channels", []))
+        current_lower = {c.lower() for c in current}
+        added = 0
+        for ch in channels:
+            login = ch.get("login") or ch.get("name", "")
+            if login and login.lower() not in current_lower:
+                current.append(login)
+                current_lower.add(login.lower())
+                added += 1
+
+        tw_cfg["channels"] = current
+        from core.config import save_settings
+        save_settings(self.settings)
+        return {"success": True, "added_count": added, "total_count": len(current), "channels": current}
+
+    def sync_youtube_subscriptions_to_watchlist(self) -> Dict[str, Any]:
+        """Imports subscribed YouTube channels into Aether's streaming watchlist."""
+        from core.oauth_manager import get_oauth_manager
+        mgr = get_oauth_manager()
+        channels = mgr.fetch_youtube_subscriptions()
+        if not channels:
+            return {"success": False, "added_count": 0, "message": "No subscribed channels found or Google YouTube not connected."}
+
+        stream_cfg = self.settings.setdefault("integrations", {}).setdefault("streaming", {})
+        yt_cfg = stream_cfg.setdefault("youtube", {})
+        current = list(yt_cfg.get("channels", []))
+        existing_ids = {c.get("channel_id") for c in current if isinstance(c, dict)}
+        added = 0
+        for ch in channels:
+            cid = ch.get("channel_id")
+            if cid and cid not in existing_ids:
+                current.append({"name": ch.get("name", cid), "channel_id": cid})
+                existing_ids.add(cid)
+                added += 1
+
+        yt_cfg["channels"] = current
+        from core.config import save_settings
+        save_settings(self.settings)
+        return {"success": True, "added_count": added, "total_count": len(current), "channels": current}
 
     def kill_audio(self):
         """Immediately halts audio playback, cancels in-flight synthesis, and purges all output buffers."""
@@ -2557,6 +2705,11 @@ class AetherEngine:
                 await self.notification_watcher.start()
             except Exception as e:
                 logger.warning(f"[START] Notification watcher async start warning: {e}")
+        if hasattr(self, "livestream_service") and self.livestream_service and (self._stream_poller_task is None or getattr(self._stream_poller_task, "done", lambda: False)()):
+            try:
+                self._stream_poller_task = asyncio.create_task(self._livestream_poll_worker())
+            except Exception as e:
+                logger.warning(f"[START] Livestream poller async start warning: {e}")
         config = self.config_getter()
         api_cfg = config.get("api", {})
         audio_cfg = config.get("audio", {})
@@ -4985,6 +5138,14 @@ class AetherEngine:
                 asyncio.run_coroutine_threadsafe(self.notification_watcher.start(), loop)
             except Exception as e:
                 logger.warning(f"[START] Desktop notification watcher start warning: {e}")
+        if hasattr(self, "livestream_service") and self.livestream_service:
+            try:
+                if loop.is_running():
+                    self._stream_poller_task = asyncio.run_coroutine_threadsafe(self._livestream_poll_worker(), loop)
+                else:
+                    self._stream_poller_task = loop.create_task(self._livestream_poll_worker())
+            except Exception as e:
+                logger.warning(f"[START] Livestream poller start warning: {e}")
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
@@ -5082,6 +5243,23 @@ class AetherEngine:
                     asyncio.create_task(self.notification_watcher.stop())
             except Exception as e:
                 logger.warning(f"[STOP] Notification watcher stop warning: {e}")
+
+        if hasattr(self, "_stream_poller_task") and self._stream_poller_task:
+            try:
+                self._stream_poller_task.cancel()
+            except Exception as e:
+                logger.warning(f"[STOP] Livestream poller cancel warning: {e}")
+            self._stream_poller_task = None
+
+        if hasattr(self, "livestream_service") and self.livestream_service:
+            try:
+                loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.livestream_service.close(), loop)
+                else:
+                    asyncio.create_task(self.livestream_service.close())
+            except Exception as e:
+                logger.warning(f"[STOP] Livestream service close warning: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 

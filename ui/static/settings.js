@@ -459,6 +459,172 @@ function renderOAuthStatus(statusMap) {
       `).join('');
     }
   }
+
+  // Live Streaming & Broadcaster Watchlist Status
+  const streamInfo = statusMap.streaming || {};
+  const streamBadge = document.getElementById('streamingStatusBadge');
+  const streamLabel = document.getElementById('streamingStatusLabel');
+  const streamEnabledChk = document.getElementById('chkStreamingEnabled');
+  const streamVerbalChk = document.getElementById('chkStreamingVerbal');
+  const streamPollInterval = document.getElementById('streamingPollInterval');
+  const twIdInput = document.getElementById('twitchClientIdInput');
+  const twSecInput = document.getElementById('twitchClientSecretInput');
+  const ytKeyInput = document.getElementById('youtubeApiKeyInput');
+  const chipsList = document.getElementById('streamingChipsList');
+  const countBadge = document.getElementById('streamingWatchlistCount');
+
+  if (streamBadge && streamInfo.enabled !== undefined) {
+    if (streamInfo.enabled) {
+      streamBadge.textContent = streamInfo.running ? 'LISTENING' : 'ACTIVE';
+      streamBadge.className = 'step-status-pill done';
+    } else {
+      streamBadge.textContent = 'DISABLED';
+      streamBadge.className = 'step-status-pill pending';
+    }
+  }
+
+  const twChannels = streamInfo.twitch_channels || [];
+  const ytChannels = streamInfo.youtube_channels || [];
+  const totalChannels = twChannels.length + ytChannels.length;
+
+  if (streamLabel) {
+    const parts = [];
+    if (streamInfo.twitch_connected) parts.push('Twitch (Connected)');
+    else parts.push('Twitch');
+    if (streamInfo.youtube_connected) parts.push('YouTube (Connected)');
+    else parts.push('YouTube');
+    streamLabel.textContent = `Monitoring ${totalChannels} creators across ${parts.join(' & ')}`;
+    streamLabel.style.color = streamInfo.enabled ? '#38bdf8' : '#94a3b8';
+  }
+
+  if (countBadge) {
+    countBadge.textContent = `${totalChannels} CHANNEL${totalChannels === 1 ? '' : 'S'}`;
+  }
+
+  if (streamEnabledChk && streamInfo.enabled !== undefined) {
+    streamEnabledChk.checked = Boolean(streamInfo.enabled);
+  }
+  if (streamVerbalChk && streamInfo.verbal_alerts !== undefined) {
+    streamVerbalChk.checked = Boolean(streamInfo.verbal_alerts);
+  }
+  if (streamPollInterval && streamInfo.poll_interval_seconds !== undefined) {
+    streamPollInterval.value = String(streamInfo.poll_interval_seconds);
+  }
+
+  if (twIdInput && streamInfo.has_twitch_id && (!twIdInput.value || twIdInput.value === '••••••••')) {
+    twIdInput.value = streamInfo.twitch_client_id_masked || '••••••••';
+  }
+  if (twSecInput && streamInfo.has_twitch_secret && (!twSecInput.value || twSecInput.value === '••••••••')) {
+    twSecInput.value = '••••••••';
+  }
+  if (ytKeyInput && streamInfo.has_youtube_key && (!ytKeyInput.value || ytKeyInput.value === '••••••••')) {
+    ytKeyInput.value = streamInfo.youtube_api_key_masked || '••••••••';
+  }
+
+  // Update Twitch OAuth Pill & Button
+  const twOAuthPill = document.getElementById('twitchOAuthStatusPill');
+  const twConnectBtn = document.getElementById('btnConnectTwitchOAuth');
+  const twDisconnectBtn = document.getElementById('btnDisconnectTwitchOAuth');
+  const twConnected = streamInfo.twitch_oauth_connected || (statusMap.twitch && statusMap.twitch.connected);
+  const twUser = streamInfo.twitch_account_name || (statusMap.twitch && statusMap.twitch.account_name) || '';
+
+  if (twOAuthPill) {
+    if (twConnected) {
+      twOAuthPill.textContent = twUser ? `CONNECTED (${twUser})` : 'CONNECTED';
+      twOAuthPill.className = 'step-status-pill done';
+      if (twConnectBtn) twConnectBtn.style.display = 'none';
+      if (twDisconnectBtn) twDisconnectBtn.style.display = 'inline-block';
+    } else {
+      twOAuthPill.textContent = 'DISCONNECTED';
+      twOAuthPill.className = 'step-status-pill pending';
+      if (twConnectBtn) twConnectBtn.style.display = 'inline-block';
+      if (twDisconnectBtn) twDisconnectBtn.style.display = 'none';
+    }
+  }
+
+  // Update YouTube OAuth Pill & Button
+  const ytOAuthPill = document.getElementById('youtubeOAuthStatusPill');
+  const ytConnectBtn = document.getElementById('btnConnectYouTubeOAuth');
+  const ytDisconnectBtn = document.getElementById('btnDisconnectYouTubeOAuth');
+  const ytOauthConnected = streamInfo.youtube_oauth_connected || (statusMap.google && statusMap.google.connected && (statusMap.google.scopes || []).some(s => s.includes('youtube')));
+
+  if (ytOAuthPill) {
+    if (ytOauthConnected) {
+      ytOAuthPill.textContent = 'GOOGLE LINKED';
+      ytOAuthPill.className = 'step-status-pill done';
+      if (ytConnectBtn) ytConnectBtn.style.display = 'none';
+      if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'inline-block';
+    } else if (streamInfo.youtube_connected) {
+      ytOAuthPill.textContent = 'API KEY ACTIVE';
+      ytOAuthPill.className = 'step-status-pill done';
+      if (ytConnectBtn) ytConnectBtn.style.display = 'inline-block';
+      if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'none';
+    } else {
+      ytOAuthPill.textContent = 'DISCONNECTED';
+      ytOAuthPill.className = 'step-status-pill pending';
+      if (ytConnectBtn) ytConnectBtn.style.display = 'inline-block';
+      if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'none';
+    }
+  }
+
+  // Render Creator Chips
+  if (chipsList) {
+    const esc = (t) => {
+      const d = document.createElement('div');
+      d.innerText = String(t || '');
+      return d.innerHTML;
+    };
+
+    if (!totalChannels) {
+      chipsList.innerHTML = '<span style="color: #64748b; font-size: 0.8rem; font-style: italic;">No creators monitored yet. Add a username above or ask Aether via voice.</span>';
+    } else {
+      const twHtml = twChannels.map(ch => `
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc; font-size: 0.8rem;">
+          <span style="font-weight: 700; font-size: 0.68rem; background: #9333ea; color: #fff; padding: 1px 5px; border-radius: 3px;">TWITCH</span>
+          <strong>${esc(ch)}</strong>
+          <span class="remove-stream-chip" data-platform="twitch" data-channel="${esc(ch)}" style="cursor: pointer; opacity: 0.7; font-weight: bold; margin-left: 4px; font-size: 0.85rem;" title="Remove ${esc(ch)}">✕</span>
+        </span>
+      `).join('');
+
+      const ytHtml = ytChannels.map(entry => {
+        const name = typeof entry === 'object' ? (entry.name || entry.channel_id) : entry;
+        const cid = typeof entry === 'object' ? entry.channel_id : entry;
+        return `
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; font-size: 0.8rem;">
+            <span style="font-weight: 700; font-size: 0.68rem; background: #dc2626; color: #fff; padding: 1px 5px; border-radius: 3px;">YOUTUBE</span>
+            <strong>${esc(name)}</strong>
+            <span class="remove-stream-chip" data-platform="youtube" data-channel="${esc(cid)}" style="cursor: pointer; opacity: 0.7; font-weight: bold; margin-left: 4px; font-size: 0.85rem;" title="Remove ${esc(name)}">✕</span>
+          </span>
+        `;
+      }).join('');
+
+      chipsList.innerHTML = twHtml + ytHtml;
+
+      chipsList.querySelectorAll('.remove-stream-chip').forEach(el => {
+        el.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const plat = el.dataset.platform;
+          const chan = el.dataset.channel;
+          if (!window.pywebview?.api?.remove_stream_channel) return;
+          try {
+            const res = await window.pywebview.api.remove_stream_channel(plat, chan);
+            if (res && res.status) {
+              renderOAuthStatus({ streaming: res.status });
+              const banner = document.getElementById('streamingFeedbackBanner');
+              if (banner) {
+                banner.style.display = 'block';
+                banner.style.color = '#38bdf8';
+                banner.textContent = `Removed ${chan} from ${plat} watchlist.`;
+                setTimeout(() => { banner.style.display = 'none'; }, 3500);
+              }
+            }
+          } catch (err) {
+            console.error('Failed removing stream channel:', err);
+          }
+        });
+      });
+    }
+  }
 }
 
 async function loadOAuthStatusUI() {
@@ -821,6 +987,242 @@ function wireOAuthAccountButtons() {
     } catch (e) {
       showDiscordNotifFeedback(`Error clearing log: ${e.message || e}`, true);
     }
+  });
+
+  // Live Streaming & Broadcaster Event Handlers
+  const showStreamingFeedback = (msg, isErr = false) => {
+    const banner = document.getElementById('streamingFeedbackBanner');
+    if (!banner) return;
+    banner.style.display = msg ? 'block' : 'none';
+    banner.style.color = isErr ? '#f87171' : '#38bdf8';
+    banner.textContent = msg || '';
+    if (msg && !isErr) {
+      setTimeout(() => {
+        if (banner.textContent === msg) banner.style.display = 'none';
+      }, 4000);
+    }
+  };
+
+  bindOnce('btnConfigureStreaming', () => {
+    const drawer = document.getElementById('streamingConfigDrawer');
+    if (drawer) {
+      drawer.style.display = drawer.style.display === 'none' ? 'block' : 'none';
+    }
+  });
+
+  bindOnce('btnCancelStreamingConfig', () => {
+    const drawer = document.getElementById('streamingConfigDrawer');
+    if (drawer) drawer.style.display = 'none';
+  });
+
+  bindOnce('btnSaveStreamingConfig', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_streaming_config) return;
+    const twId = (document.getElementById('twitchClientIdInput')?.value || '').trim();
+    const twSec = (document.getElementById('twitchClientSecretInput')?.value || '').trim();
+    const ytKey = (document.getElementById('youtubeApiKeyInput')?.value || '').trim();
+
+    try {
+      const res = await window.pywebview.api.save_streaming_config(
+        null, null, null, twId, twSec, ytKey
+      );
+      renderOAuthStatus({ streaming: res });
+      showStreamingFeedback('Live streaming API credentials saved.');
+      const drawer = document.getElementById('streamingConfigDrawer');
+      if (drawer) drawer.style.display = 'none';
+    } catch (e) {
+      showStreamingFeedback(`Error saving streaming credentials: ${e.message || e}`, true);
+    }
+  });
+
+  const saveStreamingToggleSettings = async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_streaming_config) return;
+    const enabled = Boolean(document.getElementById('chkStreamingEnabled')?.checked);
+    const verbal = Boolean(document.getElementById('chkStreamingVerbal')?.checked);
+    const pollInterval = parseInt(document.getElementById('streamingPollInterval')?.value || '120', 10);
+
+    try {
+      const res = await window.pywebview.api.save_streaming_config(enabled, pollInterval, verbal);
+      renderOAuthStatus({ streaming: res });
+      showStreamingFeedback('Updated live streaming preferences.');
+    } catch (e) {
+      showStreamingFeedback(`Error updating settings: ${e.message || e}`, true);
+    }
+  };
+
+  const chkStreamEn = document.getElementById('chkStreamingEnabled');
+  if (chkStreamEn && !chkStreamEn.dataset.wired) {
+    chkStreamEn.dataset.wired = '1';
+    chkStreamEn.addEventListener('change', saveStreamingToggleSettings);
+  }
+
+  const chkStreamVerb = document.getElementById('chkStreamingVerbal');
+  if (chkStreamVerb && !chkStreamVerb.dataset.wired) {
+    chkStreamVerb.dataset.wired = '1';
+    chkStreamVerb.addEventListener('change', saveStreamingToggleSettings);
+  }
+
+  const streamPollSel = document.getElementById('streamingPollInterval');
+  if (streamPollSel && !streamPollSel.dataset.wired) {
+    streamPollSel.dataset.wired = '1';
+    streamPollSel.addEventListener('change', saveStreamingToggleSettings);
+  }
+
+  bindOnce('btnAddStreamChannel', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.add_stream_channel) return;
+    const plat = (document.getElementById('newStreamPlatform')?.value || 'twitch').trim();
+    const chanInput = document.getElementById('newStreamChannelInput');
+    const dispInput = document.getElementById('newStreamDisplayInput');
+    const chan = (chanInput?.value || '').trim();
+    const disp = (dispInput?.value || '').trim();
+
+    if (!chan) {
+      showStreamingFeedback('Please enter a creator username or channel ID.', true);
+      return;
+    }
+
+    try {
+      const res = await window.pywebview.api.add_stream_channel(plat, chan, disp);
+      if (res && res.success) {
+        renderOAuthStatus({ streaming: res.status });
+        showStreamingFeedback(`Added ${disp || chan} to your ${plat} watchlist!`);
+        if (chanInput) chanInput.value = '';
+        if (dispInput) dispInput.value = '';
+      } else {
+        showStreamingFeedback(res?.error || 'Failed adding channel.', true);
+      }
+    } catch (e) {
+      showStreamingFeedback(`Error adding channel: ${e.message || e}`, true);
+    }
+  });
+
+  bindOnce('btnCheckStreamingNow', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.check_live_streams_now) return;
+    const container = document.getElementById('streamingLiveResultsContainer');
+    const listEl = document.getElementById('streamingLiveResultsList');
+    if (!container || !listEl) return;
+
+    listEl.innerHTML = '<div style="color: #38bdf8; font-size: 0.8rem; font-style: italic;">Checking live broadcasts across Twitch &amp; YouTube...</div>';
+    container.style.display = 'block';
+
+    try {
+      const res = await window.pywebview.api.check_live_streams_now();
+      const streams = res.streams || [];
+      if (!streams.length) {
+        listEl.innerHTML = '<div style="color: #94a3b8; font-size: 0.8rem; font-style: italic;">No watchlist channels returned broadcast data.</div>';
+      } else {
+        listEl.innerHTML = streams.map(s => {
+          const isLive = Boolean(s.is_live);
+          const platBadge = s.platform === 'twitch'
+            ? '<span style="background: #9333ea; color: #fff; font-size: 0.68rem; font-weight: 700; padding: 1px 5px; border-radius: 3px;">TWITCH</span>'
+            : '<span style="background: #dc2626; color: #fff; font-size: 0.68rem; font-weight: 700; padding: 1px 5px; border-radius: 3px;">YOUTUBE</span>';
+          const livePill = isLive
+            ? '<span style="color: #34d399; font-weight: 700; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;">● LIVE</span>'
+            : '<span style="color: #64748b; font-size: 0.75rem;">OFFLINE</span>';
+
+          const viewers = isLive && s.viewer_count ? ` • ${s.viewer_count.toLocaleString()} viewers` : '';
+          const category = s.game_or_category ? ` • ${s.game_or_category}` : '';
+          const title = s.title ? `<div style="color: #cbd5e1; font-size: 0.78rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${s.title}</div>` : '';
+          const link = s.url ? `<a href="${s.url}" target="_blank" style="color: #38bdf8; font-size: 0.74rem; text-decoration: none; margin-left: auto;">Open Stream ↗</a>` : '';
+
+          return `
+            <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.15); border-radius: 6px; padding: 8px 10px;">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                ${platBadge}
+                <strong style="color: #e2e8f0; font-size: 0.84rem;">${s.channel_name}</strong>
+                ${livePill}
+                <span style="color: #94a3b8; font-size: 0.75rem;">${category}${viewers}</span>
+                ${link}
+              </div>
+              ${title}
+            </div>
+          `;
+        }).join('');
+      }
+    } catch (e) {
+      listEl.innerHTML = `<div style="color: #f87171; font-size: 0.8rem;">Could not query live streams: ${e.message || e}</div>`;
+    }
+  });
+
+  bindOnce('btnConnectTwitchOAuth', async () => {
+    if (!window.pywebview?.api?.start_oauth_flow) return;
+    const cid = (document.getElementById('twitchClientIdInput')?.value || '').trim();
+    const sec = (document.getElementById('twitchClientSecretInput')?.value || '').trim();
+    if (cid && !cid.includes('••••')) {
+      const payload = { client_id: cid };
+      if (sec && !sec.includes('••••')) payload.client_secret = sec;
+      await window.pywebview.api.save_oauth_client_config('twitch', payload);
+    }
+    const res = await window.pywebview.api.start_oauth_flow('twitch');
+    if (res && res.success) {
+      showStreamingFeedback(res.message || 'Complete Twitch sign-in in your browser...');
+    } else {
+      showStreamingFeedback(res?.error || 'Could not start Twitch OAuth flow.', true);
+    }
+  });
+
+  bindOnce('btnDisconnectTwitchOAuth', async () => {
+    if (!window.pywebview?.api?.disconnect_oauth_provider) return;
+    const res = await window.pywebview.api.disconnect_oauth_provider('twitch');
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showStreamingFeedback('Disconnected Twitch account.');
+    }
+  });
+
+  bindOnce('btnConnectYouTubeOAuth', async () => {
+    if (!window.pywebview?.api?.start_oauth_flow) return;
+    const res = await window.pywebview.api.start_oauth_flow('google');
+    if (res && res.success) {
+      showStreamingFeedback(res.message || 'Complete Google sign-in in your browser...');
+    } else {
+      showStreamingFeedback(res?.error || 'Could not start Google OAuth flow.', true);
+    }
+  });
+
+  bindOnce('btnDisconnectYouTubeOAuth', async () => {
+    if (!window.pywebview?.api?.disconnect_oauth_provider) return;
+    const res = await window.pywebview.api.disconnect_oauth_provider('google');
+    if (res && res.success) {
+      renderOAuthStatus(res.status);
+      showStreamingFeedback('Disconnected Google account.');
+    }
+  });
+
+  bindOnce('btnSyncTwitchFollows', async () => {
+    if (!window.pywebview?.api?.sync_twitch_follows) return;
+    showStreamingFeedback('Fetching followed creators from Twitch...');
+    try {
+      const res = await window.pywebview.api.sync_twitch_follows();
+      if (res && res.success) {
+        renderOAuthStatus({ streaming: res.status });
+        showStreamingFeedback(`Synced ${res.added_count} new followed creator(s) from Twitch! (Total: ${res.total_count})`);
+      } else {
+        showStreamingFeedback(res?.error || res?.message || 'Could not sync Twitch follows.', true);
+      }
+    } catch (err) {
+      showStreamingFeedback(`Error syncing Twitch follows: ${err.message || err}`, true);
+    }
+  });
+
+  bindOnce('btnSyncYouTubeSubscriptions', async () => {
+    if (!window.pywebview?.api?.sync_youtube_subscriptions) return;
+    showStreamingFeedback('Fetching subscriptions from YouTube Data API...');
+    try {
+      const res = await window.pywebview.api.sync_youtube_subscriptions();
+      if (res && res.success) {
+        renderOAuthStatus({ streaming: res.status });
+        showStreamingFeedback(`Synced ${res.added_count} new subscribed channel(s) from YouTube! (Total: ${res.total_count})`);
+      } else {
+        showStreamingFeedback(res?.error || res?.message || 'Could not sync YouTube subscriptions.', true);
+      }
+    } catch (err) {
+      showStreamingFeedback(`Error syncing YouTube subscriptions: ${err.message || err}`, true);
+    }
+  });
+
+  bindOnce('btnCloseStreamingResults', () => {
+    const container = document.getElementById('streamingLiveResultsContainer');
+    if (container) container.style.display = 'none';
   });
 }
 
