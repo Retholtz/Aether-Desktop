@@ -44,6 +44,8 @@ from core.notification_watcher import DesktopNotificationWatcher, DesktopNotific
 from tools.notification_tools import register_notification_tools
 from core.livestream_service import LiveStreamService, LiveStreamInfo
 from tools.livestream_tools import register_livestream_tools
+from core.replay_service import ReplayService
+from tools.replay_tools import register_replay_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -549,6 +551,8 @@ class AetherEngine:
                     self.settings.setdefault("integrations", {})["desktop_notifications"] = cfg["integrations"]["desktop_notifications"]
                 if "integrations" in cfg and "streaming" in cfg["integrations"]:
                     self.settings.setdefault("integrations", {})["streaming"] = cfg["integrations"]["streaming"]
+                if "integrations" in cfg and "replay_capture" in cfg["integrations"]:
+                    self.settings.setdefault("integrations", {})["replay_capture"] = cfg["integrations"]["replay_capture"]
             except Exception:
                 pass
 
@@ -607,6 +611,19 @@ class AetherEngine:
         else:
             self.livestream_service = None
             self._stream_poller_task = None
+
+        # Instant Replay Capture Integration (ShadowPlay, Xbox Game Bar, OBS Studio)
+        replay_cfg = self.settings.get("integrations", {}).get("replay_capture", {})
+        obs_cfg = replay_cfg.get("obs", {})
+        self.replay_service = ReplayService(
+            backend=replay_cfg.get("backend", "shadowplay"),
+            obs_host=obs_cfg.get("host", "localhost"),
+            obs_port=int(obs_cfg.get("port", 4455)),
+            obs_password=obs_cfg.get("password", ""),
+            spoken_confirmation=replay_cfg.get("spoken_confirmation", "Captured."),
+            enabled=replay_cfg.get("enabled", True)
+        )
+        register_replay_tools(self.dispatcher, self.replay_service)
 
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
@@ -1862,6 +1879,43 @@ class AetherEngine:
         save_settings(self.settings)
         return {"success": True, "added_count": added, "total_count": len(current), "channels": current}
 
+    def set_replay_capture_config(
+        self,
+        enabled: Optional[bool] = None,
+        backend: Optional[str] = None,
+        spoken_confirmation: Optional[str] = None,
+        obs: Optional[dict] = None
+    ):
+        """Updates replay capture configuration at runtime."""
+        replay_cfg = self.settings.setdefault("integrations", {}).setdefault("replay_capture", {})
+        if enabled is not None:
+            replay_cfg["enabled"] = bool(enabled)
+        if backend is not None:
+            replay_cfg["backend"] = backend.lower().strip()
+        if spoken_confirmation is not None:
+            replay_cfg["spoken_confirmation"] = spoken_confirmation
+        if obs is not None:
+            obs_cfg = replay_cfg.setdefault("obs", {})
+            obs_cfg.update(obs)
+
+        if hasattr(self, "replay_service") and self.replay_service:
+            if backend is not None:
+                self.replay_service.backend = backend.lower().strip()
+            if spoken_confirmation is not None:
+                self.replay_service.spoken_confirmation = spoken_confirmation
+            if enabled is not None:
+                self.replay_service.enabled = bool(enabled)
+            if obs is not None:
+                if "host" in obs:
+                    self.replay_service.obs_host = obs["host"]
+                if "port" in obs:
+                    self.replay_service.obs_port = int(obs["port"])
+                if "password" in obs:
+                    self.replay_service.obs_password = obs["password"]
+
+        from core.config import save_settings
+        save_settings(self.settings)
+
     def kill_audio(self):
         """Immediately halts audio playback, cancels in-flight synthesis, and purges all output buffers."""
         self._kill_playback_flag = True
@@ -2458,7 +2512,18 @@ class AetherEngine:
                             intercept = await self.game_engine.intercept_voice_turn_async(clean_user_speech, agent_name=agent_name)
                             if intercept.handled:
                                 logger.info(f"[GAME VOICE INTERCEPT] Action: {intercept.action_type} for '{clean_user_speech}'")
-                                if intercept.action_type in ("mode_toggle", "guidance_level_change"):
+                                if intercept.action_type == "replay_capture" and hasattr(self, "replay_service"):
+                                    res = await self.replay_service.trigger_clip()
+                                    intercept.tts_message = res.get("spoken_confirmation", "Captured.")
+                                    if intercept.user_message:
+                                        self.notify("chat_event", {
+                                            "type": "system",
+                                            "content": intercept.user_message,
+                                            "source": "system"
+                                        })
+                                    if intercept.tts_message:
+                                        await self._speak_feedback(intercept.tts_message)
+                                elif intercept.action_type in ("mode_toggle", "guidance_level_change"):
                                     self.kill_audio()
                                     if intercept.user_message:
                                         self.notify("chat_event", {
@@ -3543,11 +3608,17 @@ class AetherEngine:
                 if hasattr(self, "game_engine") and self.game_engine:
                     intercept = await self.game_engine.intercept_voice_turn_async(user_prompt, agent_name=agent_name)
                     if intercept.handled:
+                        # 1. Execute replay capture if triggered
+                        if intercept.action_type == "replay_capture" and hasattr(self, "replay_service"):
+                            res = await self.replay_service.trigger_clip()
+                            intercept.tts_message = res.get("spoken_confirmation", "Captured.")
+
                         if intercept.requires_context_reset:
                             chat = create_fresh_chat()
                             chat_game_mode_state = bool(self.game_engine.is_game_mode_active())
                             self._reset_context_flag = False
 
+                        # 2. Emit UI event & Spoken feedback
                         if intercept.user_message:
                             self.notify("chat_event", {
                                 "type": "agent" if intercept.action_type == "mode_toggle" else "system",
@@ -3556,29 +3627,14 @@ class AetherEngine:
                             })
 
                         if intercept.tts_message:
-                            self.notify("status", {"state": "speaking", "message": intercept.tts_message})
-                            try:
-                                api_cfg = self.config_getter().get("api", {}) if self.config_getter else {}
-                                tts_m = api_cfg.get("tts_model_endpoint") or api_cfg.get("tts_endpoint") or tts_model
-                                if tts_m and client:
-                                    def _on_gm_chunk(c: bytes):
-                                        if c and self.audio and self.is_running:
-                                            self.audio.write_output_chunk(c)
-                                    await self._stream_synthesize_speech(
-                                        text=intercept.tts_message,
-                                        tts_engine=tts_m,
-                                        voice_name=voice_name,
-                                        client=client,
-                                        on_pcm_chunk=_on_gm_chunk,
-                                        voice_accent=voice_accent,
-                                        voice_speed=voice_speed
-                                    )
-                                    if self.audio:
-                                        self.audio.flush_output()
-                                        while not self.audio.is_output_empty() and self.is_running:
-                                            await asyncio.sleep(0.04)
-                            except Exception as e:
-                                logger.debug(f"[GAME_MODE] TTS feedback error: {e}")
+                            await self._speak_feedback(
+                                intercept.tts_message,
+                                voice_name=voice_name,
+                                tts_model=tts_model,
+                                client=client,
+                                voice_accent=voice_accent,
+                                voice_speed=voice_speed
+                            )
 
                         if intercept.skip_llm:
                             if not is_wake_idle:
@@ -4755,6 +4811,49 @@ class AetherEngine:
             voice_speed=voice_speed
         )
         return b"".join(chunks) if chunks else None
+
+    async def _speak_feedback(
+        self,
+        text: str,
+        voice_name: Optional[str] = None,
+        tts_model: Optional[str] = None,
+        client: Optional[Any] = None,
+        voice_accent: Optional[str] = None,
+        voice_speed: Optional[float] = None
+    ):
+        """Speaks a short feedback utterance (e.g. for fast-path voice interception or replay capture)."""
+        if not text:
+            return
+        self.notify("status", {"state": "speaking", "message": text})
+        try:
+            cfg = self.config_getter() if callable(self.config_getter) else {}
+            cfg = cfg or {}
+            api_cfg = cfg.get("api", {})
+            tts_m = tts_model or api_cfg.get("tts_model_endpoint") or api_cfg.get("tts_endpoint") or "windows-sapi5"
+            v_name = voice_name or cfg.get("tts_voice") or "Achernar"
+            v_accent = voice_accent or cfg.get("voice_accent", "default")
+            v_speed = voice_speed if voice_speed is not None else cfg.get("tts_speed", 1.0)
+            cli = client or getattr(self, "client", None)
+
+            def _on_chunk(c: bytes):
+                if c and self.audio and self.is_running:
+                    self.audio.write_output_chunk(c)
+
+            await self._stream_synthesize_speech(
+                text=text,
+                tts_engine=tts_m,
+                voice_name=v_name,
+                client=cli,
+                on_pcm_chunk=_on_chunk,
+                voice_accent=v_accent,
+                voice_speed=v_speed
+            )
+            if self.audio:
+                self.audio.flush_output()
+                while not self.audio.is_output_empty() and self.is_running:
+                    await asyncio.sleep(0.04)
+        except Exception as e:
+            logger.debug(f"[SPEAK_FEEDBACK] Feedback TTS error: {e}")
 
     def _build_live_config(
         self,

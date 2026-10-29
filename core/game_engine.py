@@ -67,6 +67,7 @@ class GameEngine:
         "get_steam_owned_games",
         "get_steam_game_achievements",
         "get_steam_patch_notes",
+        "trigger_instant_replay",
     }
 
     def __init__(
@@ -151,6 +152,17 @@ class GameEngine:
         clean_voice_cmd = re.sub(r'^[,\.\s]+|[,\.\s]+$', '', lower_prompt).strip()
         if clean_voice_cmd.startswith(agent_name.lower()):
             clean_voice_cmd = clean_voice_cmd[len(agent_name):].strip().lstrip(",. ")
+
+        # --- Fast-Path: Instant Replay Capture ("Aether, clip that") ---
+        if re.search(r'\b(clip\s+that|save\s+clip|capture\s+clip|record\s+that|save\s+replay|clip\s+this)\b', clean_voice_cmd):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="replay_capture",
+                user_message="🎬 [Replay Capture] Triggering instant replay buffer...",
+                tts_message="Captured.",
+                requires_context_reset=False,
+                skip_llm=True
+            )
 
         # 1. Mode Toggle: Disable Game Mode
         if (re.search(r'\b(disable|exit|turn\s+off|leave|deactivate|stop)\s+game\s+mode\b', clean_voice_cmd)

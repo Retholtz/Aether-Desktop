@@ -2311,6 +2311,7 @@ class GuiBridge:
         res["steam"] = self.get_steam_status()
         res["desktop_notifications"] = self.get_desktop_notifications_status()
         res["streaming"] = self.get_streaming_status()
+        res["replay_capture"] = self.get_replay_capture_config()
         return res
 
     def save_oauth_client_config(self, provider: str, config_data: Optional[dict] = None) -> dict:
@@ -2890,6 +2891,69 @@ class GuiBridge:
         self.notify("oauth_status_updated", self.get_oauth_status())
         res["status"] = status
         return res
+
+    def get_replay_capture_config(self) -> dict:
+        """Returns the current replay capture configuration."""
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+        replay_cfg = settings.get("integrations", {}).get("replay_capture", {})
+        obs_cfg = replay_cfg.get("obs", {})
+        return {
+            "success": True,
+            "enabled": bool(replay_cfg.get("enabled", True)),
+            "backend": str(replay_cfg.get("backend", "shadowplay")),
+            "spoken_confirmation": str(replay_cfg.get("spoken_confirmation", "Captured.")),
+            "obs": {
+                "host": str(obs_cfg.get("host", "localhost")),
+                "port": int(obs_cfg.get("port", 4455)),
+                "password": str(obs_cfg.get("password", ""))
+            }
+        }
+
+    def save_replay_capture_config(
+        self,
+        enabled: Optional[bool] = None,
+        backend: Optional[str] = None,
+        spoken_confirmation: Optional[str] = None,
+        obs_host: Optional[str] = None,
+        obs_port: Optional[int] = None,
+        obs_password: Optional[str] = None
+    ) -> dict:
+        """Saves and applies replay capture settings."""
+        from core.config import save_settings
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+        replay_cfg = settings.setdefault("integrations", {}).setdefault("replay_capture", {})
+        if enabled is not None:
+            replay_cfg["enabled"] = bool(enabled)
+        if backend is not None:
+            replay_cfg["backend"] = backend.lower().strip()
+        if spoken_confirmation is not None:
+            replay_cfg["spoken_confirmation"] = spoken_confirmation
+
+        obs_cfg = replay_cfg.setdefault("obs", {})
+        if obs_host is not None:
+            obs_cfg["host"] = obs_host.strip()
+        if obs_port is not None:
+            obs_cfg["port"] = int(obs_port)
+        if obs_password is not None and "••••" not in obs_password:
+            obs_cfg["password"] = obs_password
+
+        save_settings(settings)
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_replay_capture_config"):
+            self._engine.set_replay_capture_config(
+                enabled=replay_cfg.get("enabled"),
+                backend=replay_cfg.get("backend"),
+                spoken_confirmation=replay_cfg.get("spoken_confirmation"),
+                obs=obs_cfg
+            )
+        return self.get_replay_capture_config()
 
 
 GUIBridge = GuiBridge

@@ -1754,6 +1754,77 @@
             </div>
           </div>
 
+          <!-- INSTANT REPLAY CAPTURE ("AETHER, CLIP THAT!") -->
+          <div class="settings-card hud-card" id="replayCaptureCard" style="margin-top: 16px;">
+            <div class="card-header-row">
+              <div class="card-title-group">
+                <span class="card-icon">🎬</span>
+                <h3 class="card-title">INSTANT REPLAY CAPTURE ("AETHER, CLIP THAT!")</h3>
+              </div>
+              <span class="card-tag">SUB-SECOND RECORDING</span>
+            </div>
+            <div class="card-body">
+              <p class="section-desc">
+                Hands-free voice clipping for gaming. Say <em>"Aether, clip that"</em> or <em>"save replay"</em> to capture the last 30-60 seconds of gameplay instantly without waiting for LLM round-trips.
+              </p>
+
+              <!-- Replay Service Status & Controls -->
+              <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; background: rgba(15, 23, 42, 0.6); padding: 12px 14px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.15); margin-top: 8px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <span id="replayCaptureStatusBadge" class="step-status-pill done">ENABLED</span>
+                  <div style="display: flex; flex-direction: column;">
+                    <span style="font-weight: 600; font-size: 0.9rem; color: #f8fafc;">Capture Backend</span>
+                    <span id="replayCaptureBackendLabel" style="color: #94a3b8; font-size: 0.82rem; margin-top: 2px;">NVIDIA ShadowPlay (Alt + F10)</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                  <label style="display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #cbd5e1; cursor: pointer;">
+                    <input type="checkbox" id="chkReplayCaptureEnabled" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                    <span>Enabled</span>
+                  </label>
+
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 0.82rem; color: #94a3b8;">Backend:</span>
+                    <select id="selReplayCaptureBackend" class="hud-select" style="padding: 2px 8px; font-size: 0.78rem; height: 28px; border-radius: 4px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(56, 189, 248, 0.25); color: #e2e8f0; cursor: pointer;">
+                      <option value="shadowplay">NVIDIA ShadowPlay (Alt + F10)</option>
+                      <option value="xbox_game_bar">Xbox Game Bar (Win + Alt + G)</option>
+                      <option value="obs_websocket">OBS Studio WebSocket v5</option>
+                    </select>
+                  </div>
+
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 0.82rem; color: #94a3b8;">Spoken Cue:</span>
+                    <input type="text" id="txtReplaySpokenConfirmation" value="Captured." class="hud-input" style="width: 90px; height: 26px; font-size: 0.8rem; padding: 2px 6px;" />
+                  </div>
+
+                  <button type="button" id="btnSaveReplayConfig" class="btn-primary-sm" style="padding: 6px 14px; font-weight: 600;">Save</button>
+                </div>
+              </div>
+
+              <!-- OBS Settings Row (visible when OBS WebSocket is selected) -->
+              <div id="replayObsConfigDrawer" style="display: none; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 12px 14px; margin-top: 10px;">
+                <h4 style="margin: 0 0 8px 0; color: #38bdf8; font-size: 0.85rem; font-weight: 600;">OBS STUDIO WEBSOCKET SETTINGS</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+                  <div>
+                    <label style="display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 3px;">OBS Host</label>
+                    <input type="text" id="txtReplayObsHost" value="localhost" class="hud-input" style="width: 100%; font-size: 0.8rem;" />
+                  </div>
+                  <div>
+                    <label style="display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 3px;">OBS Port</label>
+                    <input type="number" id="numReplayObsPort" value="4455" class="hud-input" style="width: 100%; font-size: 0.8rem;" />
+                  </div>
+                  <div>
+                    <label style="display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 3px;">Server Password (Optional)</label>
+                    <input type="password" id="txtReplayObsPassword" placeholder="Leave blank if no auth" class="hud-input" style="width: 100%; font-size: 0.8rem;" />
+                  </div>
+                </div>
+              </div>
+
+              <div id="replayFeedbackBanner" style="margin: 8px 0 4px 0; font-size: 0.83rem; color: #38bdf8; display: none;"></div>
+            </div>
+          </div>
+
       </section>
 
       <!-- ============================================================= -->

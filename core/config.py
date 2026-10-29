@@ -70,6 +70,16 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
                 ],
             },
         },
+        "replay_capture": {
+            "enabled": True,
+            "backend": "shadowplay",
+            "spoken_confirmation": "Captured.",
+            "obs": {
+                "host": "localhost",
+                "port": 4455,
+                "password": "",
+            },
+        },
     }
 }
 
@@ -164,6 +174,16 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
             "channel_id": "UCBR8-60-B28hp2BmDPdntcQ"
         }
     ])
+
+    # Ensure nested integrations.replay_capture structure is populated
+    replay_cfg = integrations.setdefault("replay_capture", {})
+    replay_cfg.setdefault("enabled", True)
+    replay_cfg.setdefault("backend", "shadowplay")
+    replay_cfg.setdefault("spoken_confirmation", "Captured.")
+    obs_cfg = replay_cfg.setdefault("obs", {})
+    obs_cfg.setdefault("host", "localhost")
+    obs_cfg.setdefault("port", 4455)
+    obs_cfg.setdefault("password", "")
 
     return Settings(settings_data)
 

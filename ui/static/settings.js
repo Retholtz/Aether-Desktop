@@ -625,6 +625,36 @@ function renderOAuthStatus(statusMap) {
       });
     }
   }
+
+  // Render Instant Replay Capture Status
+  const rInfo = statusMap.replay_capture;
+  if (rInfo) {
+    const chk = document.getElementById('chkReplayCaptureEnabled');
+    if (chk && rInfo.enabled !== undefined) chk.checked = Boolean(rInfo.enabled);
+    const sel = document.getElementById('selReplayCaptureBackend');
+    if (sel && rInfo.backend) sel.value = rInfo.backend;
+    const txtCue = document.getElementById('txtReplaySpokenConfirmation');
+    if (txtCue && rInfo.spoken_confirmation) txtCue.value = rInfo.spoken_confirmation;
+    const obsDrawer = document.getElementById('replayObsConfigDrawer');
+    if (obsDrawer) obsDrawer.style.display = rInfo.backend === 'obs_websocket' ? 'block' : 'none';
+    const badge = document.getElementById('replayCaptureStatusBadge');
+    if (badge) {
+      badge.textContent = rInfo.enabled ? 'ENABLED' : 'DISABLED';
+      badge.className = `step-status-pill ${rInfo.enabled ? 'done' : 'pending'}`;
+    }
+    const lbl = document.getElementById('replayCaptureBackendLabel');
+    if (lbl) {
+      if (rInfo.backend === 'shadowplay') lbl.textContent = 'NVIDIA ShadowPlay (Alt + F10)';
+      else if (rInfo.backend === 'xbox_game_bar') lbl.textContent = 'Xbox Game Bar (Win + Alt + G)';
+      else if (rInfo.backend === 'obs_websocket') lbl.textContent = `OBS Studio WebSocket (${rInfo.obs?.host || 'localhost'}:${rInfo.obs?.port || 4455})`;
+    }
+    if (rInfo.obs) {
+      const h = document.getElementById('txtReplayObsHost');
+      if (h && rInfo.obs.host) h.value = rInfo.obs.host;
+      const p = document.getElementById('numReplayObsPort');
+      if (p && rInfo.obs.port) p.value = rInfo.obs.port;
+    }
+  }
 }
 
 async function loadOAuthStatusUI() {
@@ -1224,6 +1254,63 @@ function wireOAuthAccountButtons() {
     const container = document.getElementById('streamingLiveResultsContainer');
     if (container) container.style.display = 'none';
   });
+
+  // Instant Replay Capture Event Handlers
+  const selBackend = document.getElementById('selReplayCaptureBackend');
+  const obsDrawer = document.getElementById('replayObsConfigDrawer');
+  if (selBackend && !selBackend.dataset.wiredReplay) {
+    selBackend.dataset.wiredReplay = '1';
+    selBackend.addEventListener('change', () => {
+      if (obsDrawer) {
+        obsDrawer.style.display = selBackend.value === 'obs_websocket' ? 'block' : 'none';
+      }
+    });
+  }
+
+  const showReplayFeedback = (msg, isErr = false) => {
+    const banner = document.getElementById('replayFeedbackBanner');
+    if (!banner) return;
+    banner.style.display = 'block';
+    banner.style.color = isErr ? '#f87171' : '#38bdf8';
+    banner.textContent = msg;
+    setTimeout(() => { banner.style.display = 'none'; }, 4000);
+  };
+
+  bindOnce('btnSaveReplayConfig', async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_replay_capture_config) return;
+    const enabled = Boolean(document.getElementById('chkReplayCaptureEnabled')?.checked);
+    const backend = document.getElementById('selReplayCaptureBackend')?.value || 'shadowplay';
+    const spoken = (document.getElementById('txtReplaySpokenConfirmation')?.value || 'Captured.').trim();
+    const obsHost = (document.getElementById('txtReplayObsHost')?.value || 'localhost').trim();
+    const obsPort = parseInt(document.getElementById('numReplayObsPort')?.value || '4455', 10);
+    const obsPassword = document.getElementById('txtReplayObsPassword')?.value || '';
+
+    try {
+      const res = await window.pywebview.api.save_replay_capture_config(
+        enabled, backend, spoken, obsHost, obsPort, obsPassword
+      );
+      renderOAuthStatus({ replay_capture: res });
+      showReplayFeedback(`Replay capture preferences saved (${backend}).`);
+    } catch (e) {
+      showReplayFeedback(`Error saving replay settings: ${e.message || e}`, true);
+    }
+  });
+
+  const chkReplayEn = document.getElementById('chkReplayCaptureEnabled');
+  if (chkReplayEn && !chkReplayEn.dataset.wired) {
+    chkReplayEn.dataset.wired = '1';
+    chkReplayEn.addEventListener('change', async () => {
+      if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_replay_capture_config) return;
+      const enabled = Boolean(chkReplayEn.checked);
+      try {
+        const res = await window.pywebview.api.save_replay_capture_config(enabled);
+        renderOAuthStatus({ replay_capture: res });
+        showReplayFeedback(enabled ? 'Instant replay capture enabled.' : 'Instant replay capture disabled.');
+      } catch (e) {
+        showReplayFeedback(`Error toggling replay: ${e.message || e}`, true);
+      }
+    });
+  }
 }
 
 // Refresh button event listener wiring:

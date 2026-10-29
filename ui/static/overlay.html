@@ -1853,6 +1853,10 @@
               agentActionText.innerText = `${agentName}: ${cleanSummary.slice(0, 60)}${cleanSummary.length > 60 ? '...' : ''}`;
               setNormalAgentResponse(data.content);
               setMaxAgentResponse(data.content);
+            } else if (data.type === "system") {
+              actionIcon.innerText = "🎬";
+              const cleanSummary = (data.content || '').replace(/\s+/g, ' ').trim();
+              agentActionText.innerText = cleanSummary.slice(0, 80);
             }
           } else if (type === "user_speech_stream") {
             if (data.text) {
