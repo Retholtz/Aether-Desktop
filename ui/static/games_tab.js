@@ -8,6 +8,15 @@ let currentGamesData = null;
 let activeGameId = null;
 let scratchpadDebounceTimer = null;
 
+function escapeGameHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 async function loadGamesUI() {
     try {
         if (!window.pywebview || !window.pywebview.api) {
@@ -31,7 +40,11 @@ function renderGamesSidebar() {
 
     const profiles = currentGamesData ? (currentGamesData.profiles || {}) : {};
     const running = currentGamesData ? (currentGamesData.running_status || {}) : {};
-    const gameIds = Object.keys(profiles);
+    const gameIds = Object.keys(profiles).sort((a, b) => {
+        const nameA = (profiles[a]?.display_name || a).toLowerCase();
+        const nameB = (profiles[b]?.display_name || b).toLowerCase();
+        return nameA.localeCompare(nameB, undefined, { numeric: true });
+    });
 
     if (gameIds.length === 0) {
         listEl.innerHTML = `
@@ -47,21 +60,13 @@ function renderGamesSidebar() {
         activeGameId = gameIds[0];
     }
 
-function escapeGameHtml(str) {
-    return String(str == null ? '' : str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
     gameIds.forEach(gid => {
         const p = profiles[gid];
         const isOnline = running[gid] || false;
 
         const item = document.createElement('div');
         item.className = `game-item ${gid === activeGameId ? 'active' : ''}`;
+        item.dataset.gameId = gid;
         item.onclick = () => switchActiveGame(gid);
 
         item.innerHTML = `
@@ -760,6 +765,7 @@ window.promptAddGame = promptAddGame;
 window.promptDeleteGame = promptDeleteGame;
 window.startTelemetryPolling = startTelemetryPolling;
 window.updateTelemetryHUD = updateTelemetryHUD;
+window.escapeGameHtml = escapeGameHtml;
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initGamesTabEvents);

@@ -73,17 +73,20 @@ class ProgramManager:
                     with open(self.programs_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     if isinstance(data, dict) and "programs" in data:
-                        deduped = self._deduplicate_programs(data)
-                        if deduped:
-                            self._save_programs(data)
-                        return data
+                        self.data = data
+                        synced = self.sync_from_games(target_payload=self.data)
+                        deduped = self._deduplicate_programs(self.data)
+                        if synced or deduped:
+                            self._save_programs(self.data)
+                        return self.data
                 except Exception as e:
                     logger.warning(f"[PROGRAM_MGR] Failed reading {self.programs_path}: {e}")
 
             # Initialize defaults and migrate existing whitelist and games
             initial = copy.deepcopy(DEFAULT_PROGRAMS)
+            self.data = initial
             self._import_from_config(initial)
-            self._import_from_games(initial)
+            self.sync_from_games(target_payload=initial)
             self._deduplicate_programs(initial)
             self._save_programs(initial)
             return initial
@@ -105,6 +108,8 @@ class ProgramManager:
             primary_pid = None
             if name_norm and name_norm in seen_names:
                 primary_pid = seen_names[name_norm]
+            elif path_norm and path_norm in seen_paths:
+                primary_pid = seen_paths[path_norm]
 
             if primary_pid and primary_pid != pid:
                 primary = programs[primary_pid]
@@ -116,6 +121,12 @@ class ProgramManager:
                     primary["elevate"] = p["elevate"]
                 if not primary.get("working_dir") and p.get("working_dir"):
                     primary["working_dir"] = p["working_dir"]
+
+                # If current item has spaced/formatted name and primary does not, adopt it
+                p_name = p.get("name", "")
+                prim_name = primary.get("name", "")
+                if " " in p_name and " " not in prim_name:
+                    primary["name"] = p_name
 
                 to_delete.append(pid)
                 changed = True
@@ -147,11 +158,15 @@ class ProgramManager:
                     continue
                 clean = item.strip()
                 clean_no_ext = clean[:-4] if clean.lower().endswith(".exe") else clean
+                clean_norm = re.sub(r'[^a-zA-Z0-9]+', '', clean_no_ext.lower())
                 already_exists = False
                 for p in payload["programs"].values():
                     p_path = os.path.basename(p.get("path", "")).lower()
                     p_name = p.get("name", "").lower()
-                    if clean.lower() in (p_path, p_name) or clean_no_ext.lower() in (p_path.replace(".exe", ""), p_name):
+                    p_norm = re.sub(r'[^a-zA-Z0-9]+', '', p_name)
+                    if (clean.lower() in (p_path, p_name) or
+                        clean_no_ext.lower() in (p_path.replace(".exe", ""), p_name) or
+                        (clean_norm and clean_norm == p_norm)):
                         already_exists = True
                         break
                 if already_exists:
@@ -171,58 +186,195 @@ class ProgramManager:
         except Exception as e:
             logger.debug(f"[PROGRAM_MGR] Could not import config whitelist: {e}")
 
-    def _import_from_games(self, payload: Dict[str, Any]):
-        """Imports game titles (e.g. Crimson Desert, Elite Dangerous) from games directory into programs."""
-        try:
-            profiles = {}
+    def sync_from_games(
+        self,
+        game_profiles: Optional[Dict[str, Any]] = None,
+        target_payload: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Synchronizes all game profiles from data/games/*.json and data/games_profiles.json
+        into the ProgramManager allowed programs list.
+        Resolves executable paths and Steam AppIDs, preserves custom user launch arguments and elevation,
+        and saves changes to programs.json and config.json.
+        Returns True if changes were made, False otherwise.
+        """
+        with self._lock:
+            payload = target_payload if target_payload is not None else getattr(self, "data", {})
+            if not isinstance(payload, dict):
+                return False
+            programs = payload.setdefault("programs", {})
+
+            profiles: Dict[str, Dict[str, Any]] = {}
+
+            # 1. Directory mode is the primary source of truth for games
+            has_dir_games = False
             if os.path.exists(GAMES_DIR):
-                for fname in os.listdir(GAMES_DIR):
-                    if fname.endswith(".json") and fname != "active_state.json":
-                        try:
-                            with open(os.path.join(GAMES_DIR, fname), "r", encoding="utf-8") as f:
-                                p = json.load(f)
-                                if isinstance(p, dict):
-                                    gid = os.path.splitext(fname)[0]
-                                    profiles[gid] = p
-                        except Exception:
-                            pass
-            elif os.path.exists(GAMES_PROFILES_PATH):
+                try:
+                    for fname in os.listdir(GAMES_DIR):
+                        if fname.endswith(".json") and fname != "active_state.json":
+                            fpath = os.path.join(GAMES_DIR, fname)
+                            try:
+                                with open(fpath, "r", encoding="utf-8") as f:
+                                    p = json.load(f)
+                                    if isinstance(p, dict):
+                                        gid = os.path.splitext(fname)[0]
+                                        profiles[gid] = p
+                                        has_dir_games = True
+                            except Exception as e:
+                                logger.debug(f"[PROGRAM_MGR] Could not read game profile {fname}: {e}")
+                except Exception as e:
+                    logger.debug(f"[PROGRAM_MGR] Could not scan games directory: {e}")
+
+            # 2. Legacy fallback: ONLY if directory mode had no games
+            if not has_dir_games and os.path.exists(GAMES_PROFILES_PATH):
                 try:
                     with open(GAMES_PROFILES_PATH, "r", encoding="utf-8") as f:
                         gdata = json.load(f)
-                    profiles = gdata.get("profiles", {})
+                    gp_dict = gdata.get("profiles", {}) if (isinstance(gdata, dict) and "profiles" in gdata) else gdata
+                    if isinstance(gp_dict, dict):
+                        for gid, p in gp_dict.items():
+                            if isinstance(p, dict):
+                                profiles[gid] = copy.deepcopy(p)
+                except Exception as e:
+                    logger.debug(f"[PROGRAM_MGR] Could not read games_profiles.json: {e}")
+
+            # 3. Enrich steam_appid metadata for existing loaded profiles
+            if os.path.exists(GAMES_PROFILES_PATH):
+                try:
+                    with open(GAMES_PROFILES_PATH, "r", encoding="utf-8") as f:
+                        gdata = json.load(f)
+                    gp_dict = gdata.get("profiles", {}) if (isinstance(gdata, dict) and "profiles" in gdata) else gdata
+                    if isinstance(gp_dict, dict):
+                        for gid, p in profiles.items():
+                            if not p.get("steam_appid") and gid in gp_dict and gp_dict[gid].get("steam_appid"):
+                                p["steam_appid"] = gp_dict[gid]["steam_appid"]
                 except Exception:
                     pass
 
+            # 3. Merge explicit game_profiles passed in (e.g. from GameManager or tests)
+            if game_profiles and isinstance(game_profiles, dict):
+                for gid, p in game_profiles.items():
+                    if isinstance(p, dict):
+                        if gid in profiles:
+                            profiles[gid].update(p)
+                        else:
+                            profiles[gid] = copy.deepcopy(p)
+
+            if not profiles:
+                return False
+
+            changed = False
+
             for gid, p in profiles.items():
-                pname = p.get("process_name") or ""
-                dname = p.get("display_name") or gid
+                dname = (p.get("display_name") or gid).strip()
+                pname = (p.get("process_name") or "").strip()
+                appid = p.get("steam_appid")
+
                 pid = re.sub(r'[^a-zA-Z0-9]+', '_', dname.lower()).strip('_') or gid
-                resolved = self.resolve_program_path(pname or dname) or pname
+                resolved = ""
+                if pname and os.path.isabs(pname) and os.path.exists(pname):
+                    resolved = pname
+                else:
+                    resolved = self.resolve_program_path(pname or dname) or self.resolve_program_path(dname) or pname
+
                 cwd = os.path.dirname(resolved) if resolved and os.path.isabs(resolved) else ""
 
-                # Check if already present under another id (e.g. crimsondesert)
+                # Check if already present under another id or variant name
                 matched_id = None
-                for existing_id, ep in list(payload["programs"].items()):
-                    e_path = os.path.basename(ep.get("path", "")).lower()
-                    e_name = ep.get("name", "").lower()
-                    if existing_id == pid or existing_id == gid or (pname and pname.lower() == e_path) or (dname and dname.lower() == e_name) or (re.sub(r'[^a-zA-Z0-9]+', '', dname.lower()) == re.sub(r'[^a-zA-Z0-9]+', '', existing_id)):
-                        matched_id = existing_id
-                        break
+                extra_ids_to_remove = []
+                dname_clean = re.sub(r'[^a-zA-Z0-9]+', '', dname.lower())
+                pname_base = os.path.basename(pname).lower() if pname else ""
+                pname_stem = pname_base[:-4] if pname_base.endswith(".exe") else pname_base
+
+                for existing_id, ep in list(programs.items()):
+                    e_path = (ep.get("path") or "").strip()
+                    e_base = os.path.basename(e_path).lower() if e_path else ""
+                    e_stem = e_base[:-4] if e_base.endswith(".exe") else e_base
+                    e_name = (ep.get("name") or "").strip()
+                    e_name_clean = re.sub(r'[^a-zA-Z0-9]+', '', e_name.lower())
+
+                    is_match = False
+                    if existing_id in (pid, gid):
+                        is_match = True
+                    elif e_name.lower() == dname.lower() or (dname_clean and e_name_clean == dname_clean):
+                        is_match = True
+                    elif pname_base and (pname_base == e_base or pname_stem == e_stem):
+                        is_match = True
+                    elif resolved and e_path and os.path.normcase(os.path.abspath(resolved)) == os.path.normcase(os.path.abspath(e_path)):
+                        is_match = True
+                    elif dname_clean and (dname_clean in e_name_clean or e_name_clean in dname_clean):
+                        if not e_path or not os.path.exists(e_path) or (resolved and e_path and os.path.normcase(resolved) == os.path.normcase(e_path)):
+                            is_match = True
+
+                    if is_match:
+                        if existing_id == pid:
+                            matched_id = existing_id
+                        elif matched_id is None:
+                            matched_id = existing_id
+                        else:
+                            extra_ids_to_remove.append(existing_id)
 
                 target_id = pid
-                if matched_id and matched_id != pid and matched_id in payload["programs"]:
-                    del payload["programs"][matched_id]
-                payload["programs"][target_id] = {
+                saved_args = ""
+                saved_elevate = False
+                saved_cwd = ""
+                saved_path = ""
+
+                if matched_id:
+                    existing_entry = programs.get(matched_id, {})
+                    saved_args = existing_entry.get("arguments", "")
+                    saved_elevate = existing_entry.get("elevate", False)
+                    saved_cwd = existing_entry.get("working_dir", "")
+                    saved_path = existing_entry.get("path", "")
+
+                    if matched_id != target_id:
+                        del programs[matched_id]
+                        changed = True
+                        if payload.get("active_program") == matched_id:
+                            payload["active_program"] = target_id
+
+                for xid in extra_ids_to_remove:
+                    x_entry = programs.get(xid, {})
+                    if not saved_args and x_entry.get("arguments"):
+                        saved_args = x_entry["arguments"]
+                    if not saved_elevate and x_entry.get("elevate"):
+                        saved_elevate = x_entry["elevate"]
+                    if xid in programs:
+                        del programs[xid]
+                        changed = True
+                    if payload.get("active_program") == xid:
+                        payload["active_program"] = target_id
+
+                final_path = resolved or saved_path or pname
+                final_cwd = cwd or saved_cwd
+                if not final_cwd and final_path and os.path.isabs(final_path):
+                    final_cwd = os.path.dirname(final_path)
+
+                prog_entry = {
                     "id": target_id,
                     "name": dname,
-                    "path": resolved or pname,
-                    "arguments": payload["programs"].get(target_id, {}).get("arguments", ""),
-                    "elevate": payload["programs"].get(target_id, {}).get("elevate", False),
-                    "working_dir": cwd or payload["programs"].get(target_id, {}).get("working_dir", "")
+                    "path": final_path,
+                    "arguments": saved_args,
+                    "elevate": saved_elevate,
+                    "working_dir": final_cwd
                 }
-        except Exception as e:
-            logger.debug(f"[PROGRAM_MGR] Could not import from games profiles: {e}")
+                if appid:
+                    prog_entry["steam_appid"] = appid
+
+                current_entry = programs.get(target_id)
+                if current_entry != prog_entry:
+                    programs[target_id] = prog_entry
+                    changed = True
+
+            if changed and target_payload is None:
+                self._deduplicate_programs(self.data)
+                self._save_programs(self.data)
+
+            return changed
+
+    def _import_from_games(self, payload: Optional[Dict[str, Any]] = None):
+        """Imports game titles (e.g. Crimson Desert, Elite Dangerous) from games directory into programs."""
+        return self.sync_from_games(target_payload=payload)
 
     def _save_programs(self, payload: Dict[str, Any]):
         """Persists programs payload to disk and syncs with config.json whitelist."""
@@ -297,11 +449,30 @@ class ProgramManager:
             return wl
 
     def list_programs(self) -> Dict[str, Any]:
-        """Returns all configured programs, active program, and process running status."""
+        """Returns all configured programs (alphabetically sorted by name), active program, and process running status."""
         with self._lock:
+            synced = self.sync_from_games()
+            progs = copy.deepcopy(self.data.get("programs", {}))
+            changed = False
+            for pid, p in progs.items():
+                curr_path = p.get("path", "").strip()
+                if not curr_path or not os.path.exists(curr_path):
+                    resolved = self.resolve_program_path(p.get("name", pid))
+                    if resolved and os.path.exists(resolved):
+                        p["path"] = resolved
+                        if not p.get("working_dir"):
+                            p["working_dir"] = os.path.dirname(resolved)
+                        if pid in self.data.get("programs", {}):
+                            self.data["programs"][pid]["path"] = resolved
+                            self.data["programs"][pid]["working_dir"] = p["working_dir"]
+                        changed = True
+            if changed:
+                self._save_programs(self.data)
+
+            sorted_progs = dict(sorted(progs.items(), key=lambda kv: (kv[1].get("name") or kv[0]).lower()))
             return {
                 "active_program": self.data.get("active_program", ""),
-                "programs": copy.deepcopy(self.data.get("programs", {})),
+                "programs": sorted_progs,
                 "running_status": self.get_running_status_map()
             }
 
@@ -473,6 +644,85 @@ class ProgramManager:
                 "active_program": self.data.get("active_program")
             }
 
+    def batch_add_programs(self, programs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Adds multiple programs to the whitelist in a single atomic transaction.
+        Synchronizes with security.app_whitelist and disk persistence once.
+        """
+        if not programs or not isinstance(programs, list):
+            return {"success": True, "added_count": 0, "added": []}
+
+        added = []
+        with self._lock:
+            for item in programs:
+                if not isinstance(item, dict):
+                    continue
+                name_clean = str(item.get("name") or item.get("display_name") or "").strip()
+                if not name_clean:
+                    continue
+
+                path_val = str(item.get("path") or "").strip()
+                args_val = str(item.get("arguments") or item.get("launch_args") or item.get("args") or "").strip()
+                elev_val = bool(item.get("elevate", False))
+                cwd_val = str(item.get("working_dir") or item.get("cwd") or "").strip()
+
+                # Auto-resolve path if missing or relative
+                resolved_path = path_val
+                if not resolved_path or not os.path.isabs(resolved_path):
+                    detected = self.resolve_program_path(resolved_path or name_clean)
+                    if detected:
+                        resolved_path = detected
+
+                if not cwd_val and resolved_path and os.path.isabs(resolved_path):
+                    cwd_val = os.path.dirname(resolved_path)
+
+                name_norm = re.sub(r'[^a-zA-Z0-9]+', '', name_clean.lower())
+
+                # Check if this program already exists
+                matched_id = None
+                for pid, p in self.data.get("programs", {}).items():
+                    p_name_norm = re.sub(r'[^a-zA-Z0-9]+', '', (p.get("name") or "").lower())
+                    if name_norm and name_norm == p_name_norm:
+                        matched_id = pid
+                        break
+
+                if matched_id:
+                    existing = self.data["programs"][matched_id]
+                    if resolved_path and (not existing.get("path") or os.path.isabs(resolved_path)):
+                        existing["path"] = resolved_path
+                    if args_val:
+                        existing["arguments"] = args_val
+                    if elev_val:
+                        existing["elevate"] = elev_val
+                    if cwd_val:
+                        existing["working_dir"] = cwd_val
+                    added.append(existing)
+                    continue
+
+                base_id = re.sub(r'[^a-zA-Z0-9]+', '_', name_clean.lower()).strip('_') or "program"
+                prog_id = base_id
+                counter = 2
+                while prog_id in self.data.get("programs", {}):
+                    prog_id = f"{base_id}_{counter}"
+                    counter += 1
+
+                new_prog = {
+                    "id": prog_id,
+                    "name": name_clean,
+                    "path": resolved_path,
+                    "arguments": args_val,
+                    "elevate": elev_val,
+                    "working_dir": cwd_val
+                }
+                self.data.setdefault("programs", {})[prog_id] = new_prog
+                added.append(new_prog)
+
+            if added:
+                self.data["active_program"] = added[-1]["id"]
+                self._save_programs(self.data)
+
+        return {"success": True, "added_count": len(added), "added": added}
+
     def update_program(
         self,
         prog_id: str,
@@ -545,6 +795,312 @@ class ProgramManager:
         if clean in ("*", "all"):
             return True
         return self.get_program(clean) is not None
+
+    def get_installed_programs(self) -> List[Dict[str, Any]]:
+        """
+        Discovers installed desktop applications on Windows by scanning:
+        1. Windows Start Menu application shortcuts (.lnk files)
+        2. Windows Registry Uninstall keys (HKLM 64-bit, HKLM 32-bit WOW64, and HKCU)
+
+        Filters out background noise, drivers, hotfixes, system updates, and runtime packages.
+        Marks whether each program is currently whitelisted.
+        """
+        results: Dict[str, Dict[str, Any]] = {}
+        if sys.platform != "win32":
+            return []
+
+        ignore_keywords = [
+            'update for', 'security update', 'hotfix', 'redistributable',
+            'language pack', 'driver package', 'realtek', 'nvidia graphics driver',
+            'intel(r) management engine', 'microsoft visual c++', 'microsoft .net',
+            'windows software development kit', 'vulkan run time libraries',
+            'amd chipset software', 'installshield'
+        ]
+
+        bad_shortcut_terms = [
+            'uninstall', 'help', 'readme', 'documentation', 'manual',
+            'website', 'release notes', 'license', 'configuration tool',
+            'diagnostics', 'crashreporter'
+        ]
+
+        # 1. Start Menu shortcuts
+        try:
+            import win32com.client
+            wscript = win32com.client.Dispatch("WScript.Shell")
+            start_dirs = [
+                os.path.join(os.environ.get("PROGRAMDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs"),
+                os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs")
+            ]
+            for sdir in start_dirs:
+                if not os.path.exists(sdir):
+                    continue
+                for root, _, files in os.walk(sdir):
+                    for f in files:
+                        if not f.lower().endswith(".lnk"):
+                            continue
+                        s_name = f[:-4].strip()
+                        lower_sname = s_name.lower()
+                        if any(b in lower_sname for b in bad_shortcut_terms):
+                            continue
+                        fp = os.path.join(root, f)
+                        try:
+                            sc = wscript.CreateShortcut(fp)
+                            target = sc.TargetPath
+                            if target and target.lower().endswith(".exe") and os.path.exists(target):
+                                t_base = os.path.basename(target).lower()
+                                if any(b in t_base for b in ['unins', 'setup', 'update', 'crashreporter', 'helper', 'installer']):
+                                    continue
+                                norm_key = re.sub(r'[^a-zA-Z0-9]+', '', lower_sname)
+                                if norm_key:
+                                    results[norm_key] = {
+                                        "name": s_name,
+                                        "path": os.path.normpath(target),
+                                        "publisher": "",
+                                        "source": "Start Menu"
+                                    }
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.debug(f"[PROGRAM_MGR] Start menu scan error: {e}")
+
+        # 2. Windows Registry
+        try:
+            import winreg
+            roots = [
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+                (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+            ]
+            for root, subkey in roots:
+                try:
+                    with winreg.OpenKey(root, subkey) as key:
+                        count = winreg.QueryInfoKey(key)[0]
+                        for i in range(count):
+                            try:
+                                kname = winreg.EnumKey(key, i)
+                                with winreg.OpenKey(key, kname) as subk:
+                                    def q(val_name):
+                                        try:
+                                            return winreg.QueryValueEx(subk, val_name)[0]
+                                        except Exception:
+                                            return None
+                                    disp = q("DisplayName")
+                                    if not disp or not str(disp).strip() or len(str(disp).strip()) < 2:
+                                        continue
+                                    disp = str(disp).strip()
+                                    if q("SystemComponent") == 1 or q("ParentKeyName") or q("NoDisplay") == 1:
+                                        continue
+                                    ldisp = disp.lower()
+                                    if any(bad in ldisp for bad in ignore_keywords) or re.search(r'kb\d{5,}', ldisp):
+                                        continue
+                                    publisher = str(q("Publisher") or "").strip()
+                                    raw_icon = str(q("DisplayIcon") or "").strip().strip('\"')
+                                    clean_icon = re.sub(r',\s*-?\d+$', '', raw_icon).strip('\"')
+                                    exe_path = ""
+                                    # Deep resolution prioritizes the actual runtime client (e.g. EliteDangerous64.exe over EDLaunch.exe)
+                                    deep_exe = self.resolve_program_path(disp)
+                                    if deep_exe and os.path.exists(deep_exe):
+                                        exe_path = deep_exe
+                                    elif clean_icon.lower().endswith(".exe") and os.path.exists(clean_icon):
+                                        t_base = os.path.basename(clean_icon).lower()
+                                        if not any(b in t_base for b in ['unins', 'setup', 'update', 'crashreporter', 'helper', 'installer']):
+                                            exe_path = os.path.normpath(clean_icon)
+                                    else:
+                                        loc = str(q("InstallLocation") or "").strip().strip('\"')
+                                        if loc and os.path.isdir(loc):
+                                            try:
+                                                for rf in sorted(os.listdir(loc)):
+                                                    if rf.lower().endswith(".exe") and not any(u in rf.lower() for u in ['unins', 'setup', 'update', 'crash', 'reporter', 'identifier', 'dxsetup', 'helper']):
+                                                        p = os.path.join(loc, rf)
+                                                        if os.path.isfile(p):
+                                                            exe_path = os.path.normpath(p)
+                                                            break
+                                                if not exe_path:
+                                                    for root_dir, _, files in os.walk(loc):
+                                                        depth = root_dir[len(loc):].count(os.sep)
+                                                        if depth > 2:
+                                                            continue
+                                                        for fn in sorted(files):
+                                                            if fn.lower().endswith(".exe"):
+                                                                fn_low = fn.lower()
+                                                                if not any(u in fn_low for u in ['unins', 'setup', 'update', 'crash', 'reporter', 'identifier', 'dxsetup', 'helper', 'crashpad']):
+                                                                    p = os.path.join(root_dir, fn)
+                                                                    if os.path.isfile(p):
+                                                                        exe_path = os.path.normpath(p)
+                                                                        break
+                                                        if exe_path:
+                                                            break
+                                            except Exception:
+                                                pass
+
+                                    norm_key = re.sub(r'[^a-zA-Z0-9]+', '', ldisp)
+                                    if not norm_key:
+                                        continue
+
+                                    if norm_key in results:
+                                        if not results[norm_key]["publisher"] and publisher:
+                                            results[norm_key]["publisher"] = publisher
+                                        if not results[norm_key]["path"] and exe_path:
+                                            results[norm_key]["path"] = exe_path
+                                    else:
+                                        results[norm_key] = {
+                                            "name": disp,
+                                            "path": exe_path,
+                                            "publisher": publisher,
+                                            "source": "Registry"
+                                        }
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"[PROGRAM_MGR] Registry scan error: {e}")
+
+        # 3. Steam Libraries Discovery (across all library drives)
+        try:
+            steam_libs = self.find_steam_libraries()
+            for lib in steam_libs:
+                steamapps = os.path.join(lib, "steamapps")
+                if not os.path.exists(steamapps):
+                    continue
+                for f in os.listdir(steamapps):
+                    if f.startswith("appmanifest_") and f.endswith(".acf"):
+                        try:
+                            with open(os.path.join(steamapps, f), "r", encoding="utf-8", errors="ignore") as acf:
+                                txt = acf.read()
+                                name_m = re.search(r'"name"\s+"([^"]+)"', txt)
+                                dir_m = re.search(r'"installdir"\s+"([^"]+)"', txt)
+                                appid_m = re.search(r'"appid"\s+"([^"]+)"', txt)
+                                name = name_m.group(1).strip() if name_m else ""
+                                dir_name = dir_m.group(1).strip() if dir_m else ""
+                                appid = appid_m.group(1).strip() if appid_m else ""
+                                if not name or "steamworks" in name.lower() or appid == "228980":
+                                    continue
+                                full_dir = os.path.join(steamapps, "common", dir_name)
+                                exe_path = self.resolve_program_path(name) or ""
+                                if not exe_path or not os.path.exists(exe_path):
+                                    if os.path.isdir(full_dir):
+                                        for root_dir, _, files in os.walk(full_dir):
+                                            depth = root_dir[len(full_dir):].count(os.sep)
+                                            if depth > 2:
+                                                continue
+                                            for fn in sorted(files):
+                                                if fn.lower().endswith(".exe"):
+                                                    fn_low = fn.lower()
+                                                    if not any(u in fn_low for u in ['unins', 'setup', 'update', 'crash', 'reporter', 'identifier', 'dxsetup', 'helper', 'crashpad']):
+                                                        exe_path = os.path.normpath(os.path.join(root_dir, fn))
+                                                        break
+                                            if exe_path:
+                                                break
+                                norm_key = re.sub(r'[^a-zA-Z0-9]+', '', name.lower())
+                                if norm_key:
+                                    if norm_key in results:
+                                        if exe_path and (not results[norm_key]["path"] or not os.path.exists(results[norm_key]["path"])):
+                                            results[norm_key]["path"] = exe_path
+                                        if appid:
+                                            results[norm_key]["steam_appid"] = appid
+                                    else:
+                                        results[norm_key] = {
+                                            "name": name,
+                                            "path": exe_path,
+                                            "publisher": "Steam",
+                                            "source": "Steam",
+                                            "steam_appid": appid
+                                        }
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.debug(f"[PROGRAM_MGR] Steam manifest scan error: {e}")
+
+        # 4. Epic Games Discovery
+        epic_manifests = os.path.expandvars(r"%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests")
+        if os.path.exists(epic_manifests):
+            try:
+                for f in os.listdir(epic_manifests):
+                    if f.endswith(".item"):
+                        try:
+                            with open(os.path.join(epic_manifests, f), "r", encoding="utf-8", errors="ignore") as ef:
+                                item_data = json.load(ef)
+                                disp_name = item_data.get("DisplayName", "").strip()
+                                inst_loc = item_data.get("InstallLocation", "").strip()
+                                launch_exe = item_data.get("LaunchExecutable", "").strip()
+                                if disp_name and inst_loc and launch_exe:
+                                    full_exe = os.path.normpath(os.path.join(inst_loc, launch_exe))
+                                    if os.path.isfile(full_exe):
+                                        norm_key = re.sub(r'[^a-zA-Z0-9]+', '', disp_name.lower())
+                                        if norm_key and norm_key not in results:
+                                            results[norm_key] = {
+                                                "name": disp_name,
+                                                "path": full_exe,
+                                                "publisher": "Epic Games",
+                                                "source": "Epic Games"
+                                            }
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"[PROGRAM_MGR] Epic Games scan error: {e}")
+
+        # 5. GOG Galaxy Games Discovery
+        if sys.platform == "win32":
+            try:
+                import winreg
+                for gog_root in [winreg.HKEY_LOCAL_MACHINE]:
+                    for gog_sub in [r"SOFTWARE\GOG.com\Games", r"SOFTWARE\WOW6432Node\GOG.com\Games"]:
+                        try:
+                            with winreg.OpenKey(gog_root, gog_sub) as k:
+                                for i in range(winreg.QueryInfoKey(k)[0]):
+                                    try:
+                                        game_key = winreg.EnumKey(k, i)
+                                        with winreg.OpenKey(k, game_key) as gk:
+                                            def gq(vn):
+                                                try:
+                                                    return winreg.QueryValueEx(gk, vn)[0]
+                                                except Exception:
+                                                    return None
+                                            gname = gq("gameName")
+                                            gpath = gq("path")
+                                            gexe = gq("exe")
+                                            if gname and gpath and gexe:
+                                                full_exe = os.path.normpath(os.path.join(str(gpath), str(gexe)))
+                                                if os.path.isfile(full_exe):
+                                                    norm_key = re.sub(r'[^a-zA-Z0-9]+', '', str(gname).lower())
+                                                    if norm_key and norm_key not in results:
+                                                        results[norm_key] = {
+                                                            "name": str(gname),
+                                                            "path": full_exe,
+                                                            "publisher": "GOG",
+                                                            "source": "GOG"
+                                                        }
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"[PROGRAM_MGR] GOG scan error: {e}")
+
+        # Check whitelist status and auto-resolve missing paths
+        installed_list = []
+        for item in results.values():
+            name = item["name"]
+            path = item["path"]
+
+            # If no path found yet, try deep path resolver
+            if not path:
+                resolved = self.resolve_program_path(name)
+                if resolved:
+                    item["path"] = resolved
+                    path = resolved
+
+            # Check if whitelisted
+            is_wl = self.is_whitelisted(name)
+            if not is_wl and path:
+                is_wl = self.is_whitelisted(os.path.basename(path))
+
+            item["is_whitelisted"] = bool(is_wl)
+            installed_list.append(item)
+
+        installed_list.sort(key=lambda x: x["name"].lower())
+        return installed_list
 
     # -------------------------------------------------------------------------
     # Deep Executable Path Resolution
@@ -641,13 +1197,21 @@ class ProgramManager:
                     gf_norm = re.sub(r'[^a-zA-Z0-9]+', '', game_folder.lower())
                     if target_norm in gf_norm or gf_norm in target_norm:
                         for root, _, files in os.walk(gf_path):
-                            for f in files:
+                            for f in sorted(files):
                                 f_lower = f.lower()
                                 if f_lower.endswith(".exe"):
                                     f_stem = f_lower[:-4]
                                     f_norm = re.sub(r'[^a-zA-Z0-9]+', '', f_stem)
-                                    if f_lower == target_base or f_stem == target_stem or f_norm == target_norm:
-                                        return os.path.normpath(os.path.join(root, f))
+                                    if (
+                                        f_lower == target_base
+                                        or f_stem == target_stem
+                                        or f_norm == target_norm
+                                        or f_norm == gf_norm
+                                        or f_norm in target_norm
+                                        or target_norm in f_norm
+                                    ):
+                                        if not any(bad in f_lower for bad in ['unins', 'setup', 'update', 'crash', 'reporter', 'identifier', 'dxsetup', 'helper', 'crashpad']):
+                                            return os.path.normpath(os.path.join(root, f))
                             if root.count(os.sep) - gf_path.count(os.sep) > 3:
                                 break
             except Exception:
@@ -844,12 +1408,46 @@ class ProgramManager:
                     "message": f"Successfully launched {display_name}."
                 }
             else:
+                # Check for Steam appid fallback before trying generic startfile
+                steam_appid = (prog.get("steam_appid") if prog else None) or ""
+                if not steam_appid and sys.platform == "win32":
+                    try:
+                        if os.path.exists(GAMES_PROFILES_PATH):
+                            with open(GAMES_PROFILES_PATH, "r", encoding="utf-8") as f:
+                                gp_data = json.load(f)
+                            for gp in gp_data.get("profiles", {}).values():
+                                if (gp.get("display_name", "").lower() == display_name.lower()) and gp.get("steam_appid"):
+                                    steam_appid = str(gp["steam_appid"])
+                                    break
+                    except Exception:
+                        pass
+
+                if steam_appid and sys.platform == "win32":
+                    try:
+                        os.startfile(f"steam://rungameid/{steam_appid}")
+                        return {
+                            "status": "success",
+                            "app_name": display_name,
+                            "executable": f"steam://rungameid/{steam_appid}",
+                            "elevated": False,
+                            "message": f"Successfully launched {display_name} via Steam (AppID: {steam_appid})."
+                        }
+                    except Exception as se:
+                        logger.debug(f"[PROGRAM_MGR] Steam URL launch error: {se}")
+
                 # Windows Shell Fallback
                 if sys.platform == "win32":
                     if target:
                         os.startfile(target)
-                    else:
+                    elif exe_path and os.path.exists(exe_path):
                         os.startfile(exe_path)
+                    else:
+                        return {
+                            "status": "error",
+                            "app_name": display_name,
+                            "executable": exe_path,
+                            "error": f"Executable not found on disk: {exe_path or '(empty path)'}"
+                        }
                     return {
                         "status": "success",
                         "app_name": display_name,

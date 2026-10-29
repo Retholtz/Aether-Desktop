@@ -292,6 +292,14 @@ class GuiBridge:
                 "game_name": game_name
             })
         self.game_mgr.on_game_mode_changed = _bridge_on_game_mode_changed
+
+        def _bridge_on_game_added(game_id: str, profile: dict):
+            if hasattr(self, "program_mgr") and self.program_mgr:
+                try:
+                    self.program_mgr.sync_from_games(game_profiles={game_id: profile})
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] on_game_added program sync error: {e}")
+        self.game_mgr.on_game_added = _bridge_on_game_added
         from core.oauth_manager import get_oauth_manager
         self._oauth_mgr = get_oauth_manager()
         self._oauth_mgr.on_status_change = lambda status: self._on_engine_event("oauth_status_updated", status)
@@ -1660,9 +1668,14 @@ class GuiBridge:
             proc_name = pdata.get("process_name", "").lower()
             status_map[gid] = proc_name in running_processes if proc_name else False
 
+        sorted_profiles = dict(sorted(
+            profiles_data.get("profiles", {}).items(),
+            key=lambda kv: (kv[1].get("display_name") or kv[0]).lower()
+        ))
+
         return {
             "active_profile": profiles_data.get("active_profile", ""),
-            "profiles": profiles_data.get("profiles", {}),
+            "profiles": sorted_profiles,
             "running_status": status_map,
             "game_mode_enabled": self.game_mgr.game_mode_enabled,
             "is_game_mode_active": self.game_mgr.is_game_mode_active(),
@@ -1673,11 +1686,34 @@ class GuiBridge:
         """Creates a new game profile and switches to it if no active game is set."""
         if not display_name or not display_name.strip():
             return {"success": False, "error": "Game name cannot be empty."}
-        return self.game_mgr.add_game(display_name=display_name.strip(), process_name=process_name.strip())
+        res = self.game_mgr.add_game(display_name=display_name.strip(), process_name=process_name.strip())
+        if res.get("success"):
+            if hasattr(self, "program_mgr") and self.program_mgr:
+                try:
+                    self.program_mgr.sync_from_games(game_profiles={res["game_id"]: res.get("profile", {})})
+                except Exception as e:
+                    logger.warning(f"[GUI_BRIDGE] Auto-sync to programs failed after add_game_profile: {e}")
+        return res
 
     def delete_game_profile(self, game_id: str) -> dict:
-        """Deletes a game profile from memory and disk."""
-        return self.game_mgr.delete_game(game_id)
+        """Deletes a game profile from memory and disk, and removes from program whitelist."""
+        prof = self.game_mgr.get_profile(game_id)
+        dname = (prof.get("display_name") or game_id).strip() if prof else game_id
+        res = self.game_mgr.delete_game(game_id)
+        if res.get("success"):
+            if hasattr(self, "program_mgr") and self.program_mgr:
+                try:
+                    dname_norm = re.sub(r'[^a-zA-Z0-9]+', '', dname.lower())
+                    to_del = []
+                    for pid, p in self.program_mgr.data.get("programs", {}).items():
+                        p_norm = re.sub(r'[^a-zA-Z0-9]+', '', p.get("name", "").lower())
+                        if pid == game_id or (dname_norm and (p_norm == dname_norm or pid == dname_norm)):
+                            to_del.append(pid)
+                    for pid in to_del:
+                        self.program_mgr.delete_program(pid)
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] Auto-delete from programs failed: {e}")
+        return res
 
     def set_active_game_profile(self, game_id: str) -> dict:
         """Switches the active game profile in memory and disk."""
@@ -2084,6 +2120,32 @@ class GuiBridge:
     def get_programs(self) -> dict:
         """Returns all whitelisted programs, active program, and process running status."""
         return self.program_mgr.list_programs()
+
+    def get_installed_programs(self) -> dict:
+        """Scans the Windows Registry and Start Menu for installed desktop applications."""
+        try:
+            programs = self.program_mgr.get_installed_programs()
+            return {"success": True, "programs": programs, "total": len(programs)}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_installed_programs: {e}")
+            return {"success": False, "error": str(e), "programs": [], "total": 0}
+
+    def batch_add_programs(self, programs: Any = None) -> dict:
+        """Adds a batch of programs to the whitelist en masse in an atomic transaction."""
+        try:
+            if not isinstance(programs, list):
+                return {"success": False, "error": "Programs argument must be a list"}
+            res = self.program_mgr.batch_add_programs(programs)
+            if res.get("success"):
+                try:
+                    self.notify("oauth_status_updated", self.get_oauth_status())
+                    self.notify("desktop_notifications_status_changed", self.get_desktop_notifications_status())
+                except Exception:
+                    pass
+            return res
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] batch_add_programs: {e}")
+            return {"success": False, "error": str(e)}
 
     def add_program(
         self,

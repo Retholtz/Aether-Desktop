@@ -9,6 +9,15 @@ let activeProgramId = null;
 let programStatusPollInterval = null;
 let cachedProgramRunningProcs = null;
 
+function escapeProgHtml(str) {
+    return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 async function loadProgramsUI() {
     try {
         if (!window.pywebview || !window.pywebview.api) {
@@ -32,7 +41,11 @@ function renderProgramsSidebar() {
 
     const programs = currentProgramsData ? (currentProgramsData.programs || {}) : {};
     const running = currentProgramsData ? (currentProgramsData.running_status || {}) : {};
-    const programIds = Object.keys(programs);
+    const programIds = Object.keys(programs).sort((a, b) => {
+        const nameA = (programs[a]?.name || a).toLowerCase();
+        const nameB = (programs[b]?.name || b).toLowerCase();
+        return nameA.localeCompare(nameB, undefined, { numeric: true });
+    });
 
     if (programIds.length === 0) {
         listEl.innerHTML = `
@@ -47,21 +60,13 @@ function renderProgramsSidebar() {
         activeProgramId = programIds[0];
     }
 
-function escapeProgHtml(str) {
-    return String(str == null ? '' : str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
     programIds.forEach(pid => {
         const p = programs[pid];
         const isOnline = running[pid] || false;
 
         const item = document.createElement('div');
         item.className = `program-item ${pid === activeProgramId ? 'active' : ''}`;
+        item.dataset.programId = pid;
         item.onclick = () => switchActiveProgram(pid);
 
         item.innerHTML = `
@@ -518,9 +523,8 @@ async function refreshProgramsStatusOnly() {
             const listEl = document.getElementById('programs-list');
             if (listEl) {
                 const items = listEl.querySelectorAll('.program-item');
-                const pids = Object.keys(data.programs || {});
-                items.forEach((item, idx) => {
-                    const pid = pids[idx];
+                items.forEach((item) => {
+                    const pid = item.dataset.programId;
                     if (pid) {
                         const isOnline = data.running_status[pid] || false;
                         const badge = item.querySelector('.badge-status');
@@ -546,6 +550,238 @@ async function refreshProgramsStatusOnly() {
     }
 }
 
+// ----------------------------------------------------------------------------
+// Bulk Sync Installed Windows Programs Modal
+// ----------------------------------------------------------------------------
+let cachedInstalledPrograms = [];
+let selectedInstalledProgNames = new Set();
+
+function openSyncProgramsModal() {
+    const modal = document.getElementById('modal-sync-programs');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    const searchInput = document.getElementById('input-sync-prog-search');
+    if (searchInput) searchInput.value = '';
+
+    selectedInstalledProgNames.clear();
+    updateSyncCounter();
+
+    loadInstalledProgramsForSync();
+}
+
+function closeSyncProgramsModal() {
+    const modal = document.getElementById('modal-sync-programs');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function loadInstalledProgramsForSync() {
+    const listEl = document.getElementById('list-sync-programs');
+    const totalEl = document.getElementById('sync-prog-total-count');
+    if (listEl) {
+        listEl.innerHTML = '<div style="padding: 30px; text-align: center; color: #64748b; font-size: 0.85rem;">🔍 Scanning installed Windows programs and shortcuts...</div>';
+    }
+
+    try {
+        if (!window.pywebview || !window.pywebview.api) {
+            if (listEl) listEl.innerHTML = '<div style="padding: 20px; text-align: center; color: #f87171;">Aether bridge not ready.</div>';
+            return;
+        }
+
+        const res = await window.pywebview.api.get_installed_programs();
+        if (res && res.success) {
+            cachedInstalledPrograms = res.programs || [];
+            const whitelistedCount = cachedInstalledPrograms.filter(p => p.is_whitelisted).length;
+            const newCount = cachedInstalledPrograms.length - whitelistedCount;
+            if (totalEl) {
+                totalEl.textContent = `${cachedInstalledPrograms.length} detected (${whitelistedCount} already whitelisted, ${newCount} new)`;
+            }
+            renderSyncProgramsList();
+        } else {
+            if (listEl) {
+                listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Failed to scan programs: ${(res && res.error) || 'Unknown error'}</div>`;
+            }
+        }
+    } catch (err) {
+        console.error("loadInstalledProgramsForSync error:", err);
+        if (listEl) {
+            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Error scanning programs: ${err}</div>`;
+        }
+    }
+}
+
+function renderSyncProgramsList() {
+    const listEl = document.getElementById('list-sync-programs');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    const searchInput = document.getElementById('input-sync-prog-search');
+    const q = (searchInput?.value || '').toLowerCase().trim();
+    const hideWhitelisted = Boolean(document.getElementById('chk-sync-hide-whitelisted')?.checked);
+
+    const whitelistedCount = cachedInstalledPrograms.filter(p => p.is_whitelisted).length;
+    const hideLabel = document.getElementById('lbl-sync-hide-whitelisted');
+    if (hideLabel) {
+        hideLabel.textContent = `Hide already whitelisted programs (${whitelistedCount})`;
+    }
+
+    const filtered = cachedInstalledPrograms.filter(item => {
+        if (hideWhitelisted && item.is_whitelisted) return false;
+        if (!q) return true;
+        const nameMatch = (item.name || '').toLowerCase().includes(q);
+        const pubMatch = (item.publisher || '').toLowerCase().includes(q);
+        const pathMatch = (item.path || '').toLowerCase().includes(q);
+        return nameMatch || pubMatch || pathMatch;
+    }).sort((a, b) => {
+        const nameA = (a.name || '').toLowerCase();
+        const nameB = (b.name || '').toLowerCase();
+        return nameA.localeCompare(nameB, undefined, { numeric: true });
+    });
+
+    if (filtered.length === 0) {
+        listEl.innerHTML = '<div style="padding: 25px; text-align: center; color: #64748b; font-size: 0.82rem;">No matching programs found.</div>';
+        return;
+    }
+
+    filtered.forEach(item => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; transition: background 0.12s;';
+        
+        row.onmouseenter = () => { row.style.background = 'rgba(56, 189, 248, 0.08)'; };
+        row.onmouseleave = () => { row.style.background = 'transparent'; };
+
+        const isChecked = selectedInstalledProgNames.has(item.name);
+        const isDisabled = Boolean(item.is_whitelisted);
+
+        row.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+                <input type="checkbox" class="sync-chk" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: ${isDisabled ? 'not-allowed' : 'pointer'}; flex-shrink: 0;" />
+                <div style="display: flex; flex-direction: column; min-width: 0; overflow: hidden;">
+                    <div style="display: flex; align-items: center; gap: 6px; overflow: hidden;">
+                        <span style="font-size: 0.84rem; font-weight: 600; color: ${isDisabled ? '#94a3b8' : '#f1f5f9'}; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeProgHtml(item.name)}</span>
+                        ${item.publisher ? `<span style="font-size: 0.68rem; color: #94a3b8; background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; white-space: nowrap;">${escapeProgHtml(item.publisher)}</span>` : ''}
+                    </div>
+                    <span style="font-size: 0.72rem; color: #64748b; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;">${escapeProgHtml(item.path || '(Executable path auto-resolved on launch)')}</span>
+                </div>
+            </div>
+            ${isDisabled ? `<span class="badge-status badge-online" style="font-size: 0.66rem; padding: 2px 6px; margin-left: 8px; flex-shrink: 0;">WHITELISTED</span>` : ''}
+        `;
+
+        if (!isDisabled) {
+            row.onclick = (e) => {
+                if (e.target.tagName !== 'INPUT') {
+                    const chk = row.querySelector('.sync-chk');
+                    if (chk) {
+                        chk.checked = !chk.checked;
+                        toggleInstalledProgSelection(item.name, chk.checked);
+                    }
+                }
+            };
+            const chkEl = row.querySelector('.sync-chk');
+            if (chkEl) {
+                chkEl.onchange = (e) => {
+                    toggleInstalledProgSelection(item.name, e.target.checked);
+                };
+            }
+        }
+
+        listEl.appendChild(row);
+    });
+}
+
+function toggleInstalledProgSelection(progName, isSelected) {
+    if (isSelected) {
+        selectedInstalledProgNames.add(progName);
+    } else {
+        selectedInstalledProgNames.delete(progName);
+    }
+    updateSyncCounter();
+}
+
+function updateSyncCounter() {
+    const count = selectedInstalledProgNames.size;
+    const counterEl = document.getElementById('sync-prog-counter');
+    const confirmBtn = document.getElementById('btn-confirm-sync-prog');
+
+    if (counterEl) {
+        counterEl.textContent = `${count} selected`;
+    }
+    if (confirmBtn) {
+        confirmBtn.textContent = `Add Selected (${count})`;
+        confirmBtn.disabled = (count === 0);
+    }
+}
+
+function handleSyncSelectAllVisible() {
+    const searchInput = document.getElementById('input-sync-prog-search');
+    const q = (searchInput?.value || '').toLowerCase().trim();
+    const hideWhitelisted = Boolean(document.getElementById('chk-sync-hide-whitelisted')?.checked);
+
+    cachedInstalledPrograms.forEach(item => {
+        if (item.is_whitelisted) return;
+        if (hideWhitelisted && item.is_whitelisted) return;
+        if (q) {
+            const nameMatch = (item.name || '').toLowerCase().includes(q);
+            const pubMatch = (item.publisher || '').toLowerCase().includes(q);
+            const pathMatch = (item.path || '').toLowerCase().includes(q);
+            if (!nameMatch && !pubMatch && !pathMatch) return;
+        }
+        selectedInstalledProgNames.add(item.name);
+    });
+
+    renderSyncProgramsList();
+    updateSyncCounter();
+}
+
+function handleSyncDeselectAll() {
+    selectedInstalledProgNames.clear();
+    renderSyncProgramsList();
+    updateSyncCounter();
+}
+
+async function handleConfirmSyncPrograms() {
+    if (selectedInstalledProgNames.size === 0) return;
+
+    const itemsToAdd = [];
+    cachedInstalledPrograms.forEach(p => {
+        if (selectedInstalledProgNames.has(p.name)) {
+            itemsToAdd.push({
+                name: p.name,
+                path: p.path || ''
+            });
+        }
+    });
+
+    if (itemsToAdd.length === 0) return;
+
+    const confirmBtn = document.getElementById('btn-confirm-sync-prog');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Adding...';
+    }
+
+    try {
+        const res = await window.pywebview.api.batch_add_programs(itemsToAdd);
+        if (res && res.success) {
+            closeSyncProgramsModal();
+            await loadProgramsUI();
+            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
+                window.AetherApp.showToast(`Added ${res.added_count} programs to allowed whitelist.`);
+            }
+        } else {
+            alert((res && res.error) || 'Failed to add programs in batch.');
+        }
+    } catch (err) {
+        console.error("batch_add_programs error:", err);
+        alert("Error adding programs: " + err);
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            updateSyncCounter();
+        }
+    }
+}
+
 // Global DOM Hook Initializer
 function initProgramsTabEvents() {
     // Add Program Buttons
@@ -553,6 +789,34 @@ function initProgramsTabEvents() {
     const addEmptyBtn = document.getElementById('btn-add-program-empty');
     if (addBtn) addBtn.onclick = openAddProgramModal;
     if (addEmptyBtn) addEmptyBtn.onclick = openAddProgramModal;
+
+    // Sync Programs Buttons & Modal
+    const syncBtn = document.getElementById('btn-sync-programs');
+    const syncEmptyBtn = document.getElementById('btn-sync-programs-empty');
+    if (syncBtn) syncBtn.onclick = openSyncProgramsModal;
+    if (syncEmptyBtn) syncEmptyBtn.onclick = openSyncProgramsModal;
+
+    const closeSyncBtn = document.getElementById('btn-close-sync-programs-modal');
+    const cancelSyncBtn = document.getElementById('btn-cancel-sync-prog');
+    const confirmSyncBtn = document.getElementById('btn-confirm-sync-prog');
+    if (closeSyncBtn) closeSyncBtn.onclick = closeSyncProgramsModal;
+    if (cancelSyncBtn) cancelSyncBtn.onclick = closeSyncProgramsModal;
+    if (confirmSyncBtn) confirmSyncBtn.onclick = handleConfirmSyncPrograms;
+
+    const selectAllBtn = document.getElementById('btn-sync-select-all');
+    const deselectAllBtn = document.getElementById('btn-sync-deselect-all');
+    if (selectAllBtn) selectAllBtn.onclick = handleSyncSelectAllVisible;
+    if (deselectAllBtn) deselectAllBtn.onclick = handleSyncDeselectAll;
+
+    const syncSearchInput = document.getElementById('input-sync-prog-search');
+    if (syncSearchInput) {
+        syncSearchInput.oninput = () => renderSyncProgramsList();
+    }
+
+    const hideWlChk = document.getElementById('chk-sync-hide-whitelisted');
+    if (hideWlChk) {
+        hideWlChk.onchange = () => renderSyncProgramsList();
+    }
 
     // Modal close & confirm
     const closeBtn = document.getElementById('btn-close-add-program-modal');
@@ -618,3 +882,7 @@ window.handleLaunchActiveProgram = handleLaunchActiveProgram;
 window.handleCloseActiveProgram = handleCloseActiveProgram;
 window.handleSaveActiveProgram = handleSaveActiveProgram;
 window.handleDeleteActiveProgram = handleDeleteActiveProgram;
+window.openSyncProgramsModal = openSyncProgramsModal;
+window.closeSyncProgramsModal = closeSyncProgramsModal;
+window.handleConfirmSyncPrograms = handleConfirmSyncPrograms;
+window.escapeProgHtml = escapeProgHtml;

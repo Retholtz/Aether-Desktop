@@ -251,7 +251,12 @@
           <aside class="programs-sidebar">
             <div class="sidebar-header" style="display: flex; justify-content: space-between; align-items: center;">
               <h4>ALLOWED PROGRAMS</h4>
-              <button type="button" id="btn-add-program" class="btn-primary-sm" title="Add a new program to whitelist">+ Add</button>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <button type="button" id="btn-sync-programs" class="btn-secondary-sm" title="Scan installed Windows programs to whitelist en masse" style="padding: 3px 8px; font-size: 0.72rem; display: flex; align-items: center; gap: 4px;">
+                  <span>🔄</span> Sync
+                </button>
+                <button type="button" id="btn-add-program" class="btn-primary-sm" title="Add a new program to whitelist">+ Add</button>
+              </div>
             </div>
             <div id="programs-list" class="programs-list-group">
               <!-- Dynamically populated by JS -->
@@ -289,7 +294,12 @@
               <p style="color: #94a3b8; max-width: 440px; margin: 0 auto 20px auto; font-size: 0.9rem;">
                 Add applications you want Aether to be able to open, launch with custom extensions, or control.
               </p>
-              <button type="button" id="btn-add-program-empty" class="btn-primary-sm" style="padding: 8px 18px; font-size: 13px;">+ Add Your First Program</button>
+              <div style="display: flex; gap: 10px; justify-content: center; align-items: center;">
+                <button type="button" id="btn-add-program-empty" class="btn-primary-sm" style="padding: 8px 18px; font-size: 13px;">+ Add Your First Program</button>
+                <button type="button" id="btn-sync-programs-empty" class="btn-secondary-sm" style="padding: 8px 18px; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+                  <span>🔄</span> Sync Installed Programs
+                </button>
+              </div>
             </div>
 
             <!-- Program Configuration Card -->
@@ -1926,6 +1936,57 @@
       <div class="modal-footer">
         <button type="button" id="btn-cancel-add-prog" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
         <button type="button" id="btn-confirm-add-prog" class="btn-primary-sm" style="padding: 7px 18px;">Add Program</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Sync Installed Programs (Bulk Whitelist) -->
+  <div id="modal-sync-programs" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 720px; width: 92%; max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.25rem;">🔄</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.05rem; color: #f1f5f9;">Sync Installed Programs</h3>
+            <span style="font-size: 0.75rem; color: #94a3b8;">Discover applications installed on Windows and add them to your allowed whitelist en masse.</span>
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-sync-programs-modal" title="Close">✕</button>
+      </div>
+
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px; overflow: hidden; padding-bottom: 8px;">
+        <!-- Search and Quick Action Toolbar -->
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 240px; position: relative;">
+            <input type="text" id="input-sync-prog-search" class="modal-input" placeholder="Search installed programs by name, publisher, or path..." style="width: 100%; box-sizing: border-box; padding-left: 32px;" />
+            <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 0.85rem; color: #64748b; pointer-events: none;">🔍</span>
+          </div>
+          <div style="display: flex; gap: 6px; align-items: center;">
+            <button type="button" id="btn-sync-select-all" class="btn-secondary-sm" style="font-size: 0.74rem; padding: 5px 10px;">Select All Visible</button>
+            <button type="button" id="btn-sync-deselect-all" class="btn-secondary-sm" style="font-size: 0.74rem; padding: 5px 10px;">Deselect All</button>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 2px; font-size: 0.76rem; color: #94a3b8;">
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
+            <input type="checkbox" id="chk-sync-hide-whitelisted" checked style="accent-color: #38bdf8; width: 14px; height: 14px; cursor: pointer;" />
+            <span id="lbl-sync-hide-whitelisted">Hide already whitelisted programs</span>
+          </label>
+          <span id="sync-prog-counter" style="font-weight: 600; color: #38bdf8;">0 selected</span>
+        </div>
+
+        <!-- Scrollable Programs List -->
+        <div id="list-sync-programs" style="flex: 1; min-height: 280px; max-height: 380px; overflow-y: auto; background: rgba(15, 23, 42, 0.65); border: 1px solid #334155; border-radius: 6px;">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+        <span id="sync-prog-total-count" style="font-size: 0.75rem; color: #64748b;">Scanning system...</span>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" id="btn-cancel-sync-prog" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+          <button type="button" id="btn-confirm-sync-prog" class="btn-primary-sm" style="padding: 7px 18px;" disabled>Add Selected (0)</button>
+        </div>
       </div>
     </div>
   </div>

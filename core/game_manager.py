@@ -24,6 +24,19 @@ GAMES_DIR = os.path.join("data", "games")
 GAMES_STATE_FILE = "active_state.json"
 GAMES_PROFILES_PATH = os.path.join("data", "games_profiles.json")
 
+LAUNCHER_GAME_PAIRS = {
+    "edlaunch.exe": "elitedangerous64.exe",
+    "elitedangerous64.exe": "edlaunch.exe",
+    "edlaunch": "elitedangerous64",
+    "elitedangerous64": "edlaunch",
+    "rsi launcher.exe": "starcitizen.exe",
+    "starcitizen.exe": "rsi launcher.exe",
+    "launcher.exe": "aces.exe",
+    "aces.exe": "launcher.exe",
+    "redprelauncher.exe": "cyberpunk2077.exe",
+    "cyberpunk2077.exe": "redprelauncher.exe"
+}
+
 DEFAULT_PROFILES = {
     "active_profile": "",
     "profiles": {}
@@ -72,6 +85,7 @@ class GameManager:
         self.game_mode_enabled: bool = False
         self.user_override_game_mode: Optional[bool] = None  # None = auto, True = explicit on, False = explicit off
         self.on_game_mode_changed: Optional[Callable[..., None]] = None
+        self.on_game_added: Optional[Callable[[str, Dict[str, Any]], None]] = None
         self._foreground_watcher_thread: Optional[threading.Thread] = None
         self._stop_foreground_watcher = threading.Event()
         self._last_detected_game: Optional[str] = None
@@ -294,6 +308,12 @@ class GameManager:
             self._update_telemetry_adapter(game_id)
 
         self._save_profiles(self.data)
+        if callable(self.on_game_added):
+            try:
+                self.on_game_added(game_id, profile)
+            except Exception as e:
+                print(f"[WARN] [GAME_MGR] on_game_added callback error: {e}")
+
         return {
             "success": True,
             "game_id": game_id,
@@ -321,6 +341,15 @@ class GameManager:
                         print(f"[WARN] [GAME_MGR] Failed removing {gpath}: {e}")
                 state_path = os.path.join(self.games_dir, GAMES_STATE_FILE)
                 _save_atomic(state_path, {"active_profile": self.data.get("active_profile", "")})
+                if os.path.exists(self.profiles_path):
+                    try:
+                        with open(self.profiles_path, "r", encoding="utf-8") as pf:
+                            gp = json.load(pf)
+                        if isinstance(gp, dict) and game_id in gp:
+                            del gp[game_id]
+                            _save_atomic(self.profiles_path, gp)
+                    except Exception:
+                        pass
             else:
                 self._save_profiles(self.data)
 
@@ -456,7 +485,11 @@ class GameManager:
                     if not p_info_name:
                         continue
                     p_info_lower = p_info_name.lower().strip()
-                    if p_info_lower == pname or (pstem and pstem in p_info_lower):
+                    paired = LAUNCHER_GAME_PAIRS.get(pname, "")
+                    paired_stem = os.path.splitext(paired)[0] if paired else ""
+                    if (p_info_lower == pname or
+                        (pstem and pstem in p_info_lower) or
+                        (paired and (p_info_lower == paired or (paired_stem and paired_stem in p_info_lower)))):
                         return True
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
@@ -556,18 +589,25 @@ class GameManager:
                 pname = (profile.get("process_name") or "").lower().strip()
                 dname = (profile.get("display_name") or "").lower().strip()
 
-                # A. Match process executable name (exact, stem, or substring)
+                # A. Match process executable name (exact, stem, substring, or paired launcher/runtime)
                 if pname and proc_name:
                     pname_stem = os.path.splitext(pname)[0]
+                    paired = LAUNCHER_GAME_PAIRS.get(pname, "")
+                    paired_stem = os.path.splitext(paired)[0] if paired else ""
                     if (proc_name == pname or
                         pname_stem in proc_name or
                         proc_name in pname or
-                        pname in proc_name):
+                        pname in proc_name or
+                        (paired and (proc_name == paired or paired_stem in proc_name or proc_name in paired))):
                         return gid
 
-                # B. Match window title containing game display name
-                if dname and len(dname) > 3 and dname in window_title:
-                    return gid
+                # B. Match window title containing game display name or title words
+                if dname and len(dname) > 3:
+                    if dname in window_title:
+                        return gid
+                    words = [w for w in re.split(r'[^a-zA-Z0-9]+', dname) if len(w) > 2]
+                    if len(words) >= 2 and all(w in window_title for w in words):
+                        return gid
         except Exception:
             pass
         return None
@@ -601,7 +641,11 @@ class GameManager:
                         continue
                     p_name_lower = p_name.lower().strip()
                     for gid, (pname, pstem) in targets.items():
-                        if p_name_lower == pname or (pstem and pstem in p_name_lower):
+                        paired = LAUNCHER_GAME_PAIRS.get(pname, "")
+                        paired_stem = os.path.splitext(paired)[0] if paired else ""
+                        if (p_name_lower == pname or
+                            (pstem and pstem in p_name_lower) or
+                            (paired and (p_name_lower == paired or (paired_stem and paired_stem in p_name_lower)))):
                             return gid
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue

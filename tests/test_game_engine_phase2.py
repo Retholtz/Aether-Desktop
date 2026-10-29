@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from core.game_manager import GameManager
 from core.gui_bridge import GUIBridge
+from core.program_manager import ProgramManager
 
 
 class MockEngine:
@@ -13,20 +14,24 @@ class MockEngine:
 class TestGameEnginePhase2(unittest.TestCase):
     def setUp(self):
         self.test_json = "data/test_games_profiles_phase2.json"
-        if os.path.exists(self.test_json):
-            try:
-                os.remove(self.test_json)
-            except OSError:
-                pass
+        self.test_prog_json = "data/test_programs_phase2.json"
+        for p in (self.test_json, self.test_prog_json):
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
         self.bridge = GUIBridge(MockEngine())
         self.bridge.game_mgr = GameManager(profiles_path=self.test_json)
+        self.bridge.program_mgr = ProgramManager(programs_path=self.test_prog_json)
 
     def tearDown(self):
-        if os.path.exists(self.test_json):
-            try:
-                os.remove(self.test_json)
-            except OSError:
-                pass
+        for p in (self.test_json, self.test_prog_json):
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
     def test_add_and_delete_game_via_bridge(self):
         # Starts empty
