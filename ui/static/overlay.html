@@ -99,7 +99,8 @@
     body.mode-mini .top-bar,
     body.mode-mini .normal-exchange-pane,
     body.mode-mini .agent-action-row,
-    body.mode-mini .transcript-pane {
+    body.mode-mini .transcript-pane,
+    body.mode-mini .hud-chat-form {
       display: none !important;
     }
 
@@ -662,6 +663,73 @@
     }
 
     /* =========================================================================
+       Max Mode Chat Input Form (Large HUD Only)
+       ========================================================================= */
+    .hud-chat-form {
+      display: none;
+      align-items: stretch;
+      gap: 8px;
+      margin-top: 8px;
+      margin-bottom: 2px;
+      flex-shrink: 0;
+      width: 100%;
+    }
+
+    body.mode-max .hud-chat-form {
+      display: flex;
+    }
+
+    body.mode-mini .hud-chat-form,
+    body.mode-normal .hud-chat-form {
+      display: none !important;
+    }
+
+    .hud-chat-input {
+      flex: 1;
+      min-width: 0;
+      background: #1f1f1f;
+      border: 1px solid #3d3d3d;
+      color: var(--text-main, #ffffff);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px 12px;
+      border-radius: 4px;
+      outline: none;
+      user-select: text;
+      cursor: text;
+      transition: border-color 0.2s ease;
+    }
+
+    .hud-chat-input::placeholder {
+      color: #767676;
+    }
+
+    .hud-chat-input:focus {
+      border-color: var(--accent, #0078d4);
+    }
+
+    .hud-chat-send-btn {
+      background: #1f1f1f;
+      border: 1px solid #3d3d3d;
+      color: #a6a6a6;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      padding: 6px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+    }
+
+    .hud-chat-send-btn:hover {
+      background: #383838;
+      color: #ffffff;
+      border-color: var(--accent, #0078d4);
+    }
+
+    /* =========================================================================
        Resize Handles & Corner Grip (Normal & Max Modes Only)
        ========================================================================= */
     .hud-resizer {
@@ -798,6 +866,12 @@
         <div class="turn-body">Aether on standby. Start assistant from main window.</div>
       </div>
     </div>
+
+    <!-- Max Mode: Chat Text Input Form (Large HUD Only, above Agent Action Row) -->
+    <form id="hudChatForm" class="hud-chat-form no-drag">
+      <input type="text" id="hudChatInput" class="hud-chat-input" placeholder="Type a message or speak into your microphone..." autocomplete="off">
+      <button type="submit" class="hud-chat-send-btn" id="hudSendChatBtn">SEND</button>
+    </form>
 
     <!-- Agent Action Prompt Row -->
     <div class="agent-action-row" id="actionRow">
@@ -1184,6 +1258,14 @@
 
         if (mode === "max" && transcriptPane) {
           transcriptPane.scrollTo({ top: transcriptPane.scrollHeight, behavior: 'smooth' });
+        } else if (mode !== "max") {
+          const chatIn = document.getElementById("hudChatInput");
+          if (chatIn && document.activeElement === chatIn) {
+            chatIn.blur();
+            if (window.pywebview?.api?.set_input_focused) {
+              window.pywebview.api.set_input_focused(false);
+            }
+          }
         }
       }
 
@@ -1824,6 +1906,65 @@
             muteBtn.classList.toggle("muted", isMuted);
             muteBtn.innerText = isMuted ? "🔇" : "🎤";
           }
+        }
+      });
+
+      // Max Mode Chat Input Form & Focus Handlers
+      const hudChatForm = document.getElementById("hudChatForm");
+      const hudChatInput = document.getElementById("hudChatInput");
+
+      if (hudChatForm) {
+        hudChatForm.addEventListener("submit", async function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          const text = hudChatInput ? hudChatInput.value.trim() : "";
+          if (!text) return;
+          if (hudChatInput) {
+            hudChatInput.value = "";
+            hudChatInput.blur();
+          }
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.set_input_focused) {
+            window.pywebview.api.set_input_focused(false);
+          }
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.send_text_message) {
+            await window.pywebview.api.send_text_message(text);
+          }
+        });
+      }
+
+      if (hudChatInput) {
+        hudChatInput.addEventListener("focus", function() {
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.set_input_focused) {
+            window.pywebview.api.set_input_focused(true);
+          }
+        });
+        hudChatInput.addEventListener("blur", function() {
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.set_input_focused) {
+            window.pywebview.api.set_input_focused(false);
+          }
+        });
+        hudChatInput.addEventListener("keydown", function(e) {
+          if (e.key === "Escape") {
+            hudChatInput.blur();
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.set_input_focused) {
+              window.pywebview.api.set_input_focused(false);
+            }
+          }
+        });
+      }
+
+      document.addEventListener("pointerdown", function(e) {
+        if (hudChatInput && document.activeElement === hudChatInput && e.target !== hudChatInput && !e.target.closest("#hudChatForm")) {
+          hudChatInput.blur();
+          if (window.pywebview && window.pywebview.api && window.pywebview.api.set_input_focused) {
+            window.pywebview.api.set_input_focused(false);
+          }
+        }
+      });
+
+      window.addEventListener("blur", function() {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.set_input_focused) {
+          window.pywebview.api.set_input_focused(false);
         }
       });
 

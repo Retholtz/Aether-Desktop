@@ -118,6 +118,43 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
         self.assertEqual(content.count("let heavySel ="), 0)
         self.assertEqual(content.count("var heavySel ="), 0)
 
+    def test_hud_bridge_send_text_and_input_focus(self):
+        """HUDBridge should relay send_text_message and set_input_focused to GuiBridge."""
+        mock_win = MagicMock()
+        mock_bridge = MagicMock()
+        mock_bridge.send_text_message.return_value = {"success": True}
+        mock_bridge.set_input_focused.return_value = {"success": True}
+
+        hud = HUDBridge(mock_win, mock_bridge)
+
+        res_focus = hud.set_input_focused(True)
+        self.assertTrue(res_focus["success"])
+        mock_bridge.set_input_focused.assert_called_once_with(True)
+
+        res_msg = hud.send_text_message("Hello Aether")
+        self.assertTrue(res_msg["success"])
+        mock_bridge.send_text_message.assert_called_once_with("Hello Aether")
+
+    def test_overlay_html_max_mode_chat_input(self):
+        """Ensures overlay.html includes the message box in Max Mode only, placed above actionRow."""
+        path = "ui/static/overlay.html"
+        self.assertTrue(os.path.exists(path), f"File {path} must exist")
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn('id="hudChatForm"', content)
+        self.assertIn('id="hudChatInput"', content)
+        self.assertIn('id="hudSendChatBtn"', content)
+        self.assertIn('placeholder="Type a message or speak into your microphone..."', content)
+        self.assertIn("body.mode-max .hud-chat-form", content)
+        self.assertIn("body.mode-normal .hud-chat-form", content)
+        self.assertIn("body.mode-mini .hud-chat-form", content)
+
+        # Ensure hudChatForm is positioned above actionRow ("Aether on standby")
+        form_idx = content.index('id="hudChatForm"')
+        action_idx = content.index('id="actionRow"')
+        self.assertLess(form_idx, action_idx)
+
 
 if __name__ == "__main__":
     unittest.main()

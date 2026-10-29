@@ -431,6 +431,18 @@ class HUDBridge:
             return self._bridge.toggle_game_mode()
         return {"success": False}
 
+    def send_text_message(self, text: str) -> dict:
+        """Relays typed chat message from HUD overlay to GuiBridge."""
+        if hasattr(self._bridge, "send_text_message"):
+            return self._bridge.send_text_message(text)
+        return {"success": False, "error": "Bridge not available"}
+
+    def set_input_focused(self, focused: bool) -> dict:
+        """Relays text input focus state from HUD overlay to GuiBridge."""
+        if hasattr(self._bridge, "set_input_focused"):
+            return self._bridge.set_input_focused(focused)
+        return {"success": False}
+
 
 class HudWindow:
     """Encapsulates the PyWebView HUD interface, floating overlay, and system tray."""
