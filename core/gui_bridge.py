@@ -2955,6 +2955,45 @@ class GuiBridge:
             )
         return self.get_replay_capture_config()
 
+    def get_audio_ducking_settings(self) -> dict:
+        """Retrieves current audio ducking settings."""
+        settings = getattr(self.engine, "settings", None)
+        if settings is None or not isinstance(settings, dict):
+            from core.config import load_settings
+            settings = load_settings()
+        cfg = settings.get("audio_ducking", {})
+        return {
+            "enabled": cfg.get("enabled", True),
+            "duck_percentage": cfg.get("duck_percentage", 60)
+        }
+
+    def update_audio_ducking_settings(self, enabled: bool, duck_percentage: int) -> dict:
+        """Persists and updates audio ducking parameters in engine settings and runtime service."""
+        if not hasattr(self.engine, "settings") or not isinstance(self.engine.settings, dict):
+            from core.config import load_settings
+            self.engine.settings = load_settings()
+
+        if "audio_ducking" not in self.engine.settings:
+            self.engine.settings["audio_ducking"] = {}
+
+        self.engine.settings["audio_ducking"]["enabled"] = bool(enabled)
+        self.engine.settings["audio_ducking"]["duck_percentage"] = int(duck_percentage)
+
+        if hasattr(self.engine, "save_settings") and callable(self.engine.save_settings):
+            self.engine.save_settings()
+        else:
+            from core.config import save_settings
+            save_settings(self.engine.settings)
+
+        if hasattr(self.engine, "audio_ducking_service") and self.engine.audio_ducking_service:
+            self.engine.audio_ducking_service.update_settings(
+                enabled=bool(enabled),
+                duck_percentage=int(duck_percentage)
+            )
+
+        return {"status": "success", "settings": self.engine.settings["audio_ducking"]}
+
+
 
 GUIBridge = GuiBridge
 

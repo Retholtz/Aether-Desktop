@@ -258,6 +258,67 @@ async function loadVoicesUI(config) {
   }
 }
 
+
+// Audio Ducking UI Integration
+async function loadAudioDuckingUI() {
+  const toggle = document.getElementById('ducking-toggle');
+  const slider = document.getElementById('ducking-slider');
+  const numInput = document.getElementById('ducking-input');
+  const valDisplay = document.getElementById('ducking-val-display');
+  const hintDisplay = document.getElementById('ducking-hint');
+
+  function syncDuckingUI(val) {
+    if (slider) slider.value = val;
+    if (numInput) numInput.value = val;
+    if (valDisplay) valDisplay.textContent = `-${val}%`;
+    if (hintDisplay) hintDisplay.textContent = `-${val}% background volume during speech. Dynamically lowers game and media audio while keeping Aether speech at 100%.`;
+  }
+
+  function saveDuckingSettings() {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.update_audio_ducking_settings) {
+      const isEnabled = toggle ? toggle.checked : true;
+      const pct = slider ? parseInt(slider.value, 10) : 60;
+      window.pywebview.api.update_audio_ducking_settings(isEnabled, pct);
+    }
+  }
+
+  if (slider && !slider.dataset.wiredDucking) {
+    slider.dataset.wiredDucking = "1";
+    slider.addEventListener('input', (e) => syncDuckingUI(e.target.value));
+    slider.addEventListener('change', saveDuckingSettings);
+  }
+
+  if (numInput && !numInput.dataset.wiredDucking) {
+    numInput.dataset.wiredDucking = "1";
+    numInput.addEventListener('input', (e) => syncDuckingUI(e.target.value));
+    numInput.addEventListener('change', (e) => {
+      syncDuckingUI(e.target.value);
+      saveDuckingSettings();
+    });
+  }
+
+  if (toggle && !toggle.dataset.wiredDucking) {
+    toggle.dataset.wiredDucking = "1";
+    toggle.addEventListener('change', saveDuckingSettings);
+  }
+
+  if (typeof window !== "undefined" && window.pywebview && window.pywebview.api && window.pywebview.api.get_audio_ducking_settings) {
+    try {
+      const cfg = await window.pywebview.api.get_audio_ducking_settings();
+      if (cfg) {
+        if (toggle && cfg.enabled !== undefined) {
+          toggle.checked = Boolean(cfg.enabled);
+        }
+        if (cfg.duck_percentage !== undefined) {
+          syncDuckingUI(cfg.duck_percentage);
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load audio ducking settings:", e);
+    }
+  }
+}
+
 // Initialization routine inside Settings load:
 async function loadSettingsUI() {
   let config = {};
@@ -278,6 +339,7 @@ async function loadSettingsUI() {
   updateSettingsModelDropdowns(modelData, config);
   await loadVoicesUI(config);
   await loadOAuthStatusUI();
+  await loadAudioDuckingUI();
 }
 
 function showOAuthFeedback(msg, isError = false) {
@@ -1361,6 +1423,7 @@ if (typeof document !== "undefined") {
     wireModelRefreshButton();
     wireTtsChangeListener();
     wireOAuthAccountButtons();
+    loadAudioDuckingUI();
   };
 
   if (document.readyState === "loading") {

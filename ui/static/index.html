@@ -712,6 +712,27 @@
                   </small>
                 </div>
 
+                <!-- Audio Ducking -->
+                <div class="form-group full setting-group settings-group">
+                  <div class="setting-header slider-header">
+                    <label for="ducking-slider">Audio Ducking</label>
+                    <span id="ducking-val-display" class="badge slider-val">-60%</span>
+                  </div>
+                  <div style="margin-bottom: 8px;">
+                    <label class="hud-checkbox">
+                      <input type="checkbox" id="ducking-toggle" checked>
+                      <span>Enable Background Audio Ducking</span>
+                    </label>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <input type="range" id="ducking-slider" min="0" max="100" step="5" value="60" class="hud-slider" style="flex: 1;">
+                    <input type="number" id="ducking-input" min="0" max="100" step="5" value="60" class="hud-input" style="width: 65px; text-align: center;">
+                  </div>
+                  <small class="description input-hint" id="ducking-hint">
+                    -60% background volume during speech. Dynamically lowers game and media audio while keeping Aether speech at 100%.
+                  </small>
+                </div>
+
               </div>
             </div>
           </div>

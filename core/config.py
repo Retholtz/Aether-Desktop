@@ -80,7 +80,13 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
                 "password": "",
             },
         },
-    }
+    },
+    "audio_ducking": {
+        "enabled": True,
+        "duck_percentage": 60,
+        "target_mode": "all_except_aether",
+        "restore_delay_ms": 150,
+    },
 }
 
 
@@ -184,6 +190,13 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
     obs_cfg.setdefault("host", "localhost")
     obs_cfg.setdefault("port", 4455)
     obs_cfg.setdefault("password", "")
+
+    # Ensure audio_ducking structure is populated
+    duck_cfg = settings_data.setdefault("audio_ducking", {})
+    duck_cfg.setdefault("enabled", True)
+    duck_cfg.setdefault("duck_percentage", 60)
+    duck_cfg.setdefault("target_mode", "all_except_aether")
+    duck_cfg.setdefault("restore_delay_ms", 150)
 
     return Settings(settings_data)
 

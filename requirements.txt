@@ -43,4 +43,7 @@ winsdk
 winrt-Windows.UI.Notifications
 winrt-Windows.UI.Notifications.Management
 winrt-Windows.ApplicationModel
+pycaw
+comtypes
+
 

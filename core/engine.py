@@ -46,6 +46,7 @@ from core.livestream_service import LiveStreamService, LiveStreamInfo
 from tools.livestream_tools import register_livestream_tools
 from core.replay_service import ReplayService
 from tools.replay_tools import register_replay_tools
+from core.audio_ducking_service import AudioDuckingService
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -553,6 +554,8 @@ class AetherEngine:
                     self.settings.setdefault("integrations", {})["streaming"] = cfg["integrations"]["streaming"]
                 if "integrations" in cfg and "replay_capture" in cfg["integrations"]:
                     self.settings.setdefault("integrations", {})["replay_capture"] = cfg["integrations"]["replay_capture"]
+                if "audio_ducking" in cfg:
+                    self.settings["audio_ducking"] = cfg["audio_ducking"]
             except Exception:
                 pass
 
@@ -624,6 +627,14 @@ class AetherEngine:
             enabled=replay_cfg.get("enabled", True)
         )
         register_replay_tools(self.dispatcher, self.replay_service)
+
+        # Native Windows Audio Ducking Subsystem (WASAPI Selective Attenuation)
+        duck_cfg = self.settings.get("audio_ducking", {})
+        self.audio_ducking_service = AudioDuckingService(
+            enabled=duck_cfg.get("enabled", True),
+            duck_percentage=duck_cfg.get("duck_percentage", 60),
+            restore_delay_ms=duck_cfg.get("restore_delay_ms", 150)
+        )
 
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
@@ -1640,11 +1651,55 @@ class AetherEngine:
     def notify(self, event_type: str, data: dict):
         if event_type == "status":
             logger.debug(f"[STATUS] {data.get('state')}: {data.get('message')}")
+            state = data.get("state")
+            if state:
+                self._dispatch_state_change(state)
         if self.on_event:
             try:
                 self.on_event(event_type, data)
             except Exception as e:
                 logger.error(f"[ENGINE EVENT ERROR] {e}")
+
+    def _dispatch_state_change(self, state: str):
+        if not hasattr(self, "_on_engine_state_changed"):
+            return
+        coro = self._on_engine_state_changed(state)
+        loop = getattr(self, "_loop", None)
+        if loop and loop.is_running():
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                current_loop = None
+            if current_loop is loop:
+                loop.create_task(coro)
+            else:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+        else:
+            try:
+                current_loop = asyncio.get_running_loop()
+                if current_loop and current_loop.is_running():
+                    current_loop.create_task(coro)
+                else:
+                    asyncio.run(coro)
+            except RuntimeError:
+                pass
+            except Exception as e:
+                logger.debug(f"[DUCKING] Failed to schedule state changed: {e}")
+
+    async def _on_engine_state_changed(self, new_state: str):
+        if new_state in ("listening", "speaking", "thinking", "hearing", "transcribing"):
+            if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
+                await self.audio_ducking_service.duck()
+        elif new_state in ("idle", "ready", "standby", "disconnected"):
+            if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
+                await self.audio_ducking_service.unduck()
+
+    def save_settings(self, settings_dict: Optional[dict] = None) -> None:
+        """Persists engine settings to data/settings.json."""
+        from core.config import save_settings
+        if settings_dict is not None:
+            self.settings = settings_dict
+        save_settings(self.settings)
 
     def post_proactive_event(self, alert_text: str, source: str = "Background Job"):
         """
@@ -5359,6 +5414,16 @@ class AetherEngine:
                     asyncio.create_task(self.livestream_service.close())
             except Exception as e:
                 logger.warning(f"[STOP] Livestream service close warning: {e}")
+
+        if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
+            try:
+                loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.audio_ducking_service.unduck(), loop)
+                else:
+                    asyncio.create_task(self.audio_ducking_service.unduck())
+            except Exception as e:
+                logger.warning(f"[STOP] Audio ducking unduck warning: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 
