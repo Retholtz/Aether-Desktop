@@ -1299,6 +1299,22 @@ class ProgramManager:
         Validates whitelist, resolves executable path, binds arguments & extensions,
         and launches the application detached or elevated via Windows UAC.
         """
+        target_str = str(target or "").lower()
+        prog_clean = str(prog_id_or_name or "").lower().strip()
+        if (
+            prog_clean in ("mmsys.cpl", "msdt.exe", "devmgmt.msc", "mmsys_cpl", "control_exe")
+            or (prog_clean == "control.exe" and any(k in target_str for k in ("sound", "mmsys", "troubleshoot", "audio")))
+            or ("audio" in target_str and "diagnostic" in target_str)
+        ):
+            return {
+                "status": "blocked",
+                "app_name": prog_id_or_name,
+                "error": (
+                    "Security Blocked: Direct execution of Windows Audio Troubleshooter or Sound Control Panel is prohibited. "
+                    "Modifying Windows audio endpoints or running audio troubleshooters disrupts active WASAPI hardware output streams."
+                )
+            }
+
         prog = self.get_program(prog_id_or_name)
         if not prog and not self.is_whitelisted(prog_id_or_name):
             return {

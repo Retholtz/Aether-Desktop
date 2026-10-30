@@ -137,6 +137,8 @@ class WhitelistValidator:
     def is_whitelisted(cls, target_exe: str, whitelist: List[str]) -> bool:
         """Checks whether the application is permitted by the security whitelist."""
         target_clean = (target_exe or "").lower().strip()
+        if target_clean in ("mmsys.cpl", "msdt.exe", "devmgmt.msc", "control.exe"):
+            return False
         target_base = target_clean[:-4] if target_clean.endswith(".exe") else target_clean
 
         if whitelist:
@@ -222,6 +224,23 @@ class WhitelistValidator:
         Returns a structured JSON status dictionary.
         """
         target_exe = cls.normalize_app_name(app_name)
+        target_exe_lower = target_exe.lower()
+        target_str = str(app_name or "").lower()
+        if (
+            target_exe_lower in ("mmsys.cpl", "msdt.exe", "devmgmt.msc")
+            or (target_exe_lower == "control.exe" and any(k in target_str for k in ("sound", "mmsys", "troubleshoot", "audio")))
+            or ("audio" in target_str and "diagnostic" in target_str)
+        ):
+            return {
+                "status": "blocked",
+                "app_name": app_name,
+                "executable": target_exe,
+                "error": (
+                    "Security Blocked: Direct execution of Windows Audio Troubleshooter or Sound Control Panel is prohibited. "
+                    "Modifying Windows audio endpoints or running audio troubleshooters disrupts active WASAPI hardware output streams."
+                )
+            }
+
 
         # 1. Security whitelist validation
         if not cls.is_whitelisted(target_exe, whitelist):
@@ -344,6 +363,22 @@ class WhitelistValidator:
     def validate_and_close(cls, app_name: str, whitelist: List[str]) -> dict:
         """Validates whitelist and terminates the requested application."""
         target_exe = cls.normalize_app_name(app_name)
+        target_exe_lower = target_exe.lower()
+        target_str = str(app_name or "").lower()
+        if (
+            target_exe_lower in ("mmsys.cpl", "msdt.exe", "devmgmt.msc")
+            or (target_exe_lower == "control.exe" and any(k in target_str for k in ("sound", "mmsys", "troubleshoot", "audio")))
+            or ("audio" in target_str and "diagnostic" in target_str)
+        ):
+            return {
+                "status": "blocked",
+                "app_name": app_name,
+                "executable": target_exe,
+                "error": (
+                    "Security Blocked: Direct execution of Windows Audio Troubleshooter or Sound Control Panel is prohibited. "
+                    "Modifying Windows audio endpoints or running audio troubleshooters disrupts active WASAPI hardware output streams."
+                )
+            }
 
         if not cls.is_whitelisted(target_exe, whitelist):
             return {
@@ -481,6 +516,29 @@ class WhitelistValidator:
     def add_to_whitelist(cls, app_name: str, whitelist: List[str]) -> dict:
         """Adds normalized executable to the whitelist and registers in ProgramManager."""
         target_exe = cls.normalize_app_name(app_name)
+        if target_exe.lower() in ("mmsys.cpl", "msdt.exe", "devmgmt.msc", "control.exe"):
+            return {
+                "status": "blocked",
+                "app_name": app_name,
+                "executable": target_exe,
+                "error": "Security Blocked: Cannot add system sound control or audio diagnostic tools to the whitelist."
+            }
+        target_exe_lower = target_exe.lower()
+        target_str = str(app_name or "").lower()
+        if (
+            target_exe_lower in ("mmsys.cpl", "msdt.exe", "devmgmt.msc")
+            or (target_exe_lower == "control.exe" and any(k in target_str for k in ("sound", "mmsys", "troubleshoot", "audio")))
+            or ("audio" in target_str and "diagnostic" in target_str)
+        ):
+            return {
+                "status": "blocked",
+                "app_name": app_name,
+                "executable": target_exe,
+                "error": (
+                    "Security Blocked: Direct execution of Windows Audio Troubleshooter or Sound Control Panel is prohibited. "
+                    "Modifying Windows audio endpoints or running audio troubleshooters disrupts active WASAPI hardware output streams."
+                )
+            }
         current_list = list(whitelist) if whitelist else []
 
         # Sync to ProgramManager
@@ -513,6 +571,22 @@ class WhitelistValidator:
     def remove_from_whitelist(cls, app_name: str, whitelist: List[str]) -> dict:
         """Removes normalized executable from the whitelist and ProgramManager."""
         target_exe = cls.normalize_app_name(app_name)
+        target_exe_lower = target_exe.lower()
+        target_str = str(app_name or "").lower()
+        if (
+            target_exe_lower in ("mmsys.cpl", "msdt.exe", "devmgmt.msc")
+            or (target_exe_lower == "control.exe" and any(k in target_str for k in ("sound", "mmsys", "troubleshoot", "audio")))
+            or ("audio" in target_str and "diagnostic" in target_str)
+        ):
+            return {
+                "status": "blocked",
+                "app_name": app_name,
+                "executable": target_exe,
+                "error": (
+                    "Security Blocked: Direct execution of Windows Audio Troubleshooter or Sound Control Panel is prohibited. "
+                    "Modifying Windows audio endpoints or running audio troubleshooters disrupts active WASAPI hardware output streams."
+                )
+            }
         target_clean = target_exe.lower().strip()
         target_base = target_clean[:-4] if target_clean.endswith(".exe") else target_clean
 

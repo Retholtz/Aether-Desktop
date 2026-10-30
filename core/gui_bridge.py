@@ -342,6 +342,19 @@ class GuiBridge:
                 # Safely inspect and mutate device preferences
                 self._sync_active_audio_devices()
 
+            # Health Watchdog: Revive audio engine streams if invalidated by OS
+            if os.environ.get("AETHER_TESTING") != "1":
+                try:
+                    eng = getattr(self, "_engine", None)
+                    aud = getattr(eng, "audio", None) if eng else None
+                    if aud and getattr(aud, "_running", False):
+                        out_s = getattr(aud, "out_stream", None)
+                        if out_s is not None and not getattr(out_s, "active", False):
+                            if hasattr(aud, "ensure_output_stream_healthy"):
+                                aud.ensure_output_stream_healthy()
+                except Exception:
+                    pass
+
     def _sync_active_audio_devices(self):
         try:
             fp = get_windows_audio_fingerprint()
@@ -2312,6 +2325,7 @@ class GuiBridge:
         res["desktop_notifications"] = self.get_desktop_notifications_status()
         res["streaming"] = self.get_streaming_status()
         res["replay_capture"] = self.get_replay_capture_config()
+        res["media_controller"] = self.get_media_controller_config()
         return res
 
     def save_oauth_client_config(self, provider: str, config_data: Optional[dict] = None) -> dict:
@@ -2954,6 +2968,54 @@ class GuiBridge:
                 obs=obs_cfg
             )
         return self.get_replay_capture_config()
+
+    def get_media_controller_config(self) -> dict:
+        """Returns the current media controller configuration."""
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        elif hasattr(self, "engine") and self.engine and hasattr(self.engine, "settings") and isinstance(self.engine.settings, dict):
+            settings = self.engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+        media_cfg = settings.get("integrations", {}).get("media_controller", {})
+        return {
+            "success": True,
+            "enabled": bool(media_cfg.get("enabled", True)),
+            "verbal_acknowledgement": bool(media_cfg.get("verbal_acknowledgement", True)),
+            "supported_commands": list(media_cfg.get("supported_commands", ["play", "pause", "toggle", "next", "previous", "query"]))
+        }
+
+    def save_media_controller_config(
+        self,
+        enabled: Optional[bool] = None,
+        verbal_acknowledgement: Optional[bool] = None
+    ) -> dict:
+        """Updates and persists media controller settings."""
+        settings = None
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "settings") and isinstance(self._engine.settings, dict):
+            settings = self._engine.settings
+        elif hasattr(self, "engine") and self.engine and hasattr(self.engine, "settings") and isinstance(self.engine.settings, dict):
+            settings = self.engine.settings
+        else:
+            from core.config import load_settings
+            settings = load_settings()
+
+        media_cfg = settings.setdefault("integrations", {}).setdefault("media_controller", {})
+        if enabled is not None:
+            media_cfg["enabled"] = bool(enabled)
+        if verbal_acknowledgement is not None:
+            media_cfg["verbal_acknowledgement"] = bool(verbal_acknowledgement)
+
+        from core.config import save_settings
+        save_settings(settings)
+
+        engine_inst = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        if engine_inst and hasattr(engine_inst, "media_service") and engine_inst.media_service:
+            if verbal_acknowledgement is not None:
+                engine_inst.media_service.verbal_ack = bool(verbal_acknowledgement)
+
+        return self.get_media_controller_config()
 
     def get_audio_ducking_settings(self) -> dict:
         """Retrieves current audio ducking settings."""

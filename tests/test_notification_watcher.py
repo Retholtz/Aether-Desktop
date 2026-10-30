@@ -49,7 +49,7 @@ class TestNotificationWatcher(unittest.TestCase):
         self.watcher.clear_history()
         self.assertEqual(len(self.watcher.get_recent()), 0)
 
-    @patch("core.notification_watcher.WINSDK_AVAILABLE", True)
+    @patch("core.notification_watcher.WINRT_AVAILABLE", True)
     def test_text_extraction_helper(self):
         mock_notif = MagicMock()
         mock_binding = MagicMock()
@@ -89,6 +89,7 @@ class TestNotificationWatcher(unittest.TestCase):
         self.assertNotIn("*", updated_targets)
 
     def test_notification_tools_registration_and_execution(self):
+        self.watcher.is_supported = MagicMock(return_value=True)
         dispatcher = MagicMock()
         registered_tools = {}
 

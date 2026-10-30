@@ -13,28 +13,20 @@ from core.logger import get_logger
 
 logger = get_logger("NotificationWatcher")
 
-# Lazy-import winsdk components to permit mock testing on non-Windows environments
+# Import PyWinRT components to permit mock testing on non-Windows environments
 try:
-    from winsdk.windows.ui.notifications.management import (
+    from winrt.windows.ui.notifications.management import (
         UserNotificationListener,
         UserNotificationListenerAccessStatus
     )
-    from winsdk.windows.ui.notifications import NotificationKinds, KnownNotificationBindings
-    WINSDK_AVAILABLE = True
+    from winrt.windows.ui.notifications import NotificationKinds, KnownNotificationBindings
+    WINRT_AVAILABLE = True
 except ImportError:
-    try:
-        from winrt.windows.ui.notifications.management import (
-            UserNotificationListener,
-            UserNotificationListenerAccessStatus
-        )
-        from winrt.windows.ui.notifications import NotificationKinds, KnownNotificationBindings
-        WINSDK_AVAILABLE = True
-    except ImportError:
-        WINSDK_AVAILABLE = False
-        UserNotificationListener = None
-        UserNotificationListenerAccessStatus = None
-        NotificationKinds = None
-        KnownNotificationBindings = None
+    WINRT_AVAILABLE = False
+    UserNotificationListener = None
+    UserNotificationListenerAccessStatus = None
+    NotificationKinds = None
+    KnownNotificationBindings = None
 
 if NotificationKinds is None:
     class _MockNotificationKinds:
@@ -94,7 +86,7 @@ class DesktopNotificationWatcher:
         self._recent_notifications: deque = deque(maxlen=50)
 
     def is_supported(self) -> bool:
-        return WINSDK_AVAILABLE
+        return WINRT_AVAILABLE
 
     def get_effective_targets(self) -> Set[str]:
         """
@@ -121,7 +113,7 @@ class DesktopNotificationWatcher:
     async def initialize(self) -> bool:
         """Requests WinRT notification permissions from the Windows shell."""
         if not self.is_supported():
-            logger.warning("[NOTIFICATIONS] winsdk is not installed. Notification watching disabled.")
+            logger.warning("[NOTIFICATIONS] PyWinRT is not installed. Notification watching disabled.")
             return False
 
         try:

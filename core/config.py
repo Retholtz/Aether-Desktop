@@ -80,6 +80,18 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
                 "password": "",
             },
         },
+        "media_controller": {
+            "enabled": True,
+            "verbal_acknowledgement": True,
+            "supported_commands": [
+                "play",
+                "pause",
+                "toggle",
+                "next",
+                "previous",
+                "query",
+            ],
+        },
     },
     "audio_ducking": {
         "enabled": True,
@@ -190,6 +202,19 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
     obs_cfg.setdefault("host", "localhost")
     obs_cfg.setdefault("port", 4455)
     obs_cfg.setdefault("password", "")
+
+    # Ensure nested integrations.media_controller structure is populated
+    media_cfg = integrations.setdefault("media_controller", {})
+    media_cfg.setdefault("enabled", True)
+    media_cfg.setdefault("verbal_acknowledgement", True)
+    media_cfg.setdefault("supported_commands", [
+        "play",
+        "pause",
+        "toggle",
+        "next",
+        "previous",
+        "query",
+    ])
 
     # Ensure audio_ducking structure is populated
     duck_cfg = settings_data.setdefault("audio_ducking", {})

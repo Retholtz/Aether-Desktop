@@ -46,6 +46,8 @@ from core.livestream_service import LiveStreamService, LiveStreamInfo
 from tools.livestream_tools import register_livestream_tools
 from core.replay_service import ReplayService
 from tools.replay_tools import register_replay_tools
+from core.media_controller_service import MediaControllerService
+from tools.media_tools import register_media_tools
 from core.audio_ducking_service import AudioDuckingService
 from ui.notifications import NotificationDispatcher
 
@@ -628,12 +630,33 @@ class AetherEngine:
         )
         register_replay_tools(self.dispatcher, self.replay_service)
 
+        # Universal Media Controller Integration (Windows SMTC via WinRT)
+        media_cfg = self.settings.get("integrations", {}).get("media_controller", {})
+        if media_cfg.get("enabled", True):
+            self.media_service = MediaControllerService(
+                verbal_ack=media_cfg.get("verbal_acknowledgement", True)
+            )
+            register_media_tools(self.dispatcher, self.media_service)
+        else:
+            self.media_service = None
+
         # Native Windows Audio Ducking Subsystem (WASAPI Selective Attenuation)
+        def _is_audio_output_active():
+            aud = getattr(self, "audio", None)
+            if not aud:
+                return False
+            if getattr(aud, "is_speaking", False):
+                return True
+            if callable(getattr(aud, "is_output_empty", None)) and not aud.is_output_empty():
+                return True
+            return False
+
         duck_cfg = self.settings.get("audio_ducking", {})
         self.audio_ducking_service = AudioDuckingService(
             enabled=duck_cfg.get("enabled", True),
             duck_percentage=duck_cfg.get("duck_percentage", 60),
-            restore_delay_ms=duck_cfg.get("restore_delay_ms", 150)
+            restore_delay_ms=duck_cfg.get("restore_delay_ms", 150),
+            is_output_active_fn=_is_audio_output_active
         )
 
         # Check Windows Administrator privilege for gaming input reliability
@@ -1687,10 +1710,10 @@ class AetherEngine:
                 logger.debug(f"[DUCKING] Failed to schedule state changed: {e}")
 
     async def _on_engine_state_changed(self, new_state: str):
-        if new_state in ("listening", "speaking", "thinking", "hearing", "transcribing"):
+        if new_state in ("speaking", "thinking", "hearing", "transcribing", "executing"):
             if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
                 await self.audio_ducking_service.duck()
-        elif new_state in ("idle", "ready", "standby", "disconnected"):
+        elif new_state in ("idle", "ready", "standby", "listening", "disconnected"):
             if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
                 await self.audio_ducking_service.unduck()
 
@@ -1971,6 +1994,25 @@ class AetherEngine:
         from core.config import save_settings
         save_settings(self.settings)
 
+    def set_media_controller_config(
+        self,
+        enabled: Optional[bool] = None,
+        verbal_acknowledgement: Optional[bool] = None
+    ):
+        """Updates and persists Universal Media Controller integration settings."""
+        media_cfg = self.settings.setdefault("integrations", {}).setdefault("media_controller", {})
+        if enabled is not None:
+            media_cfg["enabled"] = bool(enabled)
+        if verbal_acknowledgement is not None:
+            media_cfg["verbal_acknowledgement"] = bool(verbal_acknowledgement)
+
+        if hasattr(self, "media_service") and self.media_service:
+            if verbal_acknowledgement is not None:
+                self.media_service.verbal_ack = bool(verbal_acknowledgement)
+
+        from core.config import save_settings
+        save_settings(self.settings)
+
     def kill_audio(self):
         """Immediately halts audio playback, cancels in-flight synthesis, and purges all output buffers."""
         self._kill_playback_flag = True
@@ -2059,6 +2101,8 @@ class AetherEngine:
         if active:
             self._last_live_turn_completed_ts = time.time()
             self.last_user_turn_timestamp = time.time()
+            if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
+                self._dispatch_state_change("hearing")
         if active and not self.is_running and self._loop:
             logger.info("[PTT] Auto-starting engine from PTT press")
             self.start(self._loop)
@@ -2166,6 +2210,8 @@ class AetherEngine:
         self._last_live_turn_completed_ts = now_ts
         self._in_active_turn = True
         self.conn_mgr.record_activity()
+        if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
+            self._dispatch_state_change("thinking")
         if self.is_on_demand_mode() and (self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED):
             await self._ensure_live_connected(reason="Typed text sent")
         await self._text_queue.put(clean_text)
@@ -2567,7 +2613,27 @@ class AetherEngine:
                             intercept = await self.game_engine.intercept_voice_turn_async(clean_user_speech, agent_name=agent_name)
                             if intercept.handled:
                                 logger.info(f"[GAME VOICE INTERCEPT] Action: {intercept.action_type} for '{clean_user_speech}'")
-                                if intercept.action_type == "replay_capture" and hasattr(self, "replay_service"):
+                                if intercept.action_type.startswith("media_") and hasattr(self, "media_service") and self.media_service:
+                                    action = intercept.action_type.split("_")[1]
+                                    if action == "query":
+                                        info = await self.media_service.get_current_media_info()
+                                        if info and info.title != "Unknown Title":
+                                            intercept.tts_message = f"This is {info.title} by {info.artist}."
+                                            intercept.user_message = f"🎵 {info.title} — {info.artist}"
+                                        else:
+                                            intercept.tts_message = "No media track is currently detected."
+                                            intercept.user_message = "🎵 No active media detected."
+                                    else:
+                                        await self.media_service.execute_transport_command(action, fallback_to_media_key=True)
+                                    if intercept.user_message:
+                                        self.notify("chat_event", {
+                                            "type": "system",
+                                            "content": intercept.user_message,
+                                            "source": "system"
+                                        })
+                                    if intercept.tts_message:
+                                        await self._speak_feedback(intercept.tts_message)
+                                elif intercept.action_type == "replay_capture" and hasattr(self, "replay_service"):
                                     res = await self.replay_service.trigger_clip()
                                     intercept.tts_message = res.get("spoken_confirmation", "Captured.")
                                     if intercept.user_message:
@@ -2708,7 +2774,12 @@ class AetherEngine:
                         if self.audio:
                             self.audio.flush_output()
                         wait_count = 0
-                        while self.audio and not self.audio.is_output_empty() and wait_count < 40 and self.is_running:
+                        while (
+                            self.audio
+                            and (not self.audio.is_output_empty() or getattr(self.audio, "is_speaking", False))
+                            and wait_count < 100
+                            and self.is_running
+                        ):
                             await asyncio.sleep(0.05)
                             wait_count += 1
 
@@ -2896,7 +2967,22 @@ class AetherEngine:
             "  * `mouse_click(x, y, app_name)`: 0-1000 normalized desktop coordinate clicks.\n"
             "  * `inspect_screen_context(target='active_window')`: On-demand visual grounding of the focused active window or full primary display. Call this whenever the user says 'look at my screen', 'what error is this', 'read this code', 'summarize the document open in my browser', or refers to anything currently visible.\n"
             "  * `capture_screen_snapshot(monitor)`: High-detail screen capture.\n"
+            "  * `control_media_playback(action)`: Universal background media transport controls ('play', 'pause', 'toggle', 'next', 'previous') for YouTube Music, Spotify, VLC, and browsers via Windows SMTC.\n"
+            "  * `get_current_playing_media()`: Inspects currently playing track title, artist, and playback status.\n"
             "  * `read_saved_skill(skill_name)`: Inspects and returns full source code of any saved skill from library.\n\n"
+            "UNIVERSAL MEDIA PLAYBACK & VERIFICATION DIRECTIVE:\n"
+            "- Whenever the user asks to pause, resume, play, skip, or go to the previous song, or asks what song/track is playing:\n"
+            "  * ALWAYS invoke `control_media_playback(action=...)` or `get_current_playing_media()`.\n"
+            "  * NEVER bring browser or media player windows to the foreground, and NEVER use `find_and_click_element` or mouse clicks to pause, play, or skip songs. The media controller executes in the background seamlessly without clicks.\n"
+            "- CLOSED-LOOP PLAYBACK VERIFICATION (MANDATORY DOUBLE-CHECK):\n"
+            "  * When asked to play a specific song, artist, album, or video (e.g. 'Play Sting on YouTube', 'Put on Alan Walker'):\n"
+            "    1. Navigate or launch the artist/song page.\n"
+            "    2. Click the top track/song result or press Enter.\n"
+            "    3. DOUBLE-CHECK: Call `get_current_playing_media()` immediately to verify that the track is actively playing.\n"
+            "    4. If `get_current_playing_media()` returns status 'idle' or the track title does not match, auto-retry by clicking the first song item row or pressing Space/Enter.\n"
+            "    5. Do NOT report success or conclude your turn until `get_current_playing_media()` confirms the track is actively playing.\n"
+            "- SYSTEM SOUND SAFETY RULE:\n"
+            "  * NEVER launch, open, or click Windows Sound Control Panel (`mmsys.cpl`), `control.exe mmsys.cpl`, Windows Audio Troubleshooter (`control.exe /name Microsoft.Troubleshooting`, `msdt.exe`), or Device Manager (`devmgmt.msc`). Modifying Windows Sound endpoints or running troubleshooters restarts the Windows Audio Service and terminates active hardware audio output.\n\n"
             "PERMANENT SKILL LIBRARY (REUSABLE AUTOMATIONS):\n"
             "You possess a persistent, version-controlled library of tested automation scripts. Before writing new code from scratch, ALWAYS check if a matching skill is available and invoke `run_saved_script(skill_name, args)`. If you need to see how a saved skill was implemented, invoke `read_saved_skill(skill_name)`:\n"
             f"{skills_summary}\n\n"
@@ -3663,6 +3749,20 @@ class AetherEngine:
                 if hasattr(self, "game_engine") and self.game_engine:
                     intercept = await self.game_engine.intercept_voice_turn_async(user_prompt, agent_name=agent_name)
                     if intercept.handled:
+                        # Handle Media Actions
+                        if intercept.action_type.startswith("media_") and hasattr(self, "media_service") and self.media_service:
+                            action = intercept.action_type.split("_")[1]
+                            if action == "query":
+                                info = await self.media_service.get_current_media_info()
+                                if info and info.title != "Unknown Title":
+                                    intercept.tts_message = f"This is {info.title} by {info.artist}."
+                                    intercept.user_message = f"🎵 {info.title} — {info.artist}"
+                                else:
+                                    intercept.tts_message = "No media track is currently detected."
+                                    intercept.user_message = "🎵 No active media detected."
+                            else:
+                                await self.media_service.execute_transport_command(action, fallback_to_media_key=True)
+
                         # 1. Execute replay capture if triggered
                         if intercept.action_type == "replay_capture" and hasattr(self, "replay_service"):
                             res = await self.replay_service.trigger_clip()
@@ -5417,13 +5517,9 @@ class AetherEngine:
 
         if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
             try:
-                loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
-                if loop and loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self.audio_ducking_service.unduck(), loop)
-                else:
-                    asyncio.create_task(self.audio_ducking_service.unduck())
+                self.audio_ducking_service.restore_volumes_sync()
             except Exception as e:
-                logger.warning(f"[STOP] Audio ducking unduck warning: {e}")
+                logger.warning(f"[STOP] Audio ducking restore warning: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 

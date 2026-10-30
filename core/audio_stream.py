@@ -834,9 +834,37 @@ class AudioPipeline:
         self.clear_output_buffer()
         self.reset_vad()
 
+    def ensure_output_stream_healthy(self):
+        """
+        Verifies that PortAudio output stream is active and operational.
+        If the audio driver reset, endpoint invalidated, or audiosrv restarted, revives streams automatically.
+        """
+        if not getattr(self, "_running", False) or os.environ.get("AETHER_TESTING") == "1":
+            return
+        if self.out_stream is None:
+            return
+        is_active = False
+        try:
+            if getattr(self.out_stream, "active", False):
+                is_active = True
+        except Exception:
+            is_active = False
+
+        if not is_active:
+            logger.warning("[AUDIO] Hardware output stream is inactive or invalid. Auto-recovering WASAPI streams...")
+            try:
+                with _pa_lock:
+                    self._close_streams_only()
+                    self._open_and_start_streams_sync()
+                logger.info("[AUDIO] AudioPipeline output stream successfully reconnected.")
+            except Exception as e:
+                logger.error(f"[AUDIO] Failed to auto-recover audio output stream: {e}")
+
     def write_output_chunk(self, data: bytes):
         if not data:
             return
+        if getattr(self, "_running", False) and self.out_stream is not None and not getattr(self.out_stream, "active", False):
+            self.ensure_output_stream_healthy()
         with self.buffer_lock:
             self._fade_out_buffer = None
             self.is_speaking = True

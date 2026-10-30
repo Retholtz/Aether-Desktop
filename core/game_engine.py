@@ -68,6 +68,8 @@ class GameEngine:
         "get_steam_game_achievements",
         "get_steam_patch_notes",
         "trigger_instant_replay",
+        "get_current_playing_media",
+        "control_media_playback",
     }
 
     def __init__(
@@ -152,6 +154,62 @@ class GameEngine:
         clean_voice_cmd = re.sub(r'^[,\.\s]+|[,\.\s]+$', '', lower_prompt).strip()
         if clean_voice_cmd.startswith(agent_name.lower()):
             clean_voice_cmd = clean_voice_cmd[len(agent_name):].strip().lstrip(",. ")
+
+        # --- Fast-Path: Universal Media Controls ---
+        # 1. Track Info Query
+        if re.search(r'\b(what(\'s|\s+is)\s+(playing|this\s+song|this\s+track)|what\s+song(\s+is\s+this)?|current\s+song)\b', clean_voice_cmd):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="media_query",
+                user_message="🎵 Querying current track info...",
+                tts_message=None,
+                requires_context_reset=False,
+                skip_llm=True
+            )
+
+        # 2. Pause
+        if re.search(r'\b(pause\s+(the\s+)?(music|track|song|media|playback)|pause)\b', clean_voice_cmd):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="media_pause",
+                user_message="⏸️ [Media] Paused playback.",
+                tts_message="Paused.",
+                requires_context_reset=False,
+                skip_llm=True
+            )
+
+        # 3. Resume / Play
+        if re.search(r'\b(resume\s+(the\s+)?(music|track|song|media|playback)|play\s+music|unpause)\b', clean_voice_cmd):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="media_play",
+                user_message="▶️ [Media] Resumed playback.",
+                tts_message="Playing.",
+                requires_context_reset=False,
+                skip_llm=True
+            )
+
+        # 4. Next / Skip
+        if re.search(r'\b(next\s+(song|track)|skip\s+(this\s+)?(song|track)|skip)\b', clean_voice_cmd):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="media_next",
+                user_message="⏭️ [Media] Skipped track.",
+                tts_message="Next track.",
+                requires_context_reset=False,
+                skip_llm=True
+            )
+
+        # 5. Previous
+        if re.search(r'\b(previous\s+(song|track)|prev\s+(song|track)|go\s+back\s+a\s+track)\b', clean_voice_cmd):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="media_previous",
+                user_message="⏮️ [Media] Previous track.",
+                tts_message="Previous track.",
+                requires_context_reset=False,
+                skip_llm=True
+            )
 
         # --- Fast-Path: Instant Replay Capture ("Aether, clip that") ---
         if re.search(r'\b(clip\s+that|save\s+clip|capture\s+clip|record\s+that|save\s+replay|clip\s+this)\b', clean_voice_cmd):

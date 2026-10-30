@@ -88,55 +88,66 @@ class InterruptibleAudioPlayer:
         self._interrupt_event.clear()
 
     def play_loop(self):
-        """Dedicated playback worker thread feeding the audio output stream."""
+        """Dedicated playback worker thread feeding the audio output stream with auto-reconnection."""
         if sd is None:
             return
 
-        with sd.RawOutputStream(
-            samplerate=self.sample_rate,
-            channels=self.channels,
-            dtype='int16',
-            blocksize=1024
-        ) as stream:
-            self._stream = stream
-            while True:
-                # If a micro-fade chunk was queued by trigger_barge_in, flush it smoothly to DAC
-                fade_chunk = None
-                with self._lock:
-                    if self._pending_fade_chunk is not None:
-                        fade_chunk = self._pending_fade_chunk
-                        self._pending_fade_chunk = None
-                if fade_chunk:
-                    try:
-                        stream.write(fade_chunk)
-                    except Exception:
-                        pass
+        import time
 
-                try:
-                    chunk = self.audio_queue.get(timeout=0.05)
-                except queue.Empty:
-                    with self._lock:
-                        self.is_playing = False
-                    continue
+        while not getattr(self, "_stop_worker", False):
+            try:
+                with sd.RawOutputStream(
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype='int16',
+                    blocksize=1024
+                ) as stream:
+                    self._stream = stream
+                    while not getattr(self, "_stop_worker", False):
+                        # If a micro-fade chunk was queued by trigger_barge_in, flush it smoothly to DAC
+                        fade_chunk = None
+                        with self._lock:
+                            if self._pending_fade_chunk is not None:
+                                fade_chunk = self._pending_fade_chunk
+                                self._pending_fade_chunk = None
+                        if fade_chunk:
+                            try:
+                                stream.write(fade_chunk)
+                            except Exception:
+                                pass
 
-                if self._interrupt_event.is_set():
-                    # Interrupted: Discard chunk without sending to DAC
-                    try:
-                        self.audio_queue.task_done()
-                    except Exception:
-                        pass
-                    continue
+                        try:
+                            chunk = self.audio_queue.get(timeout=0.05)
+                        except queue.Empty:
+                            with self._lock:
+                                self.is_playing = False
+                            continue
 
-                # Write chunk to output
-                try:
-                    with self._lock:
-                        self.is_playing = True
-                        self._last_chunk = chunk
-                    stream.write(chunk)
-                except Exception as e:
-                    print(f"[WARN] [AUDIO_OUT] Write underflow or device error: {e}")
-                finally:
-                    try:
-                        self.audio_queue.task_done()
-                    except Exception:
-                        pass
+                        if self._interrupt_event.is_set():
+                            # Interrupted: Discard chunk without sending to DAC
+                            try:
+                                self.audio_queue.task_done()
+                            except Exception:
+                                pass
+                            continue
+
+                        # Write chunk to output
+                        try:
+                            with self._lock:
+                                self.is_playing = True
+                                self._last_chunk = chunk
+                            stream.write(chunk)
+                        except Exception as e:
+                            print(f"[WARN] [AUDIO_OUT] Device error during write: {e}. Reconnecting audio stream...")
+                            # Break inner loop so the stream context manager cleanly closes and reopens!
+                            break
+                        finally:
+                            try:
+                                self.audio_queue.task_done()
+                            except Exception:
+                                pass
+            except Exception as stream_err:
+                print(f"[WARN] [AUDIO_OUT] Audio stream creation/reconnect failed: {stream_err}. Retrying in 250ms...")
+                time.sleep(0.25)
+            finally:
+                self._stream = None
