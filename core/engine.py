@@ -571,6 +571,8 @@ class AetherEngine:
                     self.settings.setdefault("integrations", {})["replay_capture"] = cfg["integrations"]["replay_capture"]
                 if "audio_ducking" in cfg:
                     self.settings["audio_ducking"] = cfg["audio_ducking"]
+                if "hardware_telemetry" in cfg and isinstance(cfg["hardware_telemetry"], dict):
+                    self.settings.setdefault("hardware_telemetry", {}).update(cfg["hardware_telemetry"])
             except Exception:
                 pass
 
@@ -675,12 +677,14 @@ class AetherEngine:
         # Real-Time Hardware Telemetry & PresentMon FPS Engine
         hw_cfg = self.settings.get("hardware_telemetry", {})
         if hw_cfg.get("enabled", True):
+            alerts_en = bool(hw_cfg.get("alerts_enabled", hw_cfg.get("verbal_warnings", True)))
             self.hardware_service = HardwareService(
                 presentmon_path=hw_cfg.get("presentmon_path", "assets/bin/PresentMon.exe"),
                 alert_callback=self._handle_hardware_alert,
                 vram_alert_threshold_pct=float(hw_cfg.get("vram_alert_threshold_pct", 95)),
                 gpu_temp_alert_threshold_c=float(hw_cfg.get("gpu_temp_alert_threshold_c", 85)),
-                cpu_temp_alert_threshold_c=float(hw_cfg.get("cpu_temp_alert_threshold_c", 90))
+                cpu_temp_alert_threshold_c=float(hw_cfg.get("cpu_temp_alert_threshold_c", 95)),
+                alerts_enabled=alerts_en
             )
             register_hardware_tools(self.dispatcher, self.hardware_service)
             if hasattr(self, "game_engine") and self.game_engine and hasattr(self.game_engine, "manager"):
@@ -1793,12 +1797,14 @@ class AetherEngine:
             logger.error(f"[PROACTIVE EVENT ERROR] {e}")
 
     def _handle_hardware_alert(self, warning: str):
+        hw_cfg = self.settings.get("hardware_telemetry", {})
+        if not hw_cfg.get("alerts_enabled", True):
+            return
         self.notify("chat_event", {
             "type": "system",
             "content": f"⚠️ {warning}",
             "source": "system"
         })
-        hw_cfg = self.settings.get("hardware_telemetry", {})
         if hw_cfg.get("verbal_warnings", True):
             try:
                 asyncio.create_task(self._speak_feedback(warning))

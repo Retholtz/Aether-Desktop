@@ -678,6 +678,50 @@ window.aetherUI = {
       });
     }
 
+    // Hardware Telemetry & Thermal Warning Sliders / Toggle
+    const syncHardwareTelemetrySettings = async () => {
+      const alertsEnabled = document.getElementById("hwWarningsEnabledCheck") ? document.getElementById("hwWarningsEnabledCheck").checked : true;
+      const cpuTemp = parseInt(document.getElementById("cpuTempThresholdSlider")?.value || "95", 10);
+      const gpuTemp = parseInt(document.getElementById("gpuTempThresholdSlider")?.value || "85", 10);
+      const vramPct = parseInt(document.getElementById("vramThresholdSlider")?.value || "95", 10);
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.save_hardware_telemetry_settings) {
+        await window.pywebview.api.save_hardware_telemetry_settings(alertsEnabled, cpuTemp, gpuTemp, vramPct);
+        this.log(`Hardware warnings ${alertsEnabled ? "ENABLED" : "DISABLED"} (CPU: ${cpuTemp}°C, GPU: ${gpuTemp}°C, VRAM: ${vramPct}%)`);
+      }
+    };
+
+    const hwWarnCheckEl = document.getElementById("hwWarningsEnabledCheck");
+    if (hwWarnCheckEl) {
+      hwWarnCheckEl.addEventListener("change", syncHardwareTelemetrySettings);
+    }
+
+    const cpuTempSliderEl = document.getElementById("cpuTempThresholdSlider");
+    const cpuTempValEl = document.getElementById("cpuTempThresholdVal");
+    if (cpuTempSliderEl) {
+      cpuTempSliderEl.addEventListener("input", (e) => {
+        if (cpuTempValEl) cpuTempValEl.innerText = `${e.target.value}°C`;
+      });
+      cpuTempSliderEl.addEventListener("change", syncHardwareTelemetrySettings);
+    }
+
+    const gpuTempSliderEl = document.getElementById("gpuTempThresholdSlider");
+    const gpuTempValEl = document.getElementById("gpuTempThresholdVal");
+    if (gpuTempSliderEl) {
+      gpuTempSliderEl.addEventListener("input", (e) => {
+        if (gpuTempValEl) gpuTempValEl.innerText = `${e.target.value}°C`;
+      });
+      gpuTempSliderEl.addEventListener("change", syncHardwareTelemetrySettings);
+    }
+
+    const vramSliderEl = document.getElementById("vramThresholdSlider");
+    const vramValEl = document.getElementById("vramThresholdVal");
+    if (vramSliderEl) {
+      vramSliderEl.addEventListener("input", (e) => {
+        if (vramValEl) vramValEl.innerText = `${e.target.value}%`;
+      });
+      vramSliderEl.addEventListener("change", syncHardwareTelemetrySettings);
+    }
+
     // Voice Calibration Wizard Buttons
     const recStep1Btn = document.getElementById("recStep1Btn");
     if (recStep1Btn) {
@@ -1640,6 +1684,31 @@ window.aetherUI = {
         }
       }
 
+      // Hardware Telemetry & Thermal Warnings
+      const hwCfg = cfg.hardware_telemetry || {};
+      const hwWarnCheck = document.getElementById("hwWarningsEnabledCheck");
+      if (hwWarnCheck) {
+        const warnEnabled = hwCfg.alerts_enabled !== undefined ? hwCfg.alerts_enabled : (hwCfg.verbal_warnings !== undefined ? hwCfg.verbal_warnings : true);
+        hwWarnCheck.checked = Boolean(warnEnabled);
+      }
+      const cpuTempLimit = hwCfg.cpu_temp_alert_threshold_c !== undefined ? parseInt(hwCfg.cpu_temp_alert_threshold_c, 10) : 95;
+      const cpuSlider = document.getElementById("cpuTempThresholdSlider");
+      if (cpuSlider) cpuSlider.value = cpuTempLimit;
+      const cpuValEl = document.getElementById("cpuTempThresholdVal");
+      if (cpuValEl) cpuValEl.innerText = `${cpuTempLimit}°C`;
+
+      const gpuTempLimit = hwCfg.gpu_temp_alert_threshold_c !== undefined ? parseInt(hwCfg.gpu_temp_alert_threshold_c, 10) : 85;
+      const gpuSlider = document.getElementById("gpuTempThresholdSlider");
+      if (gpuSlider) gpuSlider.value = gpuTempLimit;
+      const gpuValEl = document.getElementById("gpuTempThresholdVal");
+      if (gpuValEl) gpuValEl.innerText = `${gpuTempLimit}°C`;
+
+      const vramLimit = hwCfg.vram_alert_threshold_pct !== undefined ? parseInt(hwCfg.vram_alert_threshold_pct, 10) : 95;
+      const vramSlider = document.getElementById("vramThresholdSlider");
+      if (vramSlider) vramSlider.value = vramLimit;
+      const vramValEl = document.getElementById("vramThresholdVal");
+      if (vramValEl) vramValEl.innerText = `${vramLimit}%`;
+
       // Application & Startup Behavior
       const bootStartupToggle = document.getElementById("toggle-boot-startup");
       if (bootStartupToggle) {
@@ -1848,6 +1917,14 @@ window.aetherUI = {
           game_mode_key_display: this.gameModeKeyDisplay || this.currentConfig?.ui?.game_mode_key_display || "Ctrl+Shift+G",
           game_mode_vk: this.gameModeVk !== undefined ? this.gameModeVk : (this.currentConfig?.ui?.game_mode_vk ?? 71),
           game_mode_modifiers: this.gameModeModifiers || this.currentConfig?.ui?.game_mode_modifiers || ["Control", "Shift"]
+        },
+        hardware_telemetry: {
+          enabled: true,
+          alerts_enabled: document.getElementById("hwWarningsEnabledCheck") ? document.getElementById("hwWarningsEnabledCheck").checked : (this.currentConfig?.hardware_telemetry?.alerts_enabled ?? true),
+          verbal_warnings: document.getElementById("hwWarningsEnabledCheck") ? document.getElementById("hwWarningsEnabledCheck").checked : (this.currentConfig?.hardware_telemetry?.verbal_warnings ?? true),
+          cpu_temp_alert_threshold_c: document.getElementById("cpuTempThresholdSlider") ? parseInt(document.getElementById("cpuTempThresholdSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.cpu_temp_alert_threshold_c ?? 95),
+          gpu_temp_alert_threshold_c: document.getElementById("gpuTempThresholdSlider") ? parseInt(document.getElementById("gpuTempThresholdSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.gpu_temp_alert_threshold_c ?? 85),
+          vram_alert_threshold_pct: document.getElementById("vramThresholdSlider") ? parseInt(document.getElementById("vramThresholdSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.vram_alert_threshold_pct ?? 95)
         },
         primary_model_endpoint: primaryModelVal,
         tier2_heavy_model: heavyModelVal,

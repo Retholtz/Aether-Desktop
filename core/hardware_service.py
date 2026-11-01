@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import psutil
 
@@ -438,7 +438,8 @@ class HardwareService:
         alert_callback: Optional[Callable[[str], Any]] = None,
         vram_alert_threshold_pct: float = 95.0,
         gpu_temp_alert_threshold_c: float = 85.0,
-        cpu_temp_alert_threshold_c: float = 90.0,
+        cpu_temp_alert_threshold_c: float = 95.0,
+        alerts_enabled: bool = True,
         libre_dll_path: Optional[str] = None
     ):
         self.presentmon_path = presentmon_path
@@ -446,6 +447,7 @@ class HardwareService:
         self.vram_alert_threshold_pct = vram_alert_threshold_pct
         self.gpu_temp_alert_threshold_c = gpu_temp_alert_threshold_c
         self.cpu_temp_alert_threshold_c = cpu_temp_alert_threshold_c
+        self.alerts_enabled = bool(alerts_enabled)
 
         # CPU Telemetry Provider
         self._cpu_backend = CpuMonitorBackend(dll_path=libre_dll_path)
@@ -472,8 +474,32 @@ class HardwareService:
         self._alert_running = False
         self._alert_task: Optional[asyncio.Task] = None
         self._last_alert_times: Dict[str, float] = {}
+        self._consecutive_breaches: Dict[str, int] = {"cpu_temp": 0, "gpu_temp": 0, "vram": 0}
 
         self._init_gpu_telemetry()
+
+    def update_alert_settings(
+        self,
+        alerts_enabled: Optional[bool] = None,
+        cpu_temp_threshold_c: Optional[float] = None,
+        gpu_temp_threshold_c: Optional[float] = None,
+        vram_threshold_pct: Optional[float] = None
+    ):
+        """Hot-updates thermal and VRAM warning thresholds and enable state at runtime."""
+        if alerts_enabled is not None:
+            self.alerts_enabled = bool(alerts_enabled)
+        if cpu_temp_threshold_c is not None:
+            self.cpu_temp_alert_threshold_c = float(cpu_temp_threshold_c)
+        if gpu_temp_threshold_c is not None:
+            self.gpu_temp_alert_threshold_c = float(gpu_temp_threshold_c)
+        if vram_threshold_pct is not None:
+            self.vram_alert_threshold_pct = float(vram_threshold_pct)
+        logger.info(
+            f"[HARDWARE] Updated alert settings: enabled={self.alerts_enabled}, "
+            f"CPU={int(self.cpu_temp_alert_threshold_c)}°C, "
+            f"GPU={int(self.gpu_temp_alert_threshold_c)}°C, "
+            f"VRAM={int(self.vram_alert_threshold_pct)}%"
+        )
 
     def _init_gpu_telemetry(self):
         """Initializes the best available GPU driver reader in priority order: NVML -> AMD ADL -> Windows PDH."""
@@ -996,16 +1022,57 @@ class HardwareService:
             self._alert_task = None
 
     async def _poll_hardware_alerts(self, interval: float):
+        # Require 3 consecutive polls (~9s sustained) above threshold to filter out transient laptop boost spikes
+        sustained_polls_required = 3
+        cooldown_seconds = 120.0
         while self._alert_running:
             try:
                 await asyncio.sleep(interval)
-                alerts = self.check_alerts()
+                if not self.alerts_enabled:
+                    self._consecutive_breaches = {"cpu_temp": 0, "gpu_temp": 0, "vram": 0}
+                    continue
+
+                snap = self.get_snapshot()
                 now = time.time()
-                for alert in alerts:
-                    # Cooldown of 60 seconds per alert message type
-                    last = self._last_alert_times.get(alert, 0.0)
-                    if now - last >= 60.0:
-                        self._last_alert_times[alert] = now
+                triggered: List[Tuple[str, str]] = []
+
+                # 1. CPU Thermal Check (sustained)
+                if snap.cpu_temp_c is not None and snap.cpu_temp_c >= self.cpu_temp_alert_threshold_c and snap.cpu_temp_c > 0:
+                    self._consecutive_breaches["cpu_temp"] = self._consecutive_breaches.get("cpu_temp", 0) + 1
+                    if self._consecutive_breaches["cpu_temp"] >= sustained_polls_required:
+                        triggered.append((
+                            "cpu_temp",
+                            f"CPU temperature is high at {snap.cpu_temp_c}°C (Threshold: {int(self.cpu_temp_alert_threshold_c)}°C)."
+                        ))
+                else:
+                    self._consecutive_breaches["cpu_temp"] = 0
+
+                # 2. GPU Thermal Check (sustained)
+                if snap.gpu_temp_c >= self.gpu_temp_alert_threshold_c and snap.gpu_temp_c > 0:
+                    self._consecutive_breaches["gpu_temp"] = self._consecutive_breaches.get("gpu_temp", 0) + 1
+                    if self._consecutive_breaches["gpu_temp"] >= sustained_polls_required:
+                        triggered.append((
+                            "gpu_temp",
+                            f"GPU temperature is high at {snap.gpu_temp_c}°C (Threshold: {int(self.gpu_temp_alert_threshold_c)}°C)."
+                        ))
+                else:
+                    self._consecutive_breaches["gpu_temp"] = 0
+
+                # 3. VRAM Allocation Check (sustained)
+                if snap.vram_pct >= self.vram_alert_threshold_pct and snap.vram_pct > 0:
+                    self._consecutive_breaches["vram"] = self._consecutive_breaches.get("vram", 0) + 1
+                    if self._consecutive_breaches["vram"] >= sustained_polls_required:
+                        triggered.append((
+                            "vram",
+                            f"VRAM allocation is critical at {snap.vram_pct:.1f}% ({snap.vram_used_gb:.1f} / {snap.vram_total_gb:.1f} GB)."
+                        ))
+                else:
+                    self._consecutive_breaches["vram"] = 0
+
+                for category, alert in triggered:
+                    last = self._last_alert_times.get(category, 0.0)
+                    if now - last >= cooldown_seconds:
+                        self._last_alert_times[category] = now
                         logger.warning(f"[HARDWARE ALERT] {alert}")
                         if callable(self.alert_callback):
                             try:

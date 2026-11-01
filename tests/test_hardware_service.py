@@ -317,6 +317,49 @@ class TestHardwareService(unittest.TestCase):
         hud.set_mini_fps_visible(False)
         self.assertEqual(hud._mini_size, (176, 56))
 
+    def test_update_alert_settings_and_transient_spike_filtering(self):
+        received = []
+        self.service.alert_callback = lambda msg: received.append(msg)
+        self.service.update_alert_settings(
+            alerts_enabled=True,
+            cpu_temp_threshold_c=95,
+            gpu_temp_threshold_c=88,
+            vram_threshold_pct=96
+        )
+        self.assertTrue(self.service.alerts_enabled)
+        self.assertEqual(self.service.cpu_temp_alert_threshold_c, 95.0)
+        self.assertEqual(self.service.gpu_temp_alert_threshold_c, 88.0)
+        self.assertEqual(self.service.vram_alert_threshold_pct, 96.0)
+
+        # Simulate transient 96C spike (2 polls) followed by 80C recovery -> should NOT fire alert
+        snaps = [
+            HardwareSnapshot(cpu_temp_c=96, gpu_temp_c=70, vram_pct=50.0),
+            HardwareSnapshot(cpu_temp_c=96, gpu_temp_c=70, vram_pct=50.0),
+            HardwareSnapshot(cpu_temp_c=80, gpu_temp_c=70, vram_pct=50.0),
+            # Then 3 consecutive sustained polls at 96C -> SHOULD fire once
+            HardwareSnapshot(cpu_temp_c=96, gpu_temp_c=70, vram_pct=50.0),
+            HardwareSnapshot(cpu_temp_c=97, gpu_temp_c=70, vram_pct=50.0),
+            HardwareSnapshot(cpu_temp_c=96, gpu_temp_c=70, vram_pct=50.0),
+        ]
+        idx = {"i": 0}
+
+        def next_snap():
+            i = idx["i"]
+            idx["i"] += 1
+            if i >= len(snaps):
+                self.service._alert_running = False
+                return snaps[-1]
+            if i == len(snaps) - 1:
+                self.service._alert_running = False
+            return snaps[i]
+
+        self.service._alert_running = True
+        with patch.object(self.service, "get_snapshot", side_effect=next_snap):
+            asyncio.run(self.service._poll_hardware_alerts(0.001))
+
+        self.assertEqual(len(received), 1)
+        self.assertIn("CPU temperature is high at 96°C (Threshold: 95°C)", received[0])
+
 
 if __name__ == "__main__":
     unittest.main()

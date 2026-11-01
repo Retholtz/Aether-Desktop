@@ -341,6 +341,15 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     audio_cfg["software_gate"] = bool(software_gate)
     audio_cfg.setdefault("preferred_language", "en-US")
 
+    # Hardware Telemetry & Thermal Warning Threshold defaults
+    hw_cfg = cfg.setdefault("hardware_telemetry", {})
+    hw_cfg.setdefault("enabled", True)
+    hw_cfg.setdefault("alerts_enabled", True)
+    hw_cfg.setdefault("verbal_warnings", True)
+    hw_cfg.setdefault("cpu_temp_alert_threshold_c", 95)
+    hw_cfg.setdefault("gpu_temp_alert_threshold_c", 85)
+    hw_cfg.setdefault("vram_alert_threshold_pct", 95)
+
     return cfg
 
 

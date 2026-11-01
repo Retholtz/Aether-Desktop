@@ -101,9 +101,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     },
     "hardware_telemetry": {
         "enabled": True,
+        "alerts_enabled": True,
         "presentmon_path": "assets/bin/PresentMon.exe",
-        "vram_alert_threshold_pct": 95,
+        "cpu_temp_alert_threshold_c": 95,
         "gpu_temp_alert_threshold_c": 85,
+        "vram_alert_threshold_pct": 95,
         "verbal_warnings": True,
     },
 }

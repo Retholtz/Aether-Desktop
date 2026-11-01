@@ -1710,6 +1710,41 @@ class GuiBridge:
 
                     self._engine.hotkey_manager.update_config(self._config.get("audio", {}), self._config.get("ui", {}))
 
+            if "hardware_telemetry" in new_config and isinstance(new_config["hardware_telemetry"], dict):
+                hw_in = new_config["hardware_telemetry"]
+                hw_cfg = self._config.setdefault("hardware_telemetry", {})
+                if "alerts_enabled" in hw_in:
+                    hw_cfg["alerts_enabled"] = bool(hw_in["alerts_enabled"])
+                    hw_cfg["verbal_warnings"] = bool(hw_in["alerts_enabled"])
+                if "verbal_warnings" in hw_in:
+                    hw_cfg["verbal_warnings"] = bool(hw_in["verbal_warnings"])
+                if "cpu_temp_alert_threshold_c" in hw_in:
+                    hw_cfg["cpu_temp_alert_threshold_c"] = int(float(hw_in["cpu_temp_alert_threshold_c"]))
+                if "gpu_temp_alert_threshold_c" in hw_in:
+                    hw_cfg["gpu_temp_alert_threshold_c"] = int(float(hw_in["gpu_temp_alert_threshold_c"]))
+                if "vram_alert_threshold_pct" in hw_in:
+                    hw_cfg["vram_alert_threshold_pct"] = int(float(hw_in["vram_alert_threshold_pct"]))
+
+                try:
+                    from core.config import load_settings, save_settings
+                    engine_inst = getattr(self, "_engine", None) or getattr(self, "engine", None)
+                    if engine_inst and hasattr(engine_inst, "settings") and isinstance(engine_inst.settings, dict):
+                        engine_inst.settings.setdefault("hardware_telemetry", {}).update(hw_cfg)
+                        save_settings(engine_inst.settings)
+                    else:
+                        s_data = load_settings()
+                        s_data.setdefault("hardware_telemetry", {}).update(hw_cfg)
+                        save_settings(s_data)
+                    if engine_inst and hasattr(engine_inst, "hardware_service") and engine_inst.hardware_service:
+                        engine_inst.hardware_service.update_alert_settings(
+                            alerts_enabled=hw_cfg.get("alerts_enabled", True),
+                            cpu_temp_threshold_c=hw_cfg.get("cpu_temp_alert_threshold_c", 95),
+                            gpu_temp_threshold_c=hw_cfg.get("gpu_temp_alert_threshold_c", 85),
+                            vram_threshold_pct=hw_cfg.get("vram_alert_threshold_pct", 95),
+                        )
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] Failed syncing hardware_telemetry settings: {e}")
+
 
 
             new_accent = self._config.get("voice_accent") or self._config.get("api", {}).get("voice_accent")
@@ -6332,11 +6367,44 @@ class GuiBridge:
 
         return {"status": "success", "settings": self.engine.settings["audio_ducking"]}
 
+    def save_hardware_telemetry_settings(
+        self,
+        alerts_enabled: bool,
+        cpu_temp_threshold_c: int,
+        gpu_temp_threshold_c: int,
+        vram_threshold_pct: int
+    ) -> dict:
+        """Persists and hot-updates CPU/GPU thermal and VRAM warning settings."""
+        with self._config_lock:
+            hw_cfg = self._config.setdefault("hardware_telemetry", {})
+            hw_cfg["alerts_enabled"] = bool(alerts_enabled)
+            hw_cfg["verbal_warnings"] = bool(alerts_enabled)
+            hw_cfg["cpu_temp_alert_threshold_c"] = int(float(cpu_temp_threshold_c))
+            hw_cfg["gpu_temp_alert_threshold_c"] = int(float(gpu_temp_threshold_c))
+            hw_cfg["vram_alert_threshold_pct"] = int(float(vram_threshold_pct))
+            save_config_atomic(self._config, self._config_path)
 
+        engine_inst = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        try:
+            from core.config import load_settings, save_settings
+            if engine_inst and hasattr(engine_inst, "settings") and isinstance(engine_inst.settings, dict):
+                engine_inst.settings.setdefault("hardware_telemetry", {}).update(hw_cfg)
+                save_settings(engine_inst.settings)
+            else:
+                s_data = load_settings()
+                s_data.setdefault("hardware_telemetry", {}).update(hw_cfg)
+                save_settings(s_data)
+            if engine_inst and hasattr(engine_inst, "hardware_service") and engine_inst.hardware_service:
+                engine_inst.hardware_service.update_alert_settings(
+                    alerts_enabled=hw_cfg["alerts_enabled"],
+                    cpu_temp_threshold_c=hw_cfg["cpu_temp_alert_threshold_c"],
+                    gpu_temp_threshold_c=hw_cfg["gpu_temp_alert_threshold_c"],
+                    vram_threshold_pct=hw_cfg["vram_alert_threshold_pct"],
+                )
+        except Exception as e:
+            logger.debug(f"[GUI_BRIDGE] save_hardware_telemetry_settings error: {e}")
 
-
-
-
+        return {"success": True, "hardware_telemetry": hw_cfg}
 
 GUIBridge = GuiBridge
 
