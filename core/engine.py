@@ -51,6 +51,9 @@ from tools.media_tools import register_media_tools
 from core.audio_ducking_service import AudioDuckingService
 from core.hardware_service import HardwareService
 from tools.hardware_tools import register_hardware_tools
+from core.project_service import ProjectService
+from core.notebooklm_service import NotebookLMService
+from tools.project_tools import register_project_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -694,6 +697,23 @@ class AetherEngine:
                     pass
         else:
             self.hardware_service = None
+
+        # Projects Workspace & NotebookLM Cloud RAG Integration
+        proj_cfg = self.settings.get("integrations", {}).get("projects", {})
+        base_dir = proj_cfg.get("base_dir", "data/projects")
+        nb_cfg = proj_cfg.get("notebooklm", {})
+        nb_api_key = nb_cfg.get("api_key") or os.getenv("GEMINI_API_KEY", "")
+        if not nb_api_key and callable(self.config_getter):
+            try:
+                enc = (self.config_getter() or {}).get("api", {}).get("api_key_encrypted", "")
+                if enc:
+                    nb_api_key = unprotect_secret(enc)
+            except Exception:
+                pass
+        self.project_service = ProjectService(base_dir=base_dir, manifest_path="data/projects.json")
+        self.notebooklm_service = NotebookLMService(api_key=nb_api_key)
+        self.notebook_service = self.notebooklm_service
+        register_project_tools(self.dispatcher, self.project_service, self.notebooklm_service)
 
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
@@ -4503,6 +4523,21 @@ class AetherEngine:
 
         base_inst = self._inject_temporal_anchor(base_inst)
 
+        # Prepend active project custom instructions when a project is active
+        if hasattr(self, "project_service") and self.project_service:
+            active_pid = self.project_service.data.get("active_project")
+            projects_map = self.project_service.data.get("projects", {})
+            if active_pid and active_pid in projects_map:
+                proj = projects_map[active_pid]
+                custom_inst = (proj.get("custom_instructions") or "").strip()
+                if custom_inst:
+                    proj_name = proj.get("name", active_pid)
+                    project_prefix = (
+                        f"[ACTIVE PROJECT: {proj_name} ({active_pid})]\n"
+                        f"{custom_inst}\n\n"
+                    )
+                    base_inst = project_prefix + base_inst
+
         cfg = self.config_getter() if self.config_getter else {}
         api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
         accent = api_cfg.get("voice_accent") or cfg.get("voice_accent") or "default"
@@ -5631,6 +5666,16 @@ class AetherEngine:
                 self.hardware_service.close()
             except Exception as e:
                 logger.warning(f"[STOP] Hardware service close warning: {e}")
+
+        for svc_attr in ("project_service", "notebooklm_service"):
+            svc = getattr(self, svc_attr, None)
+            if svc and hasattr(svc, "close"):
+                try:
+                    loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                    if loop and loop.is_running():
+                        asyncio.run_coroutine_threadsafe(svc.close(), loop)
+                except Exception as e:
+                    logger.debug(f"[STOP] {svc_attr} close warning: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 

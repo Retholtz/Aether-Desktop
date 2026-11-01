@@ -36,6 +36,9 @@
           <button type="button" class="hud-tab nav-btn" data-tab="tab-games" id="btn-tab-games">
             <span class="tab-icon icon">🎮</span> GAMES
           </button>
+          <button type="button" class="hud-tab nav-btn" data-tab="projects" id="btn-tab-projects">
+            <span class="tab-icon icon">📁</span> PROJECTS
+          </button>
         </div>
         <div class="hud-tabs-divider" role="separator"></div>
         <div class="hud-tabs-row hud-tabs-secondary">
@@ -244,6 +247,83 @@
             </div>
 
           </main>
+        </div>
+      </div>
+
+      <!-- ============================================================= -->
+      <!-- TAB: PROJECTS (KNOWLEDGE BASE & NOTEBOOKLM WORKSPACE)         -->
+      <!-- ============================================================= -->
+      <div id="tab-projects" class="tab-pane tab-content hidden" tabindex="0">
+        <div class="projects-container games-split-container">
+          <!-- Left Rail: Project Navigator -->
+          <div class="projects-sidebar games-sidebar">
+            <div class="sidebar-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <h3>LINKED PROJECTS</h3>
+              <button type="button" id="add-project-btn" class="cyber-btn-small btn-primary-sm">+ Add</button>
+            </div>
+            <div id="projects-list" class="cyber-list games-list-group">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Main Workspace -->
+          <div class="project-workspace games-main-panel">
+            <!-- Header & Settings -->
+            <div class="project-header">
+              <div class="project-title-group">
+                <h2 id="project-title" style="margin: 0;">Select a Project</h2>
+                <div class="project-sync-toolbar">
+                  <label class="notebooklm-toggle" id="cloud-sync-toggle-label">
+                    <input type="checkbox" id="notebooklm-sync-checkbox">
+                    <span class="toggle-label">⚡ Cloud Sync</span>
+                    <span id="cloud-sync-status-hint" class="cloud-sync-status-hint"></span>
+                  </label>
+                  <button type="button" id="btn-sync-project" class="btn-secondary-sm" style="padding: 3px 10px; font-size: 0.74rem;" title="Sync files between Aether and Google Drive (\Aether Projects)">🔄 Sync</button>
+                  <button type="button" id="btn-open-drive-folder" class="btn-secondary-sm" style="padding: 3px 10px; font-size: 0.74rem;" title="Open synced Google Drive folder in File Explorer">📂 Drive Folder</button>
+                </div>
+              </div>
+              <div class="project-actions">
+                <button type="button" id="delete-project-btn" class="cyber-btn-danger btn-danger-sm">🗑️ Delete Project</button>
+              </div>
+            </div>
+
+            <!-- Instructions Editor -->
+            <div class="instruction-box game-card">
+              <label for="project-instructions">PROJECT INSTRUCTIONS / CONTEXT PROMPT:</label>
+              <textarea id="project-instructions" class="game-scratchpad-textarea" rows="3" placeholder="Provide system instructions, goals, and focus areas for Aether when working in this project..."></textarea>
+            </div>
+
+            <!-- File Dropzone & URL Input -->
+            <div class="ingestion-tray">
+              <div id="file-dropzone" class="dropzone">
+                <p>📄 Drag &amp; Drop Files (PDF, DOCX, XLSX, PPTX, MD, TXT, CSV, Code)</p>
+                <input type="file" id="file-upload-input" multiple style="display: none;">
+              </div>
+
+              <div class="url-importer">
+                <input type="url" id="import-url-input" class="modal-input" placeholder="https://docs.example.com/api-reference">
+                <button type="button" id="import-url-btn" class="cyber-btn btn-primary-sm">Import Web URL</button>
+              </div>
+            </div>
+
+            <!-- File Table -->
+            <div class="files-table-container game-card">
+              <table class="cyber-table game-table">
+                <thead>
+                  <tr>
+                    <th>Document</th>
+                    <th>Type</th>
+                    <th>Tokens (Est.)</th>
+                    <th>Source</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="project-files-body">
+                  <!-- Rendered dynamically -->
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2276,9 +2356,41 @@
     </div>
   </div>
 
+  <!-- Modal: Add Project -->
+  <div id="modal-add-project" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">📁</span>
+          <h3 style="margin: 0; font-size: 1rem; color: #f1f5f9;">Create New Project</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-project-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="input-add-project-name" class="modal-label">Project Name <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-add-project-name" class="modal-input" placeholder="e.g. Aether Engine, Tax 2026, Quantum Research" autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label for="input-add-project-desc" class="modal-label">Description (Optional)</label>
+          <input type="text" id="input-add-project-desc" class="modal-input" placeholder="Brief summary of this workspace..." autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label for="input-add-project-inst" class="modal-label">Custom System Instructions (Optional)</label>
+          <textarea id="input-add-project-inst" class="modal-input" rows="3" placeholder="Provide goals, coding conventions, or domain instructions for Aether..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-project" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-project" class="btn-primary-sm" style="padding: 7px 18px;">Create Project</button>
+      </div>
+    </div>
+  </div>
+
   <script src="settings.js"></script>
   <script src="games_tab.js"></script>
   <script src="programs_tab.js"></script>
+  <script src="projects.js"></script>
   <script src="main.js"></script>
   <script src="app.js"></script>
 </body>

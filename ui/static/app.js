@@ -160,6 +160,11 @@ window.aetherUI = {
             if (typeof loadProgramsUI === "function") {
               loadProgramsUI();
             }
+          } else if (tabKey === "projects") {
+            targetPane.focus();
+            if (typeof loadProjectsUI === "function") {
+              loadProjectsUI();
+            }
           } else if (tabKey === "accounts") {
             targetPane.focus();
             if (typeof loadOAuthStatusUI === "function") {

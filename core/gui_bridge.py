@@ -550,6 +550,29 @@ class GuiBridge:
 
                     pass
 
+        from core.project_service import ProjectService
+        from core.notebooklm_service import NotebookLMService
+
+        if hasattr(self.engine, "project_service") and self.engine.project_service is not None and isinstance(self.engine.project_service, ProjectService):
+            self.project_service = self.engine.project_service
+        else:
+            self.project_service = ProjectService()
+            if self.engine is not None:
+                try:
+                    self.engine.project_service = self.project_service
+                except Exception:
+                    pass
+
+        if hasattr(self.engine, "notebooklm_service") and self.engine.notebooklm_service is not None and isinstance(self.engine.notebooklm_service, NotebookLMService):
+            self.notebooklm_service = self.engine.notebooklm_service
+        else:
+            self.notebooklm_service = NotebookLMService()
+            if self.engine is not None:
+                try:
+                    self.engine.notebooklm_service = self.notebooklm_service
+                except Exception:
+                    pass
+
 
 
         orig_cb = self.game_mgr.on_game_mode_changed
@@ -6405,6 +6428,250 @@ class GuiBridge:
             logger.debug(f"[GUI_BRIDGE] save_hardware_telemetry_settings error: {e}")
 
         return {"success": True, "hardware_telemetry": hw_cfg}
+
+    # ------------------------------------------------------------------
+    # Projects Workspace & NotebookLM Cloud RAG Endpoints
+    # ------------------------------------------------------------------
+    def get_projects_data(self) -> Dict[str, Any]:
+        projects = self.project_service.data.get("projects", {})
+        for pid, proj in list(projects.items()):
+            nb = proj.get("notebooklm", {})
+            if nb.get("sync_enabled"):
+                try:
+                    self.project_service.sync_with_google_drive(pid)
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] Google Drive sync warning for '{pid}': {e}")
+                if not nb.get("notebook_id"):
+                    nb_id = self._ensure_project_cloud_store(pid)
+                    if nb_id:
+                        try:
+                            p_dir = self.project_service.get_project_dir(pid)
+                            files = self.project_service.list_files(pid)
+                            sources = [
+                                {"displayName": f["filename"], "filePath": os.path.join(p_dir, f["filename"])}
+                                for f in files
+                                if f.get("filename") and os.path.exists(os.path.join(p_dir, f["filename"]))
+                            ]
+                            if sources:
+                                asyncio.run(self.notebooklm_service.batch_create_sources(nb_id, sources))
+                        except Exception as e:
+                            logger.debug(f"[GUI_BRIDGE] Auto-heal cloud sync warning for '{pid}': {e}")
+        return {
+            "active_project": self.project_service.data.get("active_project"),
+            "projects": self.project_service.data.get("projects", {}),
+            "google_drive_root": self.project_service.find_google_drive_root(),
+        }
+
+    def set_active_project(self, project_id: str) -> Dict[str, Any]:
+        if project_id in self.project_service.data["projects"]:
+            self.project_service.data["active_project"] = project_id
+            self.project_service.save_manifest()
+            if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "invalidate_live_session"):
+                try:
+                    self._engine.invalidate_live_session(reason=f"Active Project Changed: {project_id}")
+                except Exception:
+                    pass
+            return {"status": "success", "active_project": project_id}
+        return {"status": "error", "message": "Project not found"}
+
+    def create_project(self, project_id: str, name: str, description: str = "", instructions: str = "") -> Dict[str, Any]:
+        res = self.project_service.create_project(project_id, name, description, instructions)
+        if res.get("status") == "success":
+            pid = res["project"]["id"]
+            self.project_service.data["active_project"] = pid
+            self.project_service.save_manifest()
+        return res
+
+    def _ensure_project_cloud_store(self, project_id: str) -> Optional[str]:
+        """Ensures the project has a linked Gemini Cloud FileSearchStore and returns its store name."""
+        if not hasattr(self, "notebooklm_service") or not self.notebooklm_service:
+            return None
+        if not self.notebooklm_service.is_configured():
+            try:
+                enc = self._config.get("api", {}).get("api_key_encrypted", "")
+                if enc:
+                    self.notebooklm_service.api_key = unprotect_secret(enc) or ""
+            except Exception:
+                pass
+        if not self.notebooklm_service.is_configured():
+            return None
+
+        proj = self.project_service.data.get("projects", {}).get(project_id, {})
+        nb = proj.get("notebooklm", {})
+        nb_id = nb.get("notebook_id")
+        if not nb_id:
+            try:
+                nb_resp = asyncio.run(self.notebooklm_service.create_notebook(proj.get("name", project_id)))
+                if isinstance(nb_resp, dict):
+                    nb_id = nb_resp.get("name") or nb_resp.get("notebookId") or nb_resp.get("id")
+                    if nb_id:
+                        self.project_service.update_project(project_id, notebook_id=nb_id)
+            except Exception as e:
+                logger.debug(f"[GUI_BRIDGE] Auto-create cloud store warning: {e}")
+        return nb_id
+
+    def update_project(
+        self,
+        project_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        custom_instructions: Optional[str] = None,
+        sync_enabled: Optional[bool] = None,
+        notebook_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        res = self.project_service.update_project(
+            project_id=project_id,
+            name=name,
+            description=description,
+            custom_instructions=custom_instructions,
+            sync_enabled=sync_enabled,
+            notebook_id=notebook_id
+        )
+        if res.get("status") == "success" and sync_enabled:
+            self.sync_project(project_id)
+            res["project"] = self.project_service.data.get("projects", {}).get(project_id, res.get("project"))
+        return res
+
+    def sync_project(self, project_id: str) -> Dict[str, Any]:
+        """
+        Triggers an immediate two-way Google Drive sync + Gemini Cloud RAG sync for the project.
+        """
+        if project_id not in self.project_service.data.get("projects", {}):
+            return {"status": "error", "message": f"Project '{project_id}' not found."}
+
+        drive_res = self.project_service.sync_with_google_drive(project_id)
+        nb_id = self._ensure_project_cloud_store(project_id)
+        cloud_synced = False
+        if nb_id:
+            try:
+                p_dir = self.project_service.get_project_dir(project_id)
+                files = self.project_service.list_files(project_id)
+                sources = []
+                for fmeta in files:
+                    fname = fmeta.get("filename")
+                    fpath = os.path.join(p_dir, fname) if fname else ""
+                    if fpath and os.path.exists(fpath):
+                        sources.append({"displayName": fname, "filePath": fpath})
+                if sources:
+                    cloud_synced = bool(asyncio.run(self.notebooklm_service.batch_create_sources(nb_id, sources)))
+                else:
+                    cloud_synced = True
+            except Exception as e:
+                logger.debug(f"[GUI_BRIDGE] sync_project cloud sync warning: {e}")
+
+        proj = self.project_service.data.get("projects", {}).get(project_id, {})
+        return {
+            "status": "success",
+            "project": proj,
+            "files": self.project_service.list_files(project_id),
+            "drive_sync": drive_res,
+            "cloud_synced": cloud_synced,
+        }
+
+    def open_project_drive_folder(self, project_id: str) -> Dict[str, Any]:
+        """Opens the project's synced Google Drive folder (or local folder fallback) in Windows File Explorer."""
+        drive_dir = self.project_service.get_drive_project_dir(project_id)
+        target_dir = drive_dir if drive_dir else self.project_service.get_project_dir(project_id)
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            if hasattr(os, "startfile"):
+                os.startfile(target_dir)
+            return {"status": "success", "path": target_dir}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def open_project_notebooklm(self, project_id: Optional[str] = None) -> Dict[str, Any]:
+        """Opens Google NotebookLM web interface in the default browser."""
+        import webbrowser
+        url = "https://notebooklm.google.com"
+        if project_id and project_id in self.project_service.data.get("projects", {}):
+            custom_url = self.project_service.data["projects"][project_id].get("notebooklm", {}).get("web_url")
+            if custom_url:
+                url = custom_url
+        try:
+            webbrowser.open(url)
+            return {"status": "success", "url": url}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def delete_project(self, project_id: str) -> Dict[str, Any]:
+        proj = self.project_service.data.get("projects", {}).get(project_id, {})
+        nb_id = proj.get("notebooklm", {}).get("notebook_id")
+        if nb_id and hasattr(self, "notebooklm_service") and self.notebooklm_service and self.notebooklm_service.is_configured():
+            try:
+                asyncio.run(self.notebooklm_service.delete_notebook(nb_id))
+            except Exception:
+                pass
+        ok = self.project_service.delete_project(project_id)
+        return {
+            "status": "success" if ok else "error",
+            "deleted": ok,
+            "active_project": self.project_service.data.get("active_project")
+        }
+
+    def list_project_files(self, project_id: str) -> List[Dict[str, Any]]:
+        return self.project_service.list_files(project_id)
+
+    def upload_project_file(self, project_id: str, filename: str, base64_content: str) -> Dict[str, Any]:
+        import base64
+        raw_bytes = base64.b64decode(base64_content)
+        meta = self.project_service.add_file(project_id, filename, raw_bytes)
+        p_data = self.project_service.data.get("projects", {}).get(project_id, {})
+        nb_cfg = p_data.get("notebooklm", {})
+        if nb_cfg.get("sync_enabled"):
+            nb_id = self._ensure_project_cloud_store(project_id)
+            if nb_id:
+                try:
+                    p_dir = self.project_service.get_project_dir(project_id)
+                    saved_fname = meta.get("filename", filename)
+                    fpath = os.path.join(p_dir, saved_fname)
+                    asyncio.run(
+                        self.notebooklm_service.batch_create_sources(
+                            nb_id,
+                            [{"displayName": saved_fname, "filePath": fpath}]
+                        )
+                    )
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] Cloud file sync warning: {e}")
+        return {"status": "success", "file": meta}
+
+    def delete_project_file(self, project_id: str, filename: str) -> Dict[str, Any]:
+        ok = self.project_service.delete_file(project_id, filename)
+        return {"status": "success" if ok else "error", "deleted": ok}
+
+    def read_project_file(self, project_id: str, filename: str) -> Dict[str, Any]:
+        p_dir = self.project_service.get_project_dir(project_id)
+        target = os.path.join(p_dir, filename)
+        if not os.path.exists(target):
+            return {"status": "error", "message": "File not found"}
+        try:
+            content = self.project_service.extract_file_text(target)
+            return {"status": "success", "filename": filename, "content": content}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def import_project_url(self, project_id: str, url: str) -> Dict[str, Any]:
+        import asyncio
+        res = asyncio.run(self.project_service.import_url(project_id, url))
+        if res.get("status") == "success":
+            p_data = self.project_service.data.get("projects", {}).get(project_id, {})
+            if p_data.get("notebooklm", {}).get("sync_enabled"):
+                nb_id = self._ensure_project_cloud_store(project_id)
+                meta = res.get("metadata") or res.get("file") or {}
+                saved_fname = meta.get("filename")
+                if nb_id and saved_fname:
+                    try:
+                        p_dir = self.project_service.get_project_dir(project_id)
+                        fpath = os.path.join(p_dir, saved_fname)
+                        asyncio.run(
+                            self.notebooklm_service.batch_create_sources(
+                                nb_id,
+                                [{"displayName": saved_fname, "filePath": fpath}]
+                            )
+                        )
+                    except Exception as e:
+                        logger.debug(f"[GUI_BRIDGE] Cloud URL sync warning: {e}")
+        return res
 
 GUIBridge = GuiBridge
 

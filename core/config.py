@@ -92,6 +92,16 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
                 "query",
             ],
         },
+        "projects": {
+            "enabled": True,
+            "base_dir": "data/projects",
+            "max_file_size_mb": 50,
+            "allowed_extensions": [".pdf", ".txt", ".md", ".csv", ".py", ".json", ".js", ".html", ".css"],
+            "notebooklm": {
+                "enabled": True,
+                "api_key": "",
+            },
+        },
     },
     "audio_ducking": {
         "enabled": True,
@@ -224,6 +234,16 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
         "previous",
         "query",
     ])
+
+    # Ensure nested integrations.projects structure is populated
+    proj_cfg = integrations.setdefault("projects", {})
+    proj_cfg.setdefault("enabled", True)
+    proj_cfg.setdefault("base_dir", "data/projects")
+    proj_cfg.setdefault("max_file_size_mb", 50)
+    proj_cfg.setdefault("allowed_extensions", [".pdf", ".txt", ".md", ".csv", ".py", ".json", ".js", ".html", ".css"])
+    nb_cfg = proj_cfg.setdefault("notebooklm", {})
+    nb_cfg.setdefault("enabled", True)
+    nb_cfg.setdefault("api_key", os.getenv("GEMINI_API_KEY", ""))
 
     # Ensure audio_ducking structure is populated
     duck_cfg = settings_data.setdefault("audio_ducking", {})

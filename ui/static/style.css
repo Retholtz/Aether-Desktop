@@ -3101,3 +3101,139 @@ label {
   color: #a0b2c3;
   background: rgba(255, 255, 255, 0.05);
 }
+
+
+/* ============================================================
+   PROJECTS TAB (LOCAL WORKSPACE & NOTEBOOKLM RAG)
+   ============================================================ */
+.project-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 15px;
+    gap: 12px;
+}
+
+.notebooklm-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--accent-cyan);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.instruction-box label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+}
+
+.instruction-box textarea {
+    width: 100%;
+    height: 70px;
+    background: rgba(15, 22, 38, 0.8);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    padding: 8px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    resize: vertical;
+}
+
+.instruction-box textarea:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+}
+
+.ingestion-tray {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin: 15px 0;
+}
+
+.dropzone {
+    border: 2px dashed rgba(0, 229, 255, 0.35);
+    border-radius: 8px;
+    padding: 18px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    color: var(--text-dim);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dropzone:hover {
+    background: rgba(0, 229, 255, 0.05);
+    border-color: var(--accent-cyan);
+    color: var(--text-main);
+}
+
+.url-importer {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.url-importer input {
+    flex: 1;
+    background: rgba(15, 22, 38, 0.8);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+
+.url-importer input:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+}
+
+.project-title-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.project-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    align-self: center;
+}
+
+.cloud-sync-status-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: 2px;
+}
+
+.cloud-sync-status-hint.synced {
+    color: #34d399;
+}
+
+.cloud-sync-status-hint.syncing {
+    color: #38bdf8;
+}
+
+.project-sync-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
