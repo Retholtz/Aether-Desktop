@@ -49,6 +49,8 @@ from tools.replay_tools import register_replay_tools
 from core.media_controller_service import MediaControllerService
 from tools.media_tools import register_media_tools
 from core.audio_ducking_service import AudioDuckingService
+from core.hardware_service import HardwareService
+from tools.hardware_tools import register_hardware_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -522,11 +524,22 @@ class AetherEngine:
         )
 
         # Gaming Subsystem & Live Companion Dispatcher
+        self._last_notified_game_mode_state = None
         def _engine_on_game_mode_changed(event_name: str, payload: dict):
-            self._reset_context_flag = True
+            if hasattr(self, "_on_game_mode_changed"):
+                self._on_game_mode_changed(
+                    enabled=payload.get("enabled", False),
+                    game_id=payload.get("game_id", "") or payload.get("active_profile", ""),
+                    game_name=payload.get("display_name", "") or payload.get("game_name", ""),
+                    is_running=payload.get("is_running", False)
+                )
             self.notify(event_name, payload)
-            mode_label = "Active" if payload.get("enabled") else "Disabled"
-            self.request_live_session_rotation(reason=f"Game Mode {mode_label}")
+            new_mode_key = (bool(payload.get("enabled")), payload.get("game_id") if payload.get("enabled") else "")
+            if new_mode_key != self._last_notified_game_mode_state:
+                self._last_notified_game_mode_state = new_mode_key
+                self._reset_context_flag = True
+                mode_label = "Active" if payload.get("enabled") else "Disabled"
+                self.request_live_session_rotation(reason=f"Game Mode {mode_label}")
 
         self.game_engine = GameEngine(
             engine=self,
@@ -658,6 +671,25 @@ class AetherEngine:
             restore_delay_ms=duck_cfg.get("restore_delay_ms", 150),
             is_output_active_fn=_is_audio_output_active
         )
+
+        # Real-Time Hardware Telemetry & PresentMon FPS Engine
+        hw_cfg = self.settings.get("hardware_telemetry", {})
+        if hw_cfg.get("enabled", True):
+            self.hardware_service = HardwareService(
+                presentmon_path=hw_cfg.get("presentmon_path", "assets/bin/PresentMon.exe"),
+                alert_callback=self._handle_hardware_alert,
+                vram_alert_threshold_pct=float(hw_cfg.get("vram_alert_threshold_pct", 95)),
+                gpu_temp_alert_threshold_c=float(hw_cfg.get("gpu_temp_alert_threshold_c", 85)),
+                cpu_temp_alert_threshold_c=float(hw_cfg.get("cpu_temp_alert_threshold_c", 90))
+            )
+            register_hardware_tools(self.dispatcher, self.hardware_service)
+            if hasattr(self, "game_engine") and self.game_engine and hasattr(self.game_engine, "manager"):
+                try:
+                    self.game_engine.manager._notify_mode_changed()
+                except Exception:
+                    pass
+        else:
+            self.hardware_service = None
 
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
@@ -1760,6 +1792,50 @@ class AetherEngine:
         except Exception as e:
             logger.error(f"[PROACTIVE EVENT ERROR] {e}")
 
+    def _handle_hardware_alert(self, warning: str):
+        self.notify("chat_event", {
+            "type": "system",
+            "content": f"⚠️ {warning}",
+            "source": "system"
+        })
+        hw_cfg = self.settings.get("hardware_telemetry", {})
+        if hw_cfg.get("verbal_warnings", True):
+            try:
+                asyncio.create_task(self._speak_feedback(warning))
+            except Exception:
+                pass
+
+    def _on_game_mode_changed(self, enabled: bool, game_id: str, game_name: str, is_running: bool = False):
+        if hasattr(self, "hardware_service") and self.hardware_service:
+            prof = self.game_engine.manager.get_profile(game_id) or {}
+            fps_enabled = prof.get("fps_monitoring", True)
+            raw_exe = prof.get("executable") or prof.get("process_name") or f"{game_id}.exe"
+            exe_name = os.path.basename(raw_exe)
+            raw_running = (
+                self.game_engine.manager.is_game_running(game_id)
+                if (hasattr(self, "game_engine") and hasattr(self.game_engine, "manager"))
+                else False
+            )
+            running_state = bool(is_running) or (raw_running is True)
+
+            should_monitor = bool(fps_enabled and running_state)
+            try:
+                loop = asyncio.get_running_loop()
+                if loop and loop.is_running():
+                    if should_monitor:
+                        loop.create_task(self.hardware_service.start_fps_monitoring(exe_name))
+                    else:
+                        loop.create_task(self.hardware_service.stop_fps_monitoring())
+                    return
+            except RuntimeError:
+                pass
+
+            # Fallback for non-asyncio threads (GameForegroundWatcher, GuiBridge, Standby)
+            if should_monitor and hasattr(self.hardware_service, "start_fps_monitoring_sync"):
+                self.hardware_service.start_fps_monitoring_sync(exe_name)
+            elif not should_monitor and hasattr(self.hardware_service, "stop_fps_monitoring_sync"):
+                self.hardware_service.stop_fps_monitoring_sync()
+
     def _on_steam_friend_status_change(self, change: dict):
         """Dispatches a proactive notification when a Steam friend changes status or in-game presence."""
         msg = change.get("message")
@@ -2099,6 +2175,7 @@ class AetherEngine:
             return
         self._ptt_active = active
         if active:
+            self._kill_playback_flag = False
             self._last_live_turn_completed_ts = time.time()
             self.last_user_turn_timestamp = time.time()
             if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
@@ -2163,6 +2240,7 @@ class AetherEngine:
             return
         if state == "speech_detected":
             if not self.is_speaking:
+                self._kill_playback_flag = False
                 self._in_active_turn = True
                 self._last_live_turn_completed_ts = time.time()
                 self.last_user_turn_timestamp = time.time()
@@ -2205,6 +2283,7 @@ class AetherEngine:
         if not clean_text:
             return
         now_ts = time.time()
+        self._kill_playback_flag = False
         self.last_user_turn_timestamp = now_ts
         self.last_user_turn_time = time.perf_counter()
         self._last_live_turn_completed_ts = now_ts
@@ -2466,6 +2545,7 @@ class AetherEngine:
                     tool_call = getattr(response, "tool_call", None)
                     if tool_call is not None and tool_call.function_calls:
                         now_ts = time.time()
+                        self._kill_playback_flag = False
                         self._is_transcribing = False
                         self.is_tool_executing = True
                         self._in_active_turn = True
@@ -2645,7 +2725,6 @@ class AetherEngine:
                                     if intercept.tts_message:
                                         await self._speak_feedback(intercept.tts_message)
                                 elif intercept.action_type in ("mode_toggle", "guidance_level_change"):
-                                    self.kill_audio()
                                     if intercept.user_message:
                                         self.notify("chat_event", {
                                             "type": "assistant",
@@ -2740,6 +2819,7 @@ class AetherEngine:
 
                     # 6. Turn Complete
                     if server_content.turn_complete:
+                        self._kill_playback_flag = False
                         # Finalize user speech if not already finalized
                         clean_user_speech = self.current_user_speech.strip()
                         if clean_user_speech:
@@ -2891,6 +2971,11 @@ class AetherEngine:
 
     async def _run(self):
         self.is_running = True
+        if hasattr(self, "hardware_service") and self.hardware_service:
+            try:
+                await self.hardware_service.start_alert_watcher()
+            except Exception as e:
+                logger.warning(f"[START] Hardware service alert watcher start warning: {e}")
         if hasattr(self, "notification_watcher") and self.notification_watcher and not self.notification_watcher._running:
             try:
                 await self.notification_watcher.start()
@@ -3762,6 +3847,19 @@ class AetherEngine:
                                     intercept.user_message = "🎵 No active media detected."
                             else:
                                 await self.media_service.execute_transport_command(action, fallback_to_media_key=True)
+
+                        if intercept.action_type == "hardware_telemetry" and hasattr(self, "hardware_service") and self.hardware_service:
+                            snap = self.hardware_service.get_snapshot()
+                            msg_parts = []
+                            if snap.cpu_temp_c is not None:
+                                msg_parts.append(f"CPU is {snap.cpu_temp_c}°C at {snap.cpu_load_pct:.0f}% load")
+                            else:
+                                msg_parts.append(f"CPU load is {snap.cpu_load_pct:.0f}%")
+                            msg_parts.append(f"GPU is {snap.gpu_temp_c}°C with {snap.vram_used_gb:.1f} of {snap.vram_total_gb:.1f} GB VRAM used")
+                            if snap.fps_avg is not None:
+                                msg_parts.append(f"running at {snap.fps_avg} FPS")
+                            intercept.tts_message = ", ".join(msg_parts) + "."
+                            intercept.user_message = f"⚡ {intercept.tts_message}"
 
                         # 1. Execute replay capture if triggered
                         if intercept.action_type == "replay_capture" and hasattr(self, "replay_service"):
@@ -5296,6 +5394,7 @@ class AetherEngine:
             self.is_tool_executing = False
             self._is_audio_streaming = False
             self._reset_context_flag = False
+            self._kill_playback_flag = False
 
             self.notify("chat_event", {
                 "type": "system",
@@ -5520,6 +5619,12 @@ class AetherEngine:
                 self.audio_ducking_service.restore_volumes_sync()
             except Exception as e:
                 logger.warning(f"[STOP] Audio ducking restore warning: {e}")
+
+        if hasattr(self, "hardware_service") and self.hardware_service:
+            try:
+                self.hardware_service.close()
+            except Exception as e:
+                logger.warning(f"[STOP] Hardware service close warning: {e}")
 
         self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 

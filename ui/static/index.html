@@ -132,7 +132,7 @@
                 </button>
               </div>
 
-              <!-- Line 2: Process Active/Inactive (left) & Guidance (middle) -->
+              <!-- Line 2: Process Active/Inactive (left) & Guidance (middle) + FPS Pill (Row 1) -->
               <div class="game-banner-row game-banner-row-2">
                 <div class="game-banner-col-status">
                   <span id="game-process-indicator" class="badge-status badge-offline">Process Inactive</span>
@@ -146,6 +146,12 @@
                       <option value="walkthrough">Walkthrough (Direct)</option>
                     </select>
                   </div>
+
+                  <!-- Inline FPS Monitoring Pill Button (Row 1 beside Guidance) -->
+                  <button type="button" id="fps-toggle-btn" class="fps-pill-btn active" onclick="handleToggleFpsMonitoring(event)" title="Toggle PresentMon FPS tracking for this game">
+                    <span class="pill-icon">⚡</span>
+                    <span class="pill-text">FPS: ON</span>
+                  </button>
                 </div>
               </div>
 

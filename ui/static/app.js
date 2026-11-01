@@ -3524,6 +3524,3 @@ if (typeof populateModelDropdowns !== "undefined") {
 if (typeof loadSettingsUI !== "undefined") {
   window.loadSettingsUI = loadSettingsUI;
 }
-
-
-

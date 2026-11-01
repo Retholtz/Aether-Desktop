@@ -48,5 +48,5 @@ winrt-Windows.UI.Notifications.Management
 winrt-Windows.ApplicationModel
 pycaw
 comtypes
-
-
+pynvml>=13.0.0
+wintmp>=1.3.0

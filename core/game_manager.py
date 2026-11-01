@@ -220,6 +220,11 @@ class GameManager:
             "profiles": profiles
         }
 
+    def save_profiles(self):
+        """Persists all profiles to disk."""
+        with self._lock:
+            self._save_profiles(self.data)
+
     def save_profile(self, game_id: str):
         """Persists a single game's profile to disk."""
         with self._lock:
@@ -472,7 +477,8 @@ class GameManager:
         if not prof:
             return False
 
-        pname = (prof.get("process_name") or "").lower().strip()
+        raw_pname = (prof.get("executable") or prof.get("process_name") or "").strip()
+        pname = os.path.basename(raw_pname).lower()
         if not pname:
             return False
 
@@ -586,7 +592,8 @@ class GameManager:
                 window_title = ""
 
             for gid, profile in self.data.get("profiles", {}).items():
-                pname = (profile.get("process_name") or "").lower().strip()
+                raw_pname = (profile.get("executable") or profile.get("process_name") or "").strip()
+                pname = os.path.basename(raw_pname).lower()
                 dname = (profile.get("display_name") or "").lower().strip()
 
                 # A. Match process executable name (exact, stem, substring, or paired launcher/runtime)
@@ -627,7 +634,8 @@ class GameManager:
 
             targets = {}
             for gid, profile in profiles.items():
-                pname = (profile.get("process_name") or "").lower().strip()
+                raw_pname = (profile.get("executable") or profile.get("process_name") or "").strip()
+                pname = os.path.basename(raw_pname).lower()
                 if pname:
                     targets[gid] = (pname, os.path.splitext(pname)[0])
 
@@ -661,7 +669,7 @@ class GameManager:
         2. Automatically sets game_mode_enabled = True (unless explicit user override).
         3. Dispatches _notify_mode_changed() so the overlay updates immediately.
         """
-        detected_id = self.detect_foreground_game()
+        detected_id = self.detect_foreground_game() or self.detect_running_game()
         # Avoid hammering psutil.process_iter() across the whole OS every 2 seconds.
         # Only check background running process if game mode was already active to verify it didn't close.
         if not detected_id and self.game_mode_enabled:
@@ -822,7 +830,8 @@ class GameManager:
             f"   - You are exclusively operating within {universe_name} in {game_title}.\n"
             f"   - Speak, react, and advise solely as the player's in-game companion. Stay 100% in-character at all times.\n"
             f"   - NEVER break character to discuss, explain, or troubleshoot real-world software, programming, Python code, system architecture, desktop bugs, or real-world events.\n"
-            f"   - If the player asks about real-world software, code, bugs, or out-of-game matters: DO NOT ANSWER OR DISCUSS SOFTWARE. Deflect in-character and remind the player: 'My focus is on our journey in {game_title}. If you want to talk about real-world topics or code, tell me to \"disable Game Mode\" first.'\n"
+            f"   - HARDWARE, THERMALS & FPS EXCEPTION: Real-time gaming rig performance metrics (CPU and GPU thermals/temperatures, VRAM allocation, and live FPS/frametime) ARE EXPLICITLY ALLOWED during Game Mode. If the player asks about thermals, temps, FPS, frame rates, or hardware status, DO NOT deflect. Invoke `get_hardware_telemetry` immediately and report the metrics directly.\n"
+            f"   - If the player asks about other unrelated real-world software, code, bugs, or out-of-game matters: DO NOT ANSWER OR DISCUSS SOFTWARE. Deflect in-character and remind the player: 'My focus is on our journey in {game_title}. If you want to talk about real-world topics or code, tell me to \"disable Game Mode\" first.'\n"
             f"   - NEVER search for, reference, or import terminology from unrelated games (e.g. World of Warcraft, Black Desert, Dark Souls, Elder Scrolls, etc.).\n"
             f"   - When discussing game lore, builds, quests, or mechanics, provide rich, thorough, and detailed guidance grounded in {game_title}.\n"
             f"2. GOOGLE SEARCH LOCK: If you perform a Google Search to assist the player, your search query MUST be strictly scoped with \"{game_title}\" (e.g. '\"{game_title}\" <topic>'). Never execute un-scoped generic searches.\n"

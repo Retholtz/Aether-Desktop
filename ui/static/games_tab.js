@@ -8,6 +8,76 @@ let currentGamesData = null;
 let activeGameId = null;
 let scratchpadDebounceTimer = null;
 
+function updateFpsPillUI(isEnabled) {
+    const btn = document.getElementById('fps-toggle-btn');
+    if (!btn) return;
+    if (isEnabled) {
+        btn.classList.add('active');
+        btn.classList.remove('inactive');
+        btn.innerHTML = '<span class="pill-icon">⚡</span><span class="pill-text">FPS: ON</span>';
+        btn.setAttribute('aria-pressed', 'true');
+    } else {
+        btn.classList.add('inactive');
+        btn.classList.remove('active');
+        btn.innerHTML = '<span class="pill-icon">⚡</span><span class="pill-text">FPS: OFF</span>';
+        btn.setAttribute('aria-pressed', 'false');
+    }
+}
+window.updateFpsPillUI = updateFpsPillUI;
+
+function getCurrentlySelectedGameId() {
+    if (activeGameId) return activeGameId;
+    if (window.activeGameId) return window.activeGameId;
+    if (currentGamesData && currentGamesData.active_profile) return currentGamesData.active_profile;
+    const activeItem = document.querySelector('.game-item.active') || document.querySelector('.game-list-item.active');
+    if (activeItem && activeItem.dataset.gameId) return activeItem.dataset.gameId;
+    if (currentGamesData && currentGamesData.profiles) {
+        const keys = Object.keys(currentGamesData.profiles);
+        if (keys.length > 0) return keys[0];
+    }
+    return "crimson_desert";
+}
+window.getCurrentlySelectedGameId = getCurrentlySelectedGameId;
+
+async function handleToggleFpsMonitoring(e) {
+    if (e) {
+        try { if (typeof e.preventDefault === 'function') e.preventDefault(); } catch (_) {}
+        try { if (typeof e.stopPropagation === 'function') e.stopPropagation(); } catch (_) {}
+    }
+
+    const fpsBtn = document.getElementById('fps-toggle-btn');
+    if (!fpsBtn) return;
+    const targetGameId = getCurrentlySelectedGameId();
+    if (!targetGameId) return;
+
+    // Detect current visual active state
+    const isCurrentlyActive = fpsBtn.classList.contains('active');
+    const newState = !isCurrentlyActive;
+
+    // Instant optimistic visual feedback
+    updateFpsPillUI(newState);
+    if (currentGamesData && currentGamesData.profiles && currentGamesData.profiles[targetGameId]) {
+        currentGamesData.profiles[targetGameId].fps_monitoring = newState;
+    }
+
+    // Persist via PyWebView bridge
+    try {
+        if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.toggle_game_fps_monitoring === 'function') {
+            const res = await window.pywebview.api.toggle_game_fps_monitoring(targetGameId, newState);
+            if (res && res.fps_monitoring !== undefined) {
+                const confirmedState = Boolean(res.fps_monitoring);
+                if (currentGamesData && currentGamesData.profiles && currentGamesData.profiles[targetGameId]) {
+                    currentGamesData.profiles[targetGameId].fps_monitoring = confirmedState;
+                }
+                updateFpsPillUI(confirmedState);
+            }
+        }
+    } catch (err) {
+        console.error("[FPS TOGGLE] Error toggling FPS tracking:", err);
+    }
+}
+window.handleToggleFpsMonitoring = handleToggleFpsMonitoring;
+
 function escapeGameHtml(str) {
     return String(str == null ? '' : str)
         .replace(/&/g, '&amp;')
@@ -24,7 +94,7 @@ async function loadGamesUI() {
             return;
         }
         currentGamesData = await window.pywebview.api.get_game_profiles();
-        activeGameId = currentGamesData.active_profile;
+        activeGameId = currentGamesData.active_profile; window.activeGameId = activeGameId;
         renderGamesSidebar();
         renderActiveGameDetail();
         startTelemetryPolling();
@@ -81,7 +151,7 @@ function renderGamesSidebar() {
 
 async function switchActiveGame(gid) {
     if (activeGameId === gid) return;
-    activeGameId = gid;
+    activeGameId = gid; window.activeGameId = gid;
     try {
         await window.pywebview.api.set_active_game_profile(gid);
     } catch (e) {
@@ -160,6 +230,14 @@ function renderActiveGameDetail() {
 
     // Navigation Mode Selector
     const navSelect = document.getElementById('select-navigation-mode');
+
+    // FPS Monitoring Pill UI Sync & Click Handler
+    const fpsBtn = document.getElementById('fps-toggle-btn');
+    if (fpsBtn) {
+        const isFpsEnabled = profile.fps_monitoring !== false;
+        updateFpsPillUI(isFpsEnabled);
+        fpsBtn.onclick = handleToggleFpsMonitoring;
+    }
     if (navSelect) {
         navSelect.value = profile.navigation_mode || 'controller';
         navSelect.onchange = async (e) => {
@@ -664,6 +742,8 @@ function initGamesTabEvents() {
     document.getElementById('btn-delete-game')?.addEventListener('click', promptDeleteGame);
 
     // Binds Synchronization (Auto-Detection)
+    const fpsBtnInit = document.getElementById('fps-toggle-btn'); if (fpsBtnInit) { fpsBtnInit.onclick = handleToggleFpsMonitoring; }
+
     document.getElementById('btn-sync-game-binds')?.addEventListener('click', async () => {
         if (!activeGameId) return;
         const btn = document.getElementById('btn-sync-game-binds');

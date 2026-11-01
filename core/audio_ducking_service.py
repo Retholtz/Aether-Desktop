@@ -17,7 +17,29 @@ try:
     import comtypes
     from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
     PYCAW_AVAILABLE = True
-except ImportError:
+except OSError as e:
+    # If COM was already initialized in MTA mode by another subsystem (e.g. .NET CLR),
+    # comtypes defaults to STA and raises WinError -2147417850 (RPC_E_CHANGED_MODE).
+    # Setting sys.coinit_flags = 0 aligns comtypes with the existing MTA thread mode.
+    if getattr(e, "winerror", None) == -2147417850 or "Cannot change thread mode" in str(e):
+        try:
+            import sys
+            sys.coinit_flags = 0
+            import comtypes
+            from pycaw.pycaw import AudioUtilities, ISimpleAudioVolume
+            PYCAW_AVAILABLE = True
+        except Exception as retry_err:
+            logger.warning(f"[AUDIO_DUCKING] Failed to load comtypes/pycaw after MTA retry: {retry_err}")
+            PYCAW_AVAILABLE = False
+            AudioUtilities = None
+            ISimpleAudioVolume = None
+    else:
+        logger.warning(f"[AUDIO_DUCKING] pycaw/comtypes could not be loaded: {e}")
+        PYCAW_AVAILABLE = False
+        AudioUtilities = None
+        ISimpleAudioVolume = None
+except ImportError as e:
+    logger.warning(f"[AUDIO_DUCKING] pycaw/comtypes could not be loaded: {e}")
     PYCAW_AVAILABLE = False
     AudioUtilities = None
     ISimpleAudioVolume = None
@@ -131,6 +153,7 @@ class AudioDuckingService:
                 sessions = AudioUtilities.GetAllSessions()
                 attenuation_factor = (100.0 - self.duck_percentage) / 100.0
                 ducked_count = 0
+                ducked_names = []
 
                 for session in sessions:
                     try:
@@ -138,16 +161,24 @@ class AudioDuckingService:
                             continue
 
                         pid = session.Process.pid
-                        if not pid or pid in exclude:
-                            continue
-
                         proc_name = ""
                         try:
                             proc_name = session.Process.name().lower()
                         except Exception:
                             pass
 
-                        if proc_name in self.SYSTEM_EXCLUSIONS:
+                        # Always keep Aether's own audio output at 100% and unmuted
+                        if not pid or pid in exclude or proc_name in self.SYSTEM_EXCLUSIONS or "python" in proc_name or "aether" in proc_name:
+                            if pid == self.own_pid or "python" in proc_name or "aether" in proc_name:
+                                try:
+                                    own_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
+                                    if own_ctl:
+                                        if own_ctl.GetMasterVolume() < 0.99:
+                                            own_ctl.SetMasterVolume(1.0, None)
+                                        if hasattr(own_ctl, "GetMute") and own_ctl.GetMute():
+                                            own_ctl.SetMute(0, None)
+                                except Exception:
+                                    pass
                             continue
 
                         volume_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
@@ -172,12 +203,13 @@ class AudioDuckingService:
                         if abs(current_vol - target_vol) > 0.01:
                             volume_ctl.SetMasterVolume(target_vol, None)
                             ducked_count += 1
+                            ducked_names.append(proc_name or str(pid))
                     except Exception as e_session:
                         logger.debug(f"[DUCKING] Skipped session due to error: {e_session}")
 
                 self._is_ducked = True
                 if ducked_count > 0:
-                    logger.info(f"[DUCKING] Ducked {ducked_count} active audio sessions by {self.duck_percentage}%.")
+                    logger.info(f"[DUCKING] Ducked {ducked_count} active audio sessions by {self.duck_percentage}%: {ducked_names}")
             except Exception as e:
                 logger.error(f"[DUCKING] Failed to duck sessions: {e}. Attempting rollback.")
                 self.restore_all()

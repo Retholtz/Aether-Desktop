@@ -171,6 +171,39 @@
       transition: color 0.3s ease;
     }
 
+    .mini-fps-badge {
+      margin-left: auto;
+      flex-shrink: 0;
+      font-family: 'JetBrains Mono', 'Consolas', monospace;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.32);
+      border-radius: 6px;
+      padding: 2px 6px;
+      white-space: nowrap;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 6px rgba(56, 189, 248, 0.15);
+    }
+
+    .hud-fps-badge {
+      font-family: 'JetBrains Mono', 'Consolas', monospace;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.38);
+      border-radius: 4px;
+      padding: 1px 6px;
+      margin-left: 4px;
+      white-space: nowrap;
+      align-items: center;
+    }
+
     /* =========================================================================
        Top Bar: Status Badge, 3-Segment Toggle & Window Controls
        ========================================================================= */
@@ -815,6 +848,7 @@
         <span class="mini-title-label" id="miniTitleLabel">Aether:</span>
         <span class="mini-status-label" id="miniStatusLabel">Standby</span>
       </div>
+      <div class="mini-fps-badge" id="miniFpsBadge" style="display: none;">FPS: --</div>
     </div>
 
     <!-- Top Bar (Normal and Max Modes) -->
@@ -824,6 +858,7 @@
         <div class="status-dot" id="statusDot"></div>
         <span class="status-label" id="statusLabel">STANDBY</span>
         <span class="game-mode-badge" id="gameModeBadge" style="display: none;">🎮 GAME MODE</span>
+        <span class="hud-fps-badge" id="hudFpsBadge" style="display: none;">FPS: --</span>
       </div>
 
       <!-- 3-Segment Toggle: [ — | ▢ | ⤢ ] -->
@@ -1002,10 +1037,41 @@
 
       let gameModeState = {
         active: false,
-        enabled: true,
+        enabled: false,
+        is_running: false,
+        fps_monitoring: true,
+        fps: null,
         game_id: "",
         display_name: ""
       };
+
+      let lastShowFps = null;
+
+      function updateFpsBadge() {
+        const miniFpsEl = document.getElementById("miniFpsBadge");
+        const hudFpsEl = document.getElementById("hudFpsBadge");
+        const showFps = Boolean(gameModeState.is_running && gameModeState.fps_monitoring);
+        const fpsText = (gameModeState.fps !== null && gameModeState.fps !== undefined && gameModeState.fps > 0)
+          ? `FPS: ${gameModeState.fps}`
+          : "FPS: --";
+
+        if (miniFpsEl) {
+          miniFpsEl.style.display = showFps ? "inline-flex" : "none";
+          if (showFps) miniFpsEl.innerText = fpsText;
+        }
+        if (hudFpsEl) {
+          hudFpsEl.style.display = showFps ? "inline-flex" : "none";
+          if (showFps) hudFpsEl.innerText = fpsText;
+        }
+        if (showFps !== lastShowFps) {
+          lastShowFps = showFps;
+          try {
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.set_mini_fps_visible) {
+              window.pywebview.api.set_mini_fps_visible(showFps);
+            }
+          } catch (e) {}
+        }
+      }
 
       function updateMiniLabels(state, action) {
         let actionDisplay = stateLabels[state] || (state ? state.charAt(0).toUpperCase() + state.slice(1) : "Standby");
@@ -1014,12 +1080,10 @@
         }
 
         if (miniTitleLabel) {
-          if (gameModeState.active && gameModeState.enabled) {
+          // Only show the game label in the HUD when the game is running AND Aether is in Game Mode for that game
+          if (gameModeState.is_running && gameModeState.enabled && gameModeState.game_id) {
             miniTitleLabel.innerText = `🎮 ${gameModeState.display_name || "Game"}:`;
-            miniTitleLabel.title = `Game Mode Focused: ${gameModeState.display_name}`;
-          } else if (gameModeState.active && !gameModeState.enabled) {
-            miniTitleLabel.innerText = `🌐 ${gameModeState.display_name || agentName}:`;
-            miniTitleLabel.title = `Open Conversation (${gameModeState.display_name} macros active)`;
+            miniTitleLabel.title = `Game Mode Active: ${gameModeState.display_name}`;
           } else {
             miniTitleLabel.innerText = `${agentName}:`;
             miniTitleLabel.title = agentName;
@@ -1033,32 +1097,40 @@
 
       function updateGameMode(data) {
         if (!data) return;
-        gameModeState.enabled = data.enabled !== undefined ? Boolean(data.enabled) : (data.game_mode_enabled !== undefined ? Boolean(data.game_mode_enabled) : false);
-        gameModeState.game_id = data.game_id || data.active_profile || "";
-        gameModeState.display_name = data.display_name || data.game_name || "";
-        const isRunning = data.is_running !== undefined ? Boolean(data.is_running) : false;
-        const isActive = data.is_active !== undefined ? Boolean(data.is_active) : (data.enabled !== undefined ? Boolean(data.enabled) : false);
-        gameModeState.active = Boolean(gameModeState.game_id) && (gameModeState.enabled || isRunning || isActive);
+        if (data.enabled !== undefined || data.game_mode_enabled !== undefined) {
+          gameModeState.enabled = data.enabled !== undefined ? Boolean(data.enabled) : Boolean(data.game_mode_enabled);
+        }
+        if (data.game_id !== undefined || data.active_profile !== undefined) {
+          gameModeState.game_id = data.game_id || data.active_profile || "";
+        }
+        if (data.display_name !== undefined || data.game_name !== undefined) {
+          gameModeState.display_name = data.display_name || data.game_name || "";
+        }
+        if (data.is_running !== undefined) {
+          gameModeState.is_running = Boolean(data.is_running);
+        }
+        if (data.fps_monitoring !== undefined) {
+          gameModeState.fps_monitoring = Boolean(data.fps_monitoring);
+        }
+        if (data.fps !== undefined) {
+          gameModeState.fps = data.fps;
+        }
+        gameModeState.active = Boolean(gameModeState.game_id) && gameModeState.is_running && gameModeState.enabled;
 
         const badge = document.getElementById("gameModeBadge");
         if (badge) {
-          if (gameModeState.active && gameModeState.enabled) {
+          if (gameModeState.is_running && gameModeState.enabled && gameModeState.game_id) {
             badge.style.display = "inline-flex";
             const title = (gameModeState.display_name || "GAME").toUpperCase();
             badge.innerText = `🎮 ${title}`;
             badge.className = "game-mode-badge focused";
-            badge.title = `Game Mode Focused: ${gameModeState.display_name}`;
-          } else if (gameModeState.active && !gameModeState.enabled) {
-            badge.style.display = "inline-flex";
-            const title = (gameModeState.display_name || "GAME").toUpperCase();
-            badge.innerText = `🌐 ${title} (MACROS)`;
-            badge.className = "game-mode-badge standby";
-            badge.title = `Open Conversation (${gameModeState.display_name} macros active)`;
+            badge.title = `Game Mode Active: ${gameModeState.display_name}`;
           } else {
             badge.style.display = "none";
           }
         }
 
+        updateFpsBadge();
         updateMiniLabels(currentStatusState);
       }
 
@@ -2014,7 +2086,24 @@
               }
             }
           }
-          if (window.pywebview.api.get_game_mode) {
+          if (window.pywebview.api.get_hud_telemetry) {
+            try {
+              const telRes = await window.pywebview.api.get_hud_telemetry();
+              if (telRes) {
+                updateGameMode(telRes);
+              }
+            } catch(ex) {}
+            setInterval(async () => {
+              try {
+                if (gameModeState.is_running && gameModeState.fps_monitoring && window.pywebview && window.pywebview.api && window.pywebview.api.get_hud_telemetry) {
+                  const tel = await window.pywebview.api.get_hud_telemetry();
+                  if (tel) {
+                    updateGameMode(tel);
+                  }
+                }
+              } catch(err) {}
+            }, 1500);
+          } else if (window.pywebview.api.get_game_mode) {
             try {
               const gmRes = await window.pywebview.api.get_game_mode();
               if (gmRes) {

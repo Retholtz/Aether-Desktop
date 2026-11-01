@@ -70,6 +70,7 @@ class GameEngine:
         "trigger_instant_replay",
         "get_current_playing_media",
         "control_media_playback",
+        "get_hardware_telemetry",
     }
 
     def __init__(
@@ -207,6 +208,25 @@ class GameEngine:
                 action_type="media_previous",
                 user_message="⏮️ [Media] Previous track.",
                 tts_message="Previous track.",
+                requires_context_reset=False,
+                skip_llm=True
+            )
+
+        # --- Fast-Path: Hardware Thermals & Framerate ---
+        if re.search(
+            r'\b('
+            r'(how(\'s|\s+is|\s+are)|what(\'s|\s+is|\s+are))\s+(a\s+|an\s+|the\s+|my\s+|our\s+)?(temps?|thermals?|fps|framerate|frames?(\s+per\s+second)?|hardware|gpu|cpu)'
+            r'|(the\s+)?(cpu|gpu|hardware|system)\s+(thermals?|temps?|temperatures?|sitting at|status|performance|load)'
+            r'|check\s+(the\s+)?(fps|framerate|temps?|thermals?|hardware|gpu|cpu)'
+            r'|hardware\s+status|fps\s+status'
+            r')\b',
+            clean_voice_cmd
+        ):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="hardware_telemetry",
+                user_message="⚡ Querying hardware thermals and performance...",
+                tts_message=None,
                 requires_context_reset=False,
                 skip_llm=True
             )
@@ -405,9 +425,10 @@ class GameEngine:
             f"THIS INSTRUCTION STRICTLY OVERRIDES ALL DESKTOP ASSISTANT, CODING, AND REAL-WORLD CAPABILITIES.\n\n"
             f"STRICT IN-CHARACTER DIRECTIVES:\n"
             f"{immersion_directive}\n"
-            f"2. ZERO TOLERANCE FOR OUT-OF-UNIVERSE DEVIATION:\n"
-            f"   - You MUST NEVER break character to discuss out-of-game matters, real-world events, politics, science, personal tasks, Python code, software architecture, system bugs, or application development.\n"
-            f"   - If the user asks about real-world topics or system bugs, stay in-character and deflect in-universe:\n"
+            f"2. ZERO TOLERANCE FOR OUT-OF-UNIVERSE DEVIATION (WITH GAMING RIG TELEMETRY ALLOWED):\n"
+            f"   - You MUST NEVER break character to discuss general real-world topics, politics, personal tasks, Python code, software architecture, system bugs, or application development.\n"
+            f"   - GAMING RIG & PERFORMANCE EXCEPTION: Rig thermals (CPU and GPU temperatures), system load, VRAM allocation, and framerate (FPS / frames per second) ARE EXPLICITLY ALLOWED AND PART OF GAME MODE. If the player asks about thermals, temperatures, FPS, framerates, or system performance, NEVER deflect. Immediately call `get_hardware_telemetry` and report the metrics directly.\n"
+            f"   - For any other unrelated real-world topics or desktop development questions, stay in-character and deflect in-universe:\n"
             f"     'My focus is entirely on our journey in {game_title}. If you wish to discuss real-world matters or inspect code, please tell me to \"disable Game Mode\" (or press {hotkey_display}).'\n"
             f"3. IN-GAME ACTIONS & TWO-TIER MEMORY:\n"
             f"   - You can execute game actions via `trigger_game_action` and check telemetry via `get_current_game_telemetry` / `get_current_game_status`.\n"
@@ -450,6 +471,8 @@ class GameEngine:
 
     def _on_game_mode_changed(self, enabled: bool, game_id: str, game_name: str, is_running: bool = False):
         if callable(self.on_notify):
+            prof = self.manager.get_profile(game_id) if game_id else None
+            fps_mon = bool(prof.get("fps_monitoring", True)) if prof else True
             self.on_notify("game_mode_changed", {
                 "enabled": enabled,
                 "game_mode_enabled": enabled,
@@ -458,6 +481,7 @@ class GameEngine:
                 "active_profile": game_id,
                 "game_id": game_id,
                 "display_name": game_name,
-                "game_name": game_name
+                "game_name": game_name,
+                "fps_monitoring": fps_mon
             })
 

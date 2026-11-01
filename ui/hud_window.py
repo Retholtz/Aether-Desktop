@@ -211,13 +211,28 @@ class HUDBridge:
     def __init__(self, window: Optional[webview.Window], bridge):
         self._window = window
         self._bridge = bridge
+        self._mini_narrow_size = (176, 56)
+        self._mini_wide_size = (245, 56)
+        self._mini_fps_visible = False
+        self._mode_lock = threading.Lock()
         self._normal_size = (440, 180)
         self._max_size = (560, 480)
 
+    @property
+    def _mini_size(self) -> Tuple[int, int]:
+        return self._mini_wide_size if self._mini_fps_visible else self._mini_narrow_size
+
     def get_agent_name(self) -> dict:
         """Returns configured agent name for the HUD overlay."""
+        if hasattr(self._bridge, "get_agent_name"):
+            try:
+                res = self._bridge.get_agent_name()
+                if isinstance(res, dict) and isinstance(res.get("agent_name"), str):
+                    return {"success": True, "agent_name": res["agent_name"]}
+            except Exception:
+                pass
         name = self._bridge.get_raw_config().get("api", {}).get("agent_name", "Aether")
-        return {"success": True, "agent_name": name}
+        return {"success": True, "agent_name": name if isinstance(name, str) else "Aether"}
 
     def get_overlay_config(self) -> dict:
         """Returns initial overlay configuration including agent name, hud mode, and engine state."""
@@ -252,43 +267,58 @@ class HUDBridge:
         if mode not in ("mini", "normal", "max"):
             mode = "normal"
         if self._window:
-            w, h = (210, 56)
-            if mode == "normal":
-                w, h = self._normal_size[0], self._normal_size[1]
-            elif mode == "max":
-                w, h = self._max_size[0], self._max_size[1]
+            with self._mode_lock:
+                w, h = self._mini_wide_size if self._mini_fps_visible else self._mini_narrow_size
+                if mode == "normal":
+                    w, h = self._normal_size[0], self._normal_size[1]
+                elif mode == "max":
+                    w, h = self._max_size[0], self._max_size[1]
 
-            # Re-clamp position so expanding width/height does not push window off screen
-            cur_x = getattr(self._window, "x", None)
-            cur_y = getattr(self._window, "y", None)
-            if cur_x is not None and cur_y is not None:
-                cx, cy = clamp_window_position(cur_x, cur_y, width=w, height=h)
-                if cx != cur_x or cy != cur_y:
-                    self._window.move(cx, cy)
-                    self._bridge.save_overlay_position(cx, cy)
+                # Re-clamp position so expanding width/height does not push window off screen
+                cur_x = getattr(self._window, "x", None)
+                cur_y = getattr(self._window, "y", None)
+                if cur_x is not None and cur_y is not None:
+                    cx, cy = clamp_window_position(cur_x, cur_y, width=w, height=h)
+                    if cx != cur_x or cy != cur_y:
+                        self._window.move(cx, cy)
+                        self._bridge.save_overlay_position(cx, cy)
 
-            self._window.resize(w, h)
-
-            # Apply OS-level window shape clipping both immediately and post-resize
-            apply_hud_window_shape(self._window, mode)
-
-            def _delayed_shape():
-                time.sleep(0.06)
+                self._window.resize(w, h)
                 apply_hud_window_shape(self._window, mode)
 
-            threading.Thread(target=_delayed_shape, daemon=True).start()
-
-            # Ensure overlay JavaScript switches CSS classes and DOM layout immediately
-            try:
-                self._window.evaluate_js(
-                    f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
-                )
-            except Exception:
-                pass
+                # Ensure overlay JavaScript switches CSS classes and DOM layout immediately
+                try:
+                    self._window.evaluate_js(
+                        f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
+                    )
+                except Exception:
+                    pass
 
         if hasattr(self._bridge, "on_hud_mode_changed"):
             self._bridge.on_hud_mode_changed(mode)
         return {"success": True, "mode": mode}
+
+    def set_mini_fps_visible(self, visible: bool) -> dict:
+        """Dynamically adjusts Mini Pill width: narrow (176px) when FPS is off, wider (245px) when FPS is on."""
+        new_vis = bool(visible)
+        if new_vis == self._mini_fps_visible:
+            return {"success": True, "visible": new_vis}
+        self._mini_fps_visible = new_vis
+        try:
+            cur_mode = self.get_hud_mode().get("mode", "normal")
+            if cur_mode == "mini" and self._window:
+                with self._mode_lock:
+                    w, h = self._mini_wide_size if new_vis else self._mini_narrow_size
+                    cur_x = getattr(self._window, "x", None)
+                    cur_y = getattr(self._window, "y", None)
+                    if cur_x is not None and cur_y is not None:
+                        cx, cy = clamp_window_position(cur_x, cur_y, width=w, height=h)
+                        if cx != cur_x or cy != cur_y:
+                            self._window.move(cx, cy)
+                    self._window.resize(w, h)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        return {"success": True, "visible": new_vis}
 
     def resize_overlay(self, width: int, height: int, x: Optional[int] = None, y: Optional[int] = None) -> dict:
         """Dynamically resizes (and optionally repositions) the HUD overlay window."""
@@ -419,6 +449,12 @@ class HUDBridge:
             return self._bridge.get_game_mode()
         return {"game_mode_enabled": False, "is_active": False, "is_running": False, "active_profile": "", "display_name": ""}
 
+    def get_hud_telemetry(self) -> dict:
+        """Relays get_hud_telemetry call from HUD overlay to GuiBridge."""
+        if hasattr(self._bridge, "get_hud_telemetry"):
+            return self._bridge.get_hud_telemetry()
+        return {"game_mode_enabled": False, "is_running": False, "fps_monitoring": False, "fps": None}
+
     def set_game_mode(self, enabled: bool) -> dict:
         """Relays set_game_mode call from HUD overlay to GuiBridge."""
         if hasattr(self._bridge, "set_game_mode"):
@@ -490,7 +526,7 @@ class HudWindow:
         cfg_mode = cfg_ui.get("hud_mode", "normal")
         init_w, init_h = (440, 180)
         if cfg_mode == "mini":
-            init_w, init_h = (210, 56)
+            init_w, init_h = (176, 56)
         elif cfg_mode == "max":
             init_w, init_h = (560, 480)
 

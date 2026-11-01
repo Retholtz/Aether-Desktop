@@ -99,6 +99,13 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "target_mode": "all_except_aether",
         "restore_delay_ms": 150,
     },
+    "hardware_telemetry": {
+        "enabled": True,
+        "presentmon_path": "assets/bin/PresentMon.exe",
+        "vram_alert_threshold_pct": 95,
+        "gpu_temp_alert_threshold_c": 85,
+        "verbal_warnings": True,
+    },
 }
 
 
@@ -222,6 +229,14 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
     duck_cfg.setdefault("duck_percentage", 60)
     duck_cfg.setdefault("target_mode", "all_except_aether")
     duck_cfg.setdefault("restore_delay_ms", 150)
+
+    # Ensure hardware_telemetry structure is populated
+    hw_cfg = settings_data.setdefault("hardware_telemetry", {})
+    hw_cfg.setdefault("enabled", True)
+    hw_cfg.setdefault("presentmon_path", "assets/bin/PresentMon.exe")
+    hw_cfg.setdefault("vram_alert_threshold_pct", 95)
+    hw_cfg.setdefault("gpu_temp_alert_threshold_c", 85)
+    hw_cfg.setdefault("verbal_warnings", True)
 
     return Settings(settings_data)
 

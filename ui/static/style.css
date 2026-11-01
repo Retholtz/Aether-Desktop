@@ -2480,12 +2480,24 @@ label {
   letter-spacing: 0.04em;
 }
 
+.guidance-level-wrap,
+.navigation-mode-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 308px;
+  min-width: 308px;
+}
+
 .guidance-level-wrap select,
 .navigation-mode-wrap select {
   font-size: 0.8rem;
   padding: 4px 10px;
   height: 32px;
-  min-width: 190px;
+  width: 224px;
+  min-width: 224px;
+  max-width: 224px;
+  box-sizing: border-box;
 }
 
 .game-banner-col-action {
@@ -3037,3 +3049,55 @@ label {
 
 
 
+
+/* Inline FPS Pill Button */
+.fps-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 14px;
+  height: 32px;
+  margin-left: 20px;
+  border-radius: 16px;
+  background: rgba(13, 23, 33, 0.85);
+  font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  outline: none;
+  user-select: none;
+}
+
+.fps-pill-btn * {
+  pointer-events: none;
+}
+
+/* Active State: Glowing Cyan */
+.fps-pill-btn.active {
+  border: 1px solid #00F3FF;
+  color: #00F3FF;
+  box-shadow: 0 0 10px rgba(0, 243, 255, 0.4), inset 0 0 6px rgba(0, 243, 255, 0.2);
+}
+
+.fps-pill-btn.active:hover {
+  background: rgba(0, 243, 255, 0.15);
+  box-shadow: 0 0 14px rgba(0, 243, 255, 0.6);
+}
+
+/* Inactive State: Muted Slate */
+.fps-pill-btn.inactive {
+  border: 1px solid #3a4754;
+  color: #7b8a97;
+  box-shadow: none;
+}
+
+.fps-pill-btn.inactive:hover {
+  border-color: #5d6e80;
+  color: #a0b2c3;
+  background: rgba(255, 255, 255, 0.05);
+}
