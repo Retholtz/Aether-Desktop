@@ -54,6 +54,11 @@ from tools.hardware_tools import register_hardware_tools
 from core.project_service import ProjectService
 from core.notebooklm_service import NotebookLMService
 from tools.project_tools import register_project_tools
+from core.ttrpg_service import TTRPGService
+from tools.ttrpg_tools import register_ttrpg_tools
+from core.session_manager import SessionManager
+from core.character_vault_service import CharacterVaultService
+from tools.vault_tools import register_vault_tools
 from ui.notifications import NotificationDispatcher
 
 logger = get_logger("Engine")
@@ -715,6 +720,18 @@ class AetherEngine:
         self.notebook_service = self.notebooklm_service
         register_project_tools(self.dispatcher, self.project_service, self.notebooklm_service)
 
+        # Universal Tabletop Roleplaying Engine (TTRPG Service & Tools)
+        self.ttrpg_service = TTRPGService(client_getter=lambda: self.client)
+        register_ttrpg_tools(self.dispatcher, self.ttrpg_service)
+        self._ttrpg_session_active = False
+
+        # Multi-Workspace Session Persistence Manager
+        self.session_mgr = SessionManager()
+
+        # Character Vault & Cross-Genre Branching Engine
+        self.vault_service = CharacterVaultService()
+        register_vault_tools(self.dispatcher, self.vault_service, lambda: self._get_current_campaign_genre())
+
         # Check Windows Administrator privilege for gaming input reliability
         from tools.os_controls import is_running_as_admin
         if not is_running_as_admin():
@@ -748,6 +765,7 @@ class AetherEngine:
 
         # Rolling Session Lifecycle & Compactor (Layer B Context Optimization)
         self.session_lifecycle = SessionLifecycleManager()
+        self.session_lifecycle.on_turn_recorded = lambda r, c: self.session_mgr.append_turn("model" if r == "assistant" else r, c)
         self._active_cm = None
         self._active_recv_task: Optional[asyncio.Task] = None
         self._base_system_instruction: str = ""
@@ -1402,6 +1420,96 @@ class AetherEngine:
     def is_tool_running(self, val: bool):
         self._is_tool_running = bool(val)
         self.is_tool_executing = bool(val)
+
+    def is_ttrpg_session_active(self) -> bool:
+        """Returns True if Aether is currently operating in Tabletop Role Play (Live DM) mode."""
+        return bool(getattr(self, "_ttrpg_session_active", False))
+
+    def set_ttrpg_session_active(self, active: bool) -> None:
+        """
+        Sets whether Aether is in Tabletop Role Play mode.
+        Role Play mode is strictly exclusive to active tabletop adventure sessions.
+        If the state changes while the engine is running, requests a live session rotation
+        so the system prompt immediately shifts between Role Play, Game Mode, and Agent Mode.
+        """
+        active_bool = bool(active)
+        prev = getattr(self, "_ttrpg_session_active", False)
+        if prev != active_bool:
+            self._ttrpg_session_active = active_bool
+            logger.info(f"[ENGINE] Tabletop Role Play Mode transitioned: {prev} -> {active_bool}")
+            if self.is_running and hasattr(self, "request_live_session_rotation"):
+                mode_str = "Active" if active_bool else "Inactive"
+                self.request_live_session_rotation(reason=f"TTRPG Mode {mode_str}")
+
+    def _get_current_campaign_genre(self) -> str:
+        """Returns the active campaign system preset or genre (default: heroic_fantasy)."""
+        if hasattr(self, "ttrpg_service") and self.ttrpg_service:
+            manifest = getattr(self.ttrpg_service, "manifest", {}) or {}
+            active_id = manifest.get("active_campaign")
+            if active_id:
+                c = manifest.get("campaigns", {}).get(active_id, {})
+                return c.get("system_preset") or c.get("genre") or "heroic_fantasy"
+        return "heroic_fantasy"
+
+    def set_active_workspace(
+        self,
+        workspace_type: str,
+        context_id: str,
+        display_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Hot-swaps active workspace context (campaign, project, game, general),
+        persists current conversation state, rehydrates target history,
+        and isolates system prompts and tools.
+        """
+        # 1. Hot-swap conversation history from disk
+        restored_history = self.session_mgr.switch_session(workspace_type, context_id, display_name)
+
+        # 2. Re-bind Gemini Chat instance with the loaded history (if client/model exists)
+        if hasattr(self, "model") and hasattr(self.model, "start_chat"):
+            try:
+                self.chat = self.model.start_chat(history=restored_history)
+            except Exception as e:
+                logger.debug(f"[ENGINE] Re-binding chat failed: {e}")
+
+        # 3. Dynamic Tool & Instruction Fencing
+        if workspace_type == "campaign":
+            self.set_ttrpg_session_active(True)
+            if hasattr(self, "ttrpg_service") and self.ttrpg_service:
+                if hasattr(self.ttrpg_service, "build_gm_system_prompt"):
+                    self.active_system_prompt = self.ttrpg_service.build_gm_system_prompt(context_id)
+                elif hasattr(self.ttrpg_service, "build_gm_context_prompt"):
+                    self.active_system_prompt = self.ttrpg_service.build_gm_context_prompt()
+            if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "set_active_scope"):
+                self.dispatcher.set_active_scope(["ttrpg_tools", "media_tools"])
+        elif workspace_type == "project":
+            self.set_ttrpg_session_active(False)
+            if hasattr(self, "project_service") and self.project_service:
+                if hasattr(self.project_service, "build_project_system_prompt"):
+                    self.active_system_prompt = self.project_service.build_project_system_prompt(context_id)
+            if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "set_active_scope"):
+                self.dispatcher.set_active_scope(["project_tools", "media_tools"])
+        elif workspace_type == "game":
+            self.set_ttrpg_session_active(False)
+            if hasattr(self, "game_engine") and self.game_engine:
+                if hasattr(self.game_engine, "build_game_prompt"):
+                    self.active_system_prompt = self.game_engine.build_game_prompt(context_id)
+                elif hasattr(self.game_engine, "build_system_instruction"):
+                    self.active_system_prompt = self.game_engine.build_system_instruction()
+            if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "set_active_scope"):
+                self.dispatcher.set_active_scope(["game_macros", "hardware_telemetry", "replay_tools"])
+        else:
+            self.set_ttrpg_session_active(False)
+            self.active_system_prompt = getattr(self, "base_system_prompt", getattr(self, "_base_system_instruction", ""))
+            if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "reset_scope"):
+                self.dispatcher.reset_scope()
+
+        # Seamless live session rotation if running
+        if self.is_running and hasattr(self, "request_live_session_rotation"):
+            self.request_live_session_rotation(reason=f"Workspace Switch: {workspace_type}:{context_id}")
+
+        logger.info(f"[ENGINE] Active workspace set to {workspace_type}:{context_id}")
+        return restored_history
 
     @property
     def audio_stream(self) -> Optional[AudioPipeline]:
@@ -2765,6 +2873,31 @@ class AetherEngine:
                                         "name": "Game Macro",
                                         "content": intercept.user_message
                                     })
+                                elif intercept.action_type.startswith("ttrpg_") and hasattr(self, "ttrpg_service"):
+                                    if intercept.action_type == "ttrpg_roll_dice":
+                                        details = intercept.details or {}
+                                        formula = details.get("formula", "1d20")
+                                        adv_mode = details.get("roll_type", "normal")
+                                        roll_res = self.ttrpg_service.parse_and_roll(formula, adv_mode)
+                                        if roll_res.get("status") == "success":
+                                            intercept.tts_message = f"Rolled {roll_res['total']}."
+                                            intercept.user_message = f"🎲 {roll_res['summary']}"
+                                            self.notify("dice_roll_event", roll_res)
+                                    elif intercept.action_type == "ttrpg_advance_turn":
+                                        turn_res = self.ttrpg_service.advance_turn()
+                                        if turn_res.get("status") == "success":
+                                            entity = turn_res["active_entity"]
+                                            intercept.tts_message = f"It is now {entity}'s turn in Round {turn_res['round']}."
+                                            intercept.user_message = f"⚔️ Turn: {entity} (Round {turn_res['round']})"
+                                            self.notify("initiative_updated", turn_res)
+                                    if intercept.user_message:
+                                        self.notify("chat_event", {
+                                            "type": "system",
+                                            "content": intercept.user_message,
+                                            "source": "system"
+                                        })
+                                    if intercept.tts_message:
+                                        await self._speak_feedback(intercept.tts_message)
 
                     # 2. Model Audio Generation
                     model_turn = getattr(server_content, "model_turn", None)
@@ -3892,6 +4025,25 @@ class AetherEngine:
                             res = await self.replay_service.trigger_clip()
                             intercept.tts_message = res.get("spoken_confirmation", "Captured.")
 
+                        # Fast-path resolution for Tabletop tools:
+                        if intercept.handled and intercept.action_type.startswith("ttrpg_") and hasattr(self, "ttrpg_service"):
+                            if intercept.action_type == "ttrpg_roll_dice":
+                                details = intercept.details or {}
+                                formula = details.get("formula", "1d20")
+                                adv_mode = details.get("roll_type", "normal")
+                                roll_res = self.ttrpg_service.parse_and_roll(formula, adv_mode)
+                                if roll_res.get("status") == "success":
+                                    intercept.tts_message = f"Rolled {roll_res['total']}."
+                                    intercept.user_message = f"🎲 {roll_res['summary']}"
+                                    self.notify("dice_roll_event", roll_res)
+                            elif intercept.action_type == "ttrpg_advance_turn":
+                                turn_res = self.ttrpg_service.advance_turn()
+                                if turn_res.get("status") == "success":
+                                    entity = turn_res["active_entity"]
+                                    intercept.tts_message = f"It is now {entity}'s turn in Round {turn_res['round']}."
+                                    intercept.user_message = f"⚔️ Turn: {entity} (Round {turn_res['round']})"
+                                    self.notify("initiative_updated", turn_res)
+
                         if intercept.requires_context_reset:
                             chat = create_fresh_chat()
                             chat_game_mode_state = bool(self.game_engine.is_game_mode_active())
@@ -4500,18 +4652,41 @@ class AetherEngine:
             return f"{instruction.rstrip()}\n\n{anchor_block}\n"
 
     def _build_system_instruction(self) -> str:
-        """Returns the active system instruction for Cortex turn generation."""
+        """
+        Returns the active system instruction for Cortex turn generation based on the active mode:
+        1. Role Play Mode (Tabletop TTRPG DM):
+           Strictly exclusive to an active tabletop adventure session (self.is_ttrpg_session_active()).
+        2. Game Mode (Video Game Companion):
+           Active when a video game process is detected or game mode is toggled on (e.g. Crimson Desert).
+        3. Agent Mode (Desktop Voice Assistant):
+           Default mode for desktop tasks, questions, voice control.
+        """
         base_inst = ""
-        if hasattr(self, "game_engine") and self.game_engine and self.game_engine.is_game_mode_active():
-            hk_display = getattr(self, "hotkey_manager", None) and getattr(self.hotkey_manager, "game_mode_display", "Ctrl+Shift+G") or "Ctrl+Shift+G"
-            game_instruction = self.game_engine.build_system_instruction(hotkey_display=hk_display)
-            if game_instruction:
-                base_inst = game_instruction
-        elif hasattr(self, "game_mgr") and self.game_mgr and self.game_mgr.is_game_mode_active():
-            game_context = self.game_mgr.get_active_game_context()
-            if game_context:
-                base_inst = game_context
 
+        # MODE 1: Tabletop Role Play Mode (Live Game Master / DM)
+        # Strictly gated behind an active adventure session!
+        if self.is_ttrpg_session_active():
+            if hasattr(self, "ttrpg_service") and self.ttrpg_service:
+                try:
+                    gm_ctx = self.ttrpg_service.build_gm_context_prompt()
+                    if gm_ctx:
+                        base_inst = gm_ctx
+                except Exception as e:
+                    logger.debug(f"[ENGINE] TTRPG GM context building failed: {e}")
+
+        # MODE 2: Video Game Companion Mode (e.g. Crimson Desert, Steam, etc.)
+        if not base_inst:
+            if hasattr(self, "game_engine") and self.game_engine and self.game_engine.is_game_mode_active():
+                hk_display = getattr(self, "hotkey_manager", None) and getattr(self.hotkey_manager, "game_mode_display", "Ctrl+Shift+G") or "Ctrl+Shift+G"
+                game_instruction = self.game_engine.build_system_instruction(hotkey_display=hk_display)
+                if game_instruction:
+                    base_inst = game_instruction
+            elif hasattr(self, "game_mgr") and self.game_mgr and self.game_mgr.is_game_mode_active():
+                game_context = self.game_mgr.get_active_game_context()
+                if game_context:
+                    base_inst = game_context
+
+        # MODE 3: Desktop Agent Mode (Default Voice Assistant)
         if not base_inst:
             cfg_now = self.config_getter() if self.config_getter else {}
             api_cfg = cfg_now.get("api", {}) if isinstance(cfg_now, dict) else {}
@@ -4523,8 +4698,8 @@ class AetherEngine:
 
         base_inst = self._inject_temporal_anchor(base_inst)
 
-        # Prepend active project custom instructions when a project is active
-        if hasattr(self, "project_service") and self.project_service:
+        # Prepend active project custom instructions when a project is active (if not in Role Play mode)
+        if not self.is_ttrpg_session_active() and hasattr(self, "project_service") and self.project_service:
             active_pid = self.project_service.data.get("active_project")
             projects_map = self.project_service.data.get("projects", {})
             if active_pid and active_pid in projects_map:
@@ -5544,6 +5719,24 @@ class AetherEngine:
 
     def stop(self):
         """Stops the assistant engine, background workers, and closes connections."""
+        # Flush active session transcript to disk and auto-summarize roleplay turns into campaign journal
+        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+            try:
+                if hasattr(self, "ttrpg_service") and self.ttrpg_service and getattr(self.ttrpg_service, "active_state", None):
+                    try:
+                        raw_turns = self.session_lifecycle.get_raw_turns()
+                        if raw_turns:
+                            self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=self.session_lifecycle.session_id)
+                            self.notify("ttrpg_state_updated", {"status": "success", "session_id": self.session_lifecycle.session_id})
+                    except Exception as e_rp:
+                        logger.warning(f"[STOP] TTRPG auto session notes error: {e_rp}")
+
+                self.session_lifecycle.flush_session_to_disk()
+                self.session_lifecycle.turn_history.clear()
+                self.session_lifecycle.reset_metrics()
+            except Exception as e:
+                logger.warning(f"[STOP] Session transcript flush error: {e}")
+
         if not self.is_running:
             if hasattr(self, "game_engine") and self.game_engine:
                 try:
@@ -5597,15 +5790,6 @@ class AetherEngine:
             self._text_queue.put_nowait("")
         except Exception:
             pass
-
-        # Flush active session transcript to disk and trigger background manifest indexing
-        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
-            try:
-                self.session_lifecycle.flush_session_to_disk()
-                self.session_lifecycle.turn_history.clear()
-                self.session_lifecycle.reset_metrics()
-            except Exception as e:
-                logger.warning(f"[STOP] Session transcript flush error: {e}")
 
         self._session_resumption_handle = None
 

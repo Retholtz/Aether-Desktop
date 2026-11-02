@@ -573,6 +573,17 @@ class GuiBridge:
                 except Exception:
                     pass
 
+        from core.ttrpg_service import TTRPGService
+        if hasattr(self.engine, "ttrpg_service") and self.engine.ttrpg_service is not None and isinstance(self.engine.ttrpg_service, TTRPGService):
+            self.ttrpg_service = self.engine.ttrpg_service
+        else:
+            self.ttrpg_service = TTRPGService(client_getter=lambda: getattr(self.engine, "client", None))
+            if self.engine is not None:
+                try:
+                    self.engine.ttrpg_service = self.ttrpg_service
+                except Exception:
+                    pass
+
 
 
         orig_cb = self.game_mgr.on_game_mode_changed
@@ -1055,42 +1066,29 @@ class GuiBridge:
 
             payload = json.dumps({"type": event_type, "data": data})
 
-            
+            def _dispatch():
+                with self._js_lock:
+                    # Dispatch to Main Window
+                    if self._is_window_ready(self._window):
+                        try:
+                            js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
+                            self._window.evaluate_js(js_code)
+                        except Exception as e:
+                            logger.debug(f"[BRIDGE DISPATCH MAIN ERROR] {e}")
 
-            with self._js_lock:
+                    # Dispatch to Floating Overlay Window
+                    if self._is_window_ready(self._overlay_window):
+                        try:
+                            overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
+                            self._overlay_window.evaluate_js(overlay_js)
+                        except Exception as e:
+                            logger.debug(f"[BRIDGE DISPATCH OVERLAY ERROR] {e}")
 
-                # Dispatch to Main Window
-
-                if self._is_window_ready(self._window):
-
-                    try:
-
-                        js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
-
-                        self._window.evaluate_js(js_code)
-
-                    except Exception:
-
-                        pass
-
-
-
-                # Dispatch to Floating Overlay Window
-
-                if self._is_window_ready(self._overlay_window):
-
-                    try:
-
-                        overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
-
-                        self._overlay_window.evaluate_js(overlay_js)
-
-                    except Exception:
-
-                        pass
+            # Execute dispatch asynchronously in a daemon worker thread to prevent
+            # deadlocking with PyWebView synchronous bridge call message pumping on Windows
+            threading.Thread(target=_dispatch, daemon=True).start()
 
         except Exception as err:
-
             logger.warning(f"[BRIDGE DISPATCH ERROR] {err}")
 
 
@@ -2028,11 +2026,17 @@ class GuiBridge:
 
         try:
 
+            if hasattr(self, "set_ttrpg_session_active"):
+                try:
+                    self.set_ttrpg_session_active(False)
+                except Exception:
+                    pass
+
             self._engine.stop()
 
             agent_name = self._config.get("api", {}).get("agent_name", "Aether")
 
-            self._on_engine_event("status", {"state": "standby", "message": f"{agent_name} on standby."})
+            self._on_engine_event("status", {"state": "disconnected", "message": f"{agent_name} stopped."})
 
             return {"success": True, "status": "stopped"}
 
@@ -2137,6 +2141,14 @@ class GuiBridge:
         except Exception as e:
 
             return {"success": False, "error": str(e)}
+
+
+
+    def send_chat_message(self, text: str) -> dict:
+
+        """Alias for send_text_message to send typed prompt to Gemini Live."""
+
+        return self.send_text_message(text)
 
 
 
@@ -6672,6 +6684,608 @@ class GuiBridge:
                     except Exception as e:
                         logger.debug(f"[GUI_BRIDGE] Cloud URL sync warning: {e}")
         return res
+
+    # ------------------------------------------------------------------
+    # Universal Tabletop Roleplaying Engine (Role Play Tab) Endpoints
+    # ------------------------------------------------------------------
+    def get_ttrpg_data(self) -> Dict[str, Any]:
+        self.ttrpg_service.load_manifest()
+        self.ttrpg_service.load_active_campaign_state()
+        active_id = self.ttrpg_service.manifest.get("active_campaign")
+        campaigns = self.ttrpg_service.manifest.get("campaigns", {})
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        is_adv = bool(getattr(eng, "is_ttrpg_session_active", lambda: False)())
+        return {
+            "active_campaign": active_id,
+            "campaigns": campaigns,
+            "active_campaign_meta": campaigns.get(active_id) if active_id else None,
+            "state": self.ttrpg_service.active_state,
+            "is_adventure_active": is_adv,
+            "projects": self.project_service.data.get("projects", {}) if hasattr(self, "project_service") and self.project_service else {}
+        }
+
+    def set_active_campaign(self, campaign_id: str) -> Dict[str, Any]:
+        res = self.ttrpg_service.set_active_campaign(campaign_id)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def create_ttrpg_campaign(
+        self,
+        title: str,
+        system_preset: str = "dnd_5e",
+        gm_mode: str = "interactive_narrator",
+        setting_overview: str = "",
+        tone: str = "Gritty, tense, grounded, cinematic",
+        difficulty: str = "helpful",
+        linked_project_id: str = "",
+        initial_files: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        res = self.ttrpg_service.create_campaign(
+            title=title,
+            system_preset=system_preset,
+            gm_mode=gm_mode,
+            setting_overview=setting_overview,
+            tone=tone,
+            difficulty=difficulty,
+            linked_project_id=linked_project_id,
+            initial_files=initial_files
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def update_ttrpg_campaign(
+        self,
+        campaign_id: Optional[str] = None,
+        title: Optional[str] = None,
+        system_preset: Optional[str] = None,
+        gm_mode: Optional[str] = None,
+        setting_overview: Optional[str] = None,
+        tone: Optional[str] = None,
+        difficulty: Optional[str] = None,
+        linked_project_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        res = self.ttrpg_service.update_campaign(
+            campaign_id=campaign_id,
+            title=title,
+            system_preset=system_preset,
+            gm_mode=gm_mode,
+            setting_overview=setting_overview,
+            tone=tone,
+            difficulty=difficulty,
+            linked_project_id=linked_project_id
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def delete_ttrpg_campaign(self, campaign_id: str) -> Dict[str, Any]:
+        res = self.ttrpg_service.delete_campaign(campaign_id)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def upload_ttrpg_document(
+        self,
+        filename: str,
+        base64_content: str,
+        doc_category: str = "ruleset",
+        campaign_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        import base64
+        try:
+            b64_clean = base64_content.split(",", 1)[1] if "," in base64_content else base64_content
+            raw_bytes = base64.b64decode(b64_clean)
+        except Exception as e:
+            return {"status": "error", "message": f"Invalid file encoding: {e}"}
+
+        res = self.ttrpg_service.add_campaign_document(
+            filename=filename,
+            content_bytes=raw_bytes,
+            doc_category=doc_category,
+            campaign_id=campaign_id
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def list_ttrpg_documents(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.ttrpg_service.list_campaign_documents(campaign_id=campaign_id)
+
+    def read_ttrpg_document(self, filename: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.ttrpg_service.read_campaign_document(filename=filename, campaign_id=campaign_id)
+
+    def delete_ttrpg_document(self, filename: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        res = self.ttrpg_service.delete_campaign_document(filename=filename, campaign_id=campaign_id)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def refresh_ttrpg_roster_and_files(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Scans the campaign files directory for newly added files, extracts and imports
+        any missing character sheets into the Party Roster, and reloads campaign state.
+        """
+        res = self.ttrpg_service.refresh_campaign_files_and_characters(campaign_id=campaign_id)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def record_ttrpg_notes(
+        self,
+        summary: str,
+        location: Optional[str] = None,
+        key_clues: Optional[List[str]] = None,
+        active_quest: Optional[str] = None,
+        last_action: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Appends a journal entry and updates live session recap in the persistent campaign memory.
+        """
+        res = self.ttrpg_service.record_campaign_notes(
+            summary=summary,
+            location=location,
+            key_clues=key_clues,
+            active_quest=active_quest,
+            last_action=last_action
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def get_ttrpg_notes(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        return self.ttrpg_service.get_campaign_notes(campaign_id=campaign_id)
+
+    def set_ttrpg_session_active(self, active: bool) -> Dict[str, Any]:
+        """
+        Auto-manages Target Speaker Filter and engine mode for Tabletop RPG DM sessions.
+        When active=True (adventure starts/resumes):
+            - Puts AetherEngine into Tabletop Role Play mode (is_ttrpg_session_active = True).
+            - If Target Speaker Filter is currently ON, saves that it was ON, then turns it OFF
+              so all players around the microphone can speak.
+        When active=False (adventure ends / Aether stops):
+            - Deactivates Tabletop Role Play mode on AetherEngine (is_ttrpg_session_active = False).
+            - If Target Speaker Filter was ON prior to the adventure session, restores it back to ON.
+            - Auto-summarizes turns to the campaign journal.
+        """
+        try:
+            eng = getattr(self, "_engine", getattr(self, "engine", None))
+            if eng and hasattr(eng, "set_ttrpg_session_active"):
+                eng.set_ttrpg_session_active(active)
+
+            with self._config_lock:
+                bio_cfg = self._config.get("audio", {}).get("voice_biometrics", {})
+                current_bio = bool(bio_cfg.get("enabled", False))
+                threshold = float(bio_cfg.get("threshold", 0.40))
+
+            if active:
+                if getattr(self, "_ttrpg_prev_target_speaker_filter", None) is None:
+                    self._ttrpg_prev_target_speaker_filter = current_bio
+                if current_bio:
+                    self.save_voice_biometrics_settings(False, threshold)
+                    logger.info("[TTRPG] Auto-toggled Target Speaker Filter OFF for tabletop session (multi-player party mode).")
+                if hasattr(self, "_on_engine_event"):
+                    self._on_engine_event("ttrpg_session_mode_changed", {"active": True})
+                return {"success": True, "filter_toggled": current_bio, "current_filter": False, "is_adventure_active": True}
+            else:
+                prev = getattr(self, "_ttrpg_prev_target_speaker_filter", None)
+                self._ttrpg_prev_target_speaker_filter = None
+                if prev is True:
+                    self.save_voice_biometrics_settings(True, threshold)
+                    logger.info("[TTRPG] Tabletop session concluded: Restored Target Speaker Filter to ON.")
+
+                # Auto-summarize session turns into campaign journal & recap on conclusion
+                if eng and hasattr(eng, "session_lifecycle") and eng.session_lifecycle:
+                    try:
+                        raw_turns = eng.session_lifecycle.get_raw_turns()
+                        if raw_turns:
+                            self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=eng.session_lifecycle.session_id)
+                            if hasattr(self, "_on_engine_event"):
+                                self._on_engine_event("ttrpg_state_updated", {"status": "success", "session_id": eng.session_lifecycle.session_id})
+                    except Exception as e_rp:
+                        logger.warning(f"[TTRPG] Auto session notes error on session end: {e_rp}")
+
+                if hasattr(self, "_on_engine_event"):
+                    self._on_engine_event("ttrpg_session_mode_changed", {"active": False})
+                return {"success": True, "filter_restored": bool(prev is True), "current_filter": True if prev is True else current_bio, "is_adventure_active": False}
+        except Exception as e:
+            logger.error(f"[TTRPG] Error in set_ttrpg_session_active: {e}")
+            return {"success": False, "error": str(e)}
+
+    def ask_aether_dm_review(self, custom_prompt: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Sends an instruction to Aether to review the uploaded campaign rulesets, modules,
+        and character sheets, populate any characters into the Party Roster, and assume the role of DM/GM.
+        """
+        if not self._engine.is_running:
+            self.start_assistant()
+        self.set_ttrpg_session_active(True)
+        active_id = self.ttrpg_service.manifest.get("active_campaign")
+        camp = self.ttrpg_service.manifest.get("campaigns", {}).get(active_id, {}) if active_id else {}
+        camp_title = camp.get("title", active_id or "the active campaign")
+        docs = (self.ttrpg_service.active_state or {}).get("documents", {})
+        doc_names = ", ".join(f"'{k}' ({v.get('category', 'doc')})" for k, v in docs.items()) if docs else "the campaign setting"
+
+        prompt = custom_prompt or (
+            f"Please act as our Dungeon Master (DM) / Game Master for the campaign '{camp_title}'. "
+            f"First, call `read_campaign_document(filename='all')` to review our uploaded documents ({doc_names}). "
+            f"If there are character sheets among the documents, add or update them on the Party Roster using `upsert_ttrpg_character`. "
+            f"Then give us a brief summary of the ruleset, campaign premise, and party, and set the opening scene!"
+        )
+        return self.send_text_message(prompt)
+
+    def start_or_resume_ttrpg_campaign(self) -> Dict[str, Any]:
+        """
+        Starts a new campaign with opening narration or resumes an existing campaign seamlessly
+        from the persistent session recap and journal notes.
+        Auto-starts Aether voice engine if not already running.
+        """
+        if not self._engine.is_running:
+            self.start_assistant()
+        self.set_ttrpg_session_active(True)
+        active_id = self.ttrpg_service.manifest.get("active_campaign")
+        camp = self.ttrpg_service.manifest.get("campaigns", {}).get(active_id, {}) if active_id else {}
+        camp_title = camp.get("title", active_id or "the campaign")
+        state = self.ttrpg_service.active_state or {}
+        recap = state.get("latest_recap")
+        loc = state.get("current_location")
+        chars = state.get("characters", {})
+        char_names = ", ".join(c.get("name", "hero") for c in chars.values()) if chars else "the party"
+        difficulty = (camp.get("difficulty") or "helpful").lower()
+
+        diff_note = ""
+        if difficulty == "helpful":
+            diff_note = " Remember we are playing in Helpful / Beginner mode: please suggest 2-3 specific actions we can take, tell us what dice to roll with our exact modifiers, and remind us of helpful abilities!"
+
+        docs = state.get("documents", {})
+        module_files = [f for f in docs.keys() if docs[f].get("category") in ("campaign", "module") or "elf" in f.lower() or "module" in f.lower()]
+        doc_hint = ""
+        if module_files:
+            doc_hint = f" Consult the adventure module '{module_files[0]}' using `read_campaign_document` (e.g. Scene 1) to accurately set the opening scene, Johan Petry/NPC dialogue, and quest hook from the module."
+
+        if recap or state.get("journal"):
+            prompt = (
+                f"Aether, please act as our Game Master and resume our campaign '{camp_title}' for {char_names}! "
+                f"Provide a brief 2-sentence recap of where we left off (at {loc or 'our last location'}), "
+                f"describe the immediate scene and what is happening right now, and ask {char_names} what we do next!{diff_note}"
+            )
+        else:
+            prompt = (
+                f"Aether, please act as our Game Master and begin our campaign '{camp_title}'! "
+                f"Introduce the setting and our characters ({char_names}), and set the opening scene from the adventure module.{doc_hint}{diff_note} "
+                f"What do we see and what are our immediate choices?"
+            )
+        return self.send_text_message(prompt)
+
+    def manage_ttrpg_progression(
+        self,
+        character_name: str,
+        action: str = "award_xp",
+        amount_or_level: int = 0,
+        notes: Optional[str] = None
+    ) -> Dict[str, Any]:
+        res = self.ttrpg_service.manage_character_progression(
+            character_name=character_name,
+            action=action,
+            amount_or_level=amount_or_level,
+            notes=notes
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def roll_ttrpg_dice(self, formula: str, roll_type: str = "normal", purpose: Optional[str] = None) -> Dict[str, Any]:
+        res = self.ttrpg_service.parse_and_roll(formula, roll_type)
+        if res.get("status") == "success" and purpose:
+            res["purpose"] = purpose
+        if res.get("status") == "success":
+            self._on_engine_event("dice_roll_event", res)
+        return res
+
+    def advance_ttrpg_turn(self) -> Dict[str, Any]:
+        res = self.ttrpg_service.advance_turn()
+        if res.get("status") == "success":
+            self._on_engine_event("initiative_updated", res)
+        return res
+
+    def add_ttrpg_initiative(self, name: str, roll_val: int, is_player: bool = True) -> Dict[str, Any]:
+        res = self.ttrpg_service.add_to_initiative(name, int(roll_val), bool(is_player))
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def remove_ttrpg_initiative(self, name_or_id: str) -> Dict[str, Any]:
+        res = self.ttrpg_service.remove_from_initiative(name_or_id)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def add_ttrpg_character(self, char_payload: Dict[str, Any]) -> Dict[str, Any]:
+        res = self.ttrpg_service.add_character(char_payload)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def delete_ttrpg_character(self, character_id_or_name: str) -> Dict[str, Any]:
+        res = self.ttrpg_service.delete_character(character_id_or_name)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def modify_ttrpg_character_stat(
+        self,
+        character_name: str,
+        stat_key: str,
+        delta: int,
+        is_custom_meter: bool = False
+    ) -> Dict[str, Any]:
+        res = self.ttrpg_service.modify_character_stat(
+            character_name=character_name,
+            stat_key=stat_key,
+            delta=int(delta),
+            is_custom_meter=bool(is_custom_meter)
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def update_ttrpg_condition(self, character_name: str, condition: str, active: bool) -> Dict[str, Any]:
+        res = self.ttrpg_service.update_condition(character_name, condition, bool(active))
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def manage_ttrpg_character_inventory(
+        self,
+        character_name: str,
+        action: str = "add",
+        items: Optional[List[str]] = None,
+        weapons: Optional[List[Dict[str, str]]] = None,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Adds or removes weapons and items for a character in the active campaign."""
+        res = self.ttrpg_service.manage_character_inventory(
+            character_name=character_name,
+            action=action,
+            items=items,
+            weapons=weapons,
+            reason=reason
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def reformat_ttrpg_weapons_or_items(self, raw_text: str, ruleset: str = "dnd_5e") -> Dict[str, Any]:
+        """Parses and reformats raw unformatted weapon or item text into structured character sheet records."""
+        return self.ttrpg_service.reformat_weapons_or_items(raw_text=raw_text, ruleset=ruleset)
+
+    # ------------------------------------------------------------------
+    # Character Vault & Cross-Genre Branching Endpoints
+    # ------------------------------------------------------------------
+    def list_vault_characters(self) -> List[Dict[str, Any]]:
+        """Lists all persistent characters in the Character Vault."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        if eng and hasattr(eng, "vault_service") and eng.vault_service:
+            return eng.vault_service.list_characters()
+        from core.character_vault_service import CharacterVaultService
+        return CharacterVaultService().list_characters()
+
+    def get_vault_character(self, char_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves full character data from the Character Vault."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        if eng and hasattr(eng, "vault_service") and eng.vault_service:
+            return eng.vault_service.get_character(char_id)
+        from core.character_vault_service import CharacterVaultService
+        return CharacterVaultService().get_character(char_id)
+
+    def save_vault_character(self, char_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Creates or updates a character in the Character Vault."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        svc = getattr(eng, "vault_service", None)
+        if not svc:
+            from core.character_vault_service import CharacterVaultService
+            svc = CharacterVaultService()
+        res = svc.save_character(char_payload)
+        if res.get("status") == "success":
+            self._on_engine_event("vault_character_updated", res)
+        return res
+
+    def delete_vault_character(self, char_id: str) -> Dict[str, Any]:
+        """Deletes a character from the Character Vault."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        svc = getattr(eng, "vault_service", None)
+        if not svc:
+            from core.character_vault_service import CharacterVaultService
+            svc = CharacterVaultService()
+        success = svc.delete_character(char_id)
+        if success:
+            self._on_engine_event("vault_character_updated", {"character_id": char_id, "deleted": True})
+        return {"status": "success" if success else "error"}
+
+    def upload_vault_character_document(
+        self,
+        filename: str,
+        base64_content: str,
+        ruleset_override: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Uploads a character sheet document (PDF AcroForm, Gemini Multimodal OCR, JSON)
+        directly into the Character Vault as a permanent Canonical Root hero.
+        """
+        import base64
+        try:
+            b64_clean = base64_content.split(",", 1)[1] if "," in base64_content else base64_content
+            raw_bytes = base64.b64decode(b64_clean)
+        except Exception as e:
+            return {"status": "error", "message": f"Invalid file encoding: {e}"}
+
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        svc = getattr(eng, "vault_service", None)
+        if not svc:
+            from core.character_vault_service import CharacterVaultService
+            svc = CharacterVaultService()
+
+        res = svc.import_from_document(
+            filename=filename,
+            content_bytes=raw_bytes,
+            ttrpg_service=self.ttrpg_service,
+            ruleset_override=ruleset_override
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("vault_character_updated", res)
+        return res
+
+    def save_campaign_character_to_vault(
+        self,
+        character_name_or_id: str,
+        campaign_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Exports a character from the active or specified campaign party roster
+        into the Character Vault as a permanent Canonical Root hero.
+        """
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        svc = getattr(eng, "vault_service", None)
+        if not svc:
+            from core.character_vault_service import CharacterVaultService
+            svc = CharacterVaultService()
+
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        camp = self.ttrpg_service.manifest.get("campaigns", {}).get(cid, {}) if cid else {}
+        chars = (self.ttrpg_service.active_state or {}).get("characters", {})
+
+        target_char = None
+        if character_name_or_id in chars:
+            target_char = chars[character_name_or_id]
+        else:
+            for c in chars.values():
+                if c.get("name", "").lower() == character_name_or_id.lower() or c.get("id") == character_name_or_id:
+                    target_char = c
+                    break
+
+        if not target_char:
+            return {"status": "error", "message": f"Character '{character_name_or_id}' not found in active campaign roster."}
+
+        res = svc.import_from_campaign(target_char, campaign_meta=camp)
+        if res.get("status") == "success":
+            self._on_engine_event("vault_character_updated", res)
+        return res
+
+    def list_campaign_characters_for_vault(self, campaign_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Lists characters currently in the active campaign available for export to the Vault."""
+        chars = (self.ttrpg_service.active_state or {}).get("characters", {})
+        results = []
+        for cid_key, c in chars.items():
+            results.append({
+                "id": c.get("id") or cid_key,
+                "name": c.get("name", "Hero"),
+                "level": c.get("level", 1),
+                "archetype": c.get("archetype", "Adventurer"),
+                "player_name": c.get("player_name", "Player")
+            })
+        return results
+
+    def import_vault_character_to_campaign(
+        self,
+        char_id: str,
+        campaign_id: Optional[str] = None,
+        quarantine_unmatched: bool = True,
+        adjudications: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Imports a character from the vault into the active campaign.
+        If cross-genre, forks a variant branch, applies item adjudications,
+        and adds the character to the active party roster.
+        """
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        svc = getattr(eng, "vault_service", None)
+        if not svc:
+            from core.character_vault_service import CharacterVaultService
+            svc = CharacterVaultService()
+
+        # Determine target campaign genre
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        camp = self.ttrpg_service.manifest.get("campaigns", {}).get(cid, {}) if cid else {}
+        target_genre = camp.get("system_preset") or camp.get("genre") or "heroic_fantasy"
+
+        import_res = svc.import_to_campaign(char_id, target_genre=target_genre, quarantine_unmatched=quarantine_unmatched)
+        if import_res.get("status") != "success":
+            return import_res
+
+        char_data = import_res["character"]
+
+        # Apply specific item adjudications if provided
+        if adjudications and isinstance(adjudications, dict):
+            for item_name, res_choice in adjudications.items():
+                svc.adjudicate_item(
+                    char_id=char_data["id"],
+                    item_name=item_name,
+                    resolution=res_choice,
+                    target_genre=target_genre
+                )
+            char_data = svc.get_character(char_data["id"]) or char_data
+
+        # Add character to campaign party roster
+        self.ttrpg_service.add_character(char_data)
+        self._on_engine_event("ttrpg_state_updated", {"status": "success", "imported_vault_char": char_data["id"]})
+        self._on_engine_event("vault_character_updated", {"character_id": char_data["id"]})
+
+        return {
+            "status": "success",
+            "character": char_data,
+            "is_crossover": import_res.get("is_crossover", False),
+            "message": f"Successfully imported '{char_data.get('name')}' to campaign party roster."
+        }
+
+    def level_up_vault_character(
+        self,
+        char_id: str,
+        level_increment: int = 1,
+        stat_boosts: Optional[Dict[str, int]] = None,
+        new_traits: Optional[List[Dict[str, str]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Levels up character via Vault Service and syncs party roster if present.
+        """
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        svc = getattr(eng, "vault_service", None)
+        if not svc:
+            from core.character_vault_service import CharacterVaultService
+            svc = CharacterVaultService()
+
+        active_genre = eng._get_current_campaign_genre() if hasattr(eng, "_get_current_campaign_genre") else "heroic_fantasy"
+        res = svc.level_up_character(
+            char_id=char_id,
+            current_campaign_genre=active_genre,
+            level_increment=int(level_increment),
+            stat_boosts=stat_boosts,
+            new_traits=new_traits
+        )
+
+        if res.get("status") == "success":
+            # Sync with campaign party roster if character is present
+            chars = (self.ttrpg_service.active_state or {}).get("characters", {})
+            updated_char = svc.get_character(char_id)
+            if updated_char and (char_id in chars or any(c.get("name") == updated_char.get("name") for c in chars.values())):
+                self.ttrpg_service.add_character(updated_char)
+                self._on_engine_event("ttrpg_state_updated", {"status": "success", "level_up": char_id})
+            self._on_engine_event("vault_character_updated", res)
+
+        return res
+
+    def set_active_workspace(
+        self,
+        workspace_type: str,
+        context_id: str,
+        display_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Switches workspace context and rehydrates history."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        if eng and hasattr(eng, "set_active_workspace"):
+            history = eng.set_active_workspace(workspace_type, context_id, display_name)
+            return {"status": "success", "history": history, "session_id": f"{workspace_type}_{context_id}"}
+        return {"status": "error", "message": "Engine not initialized"}
 
 GUIBridge = GuiBridge
 

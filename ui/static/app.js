@@ -165,6 +165,11 @@ window.aetherUI = {
             if (typeof loadProjectsUI === "function") {
               loadProjectsUI();
             }
+          } else if (tabKey === "roleplay") {
+            targetPane.focus();
+            if (typeof loadRolePlayUI === "function") {
+              loadRolePlayUI();
+            }
           } else if (tabKey === "accounts") {
             targetPane.focus();
             if (typeof loadOAuthStatusUI === "function") {
@@ -1984,40 +1989,46 @@ window.aetherUI = {
   // =========================================================================
   toggleAssistant: async function() {
     if (!window.pywebview || !window.pywebview.api) return;
+    if (this._isTogglingAssistant) return;
+    this._isTogglingAssistant = true;
     const btn = document.getElementById("toggleAssistantBtn");
     const label = document.getElementById("fabButtonText");
 
-    if (!this.isAssistantRunning) {
-      btn.disabled = true;
-      label.innerText = "STARTING...";
+    try {
+      if (!this.isAssistantRunning) {
+        btn.disabled = true;
+        label.innerText = "STARTING...";
 
-      label.innerText = "CONNECTING...";
-      this.log("Starting assistant...");
-      
-      const res = await window.pywebview.api.start_assistant();
-      btn.disabled = false;
-      if (res.success) {
-        this.isAssistantRunning = true;
-        this.updateAssistantButtonState(true);
+        label.innerText = "CONNECTING...";
+        this.log("Starting assistant...");
+        
+        const res = await window.pywebview.api.start_assistant();
+        btn.disabled = false;
+        if (res.success) {
+          this.isAssistantRunning = true;
+          this.updateAssistantButtonState(true);
+        } else {
+          this.updateAssistantButtonState(false);
+          this.renderChatBubble({
+            type: "error",
+            content: `Failed to start assistant: ${res.error || "Unknown error"}\n\nPlease verify your API key and audio devices in Settings.`
+          });
+        }
       } else {
+        btn.disabled = true;
+        label.innerText = "STOPPING...";
+        try {
+          await window.pywebview.api.stop_assistant();
+        } catch (err) {
+          console.warn("stop_assistant error:", err);
+        }
+        btn.disabled = false;
+        this.isAssistantRunning = false;
         this.updateAssistantButtonState(false);
-        this.renderChatBubble({
-          type: "error",
-          content: `Failed to start assistant: ${res.error || "Unknown error"}\n\nPlease verify your API key and audio devices in Settings.`
-        });
+        this.updateStatus("disconnected", "Assistant stopped.");
       }
-    } else {
-      btn.disabled = true;
-      label.innerText = "STOPPING...";
-      try {
-        await window.pywebview.api.stop_assistant();
-      } catch (err) {
-        console.warn("stop_assistant error:", err);
-      }
-      btn.disabled = false;
-      this.isAssistantRunning = false;
-      this.updateAssistantButtonState(false);
-      this.updateStatus("disconnected", "Assistant stopped.");
+    } finally {
+      this._isTogglingAssistant = false;
     }
   },
 
@@ -2034,6 +2045,11 @@ window.aetherUI = {
       btn.className = "hud-fab-assistant start";
       btn.querySelector(".fab-icon").innerText = "▶";
       label.innerText = `START ${name}`;
+    }
+
+    // If Aether assistant is stopped, ensure Role Play adventure button resets to inactive
+    if (!running && window.roleplayApp && typeof window.roleplayApp.updateAdventureButtonState === 'function') {
+      window.roleplayApp.updateAdventureButtonState(false);
     }
   },
 
@@ -2143,6 +2159,28 @@ window.aetherUI = {
     } else if (type === "mic_status") {
       this.isPttActive = !!data.ptt_active;
       this.updatePttButtonUI();
+    } else if (type === "dice_roll_event") {
+      if (typeof window.handleRoleplayDiceEvent === "function") {
+        window.handleRoleplayDiceEvent(data);
+      }
+    } else if (type === "initiative_updated") {
+      if (typeof window.handleRoleplayInitiativeEvent === "function") {
+        window.handleRoleplayInitiativeEvent(data);
+      }
+    } else if (type === "ttrpg_state_updated") {
+      if (typeof window.handleRoleplayStateEvent === "function") {
+        window.handleRoleplayStateEvent(data);
+      }
+    } else if (type === "ttrpg_session_mode_changed") {
+      if (typeof window.handleRoleplayAdventureModeChanged === "function") {
+        window.handleRoleplayAdventureModeChanged(data);
+      } else if (window.roleplayApp && typeof window.roleplayApp.updateAdventureButtonState === "function") {
+        window.roleplayApp.updateAdventureButtonState(!!(data && data.active));
+      }
+    } else if (type === "vault_character_updated") {
+      if (typeof window.handleRoleplayVaultEvent === "function") {
+        window.handleRoleplayVaultEvent(data);
+      }
     }
   },
 
@@ -3606,3 +3644,5 @@ if (typeof populateModelDropdowns !== "undefined") {
 if (typeof loadSettingsUI !== "undefined") {
   window.loadSettingsUI = loadSettingsUI;
 }
+
+window.app = window.aetherUI;

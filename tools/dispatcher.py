@@ -1277,9 +1277,18 @@ class ToolDispatcher:
         self.last_target_app = ""
         self._custom_declarations: Dict[str, dict] = dict(_CUSTOM_TOOL_DECLARATIONS)
         self._custom_handlers: Dict[str, Callable] = dict(_CUSTOM_TOOL_HANDLERS)
+        self._active_scopes: List[str] = []
         self.skill_router = BM25CatalogRouter()
         self._catalog_mtime = 0.0
         self._refresh_skill_index()
+
+    def set_active_scope(self, scopes: List[str]):
+        """Sets active tool category fences/scopes (e.g. ['ttrpg_tools', 'media_tools'])."""
+        self._active_scopes = list(scopes) if scopes else []
+
+    def reset_scope(self):
+        """Resets active tool scope/fences."""
+        self._active_scopes = []
 
     def register(self, name: str = "", description: str = "", parameters: Optional[dict] = None):
         """Decorator to register a custom tool function directly onto this dispatcher instance."""

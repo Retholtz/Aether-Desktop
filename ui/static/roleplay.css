@@ -1,0 +1,1206 @@
+/* =========================================================================
+   Aether Desktop - Universal Tabletop Roleplaying Engine (Role Play Tab)
+   ========================================================================= */
+
+#tab-roleplay {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Layout Division */
+.roleplay-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  gap: 16px;
+  height: calc(100vh - 120px);
+  padding: 16px;
+  background: #090e14;
+  box-sizing: border-box;
+}
+
+/* Left Rail: Campaign & Turn Ladder */
+.rp-sidebar {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid #1f2e3d;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+.rp-sidebar .sidebar-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.rp-sidebar .sidebar-header h3 {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.rp-campaign-actions-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.rp-campaign-actions-row .cyber-btn-small {
+  white-space: nowrap;
+  text-align: center;
+  padding: 5px 6px;
+}
+
+.campaign-info-box {
+  background: #111a24;
+  border: 1px solid #1f2e3d;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.campaign-info-box h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: #f8fafc;
+  font-weight: 700;
+}
+
+.system-tag {
+  display: inline-block;
+  align-self: flex-start;
+  background: rgba(0, 243, 255, 0.14);
+  color: #00F3FF;
+  border: 1px solid rgba(0, 243, 255, 0.4);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.campaign-select-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.campaign-select-row select {
+  flex: 1;
+  background: #0d151e;
+  border: 1px solid #263849;
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.campaign-meta-text {
+  font-size: 11.5px;
+  color: #94a3b8;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.campaign-tone-text {
+  font-size: 10.5px;
+  color: #64748b;
+  font-style: italic;
+}
+
+/* DM Library: Rulesets, Campaign Modules & Character Sheets */
+.rp-documents-box {
+  background: #111a24;
+  border: 1px solid #1f2e3d;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rp-docs-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.rp-docs-header h4 {
+  margin: 0;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  color: #cbd5e1;
+  font-weight: 700;
+}
+
+.rp-docs-actions-row {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 6px;
+}
+
+.rp-docs-actions-row .cyber-btn-small {
+  white-space: nowrap;
+  text-align: center;
+  padding: 5px 8px;
+}
+
+.dm-activate-btn {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.28), rgba(56, 189, 248, 0.16));
+  border-color: #38bdf8;
+  color: #e0f2fe;
+}
+
+.rp-docs-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #7d8597;
+  line-height: 1.35;
+}
+
+.rp-doc-upload-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.rp-doc-upload-controls select {
+  flex: 1;
+  min-width: 0;
+  background: #0d151e;
+  border: 1px solid #263849;
+  color: #e2e8f0;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 11.5px;
+}
+
+.rp-doc-dropzone {
+  border: 1px dashed #2b445e;
+  background: rgba(13, 21, 30, 0.65);
+  border-radius: 6px;
+  padding: 8px;
+  text-align: center;
+  font-size: 11px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rp-doc-dropzone:hover,
+.rp-doc-dropzone.drag-over {
+  border-color: #00F3FF;
+  background: rgba(0, 243, 255, 0.08);
+  color: #e2e8f0;
+}
+
+.rp-documents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 145px;
+  overflow-y: auto;
+}
+
+.rp-doc-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: #0d151e;
+  border: 1px solid #1e2d3d;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: #e2e8f0;
+}
+
+.rp-doc-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+
+.rp-doc-item-info:hover .rp-doc-filename {
+  color: #00F3FF;
+}
+
+.rp-doc-filename {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rp-doc-submeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.rp-doc-badge {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* Modal Staged Document Files */
+.rp-staged-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(13, 21, 30, 0.9);
+  border: 1px solid #1e2d3d;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.rp-staged-file-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.rp-staged-file-name {
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.rp-staged-file-size {
+  font-size: 10px;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.rp-staged-cat-select {
+  background: #111a24;
+  border: 1px solid #283e54;
+  color: #38bdf8;
+  font-size: 10px;
+  border-radius: 4px;
+  padding: 2px 4px;
+  outline: none;
+}
+
+.rp-staged-remove-btn {
+  background: transparent;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 11px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.rp-staged-remove-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* Turn & Initiative Ladder */
+.initiative-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.initiative-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.initiative-header h4 {
+  margin: 0;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  color: #cbd5e1;
+  font-weight: 700;
+}
+
+.ladder-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Turn Tracker Ladder */
+.ladder-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #131c26;
+  border: 1px solid rgba(51, 65, 85, 0.45);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: #e2e8f0;
+  transition: all 0.15s ease;
+}
+
+.ladder-item.active {
+  border-left: 4px solid #00F3FF;
+  background: rgba(0, 243, 255, 0.1);
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.ladder-roll-pill {
+  background: #0d151e;
+  border: 1px solid #2a3f54;
+  color: #38bdf8;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.initiative-add-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.initiative-add-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  background: #0d151e;
+  border: 1px solid #263849;
+  color: #e2e8f0;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.initiative-add-row input[type="number"] {
+  width: 52px;
+  background: #0d151e;
+  border: 1px solid #263849;
+  color: #e2e8f0;
+  border-radius: 4px;
+  padding: 5px 6px;
+  font-size: 12px;
+}
+
+/* Center Workspace: Party Vitals Roster & Session Journal */
+.rp-workspace {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid #1f2e3d;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.roster-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.roster-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  color: #e2e8f0;
+  font-weight: 700;
+}
+
+/* Character Vitals Cards */
+.roster-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 16px;
+  overflow: visible;
+  height: auto;
+  max-height: none;
+  padding-right: 0;
+}
+
+.character-card {
+  background: #111a24;
+  border: 1px solid #1f2e3d;
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.2s ease;
+}
+
+.character-card:hover {
+  border-color: #00F3FF;
+}
+
+.char-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.char-name-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.char-sub-archetype {
+  font-size: 11.5px;
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.char-guard-badge {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #7dd3fc;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Vitals Bar */
+.vital-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vital-labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #a0b2c3;
+  font-weight: 600;
+}
+
+.vital-controls-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vital-step-btn {
+  background: #192635;
+  border: 1px solid #2b4158;
+  color: #cbd5e1;
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vital-step-btn:hover {
+  border-color: #00F3FF;
+  color: #00F3FF;
+}
+
+.vital-progress-bg {
+  width: 100%;
+  height: 8px;
+  background: #0d151e;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.vital-fill-health {
+  height: 100%;
+  background: linear-gradient(90deg, #ff3b30, #ff6b64);
+  transition: width 0.3s ease;
+}
+
+.vital-fill-custom {
+  height: 100%;
+  background: linear-gradient(90deg, #00F3FF, #00a8ff);
+  transition: width 0.3s ease;
+}
+
+.attributes-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  background: #0c131b;
+  border: 1px solid #1a2736;
+  border-radius: 6px;
+  padding: 6px 4px;
+  text-align: center;
+}
+
+.attr-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.attr-cell-label {
+  font-size: 9px;
+  color: #64748b;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.attr-cell-val {
+  font-size: 12px;
+  color: #e2e8f0;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Condition Badges */
+.conditions-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+}
+
+.condition-badge {
+  display: inline-block;
+  background: rgba(255, 69, 58, 0.2);
+  color: #ff6b64;
+  border: 1px solid #ff453a;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  margin-right: 4px;
+  cursor: pointer;
+}
+
+/* Right Rail: Live Game Master & Dice Roller (Separate Sections) */
+.rp-right-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 1. Live Game Master Panel */
+.rp-gm-panel {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid #1f2e3d;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+.rp-gm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rp-gm-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rp-gm-hint {
+  color: #94a3b8;
+  font-size: 11.5px;
+  text-align: center;
+  line-height: 1.35;
+}
+
+/* Adventure Action Button (Matches Start Aether button in style & size) */
+.rp-adventure-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  font-family: var(--font-ui, system-ui, -apple-system, sans-serif);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 11px 16px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+  text-transform: uppercase;
+}
+
+.rp-adventure-btn.start {
+  background: #107c41;
+  color: #ffffff;
+}
+
+.rp-adventure-btn.start:hover {
+  background: #0e6b37;
+  box-shadow: 0 0 12px rgba(16, 124, 65, 0.45);
+}
+
+.rp-adventure-btn.stop {
+  background: #c50f1f;
+  color: #ffffff;
+}
+
+.rp-adventure-btn.stop:hover {
+  background: #a80000;
+  box-shadow: 0 0 12px rgba(232, 17, 35, 0.45);
+}
+
+/* 2. Dice Roller & Audit Panel */
+.rp-dice-panel {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid #1f2e3d;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.dice-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dice-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-dice-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.dice-btn {
+  background: #131f2e;
+  border: 1px solid #263b52;
+  color: #38bdf8;
+  border-radius: 6px;
+  padding: 7px 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dice-btn:hover {
+  background: rgba(0, 243, 255, 0.15);
+  border-color: #00F3FF;
+  color: #ffffff;
+}
+
+.manual-dice-input {
+  display: flex;
+  gap: 6px;
+}
+
+.manual-dice-input input {
+  flex: 1;
+  min-width: 0;
+  background: #0d151e;
+  border: 1px solid #263849;
+  color: #f8fafc;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+}
+
+.dice-mode-row {
+  display: flex;
+  gap: 6px;
+}
+
+.dice-mode-chip {
+  flex: 1;
+  background: #0d151e;
+  border: 1px solid #223242;
+  color: #94a3b8;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.dice-mode-chip.active {
+  border-color: #00F3FF;
+  color: #00F3FF;
+  background: rgba(0, 243, 255, 0.1);
+}
+
+.dice-audit-log {
+  flex: 1;
+  overflow-y: auto;
+  background: #0b1118;
+  border: 1px solid #192635;
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dice-audit-entry {
+  background: #121c27;
+  border-left: 3px solid #00F3FF;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dice-audit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.dice-audit-total {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: #00F3FF;
+}
+
+.dice-audit-summary {
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+}
+
+/* Cyber button utility classes */
+.cyber-btn {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  border: 1px solid #38bdf8;
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cyber-btn:hover {
+  background: linear-gradient(135deg, #0369a1, #075985);
+  border-color: #00F3FF;
+}
+
+.cyber-btn-small {
+  background: #162434;
+  border: 1px solid #2b445e;
+  color: #38bdf8;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cyber-btn-small:hover {
+  border-color: #00F3FF;
+  color: #ffffff;
+  background: rgba(0, 243, 255, 0.14);
+}
+
+.cyber-btn-danger-small {
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+
+.cyber-btn-danger-small:hover {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: #ef4444;
+  color: #ffffff;
+}
+
+/* --- Session Journal & Persistent Recap Styles --- */
+.rp-journal-section {
+  margin-top: 18px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.rp-journal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.rp-journal-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+.rp-journal-recap-box {
+  background: rgba(14, 165, 233, 0.08);
+  border-left: 3px solid #0284c7;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #f1f5f9;
+}
+
+.rp-journal-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 0.78rem;
+}
+
+.rp-meta-pill {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rp-meta-pill strong {
+  color: #cbd5e1;
+}
+
+.rp-clue-badge {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 0.75rem;
+  display: inline-block;
+}
+
+.rp-journal-entries-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: none;
+  overflow: visible;
+}
+
+/* Tabletop Badges & Difficulty Indicators */
+.rp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui, "Segoe UI Variable", "Segoe UI", -apple-system, sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  padding: 2px 8px;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-transform: none; /* Uniform normal title case, not all-caps */
+  box-sizing: border-box;
+}
+
+.rp-badge.diff-helpful {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+}
+
+.rp-badge.diff-easy {
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  color: #34d399;
+}
+
+.rp-badge.diff-medium {
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+}
+
+.rp-badge.diff-hard {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #f87171;
+}
+
+.rp-journal-entry-card {
+  background: rgba(11, 17, 24, 0.6);
+  border: 1px solid rgba(30, 41, 59, 0.9);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: #cbd5e1;
+}
+
+.rp-journal-entry-card .entry-meta {
+  font-size: 0.72rem;
+  color: #64748b;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* -------------------------------------------------------------
+ * Character Vault & Cross-Genre Adjudication Modal Styles
+ * ------------------------------------------------------------- */
+.cyber-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 7, 18, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.cyber-modal-box {
+  background: #0b1118;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(56, 189, 248, 0.15);
+  border-radius: 8px;
+  width: 90%;
+  max-width: 580px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: cyberModalPop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cyberModalPop {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.cyber-modal-box .modal-header {
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.75);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cyber-modal-box .modal-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #38bdf8;
+  letter-spacing: 0.5px;
+}
+
+.cyber-modal-box .modal-close-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.cyber-modal-box .modal-close-btn:hover {
+  color: #f1f5f9;
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.cyber-modal-box .modal-body {
+  padding: 16px;
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
+.adjudication-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.adjudication-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(56, 189, 248, 0.15);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.adjudication-row .item-name {
+  font-weight: 600;
+  color: #f8fafc;
+  font-size: 12.5px;
+  flex: 1;
+}
+
+.cyber-dropdown {
+  background: #0f172a;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+
+.cyber-dropdown:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+}
+
+.cyber-modal-box .modal-actions {
+  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.5);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.cyber-btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #cbd5e1;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cyber-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.vault-char-card {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.vault-char-card:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.vault-char-badge-root {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: #4ade80;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+
+.vault-char-badge-crossover {
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: #c084fc;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+
+
+
+

@@ -124,6 +124,13 @@ class SessionLifecycleManager:
                 self.turn_count += 1
                 logger.debug(f"[LIFECYCLE] Turn #{self.turn_count} ({role}): {clean_content[:80]}...")
 
+            cb = getattr(self, "on_turn_recorded", None)
+            if callable(cb):
+                try:
+                    cb(role, clean_content)
+                except Exception as e:
+                    logger.debug(f"[LIFECYCLE] on_turn_recorded hook error: {e}")
+
     def get_raw_turns(self) -> List[Dict[str, Any]]:
         """Returns the raw in-memory turn history for the current session."""
         with self._lock:

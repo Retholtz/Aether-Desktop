@@ -283,26 +283,66 @@ class ProjectService:
         return max(1, len(text) // 4)
 
     @staticmethod
+    def extract_pdf_form_fields(file_path_or_bytes: Any) -> Dict[str, str]:
+        """
+        Extracts interactive form fields and AcroForm widget annotations from a PDF file or bytes.
+        Fast, deterministic splitting without regular expression catastrophic backtracking.
+        """
+        try:
+            if isinstance(file_path_or_bytes, bytes):
+                content = file_path_or_bytes
+            elif isinstance(file_path_or_bytes, str) and os.path.exists(file_path_or_bytes):
+                with open(file_path_or_bytes, "rb") as f:
+                    content = f.read()
+            else:
+                return {}
+        except Exception:
+            return {}
+
+        fields: Dict[str, str] = {}
+        objects = content.split(b"endobj")
+        for obj in objects:
+            if b"/Subtype/Widget" in obj or b"/Subtype /Widget" in obj or b"/FT" in obj:
+                t_m = re.search(rb'/T\s*\(([^)]+)\)', obj)
+                v_m = re.search(rb'/V\s*(?:\(([^)]*)\)|/([A-Za-z0-9_]+))', obj)
+                if t_m and v_m:
+                    k = t_m.group(1).decode("latin-1", errors="ignore").strip()
+                    v = (v_m.group(1) or v_m.group(2) or b"").decode("latin-1", errors="ignore").strip()
+                    v = v.replace("\\(", "(").replace("\\)", ")")
+                    if k and v:
+                        fields[k] = v
+        return fields
+
+    @staticmethod
     def extract_file_text(file_path: str) -> str:
         """Extracts plain text from a file on disk (supports PDF, DOCX, DOC, XLSX, XLS, PPTX, RTF, and UTF-8 text files)."""
         if not os.path.exists(file_path):
             return ""
         ext = os.path.splitext(file_path)[1].lower()
         if ext == ".pdf":
+            extracted_pages: List[str] = []
             try:
                 from PySide6.QtPdf import QPdfDocument
                 doc = QPdfDocument(None)
                 doc.load(file_path)
-                pages = []
                 for i in range(doc.pageCount()):
                     page_txt = doc.getAllText(i).text()
                     if page_txt:
-                        pages.append(page_txt)
-                extracted = "\n\n".join(pages).strip()
-                if extracted:
-                    return extracted
+                        extracted_pages.append(page_txt)
             except Exception as e:
                 logger.debug(f"[PROJECT] QPdfDocument extraction fallback for '{file_path}': {e}")
+
+            form_fields = ProjectService.extract_pdf_form_fields(file_path)
+            ff_parts = []
+            if form_fields:
+                ff_parts.append("=== PDF FORM FIELDS ===")
+                for k in sorted(form_fields.keys()):
+                    ff_parts.append(f"{k}: {form_fields[k]}")
+
+            combined_pdf_text = "\n\n".join(filter(None, ["\n\n".join(extracted_pages).strip(), "\n".join(ff_parts).strip()])).strip()
+            if combined_pdf_text:
+                return combined_pdf_text
+            return ""
 
         elif ext == ".docx":
             try:
@@ -424,6 +464,9 @@ class ProjectService:
                     return combined
             except Exception:
                 pass
+
+        if ext in (".pdf", ".docx", ".xlsx", ".pptx", ".zip", ".exe", ".bin"):
+            return ""
 
         try:
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:

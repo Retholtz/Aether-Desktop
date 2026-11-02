@@ -71,6 +71,14 @@ class GameEngine:
         "get_current_playing_media",
         "control_media_playback",
         "get_hardware_telemetry",
+        "roll_dice",
+        "modify_character_vitals",
+        "advance_combat_turn",
+        "set_character_condition",
+        "list_campaign_documents",
+        "read_campaign_document",
+        "upsert_ttrpg_character",
+        "update_campaign_details",
     }
 
     def __init__(
@@ -238,6 +246,34 @@ class GameEngine:
                 action_type="replay_capture",
                 user_message="🎬 [Replay Capture] Triggering instant replay buffer...",
                 tts_message="Captured.",
+                requires_context_reset=False,
+                skip_llm=True
+            )
+
+        # --- Fast-Path: Cryptographic Dice Rolls ("Aether, roll a d20 plus 5") ---
+        dice_match = re.search(r'\broll\s+(?:a\s+|an\s+)?(\d*d\d+(?:\s*(?:[\+\-]|plus|minus)\s*\d+)?)\b', clean_voice_cmd)
+        if dice_match:
+            raw_formula = dice_match.group(1)
+            formula = re.sub(r'\bplus\b', '+', raw_formula)
+            formula = re.sub(r'\bminus\b', '-', formula).replace(" ", "")
+            adv_mode = "advantage" if "advantage" in clean_voice_cmd else ("disadvantage" if "disadvantage" in clean_voice_cmd else "normal")
+            return GameInterceptionResult(
+                handled=True,
+                action_type="ttrpg_roll_dice",
+                user_message=f"🎲 Rolling {formula} ({adv_mode})...",
+                tts_message=None,
+                requires_context_reset=False,
+                skip_llm=True,
+                details={"formula": formula, "roll_type": adv_mode}
+            )
+
+        # --- Fast-Path: Initiative Turn Advancement ("Next turn" / "Advance initiative") ---
+        if re.search(r'\b(next\s+turn|advance\s+(initiative|combat)|who(\'s|\s+is)\s+up\s+next)\b', clean_voice_cmd):
+            return GameInterceptionResult(
+                handled=True,
+                action_type="ttrpg_advance_turn",
+                user_message="⚔️ Advancing initiative turn...",
+                tts_message=None,
                 requires_context_reset=False,
                 skip_llm=True
             )
