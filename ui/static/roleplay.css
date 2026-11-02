@@ -730,6 +730,71 @@
   gap: 6px;
 }
 
+.dice-source-toggle {
+  display: inline-flex;
+  background: rgba(11, 19, 34, 0.9);
+  border: 1px solid #1e293b;
+  border-radius: 20px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.dice-source-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2.5px 8px;
+  border-radius: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  line-height: 1.2;
+}
+
+.dice-source-btn:hover {
+  color: #cbd5e1;
+}
+
+.dice-source-btn.active[data-source="digital"] {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+}
+
+.dice-source-btn.active[data-source="physical"] {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fbbf24;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.25);
+}
+
+.dice-source-indicator {
+  font-size: 10px;
+  font-weight: 500;
+  color: #64748b;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: -6px;
+  margin-bottom: -2px;
+  transition: all 0.2s ease;
+}
+
+.dice-source-indicator.physical {
+  color: #fbbf24;
+}
+
+.dice-source-indicator.digital {
+  color: #38bdf8;
+}
+
 .quick-dice-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -1199,6 +1264,121 @@
   padding: 2px 6px;
   border-radius: 3px;
   letter-spacing: 0.5px;
+}
+
+/* ========================================================================= */
+/* Role Play Subnavigation & Dedicated Adventure Story Log                   */
+/* ========================================================================= */
+.rp-workspace-subnav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #1f2e3d;
+  padding-bottom: 10px;
+  margin-bottom: 6px;
+  gap: 12px;
+}
+
+.rp-subnav-tabs {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(11, 16, 27, 0.9);
+  border: 1px solid #1f2e3d;
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.rp-tab-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 5px 12px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.rp-tab-btn:hover {
+  color: #e2e8f0;
+  background: rgba(51, 65, 85, 0.5);
+}
+
+.rp-tab-btn.active {
+  background: #0ea5e9;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.rp-subnav-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rp-subpane {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.rp-subpane.active {
+  display: flex;
+}
+
+.rp-workspace.view-all .rp-subpane {
+  display: flex !important;
+}
+
+/* Dedicated Adventure Story Card */
+.rp-story-card {
+  border: 1px solid rgba(217, 119, 6, 0.35) !important;
+  background: radial-gradient(circle at top right, rgba(217, 119, 6, 0.08), rgba(15, 23, 42, 0.85) 60%) !important;
+}
+
+.rp-story-header {
+  background: rgba(22, 19, 15, 0.95) !important;
+  border-bottom: 1px solid rgba(217, 119, 6, 0.25) !important;
+}
+
+.rp-story-badge {
+  background: rgba(245, 158, 11, 0.15) !important;
+  border: 1px solid rgba(245, 158, 11, 0.4) !important;
+  color: #fbbf24 !important;
+}
+
+.rp-story-chips {
+  border-bottom: 1px solid rgba(217, 119, 6, 0.2) !important;
+}
+
+.rp-story-chips .rp-chip:hover {
+  background: rgba(245, 158, 11, 0.2) !important;
+  border-color: #f59e0b !important;
+  color: #fef3c7 !important;
+}
+
+.rp-story-scroll {
+  min-height: 340px !important;
+  max-height: 520px;
+}
+
+.rp-story-form {
+  border-top: 1px solid rgba(217, 119, 6, 0.25) !important;
+}
+
+.chat-bubble.gm {
+  border-left: 3px solid #f59e0b;
+  background: rgba(30, 24, 18, 0.7);
+}
+
+.sender-tag.gm {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
 

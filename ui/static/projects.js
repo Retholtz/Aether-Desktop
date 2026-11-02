@@ -159,6 +159,13 @@ async function renderActiveProjectWorkspace() {
         instInput.value = proj.custom_instructions || '';
     }
 
+    const chatHeading = document.getElementById('project-chat-heading');
+    if (chatHeading) chatHeading.textContent = `💬 ${proj.name || activeProjectId} Conversation`;
+
+    const bottomInput = document.getElementById('chatTextInput');
+    if (bottomInput) bottomInput.placeholder = `Ask Aether about ${proj.name || activeProjectId}...`;
+
+    await loadProjectChatHistory(activeProjectId);
     await refreshProjectFilesList();
 }
 
@@ -679,6 +686,176 @@ function initProjectsEvents() {
                 handleImportProjectUrl();
             }
         });
+    }
+
+    initProjectChatUI();
+}
+
+function renderProjectChatBubble(item) {
+    const container = document.getElementById('projectChatHistory');
+    if (!container) return;
+
+    const bubble = document.createElement('div');
+    const safeType = String(item.type || 'system').replace(/[^a-zA-Z0-9_-]/g, '');
+    bubble.className = 'chat-bubble ' + safeType;
+
+    const timeStr = item.timestamp 
+        ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    let senderLabel = 'SYSTEM';
+    if (item.type === 'user') {
+        senderLabel = item.source === 'voice' ? 'USER [VOICE]' : 'USER [TEXT]';
+    } else if (item.type === 'assistant' || item.role === 'model') {
+        senderLabel = (item.agent_name || 'AETHER').toUpperCase();
+    } else if (item.type === 'tool') {
+        senderLabel = item.name || 'PROJECT TOOL';
+    } else if (item.type === 'error') {
+        senderLabel = 'ERROR';
+    }
+
+    const escape = (str) => {
+        const div = document.createElement('div');
+        div.innerText = str || '';
+        return div.innerHTML;
+    };
+
+    bubble.innerHTML = `
+        <div class="bubble-meta">
+            <span class="sender-tag ${safeType}">${escape(senderLabel)}</span>
+            <span class="timestamp">${escape(timeStr)}</span>
+        </div>
+        <div class="bubble-body">${escape(item.content)}</div>
+    `;
+
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+}
+window.renderProjectChatBubble = renderProjectChatBubble;
+
+async function loadProjectChatHistory(pid) {
+    const container = document.getElementById('projectChatHistory');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!pid) {
+        container.innerHTML = `<div class="chat-bubble system"><div class="bubble-body">Select a project to start an isolated conversation.</div></div>`;
+        return;
+    }
+
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.get_workspace_history) {
+            const res = await window.pywebview.api.get_workspace_history('project', pid);
+            if (res && res.history && res.history.length > 0) {
+                res.history.forEach(t => renderProjectChatBubble(t));
+                return;
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load project chat history:', e);
+    }
+
+    // Default system welcome bubble
+    renderProjectChatBubble({
+        type: 'system',
+        content: `Project workspace active. Conversations and voice turns here are strictly isolated to this project. Ask questions about your uploaded documents, search the knowledge base, or request summaries.`
+    });
+}
+window.loadProjectChatHistory = loadProjectChatHistory;
+
+function initProjectChatUI() {
+    // View Switcher Tabs
+    const viewTabs = document.querySelectorAll('#project-view-tabs .view-tab-btn');
+    const wsBody = document.getElementById('project-workspace-body');
+    viewTabs.forEach(btn => {
+        btn.onclick = () => {
+            viewTabs.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const view = btn.dataset.view || 'split';
+            if (wsBody) {
+                wsBody.classList.remove('view-split', 'view-chat', 'view-docs');
+                wsBody.classList.add(`view-${view}`);
+            }
+        };
+    });
+
+    // In-Panel Chat Form
+    const chatForm = document.getElementById('projectChatForm');
+    const chatInput = document.getElementById('projectChatInput');
+    if (chatForm && chatInput) {
+        chatForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const text = chatInput.value.trim();
+            if (!text || !activeProjectId) return;
+            chatInput.value = '';
+
+            try {
+                if (window.pywebview && window.pywebview.api) {
+                    if (window.pywebview.api.send_workspace_message) {
+                        await window.pywebview.api.send_workspace_message('project', activeProjectId, text);
+                    } else if (window.pywebview.api.send_chat_message) {
+                        await window.pywebview.api.send_chat_message(text);
+                    }
+                }
+            } catch (err) {
+                renderProjectChatBubble({ type: 'error', content: `Failed to send: ${err}` });
+            }
+        };
+    }
+
+    // Quick Chips
+    document.querySelectorAll('.proj-chip').forEach(chip => {
+        chip.onclick = () => {
+            const prompt = chip.dataset.prompt;
+            if (chatInput && prompt) {
+                chatInput.value = prompt;
+                if (chatForm) chatForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+        };
+    });
+
+    // Reset Memory Button
+    const resetBtn = document.getElementById('btn-reset-project-chat');
+    if (resetBtn) {
+        resetBtn.onclick = async () => {
+            if (!activeProjectId) return;
+            if (!confirm('Reset active AI turn memory for this project?')) return;
+            try {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.clear_workspace_history) {
+                    await window.pywebview.api.clear_workspace_history('project', activeProjectId);
+                }
+                const container = document.getElementById('projectChatHistory');
+                if (container) container.innerHTML = '';
+                renderProjectChatBubble({
+                    type: 'system',
+                    content: '✨ Project conversation memory reset. Starting a fresh turn.'
+                });
+            } catch (err) {
+                console.error('Error resetting project chat:', err);
+            }
+        };
+    }
+
+    // Clear Chat Transcript Button
+    const clearBtn = document.getElementById('btn-clear-project-chat');
+    if (clearBtn) {
+        clearBtn.onclick = async () => {
+            if (!activeProjectId) return;
+            if (!confirm('Clear all conversation messages for this project?')) return;
+            try {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.clear_workspace_history) {
+                    await window.pywebview.api.clear_workspace_history('project', activeProjectId);
+                }
+                const container = document.getElementById('projectChatHistory');
+                if (container) container.innerHTML = '';
+                renderProjectChatBubble({
+                    type: 'system',
+                    content: 'Transcript cleared.'
+                });
+            } catch (err) {
+                console.error('Error clearing project chat transcript:', err);
+            }
+        };
     }
 }
 

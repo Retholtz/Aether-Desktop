@@ -377,7 +377,8 @@ class TTRPGService:
         setting_overview: Optional[str] = None,
         tone: Optional[str] = None,
         difficulty: Optional[str] = None,
-        linked_project_id: Optional[str] = None
+        linked_project_id: Optional[str] = None,
+        dice_mode: Optional[str] = None
     ) -> Dict[str, Any]:
         """Updates an existing campaign's metadata in data/campaigns.json."""
         cid = campaign_id or self.manifest.get("active_campaign")
@@ -403,6 +404,8 @@ class TTRPGService:
             meta["difficulty"] = difficulty.strip() or "helpful"
         if linked_project_id is not None:
             meta["linked_project_id"] = linked_project_id.strip()
+        if dice_mode is not None:
+            meta["dice_mode"] = "physical" if str(dice_mode).lower().strip() in ("physical", "irl", "tabletop", "manual") else "digital"
 
         meta["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.save_manifest()
@@ -414,6 +417,24 @@ class TTRPGService:
             "campaign": meta,
             "state": self.active_state
         }
+
+    def set_dice_mode(self, mode: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        """Sets dice rolling mode ('physical' or 'digital') for the campaign."""
+        cid = campaign_id or self.manifest.get("active_campaign")
+        campaigns = self.manifest.get("campaigns", {})
+        if not cid or cid not in campaigns:
+            return {"status": "error", "message": f"Campaign '{cid}' not found."}
+        clean_mode = "physical" if str(mode).lower().strip() in ("physical", "irl", "tabletop", "manual") else "digital"
+        campaigns[cid]["dice_mode"] = clean_mode
+        self.save_manifest()
+        return {"status": "success", "campaign_id": cid, "dice_mode": clean_mode}
+
+    def get_dice_mode(self, campaign_id: Optional[str] = None) -> str:
+        """Returns the dice rolling mode ('physical' or 'digital') for the active campaign."""
+        cid = campaign_id or self.manifest.get("active_campaign")
+        if cid and cid in self.manifest.get("campaigns", {}):
+            return self.manifest["campaigns"][cid].get("dice_mode", "digital")
+        return "digital"
 
     def set_active_campaign(self, campaign_id: str) -> Dict[str, Any]:
         campaigns = self.manifest.get("campaigns", {})
@@ -2034,6 +2055,24 @@ Respond in JSON with schema:
                 "* Balanced rules adherence and tactical encounters with standard DCs (Easy 10, Medium 15, Hard 20)."
             )
 
+        # Dice Rolling Mode Directive (Physical Tabletop vs Digital Aether Rolls)
+        dice_mode = (meta.get("dice_mode") or "digital").lower().strip()
+        if dice_mode == "physical":
+            lines.append(
+                "\n[DICE ROLLING MODE: PHYSICAL TABLETOP DICE (PLAYERS ROLL AT THE TABLE)]\n"
+                "* PHYSICAL DICE MODE IS ACTIVE: The players are rolling their own physical dice in the real world at their table!\n"
+                "* When an action, attack, ability check, or saving throw requires a roll, DO NOT roll dice for the player using `roll_dice`.\n"
+                "* Instead, explicitly ask the player to roll their physical dice, tell them which die to roll (e.g. d20, 2d6), what modifier to add from their character sheet, and the DC or target (e.g., 'Sheila, please roll a d20 Perception check (+1 modifier)!').\n"
+                "* Wait for the player to state their roll result (e.g., 'I rolled a 15'), then adjudicate the outcome and describe what happens based on the number they provide.\n"
+                "* You may still use `roll_dice` for hidden DM rolls, monster attacks, or random encounter tables, but NEVER roll for players when Physical Dice mode is enabled."
+            )
+        else:
+            lines.append(
+                "\n[DICE ROLLING MODE: DIGITAL DICE (AETHER ROLLS FOR PLAYERS)]\n"
+                "* DIGITAL DICE MODE IS ACTIVE: Aether rolls for the party using the `roll_dice` tool automatically when checks, attacks, or saves are needed, or players can click the Dice Roller panel.\n"
+                "* Automatically execute `roll_dice` for player actions and describe the immediate outcome based on the result of the roll."
+            )
+
         # 1. Grounded Adventure Module Details (Prevents shooting from the hip)
         if synopsis and isinstance(synopsis, dict) and synopsis.get("setting"):
             lines.append("\n[GROUNDED CAMPAIGN ADVENTURE MODULE]")
@@ -2209,6 +2248,7 @@ Respond in JSON with schema:
             total = chosen_roll + modifier
             return {
                 "status": "success",
+                "roll_id": secrets.token_hex(6),
                 "formula": formula,
                 "roll_type": roll_type,
                 "sides": sides,
@@ -2225,6 +2265,7 @@ Respond in JSON with schema:
 
         return {
             "status": "success",
+            "roll_id": secrets.token_hex(6),
             "formula": formula,
             "roll_type": "normal",
             "sides": sides,

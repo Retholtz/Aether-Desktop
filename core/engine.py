@@ -766,6 +766,8 @@ class AetherEngine:
         # Rolling Session Lifecycle & Compactor (Layer B Context Optimization)
         self.session_lifecycle = SessionLifecycleManager()
         self.session_lifecycle.on_turn_recorded = lambda r, c: self.session_mgr.append_turn("model" if r == "assistant" else r, c)
+        self.active_workspace_type: str = "general"
+        self.active_workspace_context_id: str = "default"
         self._active_cm = None
         self._active_recv_task: Optional[asyncio.Task] = None
         self._base_system_instruction: str = ""
@@ -1462,6 +1464,9 @@ class AetherEngine:
         persists current conversation state, rehydrates target history,
         and isolates system prompts and tools.
         """
+        self.active_workspace_type = workspace_type
+        self.active_workspace_context_id = context_id
+
         # 1. Hot-swap conversation history from disk
         restored_history = self.session_mgr.switch_session(workspace_type, context_id, display_name)
 
@@ -1476,6 +1481,8 @@ class AetherEngine:
         if workspace_type == "campaign":
             self.set_ttrpg_session_active(True)
             if hasattr(self, "ttrpg_service") and self.ttrpg_service:
+                self.ttrpg_service.manifest["active_campaign"] = context_id
+                self.ttrpg_service.active_campaign_id = context_id
                 if hasattr(self.ttrpg_service, "build_gm_system_prompt"):
                     self.active_system_prompt = self.ttrpg_service.build_gm_system_prompt(context_id)
                 elif hasattr(self.ttrpg_service, "build_gm_context_prompt"):
@@ -1485,6 +1492,8 @@ class AetherEngine:
         elif workspace_type == "project":
             self.set_ttrpg_session_active(False)
             if hasattr(self, "project_service") and self.project_service:
+                self.project_service.data["active_project"] = context_id
+                self.project_service.save_manifest()
                 if hasattr(self.project_service, "build_project_system_prompt"):
                     self.active_system_prompt = self.project_service.build_project_system_prompt(context_id)
             if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "set_active_scope"):
@@ -1504,9 +1513,8 @@ class AetherEngine:
             if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "reset_scope"):
                 self.dispatcher.reset_scope()
 
-        # Seamless live session rotation if running
-        if self.is_running and hasattr(self, "request_live_session_rotation"):
-            self.request_live_session_rotation(reason=f"Workspace Switch: {workspace_type}:{context_id}")
+        # Invalidate live session to guarantee zero prompt/resumption bleed across workspaces
+        self.invalidate_live_session(reason=f"Workspace Switch: {workspace_type}:{context_id}")
 
         logger.info(f"[ENGINE] Active workspace set to {workspace_type}:{context_id}")
         return restored_history
@@ -1841,6 +1849,13 @@ class AetherEngine:
             state = data.get("state")
             if state:
                 self._dispatch_state_change(state)
+        elif event_type == "chat_event" and isinstance(data, dict):
+            if "workspace_type" not in data:
+                data["workspace_type"] = getattr(self, "active_workspace_type", "general")
+            if "context_id" not in data:
+                data["context_id"] = getattr(self, "active_workspace_context_id", "default")
+            if "session_id" not in data and hasattr(self, "session_mgr") and self.session_mgr:
+                data["session_id"] = self.session_mgr.active_session_id
         if self.on_event:
             try:
                 self.on_event(event_type, data)
@@ -2416,6 +2431,13 @@ class AetherEngine:
         clean_text = text.strip()
         if not clean_text:
             return
+
+        loop = getattr(self, "_loop", None)
+        if not self.is_running and loop and loop.is_running():
+            logger.info("[ENGINE] Auto-starting engine from send_text")
+            self.start(loop)
+            await asyncio.sleep(0.3)
+
         now_ts = time.time()
         self._kill_playback_flag = False
         self.last_user_turn_timestamp = now_ts
@@ -2425,13 +2447,15 @@ class AetherEngine:
         self.conn_mgr.record_activity()
         if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
             self._dispatch_state_change("thinking")
-        if self.is_on_demand_mode() and (self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED):
+        if self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED:
             await self._ensure_live_connected(reason="Typed text sent")
         await self._text_queue.put(clean_text)
         self.notify("chat_event", {
             "type": "user",
             "content": clean_text,
-            "source": "text"
+            "source": "text",
+            "workspace_type": getattr(self, "active_workspace_type", "general"),
+            "context_id": getattr(self, "active_workspace_context_id", "default")
         })
 
     def send_live_audio_buffer(self, audio_bytes: bytes) -> str:
@@ -3569,7 +3593,7 @@ class AetherEngine:
                     system_instruction=self._build_system_instruction(),
                     tools=[
                         types.Tool(google_search=types.GoogleSearch()),
-                        types.Tool(function_declarations=self.dispatcher.get_core_declarations())
+                        types.Tool(function_declarations=self._filter_tools_for_workspace(self.dispatcher.get_core_declarations()))
                     ],
                     tool_config=types.ToolConfig(
                         include_server_side_tool_invocations=True
@@ -4576,7 +4600,7 @@ class AetherEngine:
                             system_instruction=updated_instruction,
                             tools=[
                                 types.Tool(google_search=types.GoogleSearch()),
-                                types.Tool(function_declarations=self.dispatcher.get_core_declarations())
+                                types.Tool(function_declarations=self._filter_tools_for_workspace(self.dispatcher.get_core_declarations()))
                             ],
                             tool_config=types.ToolConfig(include_server_side_tool_invocations=True),
                             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
@@ -4698,9 +4722,9 @@ class AetherEngine:
 
         base_inst = self._inject_temporal_anchor(base_inst)
 
-        # Prepend active project custom instructions when a project is active (if not in Role Play mode)
-        if not self.is_ttrpg_session_active() and hasattr(self, "project_service") and self.project_service:
-            active_pid = self.project_service.data.get("active_project")
+        # Prepend active project custom instructions when in Project workspace mode
+        if getattr(self, "active_workspace_type", "general") == "project" and hasattr(self, "project_service") and self.project_service:
+            active_pid = getattr(self, "active_workspace_context_id", None) or self.project_service.data.get("active_project")
             projects_map = self.project_service.data.get("projects", {})
             if active_pid and active_pid in projects_map:
                 proj = projects_map[active_pid]
@@ -4719,27 +4743,72 @@ class AetherEngine:
 
         return apply_accent_directive(base_inst, accent)
 
-    def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
-        """
-        Builds per-turn GenerateContentConfig using dynamically filtered tool declarations
-        matched via BM25 semantic skill routing.
-        """
-        # 1. Fetch dynamically filtered tool declarations
+    def _filter_tools_for_workspace(self, declarations: List[dict]) -> List[dict]:
+        """Filters tool declarations based on active game mode, roleplay campaign, or project context."""
         active_game_focus = bool(
             getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active()
             or getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active()
         )
         if active_game_focus:
-            all_decls = self.dispatcher.get_core_declarations()
             if hasattr(self, "game_engine") and self.game_engine:
-                active_tools = self.game_engine.filter_tools(all_decls)
-            else:
-                active_tools = [d for d in all_decls if d.get("name") in GameEngine.CORE_GAME_TOOL_NAMES]
-        else:
-            active_tools = self.dispatcher.get_routed_tool_declarations(
-                user_prompt=user_prompt,
-                max_dynamic_skills=3
-            )
+                return self.game_engine.filter_tools(declarations)
+            return [d for d in declarations if d.get("name") in GameEngine.CORE_GAME_TOOL_NAMES]
+
+        ws_type = getattr(self, "active_workspace_type", "general")
+        if ws_type == "campaign" or self.is_ttrpg_session_active():
+            ttrpg_allowed = {
+                "roll_dice",
+                "modify_character_vitals",
+                "advance_combat_turn",
+                "set_character_condition",
+                "list_campaign_documents",
+                "read_campaign_document",
+                "lookup_ruleset_rule",
+                "upsert_ttrpg_character",
+                "manage_character_progression",
+                "update_campaign_details",
+                "record_campaign_notes",
+                "get_campaign_notes",
+                "export_character_to_vault",
+                "import_character_from_vault",
+                "list_vault_characters",
+                "get_vault_character",
+                "play_ambient_audio",
+                "stop_ambient_audio",
+                "set_ambient_volume",
+                "remember_user_fact",
+                "forget_user_fact",
+                "query_user_memory",
+                "get_user_profile"
+            }
+            return [d for d in declarations if d.get("name") in ttrpg_allowed]
+
+        if ws_type == "project":
+            project_allowed = {
+                "query_project_knowledge_base",
+                "read_project_document",
+                "save_project_artifact",
+                "import_project_url",
+                "remember_user_fact",
+                "forget_user_fact",
+                "query_user_memory",
+                "get_user_profile"
+            }
+            return [d for d in declarations if d.get("name") in project_allowed]
+
+        return declarations
+
+    def _execute_turn_modular(self, user_prompt: str, temperature: Optional[float] = None) -> types.GenerateContentConfig:
+        """
+        Builds per-turn GenerateContentConfig using dynamically filtered tool declarations
+        matched via BM25 semantic skill routing and workspace context fences.
+        """
+        # 1. Fetch dynamically filtered tool declarations
+        raw_tools = self.dispatcher.get_routed_tool_declarations(
+            user_prompt=user_prompt,
+            max_dynamic_skills=3
+        )
+        active_tools = self._filter_tools_for_workspace(raw_tools)
 
         if temperature is None:
             try:
@@ -5336,17 +5405,7 @@ class AetherEngine:
         if system_instruction_text is None:
             system_instruction_text = self._build_system_instruction()
 
-        active_game_focus = bool(
-            getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active()
-            or getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active()
-        )
-        if active_game_focus:
-            if hasattr(self, "game_engine") and self.game_engine:
-                live_tools = self.game_engine.filter_tools(get_all_tool_declarations())
-            else:
-                live_tools = [d for d in get_all_tool_declarations() if d.get("name") in GameEngine.CORE_GAME_TOOL_NAMES]
-        else:
-            live_tools = get_all_tool_declarations()
+        live_tools = self._filter_tools_for_workspace(get_all_tool_declarations())
 
         cfg = self.config_getter() if self.config_getter else {}
         if voice_name is None:
@@ -5686,6 +5745,8 @@ class AetherEngine:
         self.is_running = True
         self._stop_requested = False
         self._loop = loop
+        agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether") if callable(self.config_getter) else "Aether"
+        self.notify("status", {"state": "standby" if self.is_on_demand_mode() else "listening", "message": f"{agent_name} is active."})
         self.hotkey_manager.start()
         if hasattr(self, "startup_runner") and self.startup_runner:
             try:

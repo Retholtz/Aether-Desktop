@@ -2134,6 +2134,10 @@ class GuiBridge:
 
         try:
 
+            if not self._engine.is_running:
+                logger.info("[GUI_BRIDGE] Auto-starting engine from typed text message")
+                self.start_assistant()
+
             asyncio.run_coroutine_threadsafe(self._engine.send_text(text), self._loop)
 
             return {"success": True}
@@ -6478,12 +6482,20 @@ class GuiBridge:
         if project_id in self.project_service.data["projects"]:
             self.project_service.data["active_project"] = project_id
             self.project_service.save_manifest()
-            if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "invalidate_live_session"):
+            proj_name = self.project_service.data["projects"][project_id].get("name", project_id)
+            history = []
+            if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_active_workspace"):
+                try:
+                    history = self._engine.set_active_workspace("project", project_id, proj_name)
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] set_active_workspace error: {e}")
+            elif hasattr(self, "_engine") and self._engine and hasattr(self._engine, "invalidate_live_session"):
                 try:
                     self._engine.invalidate_live_session(reason=f"Active Project Changed: {project_id}")
                 except Exception:
                     pass
-            return {"status": "success", "active_project": project_id}
+            formatted = self._format_history_turns(history)
+            return {"status": "success", "active_project": project_id, "history": formatted}
         return {"status": "error", "message": "Project not found"}
 
     def create_project(self, project_id: str, name: str, description: str = "", instructions: str = "") -> Dict[str, Any]:
@@ -6765,6 +6777,7 @@ class GuiBridge:
             "active_campaign": active_id,
             "campaigns": campaigns,
             "active_campaign_meta": campaigns.get(active_id) if active_id else None,
+            "dice_mode": campaigns.get(active_id, {}).get("dice_mode", "digital") if active_id else "digital",
             "state": self.ttrpg_service.active_state,
             "is_adventure_active": is_adv,
             "projects": self.project_service.data.get("projects", {}) if hasattr(self, "project_service") and self.project_service else {}
@@ -6773,7 +6786,15 @@ class GuiBridge:
     def set_active_campaign(self, campaign_id: str) -> Dict[str, Any]:
         res = self.ttrpg_service.set_active_campaign(campaign_id)
         if res.get("status") == "success":
+            camp_title = (res.get("campaign") or {}).get("title", campaign_id) if isinstance(res.get("campaign"), dict) else campaign_id
+            history = []
+            if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_active_workspace"):
+                try:
+                    history = self._engine.set_active_workspace("campaign", campaign_id, camp_title)
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] set_active_workspace error: {e}")
             self._on_engine_event("ttrpg_state_updated", res)
+            res["history"] = self._format_history_turns(history)
         return res
 
     def create_ttrpg_campaign(
@@ -6979,6 +7000,8 @@ class GuiBridge:
             f"If there are character sheets among the documents, add or update them on the Party Roster using `upsert_ttrpg_character`. "
             f"Then give us a brief summary of the ruleset, campaign premise, and party, and set the opening scene!"
         )
+        if active_id:
+            return self.send_workspace_message("campaign", active_id, prompt)
         return self.send_text_message(prompt)
 
     def start_or_resume_ttrpg_campaign(self) -> Dict[str, Any]:
@@ -7022,6 +7045,8 @@ class GuiBridge:
                 f"Introduce the setting and our characters ({char_names}), and set the opening scene from the adventure module.{doc_hint}{diff_note} "
                 f"What do we see and what are our immediate choices?"
             )
+        if active_id:
+            return self.send_workspace_message("campaign", active_id, prompt)
         return self.send_text_message(prompt)
 
     def manage_ttrpg_progression(
@@ -7048,6 +7073,23 @@ class GuiBridge:
         if res.get("status") == "success":
             self._on_engine_event("dice_roll_event", res)
         return res
+
+    def set_ttrpg_dice_mode(self, mode: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        """Sets dice rolling mode ('physical' or 'digital') for tabletop roleplay."""
+        res = self.ttrpg_service.set_dice_mode(mode, campaign_id)
+        if res.get("status") == "success":
+            eng = getattr(self, "_engine", getattr(self, "engine", None))
+            if eng and hasattr(eng, "set_active_workspace") and getattr(eng, "active_workspace_type", "") == "campaign":
+                active_id = self.ttrpg_service.manifest.get("active_campaign")
+                if active_id:
+                    eng.set_active_workspace("campaign", active_id)
+            self._on_engine_event("dice_mode_updated", res)
+        return res
+
+    def get_ttrpg_dice_mode(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        """Returns active dice rolling mode ('physical' or 'digital')."""
+        mode = self.ttrpg_service.get_dice_mode(campaign_id)
+        return {"status": "success", "dice_mode": mode}
 
     def advance_ttrpg_turn(self) -> Dict[str, Any]:
         res = self.ttrpg_service.advance_turn()
@@ -7340,6 +7382,109 @@ class GuiBridge:
 
         return res
 
+    def _format_history_turns(self, history: list) -> list:
+        formatted = []
+        if not history:
+            return formatted
+        for t in history:
+            if not isinstance(t, dict):
+                continue
+            role = t.get("role", "user")
+            text = ""
+            parts = t.get("parts", [])
+            if parts and isinstance(parts, list):
+                first = parts[0]
+                if isinstance(first, dict):
+                    text = first.get("text", "")
+                elif isinstance(first, str):
+                    text = str(first)
+            elif "content" in t:
+                text = t.get("content", "")
+
+            if not text:
+                continue
+
+            msg_type = "user" if role == "user" else "assistant"
+            formatted.append({
+                "type": msg_type,
+                "role": role,
+                "content": text,
+                "timestamp": t.get("timestamp", ""),
+                "source": t.get("source", "text")
+            })
+        return formatted
+
+    def get_workspace_history(self, workspace_type: str, context_id: str) -> Dict[str, Any]:
+        """Fetches persistent conversation bubbles for a given workspace and context."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        if eng and hasattr(eng, "session_mgr") and eng.session_mgr:
+            sid = f"{workspace_type}_{context_id}".lower().strip()
+            if eng.session_mgr.active_session_id == sid:
+                return {
+                    "status": "success",
+                    "session_id": sid,
+                    "history": self._format_history_turns(eng.session_mgr.history)
+                }
+            spath = eng.session_mgr.get_session_path(sid)
+            if os.path.exists(spath):
+                try:
+                    with open(spath, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        raw = data.get("history", [])
+                        return {
+                            "status": "success",
+                            "session_id": sid,
+                            "history": self._format_history_turns(raw)
+                        }
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] get_workspace_history read error: {e}")
+            return {"status": "success", "session_id": sid, "history": []}
+        return {"status": "error", "message": "Engine not initialized"}
+
+    def clear_workspace_history(self, workspace_type: str, context_id: str) -> Dict[str, Any]:
+        """Clears persistent history for a workspace and resets AI turn memory."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        sid = f"{workspace_type}_{context_id}".lower().strip()
+        if eng and hasattr(eng, "session_mgr") and eng.session_mgr:
+            if eng.session_mgr.active_session_id == sid:
+                eng.session_mgr.clear_active_history()
+            else:
+                spath = eng.session_mgr.get_session_path(sid)
+                if os.path.exists(spath):
+                    try:
+                        os.remove(spath)
+                    except Exception:
+                        pass
+            if hasattr(eng, "invalidate_live_session"):
+                try:
+                    eng.invalidate_live_session(reason=f"User cleared workspace history: {sid}")
+                except Exception:
+                    pass
+            return {"status": "success", "session_id": sid}
+        return {"status": "error", "message": "Engine not initialized"}
+
+    def send_workspace_message(self, workspace_type: str, context_id: str, text: str) -> Dict[str, Any]:
+        """Sends a text message routed to a specific workspace context."""
+        clean_text = (text or "").strip()
+        if not clean_text:
+            return {"success": False, "error": "Empty message"}
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        if not eng:
+            return {"success": False, "error": "Engine not running"}
+
+        sid = f"{workspace_type}_{context_id}".lower().strip()
+        if getattr(eng, "active_workspace_type", "") != workspace_type or getattr(eng, "active_workspace_context_id", "") != context_id:
+            eng.set_active_workspace(workspace_type, context_id)
+
+        try:
+            if not eng.is_running:
+                logger.info(f"[GUI_BRIDGE] Auto-starting engine from workspace message ({workspace_type}:{context_id})")
+                self.start_assistant()
+            asyncio.run_coroutine_threadsafe(eng.send_text(clean_text), self._loop)
+            return {"success": True, "session_id": sid}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def set_active_workspace(
         self,
         workspace_type: str,
@@ -7350,7 +7495,8 @@ class GuiBridge:
         eng = getattr(self, "_engine", getattr(self, "engine", None))
         if eng and hasattr(eng, "set_active_workspace"):
             history = eng.set_active_workspace(workspace_type, context_id, display_name)
-            return {"status": "success", "history": history, "session_id": f"{workspace_type}_{context_id}"}
+            formatted = self._format_history_turns(history)
+            return {"status": "success", "history": formatted, "session_id": f"{workspace_type}_{context_id}"}
         return {"status": "error", "message": "Engine not initialized"}
 
 GUIBridge = GuiBridge

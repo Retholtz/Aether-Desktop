@@ -13,6 +13,7 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService):
         if callable(getattr(dispatcher, "notify", None)):
             try:
                 dispatcher.notify(event_name, payload)
+                return
             except Exception:
                 pass
         if callable(getattr(dispatcher, "on_event", None)):

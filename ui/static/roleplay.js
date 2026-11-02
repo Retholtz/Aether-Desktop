@@ -125,7 +125,43 @@ function renderRolePlayWorkspace() {
     renderInitiativeLadder();
     renderPartyRoster();
     renderSessionJournal();
+    renderDiceModeToggle();
 }
+
+function renderDiceModeToggle() {
+    const campaigns = ttrpgData.campaigns || {};
+    const activeId = ttrpgData.active_campaign;
+    const meta = (activeId && campaigns[activeId]) ? campaigns[activeId] : ttrpgData.active_campaign_meta;
+    const mode = (meta && meta.dice_mode) ? meta.dice_mode : (ttrpgData.dice_mode || 'digital');
+    updateDiceModeUI(mode);
+}
+
+function updateDiceModeUI(mode) {
+    const isPhysical = mode === 'physical';
+    const btnDigital = document.getElementById('btn-dice-source-digital');
+    const btnPhysical = document.getElementById('btn-dice-source-physical');
+    const indicator = document.getElementById('dice-source-indicator');
+    const indicatorText = document.getElementById('dice-source-indicator-text');
+
+    if (btnDigital) {
+        btnDigital.classList.toggle('active', !isPhysical);
+    }
+    if (btnPhysical) {
+        btnPhysical.classList.toggle('active', isPhysical);
+    }
+    if (indicator && indicatorText) {
+        indicator.className = 'dice-source-indicator ' + (isPhysical ? 'physical' : 'digital');
+        indicatorText.innerHTML = isPhysical 
+            ? '<span>🎲</span> <span><strong>Physical Dice</strong>: Players roll at table &amp; speak results</span>' 
+            : '<span>⚡</span> <span><strong>Aether Rolls</strong>: Digital dice rolled automatically</span>';
+    }
+}
+window.updateDiceModeUI = updateDiceModeUI;
+window.handleRoleplayDiceModeEvent = function(data) {
+    if (data && data.dice_mode) {
+        updateDiceModeUI(data.dice_mode);
+    }
+};
 
 function renderCampaignHeader() {
     const titleEl = document.getElementById("active-campaign-title");
@@ -176,6 +212,17 @@ function renderCampaignHeader() {
         }
         if (editBtn) editBtn.disabled = false;
         if (deleteBtn) deleteBtn.disabled = false;
+
+        const storyTitle = document.getElementById("rp-story-title");
+        if (storyTitle) storyTitle.textContent = `⚔️ ${meta.title || activeId} Chronicle`;
+
+        const bottomInput = document.getElementById("chatTextInput");
+        if (bottomInput) bottomInput.placeholder = `State your action to the Game Master (${meta.title || activeId})...`;
+
+        if (activeId && window._loadedCampaignStoryId !== activeId) {
+            window._loadedCampaignStoryId = activeId;
+            loadCampaignStoryHistory(activeId);
+        }
     } else {
         if (titleEl) titleEl.textContent = "No Active Campaign";
         if (tagEl) tagEl.textContent = "SANDBOX";
@@ -632,15 +679,42 @@ function renderSessionJournal() {
     }
 }
 
+const _recentDiceRolls = new Set();
+let _lastDiceSignature = '';
+let _lastDiceTimestamp = 0;
+
 function appendDiceAuditEntry(rollData) {
     const logEl = document.getElementById("dice-audit-log");
     if (!logEl || !rollData || rollData.status !== "success") return;
+
+    // Deduplication guard: prevent identical roll dispatches from rendering twice
+    if (rollData.roll_id) {
+        if (_recentDiceRolls.has(rollData.roll_id)) {
+            return;
+        }
+        _recentDiceRolls.add(rollData.roll_id);
+        if (_recentDiceRolls.size > 100) {
+            const first = _recentDiceRolls.values().next().value;
+            _recentDiceRolls.delete(first);
+        }
+    } else {
+        const sig = `${rollData.formula || ''}|${rollData.purpose || ''}|${rollData.summary || ''}|${rollData.total}`;
+        const now = Date.now();
+        if (_lastDiceSignature === sig && (now - _lastDiceTimestamp) < 1200) {
+            return;
+        }
+        _lastDiceSignature = sig;
+        _lastDiceTimestamp = now;
+    }
 
     const emptyHint = logEl.querySelector(".dice-audit-empty");
     if (emptyHint) emptyHint.remove();
 
     const entry = document.createElement("div");
     entry.className = "dice-audit-entry";
+    if (rollData.roll_id) {
+        entry.dataset.rollId = rollData.roll_id;
+    }
     const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const purposeHtml = rollData.purpose ? `<div style="color: #38bdf8; font-weight: 600; font-size: 11px;">${escapeRpHtml(rollData.purpose)}</div>` : "";
 
@@ -1726,11 +1800,258 @@ window.roleplayApp = {
     updateAdventureButtonState
 };
 
+function renderRolePlayStoryBubble(item) {
+    const container = document.getElementById('rpStoryChatHistory');
+    if (!container) return;
+
+    const bubble = document.createElement('div');
+    let bubbleType = item.type || 'system';
+    if (item.type === 'assistant' || item.role === 'model') {
+        bubbleType = 'gm';
+    }
+    const safeType = String(bubbleType).replace(/[^a-zA-Z0-9_-]/g, '');
+    bubble.className = 'chat-bubble ' + safeType;
+
+    const timeStr = item.timestamp 
+        ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    let senderLabel = 'SYSTEM';
+    if (item.type === 'user') {
+        senderLabel = item.source === 'voice' ? 'PLAYER [VOICE]' : 'PLAYER [ACTION]';
+    } else if (bubbleType === 'gm') {
+        senderLabel = 'GAME MASTER';
+    } else if (item.type === 'tool') {
+        senderLabel = item.name || 'DICE / RULES';
+    } else if (item.type === 'error') {
+        senderLabel = 'ERROR';
+    }
+
+    const escape = (str) => {
+        const div = document.createElement('div');
+        div.innerText = str || '';
+        return div.innerHTML;
+    };
+
+    bubble.innerHTML = `
+        <div class="bubble-meta">
+            <span class="sender-tag ${safeType}">${escape(senderLabel)}</span>
+            <span class="timestamp">${escape(timeStr)}</span>
+        </div>
+        <div class="bubble-body">${escape(item.content)}</div>
+    `;
+
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+}
+window.renderRolePlayStoryBubble = renderRolePlayStoryBubble;
+
+async function loadCampaignStoryHistory(cid) {
+    const container = document.getElementById('rpStoryChatHistory');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!cid) {
+        container.innerHTML = `<div class="chat-bubble system"><div class="bubble-body">Select or create a campaign to begin your tabletop adventure chronicle.</div></div>`;
+        return;
+    }
+
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.get_workspace_history) {
+            const res = await window.pywebview.api.get_workspace_history('campaign', cid);
+            if (res && res.history && res.history.length > 0) {
+                res.history.forEach(t => renderRolePlayStoryBubble(t));
+                return;
+            }
+        }
+    } catch (e) {
+        console.error('[RolePlay] Failed to load campaign story history:', e);
+    }
+
+    // Default system welcome bubble
+    renderRolePlayStoryBubble({
+        type: 'system',
+        content: `Tabletop campaign chronicle active. Narratives, NPC dialogue, dice rolls, and combat events here are strictly isolated to this campaign. Speak into your microphone or state actions below to play with Aether as your Game Master!`
+    });
+}
+window.loadCampaignStoryHistory = loadCampaignStoryHistory;
+
+function initRolePlayStoryChatUI() {
+    // Subnav pane switcher
+    const rpTabs = document.querySelectorAll('#rp-subnav-tabs .rp-tab-btn');
+    const ws = document.querySelector('.rp-workspace');
+    const panes = {
+        story: document.getElementById('rp-story-pane'),
+        roster: document.getElementById('rp-roster-pane'),
+        journal: document.getElementById('rp-journal-pane')
+    };
+
+    rpTabs.forEach(btn => {
+        btn.onclick = () => {
+            rpTabs.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const target = btn.dataset.rpPane || 'story';
+
+            if (ws) {
+                if (target === 'all') {
+                    ws.classList.add('view-all');
+                    Object.values(panes).forEach(p => { if (p) p.classList.add('active'); });
+                } else {
+                    ws.classList.remove('view-all');
+                    Object.entries(panes).forEach(([k, p]) => {
+                        if (p) {
+                            if (k === target) p.classList.add('active');
+                            else p.classList.remove('active');
+                        }
+                    });
+                }
+            }
+        };
+    });
+
+    // In-Panel Story Form
+    const storyForm = document.getElementById('rpStoryChatForm');
+    const storyInput = document.getElementById('rpStoryChatInput');
+    if (storyForm && storyInput) {
+        storyForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const text = storyInput.value.trim();
+            const cid = ttrpgData.active_campaign;
+            if (!text || !cid) return;
+            storyInput.value = '';
+
+            try {
+                if (window.pywebview && window.pywebview.api) {
+                    if (window.pywebview.api.send_workspace_message) {
+                        await window.pywebview.api.send_workspace_message('campaign', cid, text);
+                    } else if (window.pywebview.api.send_chat_message) {
+                        await window.pywebview.api.send_chat_message(text);
+                    }
+                }
+            } catch (err) {
+                renderRolePlayStoryBubble({ type: 'error', content: `Failed to send action: ${err}` });
+            }
+        };
+    }
+
+    // Story quick chips
+    document.querySelectorAll('.rp-story-chips .rp-chip').forEach(chip => {
+        chip.onclick = () => {
+            const action = chip.dataset.action;
+            if (storyInput && action) {
+                storyInput.value = action;
+                if (storyForm) storyForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+        };
+    });
+
+    // Quick d20 Check
+    const quickD20Btn = document.getElementById('btn-rp-quick-d20');
+    if (quickD20Btn) {
+        quickD20Btn.onclick = async () => {
+            const cid = ttrpgData.active_campaign;
+            if (!cid) return;
+            const rollVal = Math.floor(Math.random() * 20) + 1;
+            const text = `I roll a 1d20 check. Result: [${rollVal}]!`;
+            if (storyInput) {
+                storyInput.value = text;
+                if (storyForm) storyForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+        };
+    }
+
+    // New Scene Button
+    const newSceneBtn = document.getElementById('btn-rp-new-scene');
+    if (newSceneBtn) {
+        newSceneBtn.onclick = async () => {
+            const cid = ttrpgData.active_campaign;
+            if (!cid) return;
+            if (!confirm('Start a new scene? This signals the Game Master to set the stage for a new encounter.')) return;
+            try {
+                renderRolePlayStoryBubble({
+                    type: 'system',
+                    content: '✨ --- NEW SCENE / ENCOUNTER --- ✨'
+                });
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.send_workspace_message) {
+                    await window.pywebview.api.send_workspace_message('campaign', cid, 'Begin the next scene or transition.');
+                }
+            } catch (err) {
+                console.error('[RolePlay] Error beginning new scene:', err);
+            }
+        };
+    }
+
+    // Clear Story Transcript Button
+    const clearStoryBtn = document.getElementById('btn-rp-clear-story');
+    if (clearStoryBtn) {
+        clearStoryBtn.onclick = async () => {
+            const cid = ttrpgData.active_campaign;
+            if (!cid) return;
+            if (!confirm('Clear all story and dialogue logs for this campaign?')) return;
+            try {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.clear_workspace_history) {
+                    await window.pywebview.api.clear_workspace_history('campaign', cid);
+                }
+                const container = document.getElementById('rpStoryChatHistory');
+                if (container) container.innerHTML = '';
+                renderRolePlayStoryBubble({
+                    type: 'system',
+                    content: 'Campaign story transcript cleared.'
+                });
+            } catch (err) {
+                console.error('[RolePlay] Error clearing story transcript:', err);
+            }
+        };
+    }
+}
+
+function initDiceModeToggle() {
+    const btnDigital = document.getElementById('btn-dice-source-digital');
+    const btnPhysical = document.getElementById('btn-dice-source-physical');
+
+    const handleSwitch = async (mode) => {
+        updateDiceModeUI(mode);
+        const cid = ttrpgData.active_campaign;
+        if (ttrpgData.campaigns && ttrpgData.campaigns[cid]) {
+            ttrpgData.campaigns[cid].dice_mode = mode;
+        }
+        if (ttrpgData.active_campaign_meta) {
+            ttrpgData.active_campaign_meta.dice_mode = mode;
+        }
+        ttrpgData.dice_mode = mode;
+
+        try {
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.set_ttrpg_dice_mode) {
+                await window.pywebview.api.set_ttrpg_dice_mode(mode, cid);
+            }
+            if (typeof renderRolePlayStoryBubble === 'function') {
+                renderRolePlayStoryBubble({
+                    type: 'system',
+                    content: mode === 'physical'
+                        ? '🎲 Dice Mode: Physical Dice active. Players roll at the table and tell Aether their results!'
+                        : '⚡ Dice Mode: Digital Dice active. Aether will roll dice automatically for player actions.'
+                });
+            }
+        } catch (err) {
+            console.error('[RolePlay] Error updating dice mode:', err);
+        }
+    };
+
+    if (btnDigital) {
+        btnDigital.onclick = () => handleSwitch('digital');
+    }
+    if (btnPhysical) {
+        btnPhysical.onclick = () => handleSwitch('physical');
+    }
+}
+
 window.addEventListener("pywebviewready", () => {
     loadRolePlayUI();
 });
 
 document.addEventListener("DOMContentLoaded", () => {
+    initRolePlayStoryChatUI();
+    initDiceModeToggle();
     loadRolePlayUI();
     // Quick Dice Buttons (d4, d6, d8, d10, d12, d20, d100)
     document.querySelectorAll(".dice-btn").forEach(btn => {

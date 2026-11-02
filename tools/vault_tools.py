@@ -12,6 +12,7 @@ def register_vault_tools(dispatcher, vault_service: CharacterVaultService, get_c
         if callable(getattr(dispatcher, "notify", None)):
             try:
                 dispatcher.notify(event_name, payload)
+                return
             except Exception:
                 pass
         if callable(getattr(dispatcher, "on_event", None)):

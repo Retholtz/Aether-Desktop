@@ -385,6 +385,25 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fetched_notes["current_location"], "Forgotten Pass")
         self.assertIn("Obsidian Crypt Map", fetched_notes["discovered_clues"])
 
+    async def test_roll_dice_single_notification_emission(self):
+        events = []
+        class DualDispatcher(FakeDispatcher):
+            def __init__(self):
+                super().__init__()
+                self.on_event = lambda event_type, data: events.append((event_type, data))
+            def notify(self, event_type, data):
+                if self.on_event:
+                    self.on_event(event_type, data)
+
+        dual_dispatcher = DualDispatcher()
+        register_ttrpg_tools(dual_dispatcher, self.service)
+
+        roll_res = await dual_dispatcher.tools["roll_dice"]["handler"]("1d20+2", "normal", "Sheila Perception Check")
+        self.assertEqual(roll_res["status"], "success")
+        self.assertIn("roll_id", roll_res)
+        dice_events = [e for e in events if e[0] == "dice_roll_event"]
+        self.assertEqual(len(dice_events), 1, "dice_roll_event must only be emitted once per roll!")
+
     def test_record_and_get_campaign_notes_and_recap(self):
         rec_res = self.service.record_campaign_notes(
             summary="Eric and Sheila discovered a locked chest with an unusual military sigil.",

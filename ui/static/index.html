@@ -287,45 +287,90 @@
                 </div>
               </div>
               <div class="project-actions">
+                <div class="workspace-view-tabs" id="project-view-tabs">
+                  <button type="button" class="view-tab-btn active" data-view="split" id="btn-proj-view-split" title="View documents and chat side-by-side">◫ Split View</button>
+                  <button type="button" class="view-tab-btn" data-view="chat" id="btn-proj-view-chat" title="Expand dedicated project chat">💬 Project Chat</button>
+                  <button type="button" class="view-tab-btn" data-view="docs" id="btn-proj-view-docs" title="Expand knowledge base and documents">📄 Documents</button>
+                </div>
                 <button type="button" id="delete-project-btn" class="cyber-btn-danger btn-danger-sm">🗑️ Delete Project</button>
               </div>
             </div>
 
-            <!-- Instructions Editor -->
-            <div class="instruction-box game-card">
-              <label for="project-instructions">PROJECT INSTRUCTIONS / CONTEXT PROMPT:</label>
-              <textarea id="project-instructions" class="game-scratchpad-textarea" rows="3" placeholder="Provide system instructions, goals, and focus areas for Aether when working in this project..."></textarea>
-            </div>
+            <!-- Workspace Body: Split between Documents & Dedicated Project Chat -->
+            <div class="project-workspace-body view-split" id="project-workspace-body">
+              <!-- Left Column: Knowledge Base & Instructions -->
+              <div class="project-docs-column" id="project-docs-column">
+                <!-- Instructions Editor -->
+                <div class="instruction-box game-card">
+                  <label for="project-instructions">PROJECT INSTRUCTIONS / CONTEXT PROMPT:</label>
+                  <textarea id="project-instructions" class="game-scratchpad-textarea" rows="3" placeholder="Provide system instructions, goals, and focus areas for Aether when working in this project..."></textarea>
+                </div>
 
-            <!-- File Dropzone & URL Input -->
-            <div class="ingestion-tray">
-              <div id="file-dropzone" class="dropzone">
-                <p>📄 Drag &amp; Drop Files (PDF, DOCX, XLSX, PPTX, MD, TXT, CSV, Code)</p>
-                <input type="file" id="file-upload-input" multiple style="display: none;">
+                <!-- File Dropzone & URL Input -->
+                <div class="ingestion-tray">
+                  <div id="file-dropzone" class="dropzone">
+                    <p>📄 Drag &amp; Drop Files (PDF, DOCX, XLSX, PPTX, MD, TXT, CSV, Code)</p>
+                    <input type="file" id="file-upload-input" multiple style="display: none;">
+                  </div>
+
+                  <div class="url-importer">
+                    <input type="url" id="import-url-input" class="modal-input" placeholder="https://docs.example.com/api-reference">
+                    <button type="button" id="import-url-btn" class="cyber-btn btn-primary-sm">Import Web URL</button>
+                  </div>
+                </div>
+
+                <!-- File Table -->
+                <div class="files-table-container game-card">
+                  <table class="cyber-table game-table">
+                    <thead>
+                      <tr>
+                        <th>Document</th>
+                        <th>Type</th>
+                        <th>Tokens (Est.)</th>
+                        <th>Source</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="project-files-body">
+                      <!-- Rendered dynamically -->
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
-              <div class="url-importer">
-                <input type="url" id="import-url-input" class="modal-input" placeholder="https://docs.example.com/api-reference">
-                <button type="button" id="import-url-btn" class="cyber-btn btn-primary-sm">Import Web URL</button>
-              </div>
-            </div>
+              <!-- Right Column: Dedicated Project Chat Window -->
+              <div class="project-chat-column" id="project-chat-column">
+                <div class="dedicated-chat-card game-card">
+                  <div class="dedicated-chat-header">
+                    <div class="chat-header-info">
+                      <span class="dedicated-chat-badge">ISOLATED SESSION</span>
+                      <h4 id="project-chat-heading" class="dedicated-chat-heading">💬 Project Conversation</h4>
+                    </div>
+                    <div class="dedicated-chat-actions">
+                      <button type="button" id="btn-reset-project-chat" class="cyber-btn-small" title="Reset AI turn memory for this project">✨ Reset Memory</button>
+                      <button type="button" id="btn-clear-project-chat" class="cyber-btn-small cyber-btn-ghost-sm" title="Clear this project's chat transcript">🗑️ Clear Chat</button>
+                    </div>
+                  </div>
 
-            <!-- File Table -->
-            <div class="files-table-container game-card">
-              <table class="cyber-table game-table">
-                <thead>
-                  <tr>
-                    <th>Document</th>
-                    <th>Type</th>
-                    <th>Tokens (Est.)</th>
-                    <th>Source</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="project-files-body">
-                  <!-- Rendered dynamically -->
-                </tbody>
-              </table>
+                  <!-- Quick Chips -->
+                  <div class="chat-quick-chips">
+                    <button type="button" class="quick-chip-btn proj-chip" data-prompt="Summarize the uploaded project documents and outline key takeaways.">📑 Summarize Docs</button>
+                    <button type="button" class="quick-chip-btn proj-chip" data-prompt="Search our knowledge base and explain what materials or specifications we have on file.">🔍 Search Knowledge Base</button>
+                    <button type="button" class="quick-chip-btn proj-chip" data-prompt="What are the next recommended action items or tasks for this project?">⚡ Action Items</button>
+                  </div>
+
+                  <!-- Chat Thread History -->
+                  <div id="projectChatHistory" class="chat-history dedicated-chat-scroll">
+                    <!-- Populated dynamically -->
+                  </div>
+
+                  <!-- In-Panel Chat Input Form -->
+                  <form id="projectChatForm" class="dedicated-chat-form">
+                    <input type="text" id="projectChatInput" class="chat-input" placeholder="Ask Aether about this project or speak into your mic..." autocomplete="off">
+                    <button type="submit" class="hud-btn-secondary" id="btnSendProjectChat">SEND</button>
+                  </form>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -410,38 +455,87 @@
             </div>
           </div>
 
-          <!-- Center Workspace: Party Vitals Roster -->
+          <!-- Center Workspace: Party Vitals Roster & Adventure Story -->
           <div class="rp-workspace">
-            <div class="roster-header">
-              <h3>PARTY ROSTER (1-N PLAYERS)</h3>
-              <div style="display: flex; gap: 8px; align-items: center;">
+            <div class="rp-workspace-subnav">
+              <div class="rp-subnav-tabs" id="rp-subnav-tabs">
+                <button type="button" class="rp-tab-btn active" data-rp-pane="story" id="btn-rp-tab-story">⚔️ Adventure Dialogue &amp; Story</button>
+                <button type="button" class="rp-tab-btn" data-rp-pane="roster" id="btn-rp-tab-roster">🛡️ Party Roster</button>
+                <button type="button" class="rp-tab-btn" data-rp-pane="journal" id="btn-rp-tab-journal">📜 Journal &amp; Recap</button>
+                <button type="button" class="rp-tab-btn" data-rp-pane="all" id="btn-rp-tab-all">◫ Full View</button>
+              </div>
+              <div class="rp-subnav-actions">
                 <button type="button" id="open-vault-btn" class="cyber-btn-small" title="Open persistent Character Vault across campaigns and genres">🏛️ Character Vault</button>
                 <button type="button" id="refresh-roster-btn" class="cyber-btn-small" title="Refresh &amp; load character sheets from uploaded files if someone is missing">🔄 Refresh Sheets</button>
-                <button type="button" id="add-character-btn" class="cyber-btn">+ Add Character</button>
+                <button type="button" id="add-character-btn" class="cyber-btn-small">+ Add Character</button>
               </div>
             </div>
 
-            <div id="party-roster-grid" class="roster-grid">
-              <!-- Rendered Character Cards with Live Vitals -->
-            </div>
-
-            <!-- Session Journal & Persistent Recap Section -->
-            <div class="rp-journal-section">
-              <div class="rp-journal-header">
-                <h3>📜 SESSION JOURNAL &amp; RECAP</h3>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                  <button type="button" id="btn-refresh-journal" class="cyber-btn-small" title="Refresh session notes and recap">🔄 Refresh</button>
-                  <button type="button" id="btn-add-journal-note" class="cyber-btn-small">+ Add Note</button>
+            <!-- 1. Dedicated Adventure Story & Dialogue Log -->
+            <div id="rp-story-pane" class="rp-subpane active">
+              <div class="dedicated-chat-card game-card rp-story-card">
+                <div class="dedicated-chat-header rp-story-header">
+                  <div class="chat-header-info">
+                    <span class="dedicated-chat-badge rp-story-badge">LIVE GM NARRATION</span>
+                    <h4 id="rp-story-title" class="dedicated-chat-heading">⚔️ Campaign Chronicle</h4>
+                  </div>
+                  <div class="dedicated-chat-actions">
+                    <button type="button" id="btn-rp-quick-d20" class="cyber-btn-small" title="Quickly roll 1d20 check into story log">🎲 Roll 1d20</button>
+                    <button type="button" id="btn-rp-new-scene" class="cyber-btn-small" title="Begin a new narrative scene or combat encounter">✨ New Scene</button>
+                    <button type="button" id="btn-rp-clear-story" class="cyber-btn-small cyber-btn-ghost-sm" title="Clear this campaign's story transcript">🗑️ Clear Story</button>
+                  </div>
                 </div>
+
+                <!-- Story Quick Action Chips -->
+                <div class="chat-quick-chips rp-story-chips">
+                  <button type="button" class="quick-chip-btn rp-chip" data-action="Inspect the surrounding area carefully and describe what my character notices.">🔍 Inspect Area</button>
+                  <button type="button" class="quick-chip-btn rp-chip" data-action="I take a defensive stance, weapons ready, and watch for ambushes.">🛡️ Defensive Stance</button>
+                  <button type="button" class="quick-chip-btn rp-chip" data-action="What lore, legends, or rumors does my character recall about this place?">📖 Recall Lore</button>
+                  <button type="button" class="quick-chip-btn rp-chip" data-action="Short rest: The party tends to wounds and catches their breath.">⛺ Short Rest</button>
+                </div>
+
+                <!-- Story History Thread -->
+                <div id="rpStoryChatHistory" class="chat-history dedicated-chat-scroll rp-story-scroll">
+                  <!-- Populated dynamically -->
+                </div>
+
+                <!-- In-Panel Character Action Input Form -->
+                <form id="rpStoryChatForm" class="dedicated-chat-form rp-story-form">
+                  <input type="text" id="rpStoryChatInput" class="chat-input" placeholder="State your character's action or speak to the Game Master..." autocomplete="off">
+                  <button type="submit" class="hud-btn-secondary" id="btnSendRpStory">ACT</button>
+                </form>
               </div>
-              <div id="rp-journal-recap-box" class="rp-journal-recap-box">
-                <!-- Live Recap / Last Turn Memory -->
+            </div>
+
+            <!-- 2. Party Vitals Roster -->
+            <div id="rp-roster-pane" class="rp-subpane">
+              <div class="roster-header">
+                <h3>PARTY ROSTER (1-N PLAYERS)</h3>
               </div>
-              <div id="rp-journal-meta-row" class="rp-journal-meta-row">
-                <!-- Location, Quest, Clues -->
+              <div id="party-roster-grid" class="roster-grid">
+                <!-- Rendered Character Cards with Live Vitals -->
               </div>
-              <div id="rp-journal-entries-list" class="rp-journal-entries-list">
-                <!-- Chronological session beats -->
+            </div>
+
+            <!-- 3. Session Journal & Persistent Recap Section -->
+            <div id="rp-journal-pane" class="rp-subpane">
+              <div class="rp-journal-section" style="margin-top: 0;">
+                <div class="rp-journal-header">
+                  <h3>📜 SESSION JOURNAL &amp; RECAP</h3>
+                  <div style="display: flex; gap: 8px; align-items: center;">
+                    <button type="button" id="btn-refresh-journal" class="cyber-btn-small" title="Refresh session notes and recap">🔄 Refresh</button>
+                    <button type="button" id="btn-add-journal-note" class="cyber-btn-small">+ Add Note</button>
+                  </div>
+                </div>
+                <div id="rp-journal-recap-box" class="rp-journal-recap-box">
+                  <!-- Live Recap / Last Turn Memory -->
+                </div>
+                <div id="rp-journal-meta-row" class="rp-journal-meta-row">
+                  <!-- Location, Quest, Clues -->
+                </div>
+                <div id="rp-journal-entries-list" class="rp-journal-entries-list">
+                  <!-- Chronological session beats -->
+                </div>
               </div>
             </div>
           </div>
@@ -471,6 +565,17 @@
                 <span class="dice-title">
                   <span>🎲</span> DICE ROLLER &amp; AUDIT
                 </span>
+                <div class="dice-source-toggle" id="dice-source-toggle" title="Toggle between Aether rolling digitally or players rolling physical dice at the table">
+                  <button type="button" class="dice-source-btn active" id="btn-dice-source-digital" data-source="digital" title="Aether rolls digital dice automatically">
+                    <span class="source-icon">⚡</span> Aether
+                  </button>
+                  <button type="button" class="dice-source-btn" id="btn-dice-source-physical" data-source="physical" title="Players roll physical dice at the table">
+                    <span class="source-icon">🎲</span> Physical
+                  </button>
+                </div>
+              </div>
+              <div class="dice-source-indicator digital" id="dice-source-indicator">
+                <span id="dice-source-indicator-text">⚡ Aether Rolls (Digital Dice)</span>
               </div>
 
               <div class="quick-dice-row">

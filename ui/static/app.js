@@ -131,7 +131,14 @@ window.aetherUI = {
         if (targetPane) {
           targetPane.classList.add("active");
           targetPane.classList.remove("hidden");
-          if (tabKey === "settings") {
+          if (tabKey === "chat") {
+            targetPane.focus();
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.set_active_workspace) {
+              window.pywebview.api.set_active_workspace("general", "default", "Desktop Assistant");
+            }
+            const bottomInput = document.getElementById("chatTextInput");
+            if (bottomInput) bottomInput.placeholder = "Type a message or speak into your microphone...";
+          } else if (tabKey === "settings") {
             targetPane.focus();
             this.loadAudioDevices(true);
             if (typeof loadSettingsUI === "function") {
@@ -2080,6 +2087,23 @@ window.aetherUI = {
     }
 
     if (!window.pywebview || !window.pywebview.api) return;
+
+    // Route message according to active workspace tab
+    const activeTabBtn = document.querySelector(".hud-tab.active, .nav-btn.active");
+    const activeTab = activeTabBtn ? activeTabBtn.dataset.tab : "tab-chat";
+
+    if (activeTab === "projects" && window.activeProjectId) {
+      if (window.pywebview.api.send_workspace_message) {
+        await window.pywebview.api.send_workspace_message("project", window.activeProjectId, text);
+        return;
+      }
+    } else if (activeTab === "roleplay" && window.ttrpgData && window.ttrpgData.active_campaign) {
+      if (window.pywebview.api.send_workspace_message) {
+        await window.pywebview.api.send_workspace_message("campaign", window.ttrpgData.active_campaign, text);
+        return;
+      }
+    }
+
     await window.pywebview.api.send_text_message(text);
   },
 
@@ -2162,6 +2186,10 @@ window.aetherUI = {
     } else if (type === "dice_roll_event") {
       if (typeof window.handleRoleplayDiceEvent === "function") {
         window.handleRoleplayDiceEvent(data);
+      }
+    } else if (type === "dice_mode_updated") {
+      if (typeof window.handleRoleplayDiceModeEvent === "function") {
+        window.handleRoleplayDiceModeEvent(data);
       }
     } else if (type === "initiative_updated") {
       if (typeof window.handleRoleplayInitiativeEvent === "function") {
@@ -2274,6 +2302,19 @@ handleDesktopNotification: function(notif) {
   },
 
   renderChatBubble: function(item) {
+    // Route to dedicated workspace chats if applicable
+    if (item && item.workspace_type === "project") {
+      if (typeof window.renderProjectChatBubble === "function") {
+        window.renderProjectChatBubble(item);
+      }
+      return;
+    } else if (item && item.workspace_type === "campaign") {
+      if (typeof window.renderRolePlayStoryBubble === "function") {
+        window.renderRolePlayStoryBubble(item);
+      }
+      return;
+    }
+
     // If an active live speech bubble exists, handle consolidation
     const liveBubble = document.getElementById("activeLiveUserBubble");
     if (item.type === "user" && item.source === "voice") {

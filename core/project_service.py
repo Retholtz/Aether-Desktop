@@ -262,6 +262,33 @@ class ProjectService:
 
         return True
 
+    def build_project_system_prompt(self, project_id: str) -> str:
+        """Constructs dedicated system instructions for an active project workspace."""
+        clean_id = (project_id or "").strip()
+        if not clean_id or clean_id not in self.data.get("projects", {}):
+            return ""
+        proj = self.data["projects"][clean_id]
+        name = proj.get("name") or clean_id
+        desc = (proj.get("description") or "").strip()
+        custom_inst = (proj.get("custom_instructions") or "").strip()
+        files = self.list_files(clean_id)
+
+        lines = [
+            f"[ACTIVE PROJECT WORKSPACE: {name} ({clean_id})]",
+            "You are operating within this specific project context. Focus your research, answers, and assistance on this project's goals."
+        ]
+        if desc:
+            lines.append(f"- Project Scope / Description: {desc}")
+        if custom_inst:
+            lines.append(f"- Project Directives & Instructions: {custom_inst}")
+        if files:
+            file_names = [f["filename"] for f in files if f.get("filename")]
+            if file_names:
+                lines.append(f"- Knowledge Base Documents ({len(file_names)} files): " + ", ".join(file_names))
+                lines.append("Use your project tools (query_project_knowledge_base, read_project_document) to retrieve document contents when needed.")
+
+        return "\n".join(lines) + "\n"
+
     def get_project_dir(self, project_id: str) -> str:
         return os.path.join(self.base_dir, project_id, "files")
 
@@ -419,16 +446,29 @@ class ProjectService:
         ext = os.path.splitext(file_path)[1].lower()
         if ext == ".pdf":
             extracted_pages: List[str] = []
+            # 1. Try pypdf (lightweight, robust pure-python extractor)
             try:
-                from PySide6.QtPdf import QPdfDocument
-                doc = QPdfDocument(None)
-                doc.load(file_path)
-                for i in range(doc.pageCount()):
-                    page_txt = doc.getAllText(i).text()
-                    if page_txt:
-                        extracted_pages.append(page_txt)
+                import pypdf
+                reader = pypdf.PdfReader(file_path)
+                for page in reader.pages:
+                    ptxt = page.extract_text()
+                    if ptxt:
+                        extracted_pages.append(ptxt)
             except Exception as e:
-                logger.debug(f"[PROJECT] QPdfDocument extraction fallback for '{file_path}': {e}")
+                logger.debug(f"[PROJECT] pypdf extraction fallback for '{file_path}': {e}")
+
+            # 2. Fallback to PySide6.QtPdf if pypdf was unavailable or empty
+            if not extracted_pages:
+                try:
+                    from PySide6.QtPdf import QPdfDocument
+                    doc = QPdfDocument(None)
+                    doc.load(file_path)
+                    for i in range(doc.pageCount()):
+                        page_txt = doc.getAllText(i).text()
+                        if page_txt:
+                            extracted_pages.append(page_txt)
+                except Exception as e:
+                    logger.debug(f"[PROJECT] QPdfDocument extraction fallback for '{file_path}': {e}")
 
             form_fields = ProjectService.extract_pdf_form_fields(file_path)
             ff_parts = []

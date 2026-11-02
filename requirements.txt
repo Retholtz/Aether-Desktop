@@ -50,3 +50,4 @@ pycaw
 comtypes
 pynvml>=13.0.0
 wintmp>=1.3.0
+pypdf>=5.0.0
