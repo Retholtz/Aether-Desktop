@@ -6651,6 +6651,72 @@ class GuiBridge:
         ok = self.project_service.delete_file(project_id, filename)
         return {"status": "success" if ok else "error", "deleted": ok}
 
+    def open_project_file(self, project_id: str, filename: str) -> Dict[str, Any]:
+        """Opens a local project document using the operating system's default viewer."""
+        p_dir = self.project_service.get_project_dir(project_id)
+        target = os.path.join(p_dir, filename)
+        if not os.path.exists(target):
+            return {"status": "error", "message": f"File '{filename}' does not exist on disk."}
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(target)
+            else:
+                import subprocess, sys
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", target])
+                else:
+                    subprocess.Popen(["xdg-open", target])
+            logger.info(f"[GUI_BRIDGE] Opened local project file: {target}")
+            return {"status": "success", "path": target}
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] Failed to open project file '{filename}': {e}")
+            return {"status": "error", "message": str(e)}
+
+    def open_project_file_location(self, project_id: str, filename: str) -> Dict[str, Any]:
+        """Reveals the project file in Windows File Explorer with the item selected."""
+        p_dir = self.project_service.get_project_dir(project_id)
+        target = os.path.join(p_dir, filename)
+        try:
+            if sys.platform == "win32" and os.path.exists(target):
+                import subprocess
+                subprocess.Popen(["explorer.exe", f"/select,{os.path.normpath(target)}"])
+            elif os.path.exists(p_dir):
+                if hasattr(os, "startfile"):
+                    os.startfile(p_dir)
+                else:
+                    import subprocess, sys
+                    if sys.platform == "darwin":
+                        subprocess.Popen(["open", p_dir])
+                    else:
+                        subprocess.Popen(["xdg-open", p_dir])
+            return {"status": "success"}
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] Failed to reveal file '{filename}': {e}")
+            return {"status": "error", "message": str(e)}
+
+    def open_external_url(self, url: str) -> Dict[str, Any]:
+        """Opens an external website URL in the user's default browser."""
+        import webbrowser
+        clean_url = (url or "").strip()
+        if not clean_url:
+            return {"status": "error", "message": "No URL provided."}
+        if not clean_url.startswith(("http://", "https://")):
+            clean_url = "https://" + clean_url
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(clean_url)
+            else:
+                webbrowser.open(clean_url)
+            logger.info(f"[GUI_BRIDGE] Opened external URL: {clean_url}")
+            return {"status": "success", "url": clean_url}
+        except Exception as e:
+            try:
+                webbrowser.open(clean_url)
+                return {"status": "success", "url": clean_url}
+            except Exception as e2:
+                logger.error(f"[GUI_BRIDGE] Failed to open external URL '{clean_url}': {e2}")
+                return {"status": "error", "message": str(e2)}
+
     def read_project_file(self, project_id: str, filename: str) -> Dict[str, Any]:
         p_dir = self.project_service.get_project_dir(project_id)
         target = os.path.join(p_dir, filename)

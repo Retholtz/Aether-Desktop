@@ -184,23 +184,134 @@ async function refreshProjectFilesList() {
         files.forEach(file => {
             const tr = document.createElement('tr');
             const tokFormatted = Number(file.estimated_tokens || 0).toLocaleString();
-            const sourceLabel = file.source_type === 'scraped_url'
-                ? '🌐 Web URL'
-                : (file.source_type === 'agent_artifact'
-                    ? '🤖 Agent Artifact'
-                    : (file.source_type === 'google_drive' ? '☁️ Google Drive' : '📄 Local Upload'));
+            const isWeb = Boolean(file.source_url);
 
-            tr.innerHTML = `
-                <td style="font-weight: 500; color: #e2e8f0;">${escapeProjHtml(file.filename)}</td>
-                <td><span class="badge-status badge-info">${escapeProjHtml(file.file_type || '.txt')}</span></td>
-                <td><span class="badge-count">~${tokFormatted} tokens</span></td>
-                <td>${sourceLabel}</td>
-                <td>
-                    <button type="button" class="btn-danger-sm" onclick="handleDeleteProjectFile('${escapeProjHtml(file.filename)}')" title="Delete file">
-                        🗑️ Delete
-                    </button>
-                </td>
-            `;
+            // Document Name & Link Column
+            const tdDoc = document.createElement('td');
+            const docGroup = document.createElement('div');
+            docGroup.className = 'doc-cell-group';
+
+            const nameEl = document.createElement('span');
+            nameEl.className = 'doc-clickable-name';
+            nameEl.textContent = file.filename;
+
+            if (isWeb) {
+                // Clicking a website document title directly launches default browser and opens the site!
+                nameEl.title = `Click to open website in browser:\n${file.source_url}`;
+                nameEl.onclick = () => handleOpenWebUrl(file.source_url);
+
+                const pillsRow = document.createElement('div');
+                pillsRow.className = 'doc-pills-row';
+
+                const webPill = document.createElement('a');
+                webPill.href = 'javascript:void(0)';
+                webPill.className = 'doc-web-pill';
+                webPill.innerHTML = `🌐 Open Site ↗`;
+                webPill.title = `Open website in browser:\n${file.source_url}`;
+                webPill.onclick = (e) => {
+                    e.stopPropagation();
+                    handleOpenWebUrl(file.source_url);
+                };
+
+                const docketPill = document.createElement('a');
+                docketPill.href = 'javascript:void(0)';
+                docketPill.className = 'doc-docket-pill';
+                docketPill.innerHTML = `📄 Local Docket`;
+                docketPill.title = `Open local markdown docket file on disk (${file.filename})`;
+                docketPill.onclick = (e) => {
+                    e.stopPropagation();
+                    handleOpenProjectFile(file.filename);
+                };
+
+                pillsRow.appendChild(webPill);
+                pillsRow.appendChild(docketPill);
+
+                docGroup.appendChild(nameEl);
+                docGroup.appendChild(pillsRow);
+            } else {
+                // Local upload: opens local storage document
+                nameEl.title = `Click to open local document (${file.filename})`;
+                nameEl.onclick = () => handleOpenProjectFile(file.filename);
+                docGroup.appendChild(nameEl);
+            }
+            tdDoc.appendChild(docGroup);
+            tr.appendChild(tdDoc);
+
+            // Type Column
+            const tdType = document.createElement('td');
+            tdType.innerHTML = `<span class="badge-status badge-info">${escapeProjHtml(file.file_type || '.txt')}</span>`;
+            tr.appendChild(tdType);
+
+            // Tokens Column
+            const tdTokens = document.createElement('td');
+            tdTokens.innerHTML = `<span class="badge-count">~${tokFormatted} tokens</span>`;
+            tr.appendChild(tdTokens);
+
+            // Source Column
+            const tdSource = document.createElement('td');
+            if (isWeb) {
+                const srcBtn = document.createElement('button');
+                srcBtn.type = 'button';
+                srcBtn.className = 'source-badge-link';
+                srcBtn.innerHTML = `🌐 Web URL <span style="font-size: 10px;">↗</span>`;
+                srcBtn.title = `Launch browser and open:\n${file.source_url}`;
+                srcBtn.onclick = () => handleOpenWebUrl(file.source_url);
+                tdSource.appendChild(srcBtn);
+            } else if (file.source_type === 'agent_artifact') {
+                tdSource.innerHTML = `<span class="source-label">🤖 Agent Artifact</span>`;
+            } else if (file.source_type === 'google_drive') {
+                tdSource.innerHTML = `<span class="source-label">☁️ Google Drive</span>`;
+            } else {
+                tdSource.innerHTML = `<span class="source-label">📄 Local Upload</span>`;
+            }
+            tr.appendChild(tdSource);
+
+            // Actions Column
+            const tdActions = document.createElement('td');
+            const actGroup = document.createElement('div');
+            actGroup.className = 'file-action-buttons';
+
+            if (isWeb) {
+                // Primary Action: Open website in default browser
+                const webBtn = document.createElement('button');
+                webBtn.type = 'button';
+                webBtn.className = 'btn-action-sm btn-open-web';
+                webBtn.innerHTML = `🌐 Web ↗`;
+                webBtn.title = `Launch default browser and open site:\n${file.source_url}`;
+                webBtn.onclick = () => handleOpenWebUrl(file.source_url);
+                actGroup.appendChild(webBtn);
+
+                // Secondary Action: View local docket file
+                const docketBtn = document.createElement('button');
+                docketBtn.type = 'button';
+                docketBtn.className = 'btn-action-sm btn-open-file';
+                docketBtn.innerHTML = `📄 Docket`;
+                docketBtn.title = `View local markdown docket file`;
+                docketBtn.onclick = () => handleOpenProjectFile(file.filename);
+                actGroup.appendChild(docketBtn);
+            } else {
+                // Local Upload: Open local file
+                const openBtn = document.createElement('button');
+                openBtn.type = 'button';
+                openBtn.className = 'btn-action-sm btn-open-file';
+                openBtn.innerHTML = `📂 Open`;
+                openBtn.title = `Open document in default local application`;
+                openBtn.onclick = () => handleOpenProjectFile(file.filename);
+                actGroup.appendChild(openBtn);
+            }
+
+            // Delete Button
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn-danger-sm';
+            delBtn.innerHTML = `🗑️ Delete`;
+            delBtn.title = `Delete file`;
+            delBtn.onclick = () => handleDeleteProjectFile(file.filename);
+            actGroup.appendChild(delBtn);
+
+            tdActions.appendChild(actGroup);
+            tr.appendChild(tdActions);
+
             filesBody.appendChild(tr);
         });
     } catch (e) {
@@ -208,8 +319,45 @@ async function refreshProjectFilesList() {
     }
 }
 
+async function handleOpenProjectFile(filename) {
+    if (!activeProjectId || !filename) return;
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.open_project_file) {
+        console.warn("pywebview open_project_file API not available");
+        return;
+    }
+    try {
+        const res = await window.pywebview.api.open_project_file(activeProjectId, filename);
+        if (res && res.status === 'error') {
+            alert(res.message || "Could not open local document.");
+        }
+    } catch (e) {
+        console.error("Failed opening project file:", e);
+        alert("Failed to open file: " + e);
+    }
+}
+
+async function handleOpenWebUrl(url) {
+    if (!url) return;
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.open_external_url) {
+        window.open(url, '_blank');
+        return;
+    }
+    try {
+        const res = await window.pywebview.api.open_external_url(url);
+        if (res && res.status === 'error') {
+            alert(res.message || "Could not open URL.");
+        }
+    } catch (e) {
+        console.error("Failed opening external URL:", e);
+        window.open(url, '_blank');
+    }
+}
+
 async function handleDeleteProjectFile(filename) {
     if (!activeProjectId || !filename) return;
+    if (!confirm(`Are you sure you want to remove "${filename}" from this project?`)) {
+        return;
+    }
     try {
         await window.pywebview.api.delete_project_file(activeProjectId, filename);
         await refreshProjectFilesList();
@@ -253,12 +401,16 @@ async function handleImportProjectUrl() {
     const importBtn = document.getElementById('import-url-btn');
     if (!urlInput) return;
 
-    const url = urlInput.value.trim();
+    let url = urlInput.value.trim();
     if (!url) return;
 
     if (!activeProjectId) {
         alert("Please create or select a project first.");
         return;
+    }
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
     }
 
     const origText = importBtn ? importBtn.textContent : 'Import Web URL';

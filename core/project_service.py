@@ -7,13 +7,111 @@ import os
 import re
 import json
 import shutil
+import html
+import ssl
+import subprocess
+import sys
+import time
+import urllib.parse
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
+import certifi
+import requests
 import aiohttp
 from core.logger import get_logger
 
 logger = get_logger("ProjectService")
+
+
+DEFAULT_SCRAPE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+    "Cache-Control": "max-age=0",
+}
+
+
+def is_bot_challenge_page(text: str) -> bool:
+    """Detects whether returned HTML is a Cloudflare / Akamai bot challenge page."""
+    if not text:
+        return False
+    lower = text.lower()
+    return (
+        "<title>just a moment...</title>" in lower
+        or "<title>attention required!" in lower
+        or "security check to access" in lower
+        or ("cloudflare" in lower and "turnstile" in lower and "<title>" in lower)
+    )
+
+
+def find_system_browser() -> Optional[str]:
+    """Locates Edge or Chrome binary on the local system for headless scraping fallback."""
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe"),
+        shutil.which("msedge"),
+        shutil.which("chrome"),
+    ]
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+def fetch_with_headless_browser(url: str, timeout: int = 15) -> Optional[str]:
+    """
+    Fallback headless browser fetch for sites guarded by strict CDN/WAF anti-bot protections.
+    Runs headless Chromium/Edge with anti-bot automation flags disabled to dump the DOM.
+    """
+    browser_exe = find_system_browser()
+    if not browser_exe:
+        return None
+    try:
+        cmd = [
+            browser_exe,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-extensions",
+            "--disable-blink-features=AutomationControlled",
+            f"--user-agent={DEFAULT_SCRAPE_HEADERS['User-Agent']}",
+            "--dump-dom",
+            url
+        ]
+        flags = 0x08000000 if sys.platform == "win32" else 0
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            creationflags=flags
+        )
+        if proc.stdout and "<html" in proc.stdout.lower() and len(proc.stdout) > 200:
+            if not is_bot_challenge_page(proc.stdout):
+                return proc.stdout
+    except Exception as e:
+        logger.warning(f"[PROJECT] Headless browser fetch failed for '{url}': {e}")
+    return None
 
 
 @dataclass
@@ -606,42 +704,121 @@ class ProjectService:
 
     # --- Web URL Scraper & Markdown Converter ---
     async def import_url(self, project_id: str, url: str) -> Dict[str, Any]:
-        """Fetches web content, strips HTML markup/scripts, and saves clean Markdown."""
-        session = await self._get_session()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AetherAssistant/1.0"
-        }
+        """
+        Fetches web content using multi-tiered resilience (aiohttp -> requests -> headless Edge/Chrome),
+        strips HTML markup/scripts, and saves clean Markdown into the project repository.
+        """
+        raw_url = (url or "").strip()
+        if not raw_url:
+            return {"status": "error", "message": "No URL provided."}
 
+        # Normalize URL scheme
+        if not raw_url.startswith(("http://", "https://")):
+            target_url = "https://" + raw_url
+        else:
+            target_url = raw_url
+
+        parsed = urllib.parse.urlparse(target_url)
+        if not parsed.netloc:
+            return {"status": "error", "message": f"Invalid URL '{url}'"}
+
+        html_text: Optional[str] = None
+        last_error_status: Optional[int] = None
+        last_error_msg: Optional[str] = None
+
+        # Strategy 1: Async aiohttp with modern browser headers and certifi SSL
         try:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status != 200:
-                    return {"status": "error", "message": f"HTTP {resp.status} while fetching {url}"}
-
-                html_text = await resp.text()
+            session = await self._get_session()
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            async with session.get(
+                target_url,
+                headers=DEFAULT_SCRAPE_HEADERS,
+                ssl=ssl_ctx,
+                allow_redirects=True,
+                timeout=aiohttp.ClientTimeout(total=10.0)
+            ) as resp:
+                if resp.status == 200:
+                    body = await resp.text()
+                    if not is_bot_challenge_page(body):
+                        html_text = body
+                    else:
+                        logger.info(f"[PROJECT] aiohttp received challenge page for '{target_url}', attempting fallback...")
+                else:
+                    last_error_status = resp.status
+                    last_error_msg = f"HTTP {resp.status}"
+                    logger.info(f"[PROJECT] aiohttp received status {resp.status} for '{target_url}', attempting fallback...")
         except Exception as e:
-            logger.error(f"[PROJECT] Failed to fetch URL '{url}': {e}")
-            return {"status": "error", "message": f"Network error: {str(e)}"}
+            logger.info(f"[PROJECT] aiohttp fetch error for '{target_url}': {e}, attempting fallback...")
+            last_error_msg = str(e)
+
+        # Strategy 2: requests.Session fallback (handles cookies, complex redirect chains, and alternate TLS handling)
+        if not html_text:
+            def _requests_fetch() -> Optional[str]:
+                try:
+                    s = requests.Session()
+                    s.headers.update(DEFAULT_SCRAPE_HEADERS)
+                    r = s.get(target_url, timeout=10, verify=certifi.where())
+                    if r.status_code == 200 and not is_bot_challenge_page(r.text):
+                        return r.text
+                except Exception as ex:
+                    logger.debug(f"[PROJECT] requests fallback error for '{target_url}': {ex}")
+                return None
+
+            try:
+                html_text = await asyncio.to_thread(_requests_fetch)
+            except Exception:
+                pass
+
+        # Strategy 3: Headless Edge/Chrome fallback (bypasses WAF, Akamai, Cloudflare, executes client-side JS)
+        if not html_text:
+            logger.info(f"[PROJECT] Invoking headless browser fallback for '{target_url}'...")
+            try:
+                html_text = await asyncio.to_thread(fetch_with_headless_browser, target_url, 15)
+            except Exception as e:
+                logger.warning(f"[PROJECT] Headless browser fallback failed for '{target_url}': {e}")
+
+        if not html_text:
+            err = last_error_msg or (f"HTTP {last_error_status}" if last_error_status else "Unable to retrieve page content")
+            return {"status": "error", "message": f"Failed to fetch {target_url} ({err})"}
 
         # Extract title
-        title_match = re.search(r'<title>(.*?)</title>', html_text, re.IGNORECASE | re.DOTALL)
-        page_title = title_match.group(1).strip() if title_match else "scraped_page"
-        clean_title = re.sub(r'[^a-zA-Z0-9_-]', '_', page_title)[:40]
+        title_match = re.search(r'<title[^>]*>(.*?)</title>', html_text, re.IGNORECASE | re.DOTALL)
+        if title_match:
+            raw_title = re.sub(r'\s+', ' ', title_match.group(1)).strip()
+            page_title = html.unescape(raw_title)
+        else:
+            h1_match = re.search(r'<h1[^>]*>(.*?)</h1>', html_text, re.IGNORECASE | re.DOTALL)
+            if h1_match:
+                page_title = html.unescape(re.sub(r'<[^>]+>', '', h1_match.group(1)).strip())
+            else:
+                page_title = parsed.netloc or "scraped_page"
 
-        # Strip scripts, styles, boilerplates
+        clean_title = re.sub(r'[^a-zA-Z0-9_-]', '_', page_title).strip('_')[:50]
+        if not clean_title:
+            clean_title = f"web_page_{int(time.time())}"
+
+        # Strip scripts, styles, boilerplates, embeds
         clean_html = re.sub(r'<script.*?</script>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
         clean_html = re.sub(r'<style.*?</style>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
+        clean_html = re.sub(r'<noscript.*?</noscript>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
+        clean_html = re.sub(r'<svg.*?</svg>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
         clean_html = re.sub(r'<nav.*?</nav>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
+        clean_html = re.sub(r'<header.*?</header>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
         clean_html = re.sub(r'<footer.*?</footer>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
 
         # Convert simple tags to markdown syntax
-        clean_html = re.sub(r'<h[1-6]>(.*?)</h[1-6]>', r'\n## \1\n', clean_html, flags=re.IGNORECASE)
-        clean_html = re.sub(r'<p>(.*?)</p>', r'\n\1\n', clean_html, flags=re.IGNORECASE)
+        clean_html = re.sub(r'<h[1-6][^>]*>(.*?)</h[1-6]>', r'\n## \1\n', clean_html, flags=re.IGNORECASE)
+        clean_html = re.sub(r'<li[^>]*>(.*?)</li>', r'\n- \1', clean_html, flags=re.IGNORECASE)
+        clean_html = re.sub(r'<p[^>]*>(.*?)</p>', r'\n\1\n', clean_html, flags=re.IGNORECASE)
         clean_html = re.sub(r'<br\s*/?>', '\n', clean_html, flags=re.IGNORECASE)
-        clean_html = re.sub(r'<a\s+href="([^"]+)"[^>]*>(.*?)</a>', r'[\2](\1)', clean_html, flags=re.IGNORECASE)
+        clean_html = re.sub(r'<code[^>]*>(.*?)</code>', r'`\1`', clean_html, flags=re.IGNORECASE)
+        clean_html = re.sub(r'<a\s+[^>]*href="([^"]+)"[^>]*>(.*?)</a>', r'[\2](\1)', clean_html, flags=re.IGNORECASE)
         clean_text = re.sub(r'<[^>]+>', ' ', clean_html)
+        clean_text = html.unescape(clean_text)
+        clean_text = re.sub(r'[ \t]+', ' ', clean_text)
         clean_text = re.sub(r'\n\s*\n', '\n\n', clean_text).strip()
 
-        final_md = f"# {page_title}\n**Source:** {url}\n**Ingested:** {datetime.now(timezone.utc).isoformat()}\n\n---\n\n{clean_text}"
+        final_md = f"# {page_title}\n**Source:** {target_url}\n**Ingested:** {datetime.now(timezone.utc).isoformat()}\n\n---\n\n{clean_text}"
         filename = f"{clean_title}.md"
 
         meta = self.add_file(
@@ -649,6 +826,6 @@ class ProjectService:
             filename=filename,
             content_bytes=final_md.encode("utf-8"),
             source_type="scraped_url",
-            source_url=url
+            source_url=target_url
         )
         return {"status": "success", "metadata": meta, "file": meta}

@@ -3237,3 +3237,144 @@ label {
     flex-wrap: wrap;
     margin-top: 2px;
 }
+
+/* Document table interactive styles */
+.doc-cell-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.doc-clickable-name {
+    color: #e2e8f0;
+    cursor: pointer;
+    font-weight: 500;
+    transition: color 0.15s;
+    word-break: break-all;
+}
+
+.doc-clickable-name:hover {
+    color: var(--accent-cyan);
+    text-decoration: underline;
+}
+
+.doc-web-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    color: #a78bfa;
+    background: rgba(167, 139, 250, 0.12);
+    border: 1px solid rgba(167, 139, 250, 0.25);
+    padding: 1px 6px;
+    border-radius: 4px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.doc-web-pill:hover {
+    background: rgba(167, 139, 250, 0.25);
+    border-color: #a78bfa;
+    color: #ffffff;
+}
+
+.doc-pills-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.doc-docket-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    color: #94a3b8;
+    background: rgba(148, 163, 184, 0.1);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    padding: 1px 6px;
+    border-radius: 4px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.doc-docket-pill:hover {
+    background: rgba(148, 163, 184, 0.22);
+    border-color: #94a3b8;
+    color: #f1f5f9;
+}
+
+.source-badge-link {
+    background: rgba(0, 229, 255, 0.1);
+    border: 1px solid rgba(0, 229, 255, 0.25);
+    color: var(--accent-cyan);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.source-badge-link:hover {
+    background: rgba(0, 229, 255, 0.2);
+    border-color: var(--accent-cyan);
+    color: #ffffff;
+}
+
+.source-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.file-action-buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-action-sm {
+    padding: 4px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+}
+
+.btn-open-file {
+    background: rgba(56, 189, 248, 0.15);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    color: #38bdf8;
+}
+
+.btn-open-file:hover {
+    background: rgba(56, 189, 248, 0.3);
+    border-color: #38bdf8;
+    color: #ffffff;
+}
+
+.btn-open-web {
+    background: rgba(168, 85, 247, 0.15);
+    border: 1px solid rgba(168, 85, 247, 0.3);
+    color: #c084fc;
+}
+
+.btn-open-web:hover {
+    background: rgba(168, 85, 247, 0.3);
+    border-color: #c084fc;
+    color: #ffffff;
+}

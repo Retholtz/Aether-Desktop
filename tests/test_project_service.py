@@ -153,6 +153,90 @@ class TestProjectService(unittest.IsolatedAsyncioTestCase):
         finally:
             shutil.rmtree(fake_drive_root, ignore_errors=True)
 
+    @patch("aiohttp.ClientSession.get")
+    @patch("requests.Session.get")
+    async def test_import_url_403_fallback_to_requests(self, mock_requests_get, mock_aio_get):
+        self.service.create_project("fb_proj", "Fallback Project")
+
+        # aiohttp returns 403 Forbidden
+        mock_aio_resp = AsyncMock()
+        mock_aio_resp.status = 403
+        mock_aio_get.return_value.__aenter__.return_value = mock_aio_resp
+
+        # requests fallback returns 200 OK
+        mock_req_resp = MagicMock()
+        mock_req_resp.status_code = 200
+        mock_req_resp.text = "<html><head><title>Design Article &amp; Tips</title></head><body><h1>Living Room</h1><p>Tips for interior design.</p></body></html>"
+        mock_requests_get.return_value = mock_req_resp
+
+        res = await self.service.import_url("fb_proj", "example.com/interior-design")
+        self.assertEqual(res["status"], "success")
+        self.assertIn("Design_Article", res["metadata"]["filename"])
+        self.assertEqual(res["metadata"]["source_url"], "https://example.com/interior-design")
+
+        # Verify content has unescaped title and converted markdown
+        p_dir = self.service.get_project_dir("fb_proj")
+        with open(os.path.join(p_dir, res["metadata"]["filename"]), "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("Design Article & Tips", content)
+        self.assertIn("## Living Room", content)
+
+    @patch("aiohttp.ClientSession.get")
+    @patch("requests.Session.get")
+    @patch("core.project_service.fetch_with_headless_browser")
+    async def test_import_url_403_fallback_to_headless_browser(self, mock_browser, mock_requests_get, mock_aio_get):
+        self.service.create_project("browser_proj", "Browser Project")
+
+        # Both aiohttp and requests fail with 403 / challenge
+        mock_aio_resp = AsyncMock()
+        mock_aio_resp.status = 403
+        mock_aio_get.return_value.__aenter__.return_value = mock_aio_resp
+
+        mock_req_resp = MagicMock()
+        mock_req_resp.status_code = 403
+        mock_requests_get.return_value = mock_req_resp
+
+        # Headless browser succeeds with DOM
+        mock_browser.return_value = "<html><head><title>Akamai Protected Store</title></head><body><h2>Products</h2><p>Exclusive furniture.</p></body></html>"
+
+        res = await self.service.import_url("browser_proj", "https://store.example.com")
+        self.assertEqual(res["status"], "success")
+        self.assertIn("Akamai_Protected_Store", res["metadata"]["filename"])
+        mock_browser.assert_called_once()
+
+    def test_open_project_file_and_external_url(self):
+        # Setup mock GuiBridge with ProjectService
+        self.service.create_project("open_proj", "Open Project")
+        self.service.add_file("open_proj", "sample.pdf", b"%PDF-1.4 test content")
+
+        mock_bridge = MagicMock()
+        mock_bridge.project_service = self.service
+        from core.gui_bridge import GuiBridge
+
+        # 1. Test open_project_file success
+        with patch("os.startfile", create=True) as mock_startfile:
+            res = GuiBridge.open_project_file(mock_bridge, "open_proj", "sample.pdf")
+            self.assertEqual(res["status"], "success")
+            mock_startfile.assert_called_once()
+            self.assertTrue(res["path"].endswith("sample.pdf"))
+
+        # 2. Test open_project_file not found
+        res_missing = GuiBridge.open_project_file(mock_bridge, "open_proj", "nonexistent.docx")
+        self.assertEqual(res_missing["status"], "error")
+        self.assertIn("not exist", res_missing["message"])
+
+        # 3. Test open_external_url
+        with patch("os.startfile", create=True) as mock_startfile:
+            res_url = GuiBridge.open_external_url(mock_bridge, "https://butcherblockco.com/product/lerustica")
+            self.assertEqual(res_url["status"], "success")
+            mock_startfile.assert_called_once_with("https://butcherblockco.com/product/lerustica")
+
+        # 4. Test open_external_url normalizes bare domain
+        with patch("os.startfile", create=True) as mock_startfile:
+            res_url2 = GuiBridge.open_external_url(mock_bridge, "crateandbarrel.com")
+            self.assertEqual(res_url2["status"], "success")
+            mock_startfile.assert_called_once_with("https://crateandbarrel.com")
+
 
 if __name__ == "__main__":
     unittest.main()
