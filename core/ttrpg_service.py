@@ -223,6 +223,14 @@ class TTRPGService:
     def _generate_default_state(self, campaign_id: str) -> Dict[str, Any]:
         return {
             "campaign_id": campaign_id,
+            "party_caller_id": None,
+            "focused_speaker_id": None,
+            "single_mic_settings": {
+                "filter_unprefaced_side_banter": True,
+                "require_clarification_on_anonymous_actions": True,
+                "clarification_timeout_seconds": 15
+            },
+            "pending_action_stash": None,
             "current_round": 1,
             "active_turn_index": 0,
             "initiative_order": [],
@@ -1832,7 +1840,7 @@ Extract the essential campaign grounding and the EXACT starting scene into valid
   "synopsis": "<3-4 sentence comprehensive premise of the module>",
   "starting_scene": {{
     "scene_name": "<exact scene heading, e.g. 'Act 1: Prologue — Scene 1: The Beginning'>",
-    "location": "<exact location, e.g. 'Johan Petry\'s House, Camp Highmore'>",
+    "location": "<exact location from module, e.g. 'Town Square', 'Village Hall', or 'Tavern'>",
     "boxed_text": "<verbatim boxed narration text intended for the DM to read to players upon entering the scene>",
     "active_npc": "<name and stat/personality details of the NPC present in this scene>",
     "quest_briefing": "<what the quest-giver explains to the party>",
@@ -2027,12 +2035,20 @@ Respond in JSON with schema:
 
         # DM Guidance & Difficulty Mode Directive
         difficulty = (meta.get("difficulty") or "helpful").lower().strip()
+        dice_mode = (meta.get("dice_mode") or "digital").lower().strip()
+
         if difficulty == "helpful":
+            dice_help_line = (
+                "* PHYSICAL DICE MODE: Educate and explicitly guide the player on which physical dice to roll and what exact modifier to add from their character sheet (e.g., 'Roll 1d20+4 for your attack roll!').\n"
+                if dice_mode == "physical"
+                else "* DIGITAL MODE ACTIVE: Do NOT tell or ask the player to roll dice; execute `roll_dice` automatically for them.\n"
+            )
             lines.append(
                 "\n[DM GUIDANCE & CHALLENGE LEVEL: HELPFUL / BEGINNER-FRIENDLY MENTOR]\n"
                 "* The players may be beginners or learning the rules. Act as an encouraging, patient guide and Dungeon Master.\n"
-                "* Whenever you present a situation or prompt a player, ALWAYS offer 2-3 clear, recommended options for what their character can do (e.g. 'Option 1: You can swing your Longsword (+4 to hit)... Option 2: Shoot with your Heavy Crossbow... Option 3: Attempt to negotiate or intimidate...').\n"
-                "* Explicitly tell the player which dice to roll and what modifier to add (e.g., 'Roll 1d20+4 for your attack roll!').\n"
+                "* Whenever you present a situation or prompt a player, ALWAYS offer 2-3 clear, recommended options for what their character can do (e.g. 'Option 1: You can swing your Longsword (+4 to hit)... Option 2: Shoot with your Heavy Crossbow... Option 3: Attempt to negotiate or intimidate...'), UNLESS the player has already declared their action.\n"
+                "* When a player has ALREADY declared an action (e.g. 'I attack the goblin', 'I pick the lock'), IMMEDIATELY adjudicate that action without offering alternative options.\n"
+                + dice_help_line +
                 "* Proactively remind players of their character's equipment, healing potions, and class features (like Second Wind, Sneak Attack, or Action Surge) when relevant.\n"
                 "* Keep explanations friendly, clear, and educational."
             )
@@ -2056,7 +2072,6 @@ Respond in JSON with schema:
             )
 
         # Dice Rolling Mode Directive (Physical Tabletop vs Digital Aether Rolls)
-        dice_mode = (meta.get("dice_mode") or "digital").lower().strip()
         if dice_mode == "physical":
             lines.append(
                 "\n[DICE ROLLING MODE: PHYSICAL TABLETOP DICE (PLAYERS ROLL AT THE TABLE)]\n"
@@ -2068,10 +2083,20 @@ Respond in JSON with schema:
             )
         else:
             lines.append(
-                "\n[DICE ROLLING MODE: DIGITAL DICE (AETHER ROLLS FOR PLAYERS)]\n"
-                "* DIGITAL DICE MODE IS ACTIVE: Aether rolls for the party using the `roll_dice` tool automatically when checks, attacks, or saves are needed, or players can click the Dice Roller panel.\n"
-                "* Automatically execute `roll_dice` for player actions and describe the immediate outcome based on the result of the roll."
+                "\n[DICE ROLLING MODE: DIGITAL DICE (AUTOMATIC RESOLUTION)]\n"
+                "* DIGITAL DICE MODE IS ACTIVE: You (the Game Master) handle all dice rolling automatically using the `roll_dice` tool.\n"
+                "* CRITICAL RULE — NEVER ASK PLAYERS TO ROLL: Never tell or ask players to roll dice. Do not say 'Eric, roll 1d20+4' or wait for players to roll. Execute `roll_dice` directly in your turn.\n"
+                "* CRITICAL RULE — NO META-NARRATION: Never say 'Aether rolls for Eric', 'I am rolling for you', or narrate in the third person about rolling. The roll is an invisible mechanical resolution.\n"
+                "* NATURAL GM NARRATION: Weave the roll outcome directly and smoothly into the narrative: e.g., 'With an 18 to hit, your blade strikes true, dealing 8 slashing damage!' or 'The lock resists your picks with a total of 9.'"
             )
+
+        lines.append(
+            "\n[DIALOGUE STYLE & ANTI-REPETITION DIRECTIVES]\n"
+            "* BE CONCISE & PUNCHY: Keep narrations to 2-4 immersive sentences per turn. Avoid walls of text.\n"
+            "* NO REDUNDANT RECAP: Do not repeat back what the player just said. If Eric declares 'I attack the goblin', do not recite 'Eric decides to attack the goblin with his sword'. Jump directly into the swing and outcome.\n"
+            "* NO ROBOTIC MENUS: Never list 'Option 1: ... Option 2: ... Option 3: ...' when a player has already declared an action. Only offer brief, organic suggestions if a player explicitly asks what they can do or is visibly stuck.\n"
+            "* IMMERSIVE GM VOICE: Never mention system tools, JSON, meters, or 'Aether'. Speak as an evocative, living Dungeon Master."
+        )
 
         # 1. Grounded Adventure Module Details (Prevents shooting from the hip)
         if synopsis and isinstance(synopsis, dict) and synopsis.get("setting"):
@@ -2276,6 +2301,27 @@ Respond in JSON with schema:
         }
 
     # --- Character State & Vitals Management ---
+    @staticmethod
+    def _safe_int(val: Any, default: int = 0) -> int:
+        """Safely parses an integer from various types (int, float, str with +, etc.), returning default on failure."""
+        if val is None:
+            return default
+        if isinstance(val, (int, float)):
+            try:
+                return int(val)
+            except (ValueError, OverflowError):
+                return default
+        try:
+            s = str(val).strip()
+            if not s:
+                return default
+            m = re.search(r'[-+]?\d+', s)
+            if m:
+                return int(m.group(0))
+            return default
+        except Exception:
+            return default
+
     def add_character(self, char_payload: Dict[str, Any], target_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Adds or updates a character in the active campaign roster."""
         st = target_state if target_state is not None else self.active_state
@@ -2287,25 +2333,46 @@ Respond in JSON with schema:
             return {"status": "error", "message": "Character name is required."}
 
         chars = st.setdefault("characters", {})
+        existing_char = None
         char_id = char_payload.get("id")
-        if not char_id:
-            existing_id, _ = self._find_character(name)
-            char_id = existing_id or f"char_{len(chars) + 1:02d}"
-            while char_id in chars and chars[char_id].get("name", "").lower() != name.lower():
-                char_id = f"char_{secrets.randbelow(9000) + 1000}"
+        if char_id and char_id in chars:
+            existing_char = chars[char_id]
+        else:
+            existing_id, found_char = self._find_character(name)
+            if existing_id and existing_id in chars:
+                char_id = existing_id
+                existing_char = found_char
+            else:
+                char_id = char_id or f"char_{len(chars) + 1:02d}"
+                while char_id in chars and chars[char_id].get("name", "").lower() != name.lower():
+                    char_id = f"char_{secrets.randbelow(9000) + 1000}"
 
-        max_hp = max(1, int(char_payload.get("max_health", 25)))
-        cur_hp = int(char_payload.get("current_health", max_hp))
+        prev = existing_char or {}
+        prev_vitals = prev.get("vitals", {})
+
+        default_max_hp = self._safe_int(prev_vitals.get("health", {}).get("max"), 25)
+        max_hp = max(1, self._safe_int(char_payload.get("max_health"), default_max_hp))
+        default_cur_hp = self._safe_int(prev_vitals.get("health", {}).get("current"), max_hp)
+        cur_hp = self._safe_int(char_payload.get("current_health"), default_cur_hp)
         cur_hp = max(0, min(max_hp, cur_hp))
-        guard_val = int(char_payload.get("guard", 14))
+
+        default_guard = self._safe_int(prev_vitals.get("guard", {}).get("current") or prev.get("armor_class"), 14)
+        guard_val = self._safe_int(char_payload.get("guard") or char_payload.get("armor_class"), default_guard)
 
         raw_vitals = char_payload.get("vitals")
         if raw_vitals and isinstance(raw_vitals, dict) and "health" in raw_vitals:
-            vitals = raw_vitals
-            h_max = max(1, int(vitals["health"].get("max", max_hp)))
-            h_cur = int(vitals["health"].get("current", h_max))
+            vitals = dict(raw_vitals)
+            h_max = max(1, self._safe_int(vitals["health"].get("max"), max_hp))
+            h_cur = self._safe_int(vitals["health"].get("current"), h_max)
             vitals["health"]["max"] = h_max
             vitals["health"]["current"] = max(0, min(h_max, h_cur))
+        elif prev_vitals and "health" in prev_vitals:
+            vitals = json.loads(json.dumps(prev_vitals))
+            vitals["health"]["max"] = max_hp
+            vitals["health"]["current"] = cur_hp
+            if "guard" in vitals:
+                vitals["guard"]["current"] = max(0, guard_val)
+                vitals["guard"]["max"] = max(1, guard_val)
         else:
             vitals = {
                 "health": {"current": cur_hp, "max": max_hp, "label": "Health"},
@@ -2314,30 +2381,37 @@ Respond in JSON with schema:
 
         custom_meters = char_payload.get("custom_meters")
         if custom_meters is None:
-            custom_meters = {}
-            cm_label = (char_payload.get("custom_meter_label") or "").strip()
-            if cm_label:
-                cm_key = re.sub(r'[^a-z0-9_]+', '_', cm_label.lower()).strip('_') or "resource"
-                cm_max = max(1, int(char_payload.get("custom_meter_max", 5)))
-                cm_cur = max(0, min(cm_max, int(char_payload.get("custom_meter_current", cm_max))))
-                custom_meters[cm_key] = {"current": cm_cur, "max": cm_max, "label": cm_label}
+            if prev.get("custom_meters"):
+                custom_meters = dict(prev.get("custom_meters", {}))
+            else:
+                custom_meters = {}
+                cm_label = (char_payload.get("custom_meter_label") or "").strip()
+                if cm_label:
+                    cm_key = re.sub(r'[^a-z0-9_]+', '_', cm_label.lower()).strip('_') or "resource"
+                    cm_max = max(1, self._safe_int(char_payload.get("custom_meter_max"), 5))
+                    cm_cur = max(0, min(cm_max, self._safe_int(char_payload.get("custom_meter_current"), cm_max)))
+                    custom_meters[cm_key] = {"current": cm_cur, "max": cm_max, "label": cm_label}
 
         # Determine ruleset
         ruleset = (
             char_payload.get("ruleset")
+            or prev.get("ruleset")
             or char_payload.get("native_system")
+            or prev.get("native_system")
             or (self.manifest.get("campaigns", {}).get(st.get("campaign_id", ""), {}).get("system_preset"))
             or "dnd_5e"
         )
 
         raw_attrs = char_payload.get("attributes") or {}
-        attributes = dict(raw_attrs)
-        str_val = int(char_payload.get("Strength") or raw_attrs.get("Strength") or char_payload.get("Might", 10))
-        dex_val = int(char_payload.get("Dexterity") or raw_attrs.get("Dexterity") or char_payload.get("Agility", 10))
-        con_val = int(char_payload.get("Constitution") or raw_attrs.get("Constitution") or char_payload.get("Vigor", 10))
-        int_val = int(char_payload.get("Intelligence") or raw_attrs.get("Intelligence") or char_payload.get("Intellect", 10))
-        wis_val = int(char_payload.get("Wisdom") or raw_attrs.get("Wisdom") or char_payload.get("Presence", 10))
-        cha_val = int(char_payload.get("Charisma") or raw_attrs.get("Charisma") or char_payload.get("Presence", 10))
+        prev_attrs = prev.get("attributes") or {}
+        attributes = dict(raw_attrs) if raw_attrs else dict(prev_attrs)
+
+        str_val = self._safe_int(char_payload.get("Strength") or raw_attrs.get("Strength") or char_payload.get("Might") or raw_attrs.get("Might") or prev_attrs.get("Strength") or prev_attrs.get("Might"), 10)
+        dex_val = self._safe_int(char_payload.get("Dexterity") or raw_attrs.get("Dexterity") or char_payload.get("Agility") or raw_attrs.get("Agility") or prev_attrs.get("Dexterity") or prev_attrs.get("Agility"), 10)
+        con_val = self._safe_int(char_payload.get("Constitution") or raw_attrs.get("Constitution") or char_payload.get("Vigor") or raw_attrs.get("Vigor") or prev_attrs.get("Constitution") or prev_attrs.get("Vigor"), 10)
+        int_val = self._safe_int(char_payload.get("Intelligence") or raw_attrs.get("Intelligence") or char_payload.get("Intellect") or raw_attrs.get("Intellect") or prev_attrs.get("Intelligence") or prev_attrs.get("Intellect"), 10)
+        wis_val = self._safe_int(char_payload.get("Wisdom") or raw_attrs.get("Wisdom") or char_payload.get("Presence") or raw_attrs.get("Presence") or prev_attrs.get("Wisdom") or prev_attrs.get("Presence"), 10)
+        cha_val = self._safe_int(char_payload.get("Charisma") or raw_attrs.get("Charisma") or prev_attrs.get("Charisma") or wis_val, 10)
 
         if "Strength" in char_payload or "Strength" in raw_attrs or "dnd" in ruleset.lower() or "pathfinder" in ruleset.lower():
             attributes["Strength"] = str_val
@@ -2353,50 +2427,74 @@ Respond in JSON with schema:
             attributes.setdefault("Presence", max(wis_val, cha_val))
         elif "INT" in char_payload or "INT" in raw_attrs or "cyber" in ruleset.lower():
             for stat in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"):
-                attributes[stat] = int(char_payload.get(stat) or raw_attrs.get(stat, 6))
+                def_stat = self._safe_int(prev_attrs.get(stat), 6)
+                attributes[stat] = self._safe_int(char_payload.get(stat) or raw_attrs.get(stat), def_stat)
             attributes.setdefault("Might", attributes.get("BODY", 6))
             attributes.setdefault("Agility", max(attributes.get("REF", 6), attributes.get("DEX", 6)))
             attributes.setdefault("Vigor", attributes.get("BODY", 6))
             attributes.setdefault("Intellect", attributes.get("INT", 6))
             attributes.setdefault("Presence", attributes.get("COOL", 6))
         else:
-            attributes.setdefault("Might", int(char_payload.get("Might", 10)))
-            attributes.setdefault("Agility", int(char_payload.get("Agility", 10)))
-            attributes.setdefault("Vigor", int(char_payload.get("Vigor", 10)))
-            attributes.setdefault("Intellect", int(char_payload.get("Intellect", 10)))
-            attributes.setdefault("Presence", int(char_payload.get("Presence", 10)))
+            attributes.setdefault("Might", str_val)
+            attributes.setdefault("Agility", dex_val)
+            attributes.setdefault("Vigor", con_val)
+            attributes.setdefault("Intellect", int_val)
+            attributes.setdefault("Presence", max(wis_val, cha_val))
+
+        def _get_val(key, default):
+            if key in char_payload and char_payload[key] is not None:
+                return char_payload[key]
+            if key in prev and prev[key] is not None:
+                return prev[key]
+            return default
+
+        ac_val = guard_val
+        if "armor_class" in char_payload and char_payload["armor_class"] is not None:
+            ac_val = self._safe_int(char_payload["armor_class"], guard_val)
+        elif "guard" in char_payload and char_payload["guard"] is not None:
+            ac_val = guard_val
+        elif "armor_class" in prev and prev["armor_class"] is not None:
+            ac_val = self._safe_int(prev["armor_class"], guard_val)
 
         char_entry = {
             "id": char_id,
             "name": name,
-            "player_name": (char_payload.get("player_name") or "Player").strip(),
-            "archetype": (char_payload.get("archetype") or "Adventurer").strip(),
-            "is_player": bool(char_payload.get("is_player", True)),
-            "level": int(char_payload.get("level", 1)),
-            "experience_points": int(char_payload.get("experience_points", 0)),
+            "player_name": str(_get_val("player_name", "Player")).strip(),
+            "archetype": str(_get_val("archetype", "Adventurer")).strip(),
+            "is_player": bool(_get_val("is_player", True)),
+            "level": max(1, self._safe_int(_get_val("level", 1), 1)),
+            "experience_points": max(0, self._safe_int(_get_val("experience_points", 0), 0)),
             "ruleset": ruleset,
-            "species": str(char_payload.get("species") or char_payload.get("race") or ""),
-            "background": str(char_payload.get("background") or ""),
+            "species": str(_get_val("species", "") or _get_val("race", "")),
+            "background": str(_get_val("background", "")),
             "vitals": vitals,
             "custom_meters": custom_meters,
             "attributes": attributes,
-            "saving_throws": dict(char_payload.get("saving_throws", {})),
-            "currency": dict(char_payload.get("currency", {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0})),
-            "speed": str(char_payload.get("speed") or "30 ft."),
-            "hit_dice": str(char_payload.get("hit_dice") or "1d8"),
-            "armor_class": int(char_payload.get("armor_class") or guard_val),
-            "temp_hp": int(char_payload.get("temp_hp", 0)),
-            "conditions": list(char_payload.get("conditions", [])),
-            "weapons": list(char_payload.get("weapons", [])),
-            "inventory": list(char_payload.get("inventory", [])),
-            "proficiencies": str(char_payload.get("proficiencies", "")),
-            "prof_bonus": str(char_payload.get("prof_bonus", "+2")),
-            "passives": dict(char_payload.get("passives", {})),
-            "initiative": str(char_payload.get("initiative", "")),
-            "features_and_traits": list(char_payload.get("features_and_traits", [])),
-            "skills": dict(char_payload.get("skills", {})),
-            "spells": list(char_payload.get("spells", []))
+            "saving_throws": dict(_get_val("saving_throws", {})),
+            "currency": dict(_get_val("currency", {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0})),
+            "speed": str(_get_val("speed", "30 ft.")),
+            "hit_dice": str(_get_val("hit_dice", "1d8")),
+            "armor_class": ac_val,
+            "temp_hp": max(0, self._safe_int(_get_val("temp_hp", 0), 0)),
+            "conditions": list(_get_val("conditions", [])),
+            "weapons": list(_get_val("weapons", [])),
+            "inventory": list(_get_val("inventory", [])),
+            "proficiencies": str(_get_val("proficiencies", "")),
+            "prof_bonus": str(_get_val("prof_bonus", "+2")),
+            "passives": dict(_get_val("passives", {})),
+            "initiative": str(_get_val("initiative", "")),
+            "features_and_traits": list(_get_val("features_and_traits", [])),
+            "skills": dict(_get_val("skills", {})),
+            "spells": list(_get_val("spells", []))
         }
+
+        # Preserve optional rich sheet properties
+        for opt_key in ("class_and_level", "senses", "proficiencies_armor", "proficiencies_weapons", "proficiencies_tools", "proficiencies_languages", "head_sp", "body_sp", "humanity"):
+            if opt_key in char_payload and char_payload[opt_key] is not None:
+                char_entry[opt_key] = char_payload[opt_key]
+            elif opt_key in prev and prev[opt_key] is not None:
+                char_entry[opt_key] = prev[opt_key]
+
         chars[char_id] = char_entry
         active_cid = st.get("campaign_id")
         if active_cid and active_cid in self.manifest.get("campaigns", {}):
@@ -2404,6 +2502,7 @@ Respond in JSON with schema:
             self.save_manifest()
         if target_state is None or st == self.active_state:
             self.save_active_campaign_state()
+        logger.info(f"[TTRPG] Character '{name}' ({char_id}) saved in campaign '{active_cid}'. HP: {cur_hp}/{max_hp}, Guard/AC: {guard_val}")
         return {"status": "success", "character": char_entry, "state": st}
 
     def delete_character(self, character_id_or_name: str) -> Dict[str, Any]:
@@ -2891,6 +2990,101 @@ Return ONLY valid JSON.
             "is_player": active_entity["is_player"],
             "turn_index": idx
         }
+
+    # --- Single-Mic Tabletop Coordination & Clarification Engine ---
+    def set_party_caller(self, character_name: str) -> Dict[str, Any]:
+        """Sets the designated player who resolves group decisions in exploration mode."""
+        if not self.active_state:
+            return {"status": "error", "message": "No active campaign state."}
+        char_id, char_data = self._find_character(character_name)
+        if not char_data:
+            chars = self.active_state.get("characters", {})
+            if character_name in chars:
+                char_id = character_name
+                char_data = chars[char_id]
+            else:
+                return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        self.active_state["party_caller_id"] = char_id
+        self.save_active_campaign_state()
+        return {"status": "success", "caller_id": char_id, "caller_name": char_data["name"]}
+
+    def set_focused_speaker(self, character_id: str) -> Dict[str, Any]:
+        """Sets the active speaker fallback for single-mic setups."""
+        if not self.active_state:
+            return {"status": "error", "message": "No active campaign state."}
+        chars = self.active_state.get("characters", {})
+        if character_id in chars:
+            c_id = character_id
+            c_data = chars[c_id]
+        else:
+            c_id, c_data = self._find_character(character_id)
+            if not c_data:
+                return {"status": "error", "message": f"Character '{character_id}' not found."}
+
+        self.active_state["focused_speaker_id"] = c_id
+        self.save_active_campaign_state()
+        return {"status": "success", "focused_speaker_id": c_id, "name": c_data.get("name")}
+
+    def stash_pending_action(self, action_text: str, question: str):
+        """Stashes an anonymous action awaiting table clarification."""
+        if not self.active_state:
+            return
+        self.active_state["pending_action_stash"] = {
+            "action_text": action_text,
+            "prompt_message": question,
+            "stashed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        }
+        self.save_active_campaign_state()
+
+    def pop_pending_action(self) -> Optional[str]:
+        """Retrieves and clears the stashed action upon actor identification."""
+        if not self.active_state or "pending_action_stash" not in self.active_state:
+            return None
+        stashed = self.active_state.pop("pending_action_stash", None)
+        self.save_active_campaign_state()
+        return stashed.get("action_text") if stashed else None
+
+    def generate_scene_hud(self, active_actor_name: Optional[str] = None) -> str:
+        """
+        Synthesizes a high-density, low-token Scene HUD (<150 tokens) for LLM context injection.
+        """
+        if not self.active_state:
+            return ""
+
+        chars = self.active_state.get("characters", {})
+        caller_id = self.active_state.get("party_caller_id")
+        caller_name = chars.get(caller_id, {}).get("name", "Unassigned")
+
+        # Determine active turn
+        ladder = self.active_state.get("initiative_order", [])
+        turn_idx = self.active_state.get("active_turn_index", 0)
+        active_turn_name = ladder[turn_idx]["name"] if (ladder and turn_idx < len(ladder)) else None
+
+        dice_mode = self.get_dice_mode()
+        dice_directive = "Digital (Call `roll_dice` automatically; never tell player to roll or say 'Aether rolls')" if dice_mode == "digital" else "Physical (Prompt active player to roll at table)"
+
+        hud = [
+            "### SCENE HUD (PARTY STATE) ###",
+            f"Party Caller (Exploration Lead): {caller_name}",
+            f"Current Turn Initiative: {active_turn_name or 'Out of Combat'}",
+            f"Active Speaking Character: {active_actor_name or 'Party General'}",
+            f"Active Dice Mode: {dice_directive}",
+            "Party Roster Status:"
+        ]
+
+        for c_id, c in chars.items():
+            hp_cur = c.get("vitals", {}).get("health", {}).get("current", 0)
+            hp_max = c.get("vitals", {}).get("health", {}).get("max", 0)
+            guard = c.get("vitals", {}).get("guard", {}).get("current", 0)
+            conds = ", ".join(c.get("conditions", [])) or "Clear"
+            hud.append(
+                f"- {c.get('name', 'Hero')} [{c.get('archetype', 'Hero')}]: {hp_cur}/{hp_max} HP | "
+                f"Guard: {guard} | Conditions: {conds}"
+            )
+
+        hud.append("################################")
+        return "\n".join(hud)
 
     # --- Internal Helpers ---
     def _find_character(self, name: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:

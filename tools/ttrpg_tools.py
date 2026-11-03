@@ -83,7 +83,7 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService):
         """
         Reads the extracted text of an uploaded campaign document (ruleset, campaign adventure,
         or character sheet) so Aether can review it and act as the Dungeon Master / Game Master.
-        Pass query to search for a specific scene, chapter, or NPC (e.g. 'Scene 1', 'Johan Petry', 'Chief Filip').
+        Pass query to search for a specific scene, chapter, or NPC (e.g. 'Scene 1', 'Prologue', 'Chapter 1', or an NPC name).
         Pass filename='all' to read all uploaded documents in the active campaign.
         """
         return service.read_campaign_document(filename=filename, query=query)
@@ -265,17 +265,17 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService):
 
     dispatcher.register_tool(
         name="read_campaign_document",
-        description="Reads extracted text from an uploaded TTRPG campaign document (ruleset, campaign module, or character sheet) so Aether can review it and act as the Dungeon Master / Game Master. Pass query to search for a specific scene or NPC (e.g. 'Scene 1', 'Johan Petry', 'Chief Filip'). Pass filename='all' to review all uploaded documents.",
+        description="Reads extracted text from an uploaded TTRPG campaign document (ruleset, campaign module, or character sheet) so Aether can review it and act as the Dungeon Master / Game Master. Pass query to search for a specific scene or NPC (e.g. 'Scene 1', 'Prologue', 'Chapter 1', or an NPC name). Pass filename='all' to review all uploaded documents.",
         parameters={
             "type": "object",
             "properties": {
                 "filename": {
                     "type": "string",
-                    "description": "Filename of the uploaded document (e.g., 'Elfhunt_11397805.pdf', 'dnd_rules.pdf', 'char_sheet.pdf'), category ('ruleset', 'campaign', 'character_sheet'), or 'all' to read all uploaded documents."
+                    "description": "Filename of the uploaded document (e.g., 'adventure_module.pdf', 'dnd_rules.pdf', 'char_sheet.pdf'), category ('ruleset', 'campaign', 'character_sheet'), or 'all' to read all uploaded documents."
                 },
                 "query": {
                     "type": "string",
-                    "description": "Optional search term, scene name, or NPC name (e.g., 'Scene 1', 'Johan Petry', 'House of Chiefs') to retrieve only the relevant excerpt."
+                    "description": "Optional search term, scene name, or NPC name (e.g., 'Scene 1', 'Prologue', 'Tavern') to retrieve only the relevant excerpt."
                 }
             },
             "required": ["filename"]

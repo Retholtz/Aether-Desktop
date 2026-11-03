@@ -55,6 +55,7 @@ from core.project_service import ProjectService
 from core.notebooklm_service import NotebookLMService
 from tools.project_tools import register_project_tools
 from core.ttrpg_service import TTRPGService
+from core.voice_actor_parser import VoiceActorParser
 from tools.ttrpg_tools import register_ttrpg_tools
 from core.session_manager import SessionManager
 from core.character_vault_service import CharacterVaultService
@@ -1518,6 +1519,171 @@ class AetherEngine:
 
         logger.info(f"[ENGINE] Active workspace set to {workspace_type}:{context_id}")
         return restored_history
+
+    async def speak_tts(self, text: str):
+        """Speaks text using configured TTS engine or feedback channel."""
+        if not text:
+            return
+        if hasattr(self, "_speak_feedback"):
+            await self._speak_feedback(text)
+
+    async def _handle_voice_transcript(self, raw_transcript: str) -> bool:
+        """
+        Multi-Player Single-Microphone Voice Attribution & Interactive Clarification Subsystem.
+        Parses spoken utterances into structured actor actions, group consensus, or clarification states.
+        """
+        if self.active_workspace_type == "campaign" and hasattr(self, "ttrpg_service") and self.ttrpg_service:
+            state = self.ttrpg_service.active_state or {}
+            chars = state.get("characters", {})
+            is_combat = bool(state.get("initiative_order"))
+            active_combat_char = None
+            if is_combat:
+                turn_idx = state.get("active_turn_index", 0)
+                ladder = state.get("initiative_order", [])
+                if turn_idx < len(ladder):
+                    active_combat_char = ladder[turn_idx].get("entity_id")
+
+            parser = VoiceActorParser(chars)
+            parsed = parser.parse_utterance(
+                raw_text=raw_transcript,
+                is_combat_active=is_combat,
+                active_combat_char_id=active_combat_char,
+                focused_char_id=state.get("focused_speaker_id")
+            )
+
+            # 1. Check if a stashed action is awaiting actor resolution
+            stashed_action = self.ttrpg_service.pop_pending_action()
+            if stashed_action:
+                if parsed.character_id:
+                    # Table just clarified who is acting!
+                    actor_name = parsed.actor_name
+                    self.ttrpg_service.set_focused_speaker(parsed.character_id)
+                    self.notify("speaker_focused", {"character_id": parsed.character_id, "name": actor_name})
+
+                    # Reconstruct turn with resolved actor
+                    hud = self.ttrpg_service.generate_scene_hud(active_actor_name=actor_name)
+                    final_prompt = f"{hud}\n\nActor: {actor_name}\nDeclared Action: {stashed_action}"
+
+                    resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
+                    self.notify("chat_event", {"type": "agent", "content": resp_text})
+                    await self.speak_tts(resp_text)
+                    return True
+                else:
+                    # Did not resolve to a known character, re-stash and re-ask
+                    self.ttrpg_service.stash_pending_action(stashed_action, "Who is taking this action?")
+                    await self.speak_tts("I didn't catch that name. Which character is acting?")
+                    return True
+
+            # 2. Check if this new utterance requires clarification
+            if parsed.requires_actor_clarification:
+                question = f"Who wants to {parsed.clarification_target_verb}?"
+                self.ttrpg_service.stash_pending_action(parsed.clean_action_text, question)
+
+                # Speak clarification question directly without burning full LLM generation
+                await self.speak_tts(question)
+                self.notify("clarification_requested", {"question": question, "action": parsed.clean_action_text})
+                return True
+
+            # 3. Check for Group Exploration Actions
+            if parsed.is_group_action:
+                caller_id = state.get("party_caller_id")
+                caller_name = chars.get(caller_id, {}).get("name", "The Party")
+                hud = self.ttrpg_service.generate_scene_hud(active_actor_name=f"Party (Led by {caller_name})")
+                final_prompt = (
+                    f"{hud}\n\n[GROUP ACTION]\n"
+                    f"The party announces: '{parsed.clean_action_text}'.\n"
+                    f"Address {caller_name} as the party caller to confirm or describe the outcome."
+                )
+                resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
+                self.notify("chat_event", {"type": "agent", "content": resp_text})
+                await self.speak_tts(resp_text)
+                return True
+
+            # 4. Standard Attributed Execution
+            if parsed.character_id:
+                self.ttrpg_service.set_focused_speaker(parsed.character_id)
+                self.notify("speaker_focused", {"character_id": parsed.character_id, "name": parsed.actor_name})
+
+            hud = self.ttrpg_service.generate_scene_hud(active_actor_name=parsed.actor_name)
+            final_prompt = f"{hud}\n\nActor: {parsed.actor_name or 'Unspecified Hero'}\nAction: {parsed.clean_action_text}"
+            resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
+            self.notify("chat_event", {"type": "agent", "content": resp_text})
+            await self.speak_tts(resp_text)
+            return True
+        return False
+
+    async def _execute_ttrpg_chat_turn(self, final_prompt: str) -> str:
+        """
+        Executes a tabletop roleplay turn with full function/tool calling support
+        (e.g. roll_dice, modify_character_vitals), cleanses redundant meta-narration
+        ('Aether rolls for Eric'), and returns concise narrative text.
+        """
+        if not hasattr(self, "chat") or not self.chat:
+            return "The adventure awaits."
+
+        turn_config = self._execute_turn_modular(final_prompt) if hasattr(self, "_execute_turn_modular") else None
+
+        if hasattr(self.chat, "send_message_async"):
+            resp = await self.chat.send_message_async(final_prompt)
+        elif hasattr(self, "_send_chat_message_resilient"):
+            resp = await self._send_chat_message_resilient(self.chat, final_prompt, config=turn_config)
+        elif hasattr(self.chat, "send_message"):
+            resp = await asyncio.to_thread(self.chat.send_message, final_prompt)
+        else:
+            return getattr(self.chat, "text", "Understood.")
+
+        # Tool execution loop for roll_dice or character mutations
+        loop_count = 0
+        max_tool_turns = 10
+        fc_list = getattr(resp, "function_calls", None)
+        if isinstance(fc_list, list) and fc_list:
+            while fc_list and loop_count < max_tool_turns and hasattr(self, "dispatcher") and self.dispatcher:
+                loop_count += 1
+                tool_parts = []
+                for fc in fc_list:
+                    fn_name = getattr(fc, "name", "")
+                    fn_args = getattr(fc, "args", {}) or {}
+                    self.notify("chat_event", {
+                        "type": "tool",
+                        "name": fn_name,
+                        "content": f"Executing: {fn_name}({json.dumps(fn_args, default=str)})"
+                    })
+                    result = await self.dispatcher.dispatch(fn_name, fn_args)
+                    try:
+                        from google.genai import types as genai_types
+                        tool_parts.append(genai_types.Part.from_function_response(
+                            name=fn_name,
+                            response={"result": result} if not isinstance(result, dict) else result
+                        ))
+                    except Exception:
+                        pass
+                if tool_parts:
+                    if hasattr(self, "_send_chat_message_resilient"):
+                        resp = await self._send_chat_message_resilient(self.chat, tool_parts, config=turn_config)
+                    elif hasattr(self.chat, "send_message_async"):
+                        resp = await self.chat.send_message_async(tool_parts)
+                    else:
+                        break
+                    fc_list = getattr(resp, "function_calls", None)
+                    if not (isinstance(fc_list, list) and fc_list):
+                        break
+                else:
+                    break
+
+        assistant_text = ""
+        if getattr(resp, "candidates", None) and resp.candidates and resp.candidates[0].content:
+            for part in resp.candidates[0].content.parts:
+                if getattr(part, "text", None) and not getattr(part, "thought", False):
+                    assistant_text += part.text
+        if not assistant_text:
+            assistant_text = getattr(resp, "text", "") or ""
+
+        # Filter out redundant meta-narration (e.g., "Aether rolls for Eric: ", "I roll for [Name]: ")
+        cleaned = assistant_text.strip()
+        cleaned = re.sub(r'^(?:aether|the dm|the gm)\s+rolls?\s+(?:for\s+[^:,\.\-\n]+)?[:,\-\.]*\s*', '', cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r'^(?:i\s+am|i\'m)\s+rolling\s+(?:for\s+[^:,\.\-\n]+)?[:,\-\.]*\s*', '', cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r'^rolling\s+(?:for\s+[^:,\.\-\n]+)?[:,\-\.]*\s*', '', cleaned, flags=re.IGNORECASE).strip()
+        return cleaned or assistant_text.strip()
 
     @property
     def audio_stream(self) -> Optional[AudioPipeline]:
@@ -4095,6 +4261,15 @@ class AetherEngine:
                             if not is_wake_idle:
                                 self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
                             continue
+
+                # Single-Mic Tabletop Voice Attribution & Clarification Engine
+                if self.active_workspace_type == "campaign" and hasattr(self, "ttrpg_service") and self.ttrpg_service:
+                    self.chat = chat
+                    handled = await self._handle_voice_transcript(user_prompt)
+                    if handled:
+                        if not is_wake_idle:
+                            self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+                        continue
 
                 self.notify("status", {"state": "thinking", "message": f"{agent_name} is thinking...", "user_prompt": user_prompt})
 

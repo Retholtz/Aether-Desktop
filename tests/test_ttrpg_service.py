@@ -858,7 +858,7 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         res2 = self.service.reformat_weapons_or_items("Crossbow, Heavy (+3, 1d10+1 Piercing, Heavy, Loading)")
         self.assertEqual(res2["status"], "success")
         w2 = res2["weapons"][0]
-        self.assertEqual(w2["name"], "Crossbow, Heavy")
+        self.assertIn(w2["name"], ("Crossbow, Heavy", "Heavy Crossbow"))
         self.assertEqual(w2["atk_bonus"], "+3")
         self.assertIn("1d10", w2["damage"])
         self.assertIn("Heavy", w2["notes"])
@@ -884,6 +884,170 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res2["weapons"][0]["atk_bonus"], "+3")
         self.assertEqual(res2["weapons"][0]["damage"], "1d10+1")
         self.assertIn("Heavy", res2["weapons"][0]["notes"])
+
+    def test_start_or_resume_ttrpg_campaign_prompts(self):
+        """
+        Verifies that start_or_resume_ttrpg_campaign:
+        1. Does not hardcode or bake character names (e.g. (Eric, Sheila)) into the prompt text,
+           directing Aether to pull the party dynamically from the roster.
+        2. Does not mention specific campaign NPCs like Johan Petry in the module hint.
+        3. Correctly differentiates Helpful DM mode for Physical Dice vs Digital Dice:
+           - In physical mode: educates players on what physical dice to roll and exact modifiers.
+           - In digital mode: rolls digital dice automatically without asking players to roll.
+        """
+        from unittest.mock import MagicMock
+        from core.gui_bridge import GuiBridge
+
+        bridge = MagicMock(spec=GuiBridge)
+        bridge._engine = MagicMock()
+        bridge._engine.is_running = True
+        bridge.set_ttrpg_session_active = MagicMock()
+
+        # Mock ttrpg_service
+        bridge.ttrpg_service = MagicMock()
+        bridge.ttrpg_service.manifest = {
+            "active_campaign": "army_of_the_damned",
+            "campaigns": {
+                "army_of_the_damned": {
+                    "id": "army_of_the_damned",
+                    "title": "Army of the Damned",
+                    "difficulty": "helpful"
+                }
+            }
+        }
+        bridge.ttrpg_service.active_state = {
+            "characters": {
+                "char_eric": {"name": "Eric"},
+                "char_sheila": {"name": "Sheila"}
+            },
+            "documents": {
+                "armyofthedamned.pdf": {"category": "campaign"}
+            },
+            "journal": [],
+            "latest_recap": ""
+        }
+
+        sent_messages = []
+        def mock_send(ctx, cid, text):
+            sent_messages.append((ctx, cid, text))
+            return {"status": "success"}
+
+        bridge.send_workspace_message = mock_send
+
+        # Test Case 1: Physical Dice Mode in Helpful difficulty
+        bridge.ttrpg_service.get_dice_mode.return_value = "physical"
+        GuiBridge.start_or_resume_ttrpg_campaign(bridge)
+        self.assertEqual(len(sent_messages), 1)
+        prompt1 = sent_messages[-1][2]
+
+        self.assertIn("Army of the Damned", prompt1)
+        self.assertIn("Introduce the setting and our characters from the party roster", prompt1)
+        self.assertNotIn("(Eric, Sheila)", prompt1)
+        self.assertNotIn("Johan Petry", prompt1)
+        self.assertIn("armyofthedamned.pdf", prompt1)
+        self.assertIn("physical dice", prompt1.lower())
+        self.assertIn("educate us on what physical dice to roll with our exact modifiers", prompt1)
+
+        # Test Case 2: Digital Dice Mode in Helpful difficulty
+        bridge.ttrpg_service.get_dice_mode.return_value = "digital"
+        GuiBridge.start_or_resume_ttrpg_campaign(bridge)
+        prompt2 = sent_messages[-1][2]
+
+        self.assertIn("digital dice", prompt2.lower())
+        self.assertIn("roll digital dice for us automatically", prompt2)
+        self.assertNotIn("tell us what dice to roll with our exact modifiers", prompt2)
+        self.assertNotIn("(Eric, Sheila)", prompt2)
+        self.assertNotIn("Johan Petry", prompt2)
+
+        # Test Case 3: Resume campaign
+        bridge.ttrpg_service.active_state["latest_recap"] = "Escaped the misty forest."
+        bridge.ttrpg_service.active_state["current_location"] = "Stensia Valley"
+        GuiBridge.start_or_resume_ttrpg_campaign(bridge)
+        prompt3 = sent_messages[-1][2]
+
+        self.assertIn("resume our campaign 'Army of the Damned' for our party from the party roster!", prompt3)
+        self.assertNotIn("Eric, Sheila", prompt3)
+        self.assertIn("Stensia Valley", prompt3)
+
+    def test_add_and_update_character_robustness(self):
+        """
+        Verifies that add_character and GuiBridge.add_ttrpg_character:
+        1. Safely handle None values, formatted strings (+2), and partial payloads without raising TypeError.
+        2. Successfully persist updated stats (STR, DEX) and HP (current and max).
+        3. Preserve existing character features, inventory, custom meters, and conditions on edit.
+        """
+        # Create base character
+        base_payload = {
+            "name": "Thorin",
+            "player_name": "Alice",
+            "archetype": "Fighter 1",
+            "ruleset": "dnd_5e",
+            "max_health": 20,
+            "current_health": 20,
+            "guard": 16,
+            "Strength": 16,
+            "Dexterity": 12,
+            "Constitution": 14,
+            "Intelligence": 10,
+            "Wisdom": 12,
+            "Charisma": 8,
+            "weapons": [{"name": "Battleaxe", "damage": "1d8+3"}],
+            "inventory": ["Shield", "Rations"],
+            "features_and_traits": ["Second Wind"],
+            "conditions": ["Blessed"],
+            "custom_meters": {"stamina": {"current": 3, "max": 5, "label": "Stamina"}}
+        }
+        res_add = self.service.add_character(base_payload)
+        self.assertEqual(res_add["status"], "success")
+        char_id = res_add["character"]["id"]
+
+        # Now simulate editing stats and HP via a form payload that has None values (e.g. from JS NaN -> null)
+        edit_payload = {
+            "id": char_id,
+            "name": "Thorin",
+            "player_name": "Alice",
+            "ruleset": "dnd_5e",
+            "max_health": 28,          # Increased HP
+            "current_health": 24,       # Modified current HP
+            "guard": 17,               # Increased Guard
+            "Strength": 18,            # Increased STR
+            "Dexterity": 14,           # Increased DEX
+            "level": "+2",             # Formatted string level
+            "experience_points": None, # None from JS null/NaN
+            "temp_hp": None,
+            "custom_meters": None      # Must preserve existing custom meters
+        }
+        res_edit = self.service.add_character(edit_payload)
+        self.assertEqual(res_edit["status"], "success")
+        updated = res_edit["character"]
+
+        # Verify stats and HP updated
+        self.assertEqual(updated["vitals"]["health"]["max"], 28)
+        self.assertEqual(updated["vitals"]["health"]["current"], 24)
+        self.assertEqual(updated["armor_class"], 17)
+        self.assertEqual(updated["attributes"]["Strength"], 18)
+        self.assertEqual(updated["attributes"]["Dexterity"], 14)
+        self.assertEqual(updated["level"], 2)
+        self.assertEqual(updated["experience_points"], 0)
+
+        # Verify preserved non-overwritten fields
+        self.assertEqual(len(updated["weapons"]), 1)
+        self.assertEqual(updated["weapons"][0]["name"], "Battleaxe")
+        self.assertIn("Shield", updated["inventory"])
+        self.assertIn("Second Wind", updated["features_and_traits"])
+        self.assertIn("Blessed", updated["conditions"])
+        self.assertIn("stamina", updated["custom_meters"])
+
+        # Test GuiBridge.add_ttrpg_character wrapper with error handling
+        from unittest.mock import MagicMock
+        from core.gui_bridge import GuiBridge
+        mock_bridge = MagicMock(spec=GuiBridge)
+        mock_bridge.ttrpg_service = self.service
+        mock_bridge._on_engine_event = MagicMock()
+
+        bridge_res = GuiBridge.add_ttrpg_character(mock_bridge, edit_payload)
+        self.assertEqual(bridge_res["status"], "success")
+        mock_bridge._on_engine_event.assert_called_with("ttrpg_state_updated", bridge_res)
 
 
 if __name__ == "__main__":

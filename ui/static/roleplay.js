@@ -396,7 +396,13 @@ function renderPartyRoster() {
     charIds.forEach(cid => {
         const ch = charsObj[cid];
         const card = document.createElement("div");
-        card.className = "character-card";
+        const charIdAttr = ch.id || cid;
+        const isCaller = Boolean(state.party_caller_id && (state.party_caller_id === cid || state.party_caller_id === ch.id));
+        const isFocused = Boolean(state.focused_speaker_id && (state.focused_speaker_id === cid || state.focused_speaker_id === ch.id));
+
+        card.className = "character-card" + (isFocused ? " active-speaker" : "");
+        card.setAttribute("data-char-id", charIdAttr);
+        card.id = `card-${charIdAttr}`;
 
         const vitals = ch.vitals || {};
         const hp = vitals.health || { current: 20, max: 20, label: "Health" };
@@ -558,16 +564,20 @@ function renderPartyRoster() {
         const coinBadge = (goldVal !== null && goldVal !== undefined) ? `<span class="char-guard-badge" style="color: #facc15; border-color: rgba(250, 204, 21, 0.35); background: rgba(250, 204, 21, 0.1);" title="Gold Pieces">🪙 ${goldVal} GP</span>` : "";
 
         card.innerHTML = `
-            <div class="char-card-top">
+            <div class="card-header char-card-top">
                 <div>
-                    <div style="display: flex; align-items: center; gap: 6px;">
-                        <h4 class="char-name-title">${escapeRpHtml(ch.name)}</h4>
+                    <div class="card-identity" style="display: flex; align-items: center; gap: 6px;">
+                        <span class="mic-pulse-indicator" title="Active Single-Mic Speaker">🎙️</span>
+                        <h4 class="char-name char-name-title">${escapeRpHtml(ch.name)}</h4>
+                        <span class="caller-crown ${isCaller ? 'active' : ''}" title="Designated Party Caller">👑 CALLER</span>
                         <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; font-size: 10px; padding: 1px 6px;">Lv. ${charLevel}</span>
                         ${charXp ? `<span style="font-size: 10px; color: #94a3b8;">${charXp} XP</span>` : ""}
                     </div>
                     <div class="char-sub-archetype">${escapeRpHtml(ch.archetype || "Adventurer")} ${ch.player_name ? `• ${escapeRpHtml(ch.player_name)}` : ""}</div>
                 </div>
-                <div style="display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end;">
+                <div class="card-controls" style="display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end;">
+                    <button type="button" class="focus-speaker-btn cyber-btn-tiny" title="Set active single-mic focus">Focus</button>
+                    <button type="button" class="set-caller-btn cyber-btn-tiny" title="Set as Party Caller">Crown</button>
                     <span class="char-guard-badge" title="${escapeRpHtml(guard.label || "Armor Defense")}">🛡️ ${acText}</span>
                     ${initBadge}
                     ${speedBadge}
@@ -2622,321 +2632,361 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     if (closeCharBtn && charModal) {
-        closeCharBtn.addEventListener("click", () => charModal.classList.add("hidden"));
+        closeCharBtn.addEventListener("click", () => {
+            editingCharacterId = null;
+            charModal.classList.add("hidden");
+        });
     }
     if (cancelCharBtn && charModal) {
-        cancelCharBtn.addEventListener("click", () => charModal.classList.add("hidden"));
+        cancelCharBtn.addEventListener("click", () => {
+            editingCharacterId = null;
+            charModal.classList.add("hidden");
+        });
     }
     if (confirmCharBtn && charModal) {
         confirmCharBtn.addEventListener("click", async () => {
-            const name = (document.getElementById("input-rp-char-name")?.value || "").trim();
-            if (!name) {
-                alert("Please enter a character name.");
-                return;
-            }
-
-            const playerName = (document.getElementById("input-rp-char-player")?.value || "Player").trim();
-            const activeRuleset = (document.getElementById("select-rp-char-ruleset")?.value || "dnd_5e").toLowerCase();
-
-            let payload = {
-                id: editingCharacterId || undefined,
-                name: name,
-                player_name: playerName,
-                ruleset: activeRuleset
-            };
-
-            if (activeRuleset === "dnd_5e") {
-                const clsLvl = (document.getElementById("input-dnd-class-level")?.value || "Fighter 1").trim();
-                const species = (document.getElementById("input-dnd-species")?.value || "").trim();
-                const bg = (document.getElementById("input-dnd-background")?.value || "").trim();
-                const xp = parseInt(document.getElementById("input-dnd-xp")?.value || "0", 10);
-                const mLvl = clsLvl.match(/\d+/);
-                const lvl = mLvl ? parseInt(mLvl[0], 10) : 1;
-
-                const str = parseInt(document.getElementById("input-dnd-str")?.value || "10", 10);
-                const dex = parseInt(document.getElementById("input-dnd-dex")?.value || "10", 10);
-                const con = parseInt(document.getElementById("input-dnd-con")?.value || "10", 10);
-                const intVal = parseInt(document.getElementById("input-dnd-int")?.value || "10", 10);
-                const wis = parseInt(document.getElementById("input-dnd-wis")?.value || "10", 10);
-                const cha = parseInt(document.getElementById("input-dnd-cha")?.value || "10", 10);
-
-                const ac = parseInt(document.getElementById("input-dnd-ac")?.value || "14", 10);
-                const init = (document.getElementById("input-dnd-init")?.value || "+0").trim();
-                const speed = (document.getElementById("input-dnd-speed")?.value || "30 ft.").trim();
-                const profBonus = (document.getElementById("input-dnd-prof-bonus")?.value || "+2").trim();
-                const maxHp = parseInt(document.getElementById("input-dnd-max-hp")?.value || "14", 10);
-                const curHp = parseInt(document.getElementById("input-dnd-cur-hp")?.value || String(maxHp), 10);
-                const tempHp = parseInt(document.getElementById("input-dnd-temp-hp")?.value || "0", 10);
-                const hitDice = (document.getElementById("input-dnd-hit-dice")?.value || "1d10").trim();
-
-                const savingThrows = {
-                    Strength: document.getElementById("val-dnd-save-str")?.textContent || "+0",
-                    Dexterity: document.getElementById("val-dnd-save-dex")?.textContent || "+0",
-                    Constitution: document.getElementById("val-dnd-save-con")?.textContent || "+0",
-                    Intelligence: document.getElementById("val-dnd-save-int")?.textContent || "+0",
-                    Wisdom: document.getElementById("val-dnd-save-wis")?.textContent || "+0",
-                    Charisma: document.getElementById("val-dnd-save-cha")?.textContent || "+0"
-                };
-
-                const skillsDict = {};
-                const skillsContainer = document.getElementById("dnd-skills-grid-container");
-                if (skillsContainer) {
-                    DND_5E_SKILLS_DEF.forEach(s => {
-                        const cleanKey = s.name.replace(/[^a-zA-Z]/g, '');
-                        const val = document.getElementById(`val-dnd-skill-${cleanKey}`)?.textContent || "+0";
-                        const isProf = skillsContainer.querySelector(`input[data-skill="${s.name}"]`)?.checked;
-                        skillsDict[s.name] = isProf ? `${val} (Proficient)` : val;
-                    });
+            try {
+                const name = (document.getElementById("input-rp-char-name")?.value || "").trim();
+                if (!name) {
+                    alert("Please enter a character name.");
+                    return;
                 }
 
-                const currency = {
-                    pp: parseInt(document.getElementById("input-dnd-coin-pp")?.value || "0", 10),
-                    gp: parseInt(document.getElementById("input-dnd-coin-gp")?.value || "0", 10),
-                    ep: parseInt(document.getElementById("input-dnd-coin-ep")?.value || "0", 10),
-                    sp: parseInt(document.getElementById("input-dnd-coin-sp")?.value || "0", 10),
-                    cp: parseInt(document.getElementById("input-dnd-coin-cp")?.value || "0", 10)
+                const playerName = (document.getElementById("input-rp-char-player")?.value || "Player").trim();
+                const activeRuleset = (document.getElementById("select-rp-char-ruleset")?.value || "dnd_5e").toLowerCase();
+
+                const safeInt = (val, def = 0) => {
+                    if (val === null || val === undefined) return def;
+                    const m = String(val).match(/[-+]?\d+/);
+                    if (!m) return def;
+                    const parsed = parseInt(m[0], 10);
+                    return isNaN(parsed) ? def : parsed;
                 };
 
-                const armor = (document.getElementById("input-dnd-prof-armor")?.value || "").trim();
-                const weaponsProf = (document.getElementById("input-dnd-prof-weapons")?.value || "").trim();
-                const tools = (document.getElementById("input-dnd-prof-tools")?.value || "").trim();
-                const languages = (document.getElementById("input-dnd-languages")?.value || "").trim();
-                const profLang = [
-                    armor ? `=== ARMOR ===\n${armor}` : "",
-                    weaponsProf ? `=== WEAPONS ===\n${weaponsProf}` : "",
-                    tools ? `=== TOOLS ===\n${tools}` : "",
-                    languages ? `=== LANGUAGES ===\n${languages}` : ""
-                ].filter(Boolean).join("\n\n");
-
-                const wpnsRaw = (document.getElementById("input-dnd-weapons")?.value || "").trim();
-                const weapons = (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
-                    ? stagedCharacterWeapons
-                    : (wpnsRaw ? wpnsRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
-                        const parts = w.trim();
-                        const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
-                        return {
-                            name: m ? m[1].trim() : parts,
-                            atk_bonus: m && m[2] ? m[2].trim() : "+0",
-                            damage: m && m[3] ? m[3].trim() : "1d4"
-                        };
-                    }).filter(w => Boolean(w.name)) : []);
-
-                const invRaw = (document.getElementById("input-dnd-inventory")?.value || "").trim();
-                const inventory = invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
-                const featsRaw = (document.getElementById("input-dnd-features")?.value || "").trim();
-                const features = featsRaw ? featsRaw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
-                const spellsRaw = (document.getElementById("input-dnd-spells")?.value || "").trim();
-                const spells = spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
-
-                const archetype = `${clsLvl}${species || bg ? ' (' + [species, bg].filter(Boolean).join(', ') + ')' : ''}`;
-
-                payload = {
-                    ...payload,
-                    archetype: archetype,
-                    class_and_level: clsLvl,
-                    species: species,
-                    background: bg,
-                    level: lvl,
-                    experience_points: xp,
-                    max_health: maxHp,
-                    current_health: curHp,
-                    temp_hp: tempHp,
-                    guard: ac,
-                    armor_class: ac,
-                    speed: speed,
-                    hit_dice: hitDice,
-                    prof_bonus: profBonus,
-                    initiative: init,
-                    attributes: {
-                        Strength: str, Dexterity: dex, Constitution: con,
-                        Intelligence: intVal, Wisdom: wis, Charisma: cha,
-                        Might: str, Agility: dex, Vigor: con,
-                        Intellect: intVal, Presence: Math.max(wis, cha)
-                    },
-                    saving_throws: savingThrows,
-                    skills: skillsDict,
-                    currency: currency,
-                    passives: {
-                        perception: parseInt(document.getElementById("input-dnd-pass-percep")?.value || "10", 10),
-                        insight: parseInt(document.getElementById("input-dnd-pass-insight")?.value || "10", 10),
-                        investigation: parseInt(document.getElementById("input-dnd-pass-invest")?.value || "10", 10)
-                    },
-                    senses: (document.getElementById("input-dnd-senses")?.value || "").trim(),
-                    proficiencies: profLang,
-                    proficiencies_armor: armor,
-                    proficiencies_weapons: weaponsProf,
-                    proficiencies_tools: tools,
-                    proficiencies_languages: languages,
-                    weapons: weapons,
-                    inventory: inventory,
-                    features_and_traits: features,
-                    spells: spells
+                let payload = {
+                    id: editingCharacterId || undefined,
+                    name: name,
+                    player_name: playerName,
+                    ruleset: activeRuleset
                 };
-            } else if (activeRuleset === "pathfinder_2e") {
-                const clsLvl = (document.getElementById("input-pf-class-level")?.value || "Fighter 1").trim();
-                const ancestry = (document.getElementById("input-pf-ancestry")?.value || "").trim();
-                const bg = (document.getElementById("input-pf-background")?.value || "").trim();
-                const xp = parseInt(document.getElementById("input-pf-xp")?.value || "0", 10);
-                const str = parseInt(document.getElementById("input-pf-str")?.value || "10", 10);
-                const dex = parseInt(document.getElementById("input-pf-dex")?.value || "10", 10);
-                const con = parseInt(document.getElementById("input-pf-con")?.value || "10", 10);
-                const intVal = parseInt(document.getElementById("input-pf-int")?.value || "10", 10);
-                const wis = parseInt(document.getElementById("input-pf-wis")?.value || "10", 10);
-                const cha = parseInt(document.getElementById("input-pf-cha")?.value || "10", 10);
-                const ac = parseInt(document.getElementById("input-pf-ac")?.value || "15", 10);
-                const hp = parseInt(document.getElementById("input-pf-max-hp")?.value || "20", 10);
-                const speed = (document.getElementById("input-pf-speed")?.value || "25 ft.").trim();
-                const init = (document.getElementById("input-pf-perception")?.value || "+5").trim();
 
-                payload = {
-                    ...payload,
-                    archetype: `${clsLvl}${ancestry || bg ? ' (' + [ancestry, bg].filter(Boolean).join(', ') + ')' : ''}`,
-                    species: ancestry,
-                    background: bg,
-                    level: parseInt(clsLvl.match(/\d+/)?.[0] || "1", 10),
-                    experience_points: xp,
-                    max_health: hp,
-                    guard: ac,
-                    armor_class: ac,
-                    speed: speed,
-                    initiative: init,
-                    attributes: {
-                        Strength: str, Dexterity: dex, Constitution: con,
-                        Intelligence: intVal, Wisdom: wis, Charisma: cha,
-                        Might: str, Agility: dex, Vigor: con, Intellect: intVal, Presence: Math.max(wis, cha)
-                    },
-                    saving_throws: {
-                        Fortitude: document.getElementById("input-pf-save-fort")?.value || "+7",
-                        Reflex: document.getElementById("input-pf-save-ref")?.value || "+5",
-                        Will: document.getElementById("input-pf-save-will")?.value || "+4"
-                    },
-                    weapons: (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
+                if (activeRuleset === "dnd_5e") {
+                    const clsLvl = (document.getElementById("input-dnd-class-level")?.value || "Fighter 1").trim();
+                    const species = (document.getElementById("input-dnd-species")?.value || "").trim();
+                    const bg = (document.getElementById("input-dnd-background")?.value || "").trim();
+                    const xp = safeInt(document.getElementById("input-dnd-xp")?.value, 0);
+                    const mLvl = clsLvl.match(/\d+/);
+                    const lvl = mLvl ? safeInt(mLvl[0], 1) : 1;
+
+                    const str = safeInt(document.getElementById("input-dnd-str")?.value, 10);
+                    const dex = safeInt(document.getElementById("input-dnd-dex")?.value, 10);
+                    const con = safeInt(document.getElementById("input-dnd-con")?.value, 10);
+                    const intVal = safeInt(document.getElementById("input-dnd-int")?.value, 10);
+                    const wis = safeInt(document.getElementById("input-dnd-wis")?.value, 10);
+                    const cha = safeInt(document.getElementById("input-dnd-cha")?.value, 10);
+
+                    const ac = safeInt(document.getElementById("input-dnd-ac")?.value, 14);
+                    const init = (document.getElementById("input-dnd-init")?.value || "+0").trim();
+                    const speed = (document.getElementById("input-dnd-speed")?.value || "30 ft.").trim();
+                    const profBonus = (document.getElementById("input-dnd-prof-bonus")?.value || "+2").trim();
+                    const maxHp = Math.max(1, safeInt(document.getElementById("input-dnd-max-hp")?.value, 14));
+                    const curHp = Math.max(0, Math.min(maxHp, safeInt(document.getElementById("input-dnd-cur-hp")?.value, maxHp)));
+                    const tempHp = safeInt(document.getElementById("input-dnd-temp-hp")?.value, 0);
+                    const hitDice = (document.getElementById("input-dnd-hit-dice")?.value || "1d10").trim();
+
+                    const savingThrows = {
+                        Strength: document.getElementById("val-dnd-save-str")?.textContent || "+0",
+                        Dexterity: document.getElementById("val-dnd-save-dex")?.textContent || "+0",
+                        Constitution: document.getElementById("val-dnd-save-con")?.textContent || "+0",
+                        Intelligence: document.getElementById("val-dnd-save-int")?.textContent || "+0",
+                        Wisdom: document.getElementById("val-dnd-save-wis")?.textContent || "+0",
+                        Charisma: document.getElementById("val-dnd-save-cha")?.textContent || "+0"
+                    };
+
+                    const skillsDict = {};
+                    const skillsContainer = document.getElementById("dnd-skills-grid-container");
+                    if (skillsContainer) {
+                        DND_5E_SKILLS_DEF.forEach(s => {
+                            const cleanKey = s.name.replace(/[^a-zA-Z]/g, '');
+                            const val = document.getElementById(`val-dnd-skill-${cleanKey}`)?.textContent || "+0";
+                            const isProf = skillsContainer.querySelector(`input[data-skill="${s.name}"]`)?.checked;
+                            skillsDict[s.name] = isProf ? `${val} (Proficient)` : val;
+                        });
+                    }
+
+                    const currency = {
+                        pp: safeInt(document.getElementById("input-dnd-coin-pp")?.value, 0),
+                        gp: safeInt(document.getElementById("input-dnd-coin-gp")?.value, 0),
+                        ep: safeInt(document.getElementById("input-dnd-coin-ep")?.value, 0),
+                        sp: safeInt(document.getElementById("input-dnd-coin-sp")?.value, 0),
+                        cp: safeInt(document.getElementById("input-dnd-coin-cp")?.value, 0)
+                    };
+
+                    const armor = (document.getElementById("input-dnd-prof-armor")?.value || "").trim();
+                    const weaponsProf = (document.getElementById("input-dnd-prof-weapons")?.value || "").trim();
+                    const tools = (document.getElementById("input-dnd-prof-tools")?.value || "").trim();
+                    const languages = (document.getElementById("input-dnd-languages")?.value || "").trim();
+                    const profLang = [
+                        armor ? `=== ARMOR ===\n${armor}` : "",
+                        weaponsProf ? `=== WEAPONS ===\n${weaponsProf}` : "",
+                        tools ? `=== TOOLS ===\n${tools}` : "",
+                        languages ? `=== LANGUAGES ===\n${languages}` : ""
+                    ].filter(Boolean).join("\n\n");
+
+                    const wpnsRaw = (document.getElementById("input-dnd-weapons")?.value || "").trim();
+                    const weapons = (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
                         ? stagedCharacterWeapons
-                        : (() => {
-                            const strikesRaw = (document.getElementById("input-pf-strikes")?.value || "").trim();
-                            return strikesRaw ? strikesRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
-                                const parts = w.trim();
-                                const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
-                                return {
-                                    name: m ? m[1].trim() : parts,
-                                    atk_bonus: m && m[2] ? m[2].trim() : "+0",
-                                    damage: m && m[3] ? m[3].trim() : "1d6"
-                                };
-                            }).filter(w => Boolean(w.name)) : [];
-                        })(),
-                    proficiencies: document.getElementById("input-pf-skills")?.value || "",
-                    inventory: (document.getElementById("input-pf-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
-                };
-            } else if (activeRuleset === "cyberpunk") {
-                const role = (document.getElementById("input-cyber-role")?.value || "Solo 4").trim();
-                const origin = (document.getElementById("input-cyber-origin")?.value || "").trim();
-                const rep = parseInt(document.getElementById("input-cyber-rep")?.value || "0", 10);
-                const ip = parseInt(document.getElementById("input-cyber-ip")?.value || "0", 10);
+                        : (wpnsRaw ? wpnsRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
+                            const parts = w.trim();
+                            const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
+                            return {
+                                name: m ? m[1].trim() : parts,
+                                atk_bonus: m && m[2] ? m[2].trim() : "+0",
+                                damage: m && m[3] ? m[3].trim() : "1d4"
+                            };
+                        }).filter(w => Boolean(w.name)) : []);
 
-                const stats = {
-                    INT: parseInt(document.getElementById("input-cyber-int")?.value || "6", 10),
-                    REF: parseInt(document.getElementById("input-cyber-ref")?.value || "6", 10),
-                    DEX: parseInt(document.getElementById("input-cyber-dex")?.value || "6", 10),
-                    TECH: parseInt(document.getElementById("input-cyber-tech")?.value || "6", 10),
-                    COOL: parseInt(document.getElementById("input-cyber-cool")?.value || "6", 10),
-                    WILL: parseInt(document.getElementById("input-cyber-will")?.value || "6", 10),
-                    LUCK: parseInt(document.getElementById("input-cyber-luck")?.value || "6", 10),
-                    MOVE: parseInt(document.getElementById("input-cyber-move")?.value || "6", 10),
-                    BODY: parseInt(document.getElementById("input-cyber-body")?.value || "6", 10),
-                    EMP: parseInt(document.getElementById("input-cyber-emp")?.value || "6", 10)
-                };
+                    const invRaw = (document.getElementById("input-dnd-inventory")?.value || "").trim();
+                    const inventory = invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
+                    const featsRaw = (document.getElementById("input-dnd-features")?.value || "").trim();
+                    const features = featsRaw ? featsRaw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
+                    const spellsRaw = (document.getElementById("input-dnd-spells")?.value || "").trim();
+                    const spells = spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
 
-                const hp = parseInt(document.getElementById("input-cyber-hp")?.value || "40", 10);
-                const headSp = parseInt(document.getElementById("input-cyber-head-sp")?.value || "11", 10);
-                const bodySp = parseInt(document.getElementById("input-cyber-body-sp")?.value || "11", 10);
-                const humanity = parseInt(document.getElementById("input-cyber-humanity")?.value || "48", 10);
-                const eb = parseInt(document.getElementById("input-cyber-eb")?.value || "0", 10);
+                    const archetype = `${clsLvl}${species || bg ? ' (' + [species, bg].filter(Boolean).join(', ') + ')' : ''}`;
 
-                const wpnsRaw = (document.getElementById("input-cyber-weapons")?.value || "").trim();
-                const weapons = (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
-                    ? stagedCharacterWeapons
-                    : (wpnsRaw ? wpnsRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
-                        const parts = w.trim();
-                        const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
-                        return {
-                            name: m ? m[1].trim() : parts,
-                            atk_bonus: m && m[2] ? m[2].trim() : "+0",
-                            damage: m && m[3] ? m[3].trim() : "2d6"
-                        };
-                    }).filter(w => Boolean(w.name)) : []);
+                    payload = {
+                        ...payload,
+                        archetype: archetype,
+                        class_and_level: clsLvl,
+                        species: species,
+                        background: bg,
+                        level: lvl,
+                        experience_points: xp,
+                        max_health: maxHp,
+                        current_health: curHp,
+                        temp_hp: tempHp,
+                        guard: ac,
+                        armor_class: ac,
+                        speed: speed,
+                        hit_dice: hitDice,
+                        prof_bonus: profBonus,
+                        initiative: init,
+                        attributes: {
+                            Strength: str, Dexterity: dex, Constitution: con,
+                            Intelligence: intVal, Wisdom: wis, Charisma: cha,
+                            Might: str, Agility: dex, Vigor: con,
+                            Intellect: intVal, Presence: Math.max(wis, cha)
+                        },
+                        saving_throws: savingThrows,
+                        skills: skillsDict,
+                        currency: currency,
+                        passives: {
+                            perception: safeInt(document.getElementById("input-dnd-pass-percep")?.value, 10),
+                            insight: safeInt(document.getElementById("input-dnd-pass-insight")?.value, 10),
+                            investigation: safeInt(document.getElementById("input-dnd-pass-invest")?.value, 10)
+                        },
+                        senses: (document.getElementById("input-dnd-senses")?.value || "").trim(),
+                        proficiencies: profLang,
+                        proficiencies_armor: armor,
+                        proficiencies_weapons: weaponsProf,
+                        proficiencies_tools: tools,
+                        proficiencies_languages: languages,
+                        weapons: weapons,
+                        inventory: inventory,
+                        features_and_traits: features,
+                        spells: spells
+                    };
+                } else if (activeRuleset === "pathfinder_2e") {
+                    const clsLvl = (document.getElementById("input-pf-class-level")?.value || "Fighter 1").trim();
+                    const ancestry = (document.getElementById("input-pf-ancestry")?.value || "").trim();
+                    const bg = (document.getElementById("input-pf-background")?.value || "").trim();
+                    const xp = safeInt(document.getElementById("input-pf-xp")?.value, 0);
+                    const str = safeInt(document.getElementById("input-pf-str")?.value, 10);
+                    const dex = safeInt(document.getElementById("input-pf-dex")?.value, 10);
+                    const con = safeInt(document.getElementById("input-pf-con")?.value, 10);
+                    const intVal = safeInt(document.getElementById("input-pf-int")?.value, 10);
+                    const wis = safeInt(document.getElementById("input-pf-wis")?.value, 10);
+                    const cha = safeInt(document.getElementById("input-pf-cha")?.value, 10);
+                    const ac = safeInt(document.getElementById("input-pf-ac")?.value, 15);
+                    const hp = Math.max(1, safeInt(document.getElementById("input-pf-max-hp")?.value, 20));
+                    const speed = (document.getElementById("input-pf-speed")?.value || "25 ft.").trim();
+                    const init = (document.getElementById("input-pf-perception")?.value || "+5").trim();
 
-                payload = {
-                    ...payload,
-                    archetype: `${role}${origin ? ' (' + origin + ')' : ''}`,
-                    level: parseInt(role.match(/\d+/)?.[0] || "1", 10),
-                    experience_points: ip,
-                    max_health: hp,
-                    guard: bodySp,
-                    armor_class: bodySp,
-                    head_sp: headSp,
-                    body_sp: bodySp,
-                    humanity: humanity,
-                    currency: { eb: eb },
-                    attributes: {
-                        ...stats,
-                        Might: stats.BODY,
-                        Agility: Math.max(stats.REF, stats.DEX),
-                        Vigor: stats.BODY,
-                        Intellect: stats.INT,
-                        Presence: stats.COOL
-                    },
-                    weapons: weapons,
-                    features_and_traits: (document.getElementById("input-cyber-cyberware")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
-                    inventory: (document.getElementById("input-cyber-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
-                };
-            } else {
-                // Agnostic / Custom Fallback
-                const lvl = parseInt(document.getElementById("input-rp-char-level")?.value || "1", 10);
-                const xp = parseInt(document.getElementById("input-rp-char-xp")?.value || "0", 10);
-                const wpnsRaw = (document.getElementById("input-rp-char-weapons")?.value || "").trim();
-                const invRaw = (document.getElementById("input-rp-char-inventory")?.value || "").trim();
-                const spellsRaw = (document.getElementById("input-rp-char-spells")?.value || "").trim();
-                const featsRaw = (document.getElementById("input-rp-char-features")?.value || "").trim();
-                const skillsRaw = (document.getElementById("input-rp-char-skills")?.value || "").trim();
+                    payload = {
+                        ...payload,
+                        archetype: `${clsLvl}${ancestry || bg ? ' (' + [ancestry, bg].filter(Boolean).join(', ') + ')' : ''}`,
+                        species: ancestry,
+                        background: bg,
+                        level: Math.max(1, safeInt(clsLvl.match(/\d+/)?.[0], 1)),
+                        experience_points: xp,
+                        max_health: hp,
+                        current_health: hp,
+                        guard: ac,
+                        armor_class: ac,
+                        speed: speed,
+                        initiative: init,
+                        attributes: {
+                            Strength: str, Dexterity: dex, Constitution: con,
+                            Intelligence: intVal, Wisdom: wis, Charisma: cha,
+                            Might: str, Agility: dex, Vigor: con, Intellect: intVal, Presence: Math.max(wis, cha)
+                        },
+                        saving_throws: {
+                            Fortitude: document.getElementById("input-pf-save-fort")?.value || "+7",
+                            Reflex: document.getElementById("input-pf-save-ref")?.value || "+5",
+                            Will: document.getElementById("input-pf-save-will")?.value || "+4"
+                        },
+                        weapons: (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
+                            ? stagedCharacterWeapons
+                            : (() => {
+                                const strikesRaw = (document.getElementById("input-pf-strikes")?.value || "").trim();
+                                return strikesRaw ? strikesRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
+                                    const parts = w.trim();
+                                    const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
+                                    return {
+                                        name: m ? m[1].trim() : parts,
+                                        atk_bonus: m && m[2] ? m[2].trim() : "+0",
+                                        damage: m && m[3] ? m[3].trim() : "1d6"
+                                    };
+                                }).filter(w => Boolean(w.name)) : [];
+                            })(),
+                        proficiencies: document.getElementById("input-pf-skills")?.value || "",
+                        inventory: (document.getElementById("input-pf-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+                    };
+                } else if (activeRuleset === "cyberpunk") {
+                    const role = (document.getElementById("input-cyber-role")?.value || "Solo 4").trim();
+                    const origin = (document.getElementById("input-cyber-origin")?.value || "").trim();
+                    const rep = safeInt(document.getElementById("input-cyber-rep")?.value, 0);
+                    const ip = safeInt(document.getElementById("input-cyber-ip")?.value, 0);
 
-                const weapons = (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
-                    ? stagedCharacterWeapons
-                    : (wpnsRaw ? wpnsRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
-                        const parts = w.trim();
-                        const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
-                        return {
-                            name: m ? m[1].trim() : parts,
-                            atk_bonus: m && m[2] ? m[2].trim() : "+0",
-                            damage: m && m[3] ? m[3].trim() : "1d4"
-                        };
-                    }).filter(w => Boolean(w.name)) : []);
+                    const stats = {
+                        INT: safeInt(document.getElementById("input-cyber-int")?.value, 6),
+                        REF: safeInt(document.getElementById("input-cyber-ref")?.value, 6),
+                        DEX: safeInt(document.getElementById("input-cyber-dex")?.value, 6),
+                        TECH: safeInt(document.getElementById("input-cyber-tech")?.value, 6),
+                        COOL: safeInt(document.getElementById("input-cyber-cool")?.value, 6),
+                        WILL: safeInt(document.getElementById("input-cyber-will")?.value, 6),
+                        LUCK: safeInt(document.getElementById("input-cyber-luck")?.value, 6),
+                        MOVE: safeInt(document.getElementById("input-cyber-move")?.value, 6),
+                        BODY: safeInt(document.getElementById("input-cyber-body")?.value, 6),
+                        EMP: safeInt(document.getElementById("input-cyber-emp")?.value, 6)
+                    };
 
-                payload = {
-                    ...payload,
-                    archetype: (document.getElementById("input-rp-char-archetype")?.value || "Adventurer").trim(),
-                    level: isNaN(lvl) ? 1 : Math.max(1, lvl),
-                    experience_points: isNaN(xp) ? 0 : Math.max(0, xp),
-                    max_health: parseInt(document.getElementById("input-rp-char-hp")?.value || "28", 10),
-                    guard: parseInt(document.getElementById("input-rp-char-guard")?.value || "15", 10),
-                    custom_meter_label: (document.getElementById("input-rp-char-meter-label")?.value || "Stamina").trim(),
-                    custom_meter_max: parseInt(document.getElementById("input-rp-char-meter-max")?.value || "5", 10),
-                    Might: parseInt(document.getElementById("input-rp-attr-might")?.value || "12", 10),
-                    Agility: parseInt(document.getElementById("input-rp-attr-agility")?.value || "12", 10),
-                    Vigor: parseInt(document.getElementById("input-rp-attr-vigor")?.value || "12", 10),
-                    Intellect: parseInt(document.getElementById("input-rp-attr-intellect")?.value || "12", 10),
-                    Presence: parseInt(document.getElementById("input-rp-attr-presence")?.value || "12", 10),
-                    weapons: weapons,
-                    inventory: invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
-                    spells: spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
-                    features_and_traits: featsRaw ? featsRaw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
-                    proficiencies: skillsRaw
-                };
-            }
+                    const hp = Math.max(1, safeInt(document.getElementById("input-cyber-hp")?.value, 40));
+                    const headSp = safeInt(document.getElementById("input-cyber-head-sp")?.value, 11);
+                    const bodySp = safeInt(document.getElementById("input-cyber-body-sp")?.value, 11);
+                    const humanity = safeInt(document.getElementById("input-cyber-humanity")?.value, 48);
+                    const eb = safeInt(document.getElementById("input-cyber-eb")?.value, 0);
 
-            if (window.pywebview && window.pywebview.api && window.pywebview.api.add_ttrpg_character) {
-                await window.pywebview.api.add_ttrpg_character(payload);
-                charModal.classList.add("hidden");
-                await loadRolePlayUI();
+                    const wpnsRaw = (document.getElementById("input-cyber-weapons")?.value || "").trim();
+                    const weapons = (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
+                        ? stagedCharacterWeapons
+                        : (wpnsRaw ? wpnsRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
+                            const parts = w.trim();
+                            const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
+                            return {
+                                name: m ? m[1].trim() : parts,
+                                atk_bonus: m && m[2] ? m[2].trim() : "+0",
+                                damage: m && m[3] ? m[3].trim() : "2d6"
+                            };
+                        }).filter(w => Boolean(w.name)) : []);
+
+                    payload = {
+                        ...payload,
+                        archetype: `${role}${origin ? ' (' + origin + ')' : ''}`,
+                        level: Math.max(1, safeInt(role.match(/\d+/)?.[0], 1)),
+                        experience_points: ip,
+                        max_health: hp,
+                        current_health: hp,
+                        guard: bodySp,
+                        armor_class: bodySp,
+                        head_sp: headSp,
+                        body_sp: bodySp,
+                        humanity: humanity,
+                        currency: { eb: eb },
+                        attributes: {
+                            ...stats,
+                            Might: stats.BODY,
+                            Agility: Math.max(stats.REF, stats.DEX),
+                            Vigor: stats.BODY,
+                            Intellect: stats.INT,
+                            Presence: stats.COOL
+                        },
+                        weapons: weapons,
+                        features_and_traits: (document.getElementById("input-cyber-cyberware")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
+                        inventory: (document.getElementById("input-cyber-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+                    };
+                } else {
+                    // Agnostic / Custom Fallback
+                    const lvl = safeInt(document.getElementById("input-rp-char-level")?.value, 1);
+                    const xp = safeInt(document.getElementById("input-rp-char-xp")?.value, 0);
+                    const wpnsRaw = (document.getElementById("input-rp-char-weapons")?.value || "").trim();
+                    const invRaw = (document.getElementById("input-rp-char-inventory")?.value || "").trim();
+                    const spellsRaw = (document.getElementById("input-rp-char-spells")?.value || "").trim();
+                    const featsRaw = (document.getElementById("input-rp-char-features")?.value || "").trim();
+                    const skillsRaw = (document.getElementById("input-rp-char-skills")?.value || "").trim();
+
+                    const weapons = (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
+                        ? stagedCharacterWeapons
+                        : (wpnsRaw ? wpnsRaw.split(/;\s*|\n+|,\s*(?![^()]*\))/).map(w => {
+                            const parts = w.trim();
+                            const m = parts.match(/^([^(]+)(?:\(([^,)]*)(?:,\s*([^)]*))?\))?/);
+                            return {
+                                name: m ? m[1].trim() : parts,
+                                atk_bonus: m && m[2] ? m[2].trim() : "+0",
+                                damage: m && m[3] ? m[3].trim() : "1d4"
+                            };
+                        }).filter(w => Boolean(w.name)) : []);
+
+                    const maxHp = Math.max(1, safeInt(document.getElementById("input-rp-char-hp")?.value, 28));
+                    payload = {
+                        ...payload,
+                        archetype: (document.getElementById("input-rp-char-archetype")?.value || "Adventurer").trim(),
+                        level: Math.max(1, lvl),
+                        experience_points: Math.max(0, xp),
+                        max_health: maxHp,
+                        current_health: maxHp,
+                        guard: safeInt(document.getElementById("input-rp-char-guard")?.value, 15),
+                        custom_meter_label: (document.getElementById("input-rp-char-meter-label")?.value || "Stamina").trim(),
+                        custom_meter_max: Math.max(1, safeInt(document.getElementById("input-rp-char-meter-max")?.value, 5)),
+                        Might: safeInt(document.getElementById("input-rp-attr-might")?.value, 12),
+                        Agility: safeInt(document.getElementById("input-rp-attr-agility")?.value, 12),
+                        Vigor: safeInt(document.getElementById("input-rp-attr-vigor")?.value, 12),
+                        Intellect: safeInt(document.getElementById("input-rp-attr-intellect")?.value, 12),
+                        Presence: safeInt(document.getElementById("input-rp-attr-presence")?.value, 12),
+                        weapons: weapons,
+                        inventory: invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
+                        spells: spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
+                        features_and_traits: featsRaw ? featsRaw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
+                        proficiencies: skillsRaw
+                    };
+                }
+
+                confirmCharBtn.disabled = true;
+                const origText = confirmCharBtn.textContent;
+                confirmCharBtn.textContent = "Saving... ⏳";
+                try {
+                    if (window.pywebview && window.pywebview.api && window.pywebview.api.add_ttrpg_character) {
+                        const res = await window.pywebview.api.add_ttrpg_character(payload);
+                        if (res && res.status === "error") {
+                            alert(`Could not save character: ${res.message || "Unknown error"}`);
+                            return;
+                        }
+                        editingCharacterId = null;
+                        charModal.classList.add("hidden");
+                        await loadRolePlayUI();
+                    } else {
+                        console.warn("[RolePlay] pywebview add_ttrpg_character API not available.");
+                        editingCharacterId = null;
+                        charModal.classList.add("hidden");
+                    }
+                } finally {
+                    confirmCharBtn.disabled = false;
+                    confirmCharBtn.textContent = origText;
+                }
+            } catch (err) {
+                console.error("[RolePlay] Error saving character:", err);
+                alert(`Error saving character: ${err.message || err}`);
             }
         });
     }
@@ -3617,4 +3667,79 @@ function setupRoleplayAutoRefresh() {
             }
         }
     }, 4500);
+}
+
+// =========================================================================
+// Single-Mic Tabletop Coordination Controls & Clarification Intercepts
+// =========================================================================
+
+// 1. Tabletop Focus & Caller Button Dispatchers
+document.addEventListener('click', (e) => {
+  // Focus Speaker Toggle
+  if (e.target.classList.contains('focus-speaker-btn')) {
+    const card = e.target.closest('.character-card');
+    if (!card) return;
+    const charId = card.getAttribute('data-char-id');
+    
+    document.querySelectorAll('.character-card').forEach(c => c.classList.remove('active-speaker'));
+    card.classList.add('active-speaker');
+    
+    if (window.pywebview && window.pywebview.api) {
+      window.pywebview.api.set_active_speaker_focus(charId);
+    }
+  }
+
+  // Set Party Caller Toggle
+  if (e.target.classList.contains('set-caller-btn')) {
+    const card = e.target.closest('.character-card');
+    if (!card) return;
+    const charId = card.getAttribute('data-char-id');
+    const nameEl = card.querySelector('.char-name');
+    const charName = nameEl ? nameEl.innerText.trim() : "";
+
+    document.querySelectorAll('.caller-crown').forEach(badge => badge.classList.remove('active'));
+    const crown = card.querySelector('.caller-crown');
+    if (crown) crown.classList.add('active');
+
+    if (window.pywebview && window.pywebview.api && charName) {
+      window.pywebview.api.set_party_caller(charName);
+    }
+  }
+});
+
+// 2. Real-time Backend Event Listeners
+window.addEventListener('aether_speaker_focused', (event) => {
+  const { character_id } = event.detail || {};
+  document.querySelectorAll('.character-card').forEach(c => {
+    if (c.getAttribute('data-char-id') === character_id) {
+      c.classList.add('active-speaker');
+    } else {
+      c.classList.remove('active-speaker');
+    }
+  });
+});
+
+window.addEventListener('aether_clarification_requested', (event) => {
+  const { question, action } = event.detail || {};
+  console.log(`[AETHER CLARIFICATION] ${question} (Action: ${action})`);
+  // Optional: Visual toast notification for physical players glancing at the TV
+  showClarificationToast(question);
+});
+
+function showClarificationToast(text) {
+  let toast = document.getElementById('tabletop-clarification-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'tabletop-clarification-toast';
+    toast.style.cssText = `
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #1b2838; border: 2px solid #00F3FF; color: #fff;
+      padding: 12px 24px; border-radius: 8px; font-weight: bold;
+      box-shadow: 0 0 20px rgba(0,243,255,0.4); z-index: 9999;
+    `;
+    document.body.appendChild(toast);
+  }
+  toast.innerText = `🎙️ ${text}`;
+  toast.style.display = 'block';
+  setTimeout(() => { toast.style.display = 'none'; }, 6000);
 }

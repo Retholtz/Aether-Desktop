@@ -7019,30 +7019,37 @@ class GuiBridge:
         state = self.ttrpg_service.active_state or {}
         recap = state.get("latest_recap")
         loc = state.get("current_location")
-        chars = state.get("characters", {})
-        char_names = ", ".join(c.get("name", "hero") for c in chars.values()) if chars else "the party"
         difficulty = (camp.get("difficulty") or "helpful").lower()
+        dice_mode = self.ttrpg_service.get_dice_mode(active_id)
 
         diff_note = ""
         if difficulty == "helpful":
-            diff_note = " Remember we are playing in Helpful / Beginner mode: please suggest 2-3 specific actions we can take, tell us what dice to roll with our exact modifiers, and remind us of helpful abilities!"
+            if dice_mode == "physical":
+                diff_note = " Remember we are playing in Helpful / Beginner mode with physical dice: please suggest 2-3 specific actions we can take, educate us on what physical dice to roll with our exact modifiers, and remind us of helpful abilities!"
+            else:
+                diff_note = " Remember we are playing in Helpful / Beginner mode with digital dice: please suggest 2-3 specific actions we can take, remind us of helpful abilities, and roll digital dice for us automatically when actions require checks!"
 
         docs = state.get("documents", {})
-        module_files = [f for f in docs.keys() if docs[f].get("category") in ("campaign", "module") or "elf" in f.lower() or "module" in f.lower()]
+        module_files = [
+            f for f, d in docs.items()
+            if d.get("category") in ("campaign", "module")
+            or (any(k in f.lower() for k in ("module", "adventure", "campaign", "quest", "act"))
+                and not any(k in f.lower() for k in ("basicrules", "rule", "sheet", "char")))
+        ]
         doc_hint = ""
         if module_files:
-            doc_hint = f" Consult the adventure module '{module_files[0]}' using `read_campaign_document` (e.g. Scene 1) to accurately set the opening scene, Johan Petry/NPC dialogue, and quest hook from the module."
+            doc_hint = f" Consult the adventure module '{module_files[0]}' using `read_campaign_document` (e.g. Scene 1 or Chapter 1) to accurately set the opening scene, introductory NPC dialogue, and quest hook from the module."
 
         if recap or state.get("journal"):
             prompt = (
-                f"Aether, please act as our Game Master and resume our campaign '{camp_title}' for {char_names}! "
+                f"Aether, please act as our Game Master and resume our campaign '{camp_title}' for our party from the party roster! "
                 f"Provide a brief 2-sentence recap of where we left off (at {loc or 'our last location'}), "
-                f"describe the immediate scene and what is happening right now, and ask {char_names} what we do next!{diff_note}"
+                f"describe the immediate scene and what is happening right now, and ask the party what we do next!{diff_note}"
             )
         else:
             prompt = (
                 f"Aether, please act as our Game Master and begin our campaign '{camp_title}'! "
-                f"Introduce the setting and our characters ({char_names}), and set the opening scene from the adventure module.{doc_hint}{diff_note} "
+                f"Introduce the setting and our characters from the party roster, and set the opening scene from the adventure module.{doc_hint}{diff_note} "
                 f"What do we see and what are our immediate choices?"
             )
         if active_id:
@@ -7110,10 +7117,17 @@ class GuiBridge:
         return res
 
     def add_ttrpg_character(self, char_payload: Dict[str, Any]) -> Dict[str, Any]:
-        res = self.ttrpg_service.add_character(char_payload)
-        if res.get("status") == "success":
-            self._on_engine_event("ttrpg_state_updated", res)
-        return res
+        try:
+            logger.info(f"[TTRPG] add_ttrpg_character requested for: {char_payload.get('name')} (ID: {char_payload.get('id')})")
+            res = self.ttrpg_service.add_character(char_payload)
+            if res.get("status") == "success":
+                self._on_engine_event("ttrpg_state_updated", res)
+            else:
+                logger.warning(f"[TTRPG] add_ttrpg_character error: {res.get('message')}")
+            return res
+        except Exception as e:
+            logger.error(f"[TTRPG] Exception in add_ttrpg_character: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
 
     def delete_ttrpg_character(self, character_id_or_name: str) -> Dict[str, Any]:
         res = self.ttrpg_service.delete_character(character_id_or_name)
@@ -7167,6 +7181,22 @@ class GuiBridge:
     def reformat_ttrpg_weapons_or_items(self, raw_text: str, ruleset: str = "dnd_5e") -> Dict[str, Any]:
         """Parses and reformats raw unformatted weapon or item text into structured character sheet records."""
         return self.ttrpg_service.reformat_weapons_or_items(raw_text=raw_text, ruleset=ruleset)
+
+    def set_active_speaker_focus(self, character_id: str) -> Dict[str, Any]:
+        """Sets the active speaker fallback for single-mic tabletop setups."""
+        res = self.ttrpg_service.set_focused_speaker(character_id)
+        if res.get("status") == "success":
+            self._on_engine_event("speaker_focused", {"character_id": res.get("focused_speaker_id"), "name": res.get("name")})
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
+
+    def set_party_caller(self, character_name: str) -> Dict[str, Any]:
+        """Sets the designated player who resolves group decisions in exploration mode."""
+        res = self.ttrpg_service.set_party_caller(character_name)
+        if res.get("status") == "success":
+            self._on_engine_event("party_caller_updated", res)
+            self._on_engine_event("ttrpg_state_updated", res)
+        return res
 
     # ------------------------------------------------------------------
     # Character Vault & Cross-Genre Branching Endpoints

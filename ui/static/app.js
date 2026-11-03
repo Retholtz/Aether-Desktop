@@ -2209,6 +2209,21 @@ window.aetherUI = {
       if (typeof window.handleRoleplayVaultEvent === "function") {
         window.handleRoleplayVaultEvent(data);
       }
+    } else if (type === "speaker_focused") {
+      window.dispatchEvent(new CustomEvent('aether_speaker_focused', { detail: data }));
+      if (typeof window.handleRoleplaySpeakerFocused === "function") {
+        window.handleRoleplaySpeakerFocused(data);
+      }
+    } else if (type === "clarification_requested") {
+      window.dispatchEvent(new CustomEvent('aether_clarification_requested', { detail: data }));
+      if (typeof window.handleRoleplayClarificationRequested === "function") {
+        window.handleRoleplayClarificationRequested(data);
+      }
+    } else if (type === "party_caller_updated") {
+      window.dispatchEvent(new CustomEvent('aether_party_caller_updated', { detail: data }));
+      if (typeof window.handleRoleplayStateEvent === "function") {
+        window.handleRoleplayStateEvent(data);
+      }
     }
   },
 

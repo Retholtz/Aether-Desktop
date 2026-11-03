@@ -469,6 +469,81 @@
   border-color: #00F3FF;
 }
 
+/* Card Header Identity Layout */
+.card-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.char-name {
+  margin: 0;
+  font-size: 15px;
+  color: #fff;
+}
+
+/* Single-Mic Active Speaker Glow */
+.character-card.active-speaker {
+  border-color: #00F3FF;
+  box-shadow: 0 0 16px rgba(0, 243, 255, 0.4), inset 0 0 8px rgba(0, 243, 255, 0.15);
+}
+
+.character-card.active-speaker .mic-pulse-indicator {
+  display: inline-block;
+  color: #00F3FF;
+  animation: mic-pulse 1.4s infinite;
+}
+
+.mic-pulse-indicator {
+  display: none;
+  font-size: 13px;
+}
+
+/* Caller Crown Badge */
+.caller-crown {
+  display: none;
+  background: rgba(255, 215, 0, 0.12);
+  color: #ffd700;
+  border: 1px solid #ffd700;
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 1px 5px;
+  font-weight: 700;
+}
+
+.caller-crown.active {
+  display: inline-block;
+}
+
+/* Card Control Buttons */
+.card-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.cyber-btn-tiny {
+  background: #152230;
+  border: 1px solid #283e54;
+  color: #8da4be;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cyber-btn-tiny:hover {
+  background: #00F3FF;
+  color: #000;
+  border-color: #00F3FF;
+}
+
+@keyframes mic-pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.7; }
+}
+
 .char-card-top {
   display: flex;
   justify-content: space-between;
