@@ -6858,7 +6858,8 @@ class GuiBridge:
         filename: str,
         base64_content: str,
         doc_category: str = "ruleset",
-        campaign_id: Optional[str] = None
+        campaign_id: Optional[str] = None,
+        ruleset_override: Optional[str] = None
     ) -> Dict[str, Any]:
         import base64
         try:
@@ -6871,9 +6872,10 @@ class GuiBridge:
             filename=filename,
             content_bytes=raw_bytes,
             doc_category=doc_category,
-            campaign_id=campaign_id
+            campaign_id=campaign_id,
+            ruleset_override=ruleset_override
         )
-        if res.get("status") == "success":
+        if res.get("status") in ("success", "requires_ruleset_selection"):
             self._on_engine_event("ttrpg_state_updated", res)
         return res
 
@@ -7177,14 +7179,16 @@ class GuiBridge:
         action: str = "add",
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
+        spells: Optional[List[Any]] = None,
         reason: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Adds or removes weapons and items for a character in the active campaign."""
+        """Adds or removes weapons, items, and spells for a character in the active campaign."""
         res = self.ttrpg_service.manage_character_inventory(
             character_name=character_name,
             action=action,
             items=items,
             weapons=weapons,
+            spells=spells,
             reason=reason
         )
         if res.get("status") == "success":

@@ -47,12 +47,13 @@ class DnD5eParser(BaseSheetParser):
                                 pass
             return default
 
-        str_val = _get_stat(["STR", "Strength"], 10)
-        dex_val = _get_stat(["DEX", "Dexterity"], 10)
-        con_val = _get_stat(["CON", "Constitution"], 10)
-        int_val = _get_stat(["INT", "Intelligence"], 10)
-        wis_val = _get_stat(["WIS", "Wisdom"], 10)
-        cha_val = _get_stat(["CHA", "Charisma"], 10)
+        from core.parsers.spell_registry import resolve_dnd_stat
+        str_val = resolve_dnd_stat(fields.get("STR"), fields.get("STRmod") or fields.get("STR Mod"), 10)
+        dex_val = resolve_dnd_stat(fields.get("DEX"), fields.get("DEXmod") or fields.get("DEX Mod"), 10)
+        con_val = resolve_dnd_stat(fields.get("CON"), fields.get("CONmod") or fields.get("CON Mod"), 10)
+        int_val = resolve_dnd_stat(fields.get("INT"), fields.get("INTmod") or fields.get("INT Mod"), 10)
+        wis_val = resolve_dnd_stat(fields.get("WIS"), fields.get("WISmod") or fields.get("WIS Mod"), 10)
+        cha_val = resolve_dnd_stat(fields.get("CHA"), fields.get("CHamod") or fields.get("CHAmod") or fields.get("CHA Mod"), 10)
 
         # Name & Identity extraction
         name = _clean(
@@ -166,12 +167,24 @@ class DnD5eParser(BaseSheetParser):
             backstory="Criminal background operating through stealth and cunning."
         )
 
+        from core.parsers.spell_registry import parse_structured_spells
+        parsed_spells = parse_structured_spells(fields)
+        spell_ability = _clean(fields.get("spellCastingAbility0") or fields.get("SpellcastingAbility") or fields.get("SpellAbility") or "")
+        spell_save_dc = _clean(fields.get("spellSaveDC0") or fields.get("SpellSaveDC") or "")
+        spell_atk_bonus = _clean(fields.get("spellAtkBonus0") or fields.get("SpellAttackBonus") or fields.get("SpellAtkBonus") or "")
+
+        raw_init = _clean(fields.get("Init") or fields.get("Initiative"))
+        init_bonus = int(raw_init) if raw_init and raw_init.lstrip("+-").isdigit() else (dex_val - 10) // 2
+        defenses_val = _clean(fields.get("Defenses") or fields.get("Resistances") or "")
+
         native_payload = {
             "system_name": "dnd_5e",
             "class_level": cls_lvl,
             "armor_class": ac_val,
             "speed": 30,
-            "initiative_bonus": (dex_val - 10) // 2,
+            "initiative_bonus": init_bonus,
+            "defenses": defenses_val,
+            "resistances": defenses_val,
             "hit_points": {"current": cur_hp, "max": max_hp, "hit_die": "1d8"},
             "ability_scores": {
                 "STR": str_val, "DEX": dex_val, "CON": con_val,
@@ -184,6 +197,10 @@ class DnD5eParser(BaseSheetParser):
                 "tools": ["Forgery Kit", "Thieves' Tools"],
                 "languages": ["Common", "Thieves' Cant"]
             },
+            "spells": parsed_spells,
+            "spellcasting_ability": spell_ability,
+            "spell_save_dc": spell_save_dc,
+            "spell_attack_bonus": spell_atk_bonus,
             "raw_acro_form_fields": fields
         }
 

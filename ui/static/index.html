@@ -657,14 +657,29 @@
                   <span id="vault-count-badge" style="font-size: 11px; color: #64748b; font-weight: 600;">0 CHARACTERS IN VAULT</span>
                   <div style="display: flex; gap: 6px; align-items: center;">
                     <input type="file" id="input-vault-file" accept=".pdf,.json,.png,.jpg,.jpeg" style="display: none;" />
-                    <button type="button" id="btn-upload-vault-char" class="cyber-btn-small" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);" title="Upload fillable PDF character sheet (D&D Beyond or official) or scanned sheet">
-                      📄 Upload Sheet (PDF)
+                    <button type="button" id="btn-create-vault-char" class="cyber-btn-small" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="Create a new character directly in the Character Vault">
+                      ➕ New Hero
+                    </button>
+                    <button type="button" id="btn-upload-vault-char" class="cyber-btn-small" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);" title="Upload fillable or scanned character sheet (PDF, JSON, or images)">
+                      📄 Upload Sheet
                     </button>
                     <button type="button" id="btn-import-campaign-to-vault" class="cyber-btn-small" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4);" title="Save a character from active campaign roster into the vault">
                       🏰 From Campaign
                     </button>
                   </div>
                 </div>
+
+                <!-- Dropzone for Vault Sheet Ingestion -->
+                <div id="vault-dropzone" class="rp-dropzone" style="margin-bottom: 12px; padding: 12px; border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 8px; background: rgba(15, 23, 42, 0.4); text-align: center; cursor: pointer;">
+                  <span style="font-size: 1.1rem; display: block; margin-bottom: 4px;">📂</span>
+                  <div style="font-size: 0.78rem; color: #cbd5e1; font-weight: 600;">
+                    Drop any Character Sheet PDF, JSON, or Image here
+                  </div>
+                  <div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;">
+                    Supports D&amp;D 5e, Cyberpunk RED, Pathfinder 2e, Call of Cthulhu, &amp; Custom Sandboxes
+                  </div>
+                </div>
+
                 <div id="vault-characters-container" class="vault-grid" style="display: flex; flex-direction: column; gap: 10px;">
                   <!-- Dynamically populated -->
                 </div>
@@ -706,6 +721,54 @@
               <div class="modal-actions">
                 <button id="cancel-import-btn" class="cyber-btn-secondary">Cancel</button>
                 <button id="confirm-crossover-btn" class="cyber-btn">Confirm &amp; Fork Branch</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Ruleset / System Format Selection Modal -->
+          <div id="ruleset-picker-modal" class="cyber-modal-overlay" style="display: none; z-index: 100005;">
+            <div class="cyber-modal-box" style="max-width: 520px; width: 90%;">
+              <div class="modal-header">
+                <div>
+                  <h3 id="modal-ruleset-picker-title" style="margin: 0; color: #38bdf8; font-size: 15px; letter-spacing: 0.5px;">📜 SELECT CHARACTER RULESET</h3>
+                  <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+                    Which tabletop system does this character sheet belong to?
+                  </div>
+                </div>
+                <button class="modal-close-btn" id="close-ruleset-picker-btn">✕</button>
+              </div>
+
+              <div class="modal-body" style="padding: 16px;">
+                <p id="ruleset-picker-desc" style="font-size: 0.82rem; color: #cbd5e1; margin-bottom: 14px; line-height: 1.45;">
+                  Aether detected a character sheet (<strong id="ruleset-picker-filename" style="color: #38bdf8;">sheet.pdf</strong>). Please choose the matching ruleset so abilities, attributes, and equipment are mapped accurately:
+                </p>
+
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <button type="button" class="cyber-btn-secondary btn-ruleset-option" data-ruleset="dnd_5e" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; text-align: left; font-weight: 600; border-color: rgba(56, 189, 248, 0.4);">
+                    <span>⚔️ D&amp;D 5E (Fifth Edition)</span>
+                    <span style="font-size: 10px; color: #94a3b8;">STR, DEX, CON, INT, WIS, CHA</span>
+                  </button>
+                  <button type="button" class="cyber-btn-secondary btn-ruleset-option" data-ruleset="cyberpunk" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; text-align: left; font-weight: 600; border-color: rgba(239, 68, 68, 0.4);">
+                    <span>🦾 Cyberpunk RED / 2020</span>
+                    <span style="font-size: 10px; color: #94a3b8;">REF, DEX, TECH, COOL, WILL, EMP</span>
+                  </button>
+                  <button type="button" class="cyber-btn-secondary btn-ruleset-option" data-ruleset="pathfinder_2e" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; text-align: left; font-weight: 600; border-color: rgba(59, 130, 246, 0.4);">
+                    <span>🛡️ Pathfinder 2E</span>
+                    <span style="font-size: 10px; color: #94a3b8;">Ancestry, Class DC, Fort/Ref/Will</span>
+                  </button>
+                  <button type="button" class="cyber-btn-secondary btn-ruleset-option" data-ruleset="call_of_cthulhu" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; text-align: left; font-weight: 600; border-color: rgba(34, 197, 94, 0.4);">
+                    <span>🐙 Call of Cthulhu (7E)</span>
+                    <span style="font-size: 10px; color: #94a3b8;">Sanity, Investigator, d100 skills</span>
+                  </button>
+                  <button type="button" class="cyber-btn-secondary btn-ruleset-option" data-ruleset="agnostic" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; text-align: left; font-weight: 600; border-color: rgba(168, 85, 247, 0.4);">
+                    <span>🎲 Universal / Agnostic Sandbox</span>
+                    <span style="font-size: 10px; color: #94a3b8;">Might, Agility, Vigor, Intellect, Presence</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="modal-actions" style="border-top: 1px solid rgba(255, 255, 255, 0.08); padding: 10px 16px; display: flex; justify-content: flex-end;">
+                <button type="button" id="cancel-ruleset-picker-btn" class="cyber-btn-secondary">Cancel</button>
               </div>
             </div>
           </div>
@@ -2876,7 +2939,7 @@
         <div style="background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px;">
           <div style="font-size: 0.78rem; color: #cbd5e1;">
             <strong style="color: #38bdf8;">Have a character sheet file?</strong>
-            <span style="font-size: 0.72rem; color: #94a3b8; margin-left: 4px;">Upload D&amp;D Beyond PDFs, JSON, or scans to auto-load stats.</span>
+            <span style="font-size: 0.72rem; color: #94a3b8; margin-left: 4px;">Upload character sheet PDF, JSON, or scans to auto-load stats.</span>
           </div>
           <button type="button" id="btn-modal-load-char-file-body" class="cyber-btn-small" style="background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.45); white-space: nowrap; font-weight: 600; padding: 5px 10px; font-size: 0.75rem;">
             📄 Load File
@@ -3082,6 +3145,12 @@
             </div>
           </div>
 
+          <!-- Defenses & Damage Resistances -->
+          <div class="modal-field" style="margin-bottom: 12px;">
+            <label for="input-dnd-defenses" class="modal-label">🛡️ Defenses, Damage Resistances &amp; Immunities</label>
+            <input type="text" id="input-dnd-defenses" class="modal-input" placeholder="e.g. Resistances - Necrotic, Radiant" />
+          </div>
+
           <!-- 18 Canonical D&D Skills Grid -->
           <div style="margin-bottom: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 8px; padding: 10px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -3175,9 +3244,12 @@
           </div>
 
           <!-- D&D Spells & Cantrips (Optional) -->
-          <div style="margin-bottom: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 8px; padding: 10px;">
-            <div style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">
-              ✨ Spells &amp; Cantrips <span style="font-size: 0.7rem; color: #94a3b8; font-weight: normal;">(Optional for spellcasters)</span>
+          <div style="margin-bottom: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <div style="font-size: 0.78rem; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em;">
+                ✨ Spells &amp; Cantrips <span style="font-size: 0.7rem; color: #94a3b8; font-weight: normal;">(Optional for spellcasters)</span>
+              </div>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-spell-dnd" style="padding: 2px 9px; font-size: 0.72rem; color: #c084fc; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35);" title="Open popup to add a spell with Level, Damage, DC, and Range fields">+ Add Spell</button>
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 6px;">
               <div class="modal-field">
@@ -3198,10 +3270,8 @@
                 <input type="text" id="input-dnd-spell-atk" class="modal-input" placeholder="e.g. +5" value="+5" />
               </div>
             </div>
-            <div class="modal-field">
-              <label for="input-dnd-spells" class="modal-label">Spells &amp; Cantrips List</label>
-              <textarea id="input-dnd-spells" class="modal-input" rows="2" placeholder="Fire Bolt, Mage Armor, Shield, Magic Missile"></textarea>
-            </div>
+            <div id="dnd-spells-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+            <input type="hidden" id="input-dnd-spells" />
           </div>
         </div>
 
@@ -3308,9 +3378,26 @@
             <textarea id="input-pf-skills" class="modal-input" rows="2" placeholder="Athletics (+7, Expert), Intimidation (+3, Trained), Medicine (+4, Trained)"></textarea>
           </div>
 
-          <div class="modal-field">
+          <div class="modal-field" style="margin-bottom: 10px;">
             <label for="input-pf-inventory" class="modal-label">🎒 Inventory, Gear &amp; Bulk</label>
             <textarea id="input-pf-inventory" class="modal-input" rows="2" placeholder="Full Plate, Steel Shield, Adventurer's Pack (Bulk 5)"></textarea>
+          </div>
+
+          <div class="modal-field" style="margin-bottom: 10px;">
+            <label for="input-pf-features" class="modal-label">📜 Features, Feats &amp; Abilities</label>
+            <textarea id="input-pf-features" class="modal-input" rows="3" placeholder="Ancestry Feats, Class Feats, Skill Feats, Class Abilities (e.g. Rage, Sneak Attack, Sudden Charge)"></textarea>
+          </div>
+
+          <!-- Pathfinder Spells & Focus Spells -->
+          <div style="margin-bottom: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <div style="font-size: 0.78rem; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em;">
+                ✨ Spells &amp; Focus Spells <span style="font-size: 0.7rem; color: #94a3b8; font-weight: normal;">(Optional for spellcasters)</span>
+              </div>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-spell-pf" style="padding: 2px 9px; font-size: 0.72rem; color: #c084fc; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35);" title="Open popup to add a spell with Level, Damage, DC, and Range fields">+ Add Spell</button>
+            </div>
+            <div id="pf-spells-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+            <input type="hidden" id="input-pf-spells" />
           </div>
         </div>
 
@@ -3432,6 +3519,240 @@
         </div>
 
         <!-- =================================================================== -->
+        <!-- VIEW 5: CANONICAL CALL OF CTHULHU 7E INVESTIGATOR SHEET VIEW        -->
+        <!-- =================================================================== -->
+        <div id="view-char-coc" class="ruleset-view-panel" style="display: none;">
+          <!-- CoC Identity Sub-Row -->
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr; gap: 8px; margin-bottom: 12px;">
+            <div class="modal-field">
+              <label for="input-coc-occupation" class="modal-label">Occupation</label>
+              <input type="text" id="input-coc-occupation" class="modal-input" placeholder="e.g. History Student, Private Eye" value="History Student" />
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-age" class="modal-label">Age</label>
+              <input type="number" id="input-coc-age" class="modal-input" placeholder="20" value="20" min="15" max="99" />
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-sex" class="modal-label">Sex</label>
+              <input type="text" id="input-coc-sex" class="modal-input" placeholder="Female" value="Female" />
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-residence" class="modal-label">Residence</label>
+              <input type="text" id="input-coc-residence" class="modal-input" placeholder="Arkham, MA" value="Arkham" />
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-birthplace" class="modal-label">Birthplace</label>
+              <input type="text" id="input-coc-birthplace" class="modal-input" placeholder="Boston, MA" value="Boston" />
+            </div>
+          </div>
+
+          <!-- Characteristics Section (d100 Percentile with Regular / Half / Fifth) -->
+          <div class="modal-section-title" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="color: #38bdf8; font-weight: 700; font-size: 0.85rem;">🧠 CHARACTERISTICS (1-100 PERCENTILE)</span>
+            <span style="font-size: 0.7rem; color: #94a3b8;">Regular | <strong style="color: #38bdf8;">½ Hard</strong> | <strong style="color: #eab308;">⅕ Extreme</strong> auto-calculated</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; margin-bottom: 14px;">
+            <!-- STR -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;">STR</div>
+              <input type="number" id="input-coc-str" class="modal-input coc-stat-input" data-stat="str" value="70" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-str" style="color: #38bdf8; font-weight: 600;">35</span> / <span id="coc-fifth-str" style="color: #eab308; font-weight: 600;">14</span></div>
+            </div>
+            <!-- CON -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;">CON</div>
+              <input type="number" id="input-coc-con" class="modal-input coc-stat-input" data-stat="con" value="80" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-con" style="color: #38bdf8; font-weight: 600;">40</span> / <span id="coc-fifth-con" style="color: #eab308; font-weight: 600;">16</span></div>
+            </div>
+            <!-- SIZ -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;">SIZ</div>
+              <input type="number" id="input-coc-siz" class="modal-input coc-stat-input" data-stat="siz" value="50" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-siz" style="color: #38bdf8; font-weight: 600;">25</span> / <span id="coc-fifth-siz" style="color: #eab308; font-weight: 600;">10</span></div>
+            </div>
+            <!-- DEX -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;">DEX</div>
+              <input type="number" id="input-coc-dex" class="modal-input coc-stat-input" data-stat="dex" value="40" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-dex" style="color: #38bdf8; font-weight: 600;">20</span> / <span id="coc-fifth-dex" style="color: #eab308; font-weight: 600;">8</span></div>
+            </div>
+            <!-- APP -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;">APP</div>
+              <input type="number" id="input-coc-app" class="modal-input coc-stat-input" data-stat="app" value="50" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-app" style="color: #38bdf8; font-weight: 600;">25</span> / <span id="coc-fifth-app" style="color: #eab308; font-weight: 600;">10</span></div>
+            </div>
+            <!-- INT -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;" title="Intelligence / Idea">INT</div>
+              <input type="number" id="input-coc-int" class="modal-input coc-stat-input" data-stat="int" value="60" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-int" style="color: #38bdf8; font-weight: 600;">30</span> / <span id="coc-fifth-int" style="color: #eab308; font-weight: 600;">12</span></div>
+            </div>
+            <!-- POW -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;">POW</div>
+              <input type="number" id="input-coc-pow" class="modal-input coc-stat-input" data-stat="pow" value="50" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-pow" style="color: #38bdf8; font-weight: 600;">25</span> / <span id="coc-fifth-pow" style="color: #eab308; font-weight: 600;">10</span></div>
+            </div>
+            <!-- EDU -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;" title="Education / Know">EDU</div>
+              <input type="number" id="input-coc-edu" class="modal-input coc-stat-input" data-stat="edu" value="60" min="1" max="100" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #64748b; margin-top: 3px;"><span id="coc-half-edu" style="color: #38bdf8; font-weight: 600;">30</span> / <span id="coc-fifth-edu" style="color: #eab308; font-weight: 600;">12</span></div>
+            </div>
+            <!-- Move Rate -->
+            <div class="coc-stat-box" style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 4px; text-align: center;">
+              <div style="font-size: 0.7rem; font-weight: 700; color: #94a3b8;" title="Move Rate">MOVE</div>
+              <input type="number" id="input-coc-move" class="modal-input" value="8" min="1" max="12" style="padding: 4px; text-align: center; font-weight: 700; font-size: 0.95rem;" />
+              <div style="font-size: 0.65rem; color: #94a3b8; margin-top: 3px;">Rate</div>
+            </div>
+          </div>
+
+          <!-- Vitals / Trackers (HP, Sanity, Luck, MP) -->
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
+            <!-- Hit Points -->
+            <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 8px;">
+              <div style="font-size: 0.75rem; font-weight: 700; color: #f87171; margin-bottom: 4px;">❤️ HIT POINTS</div>
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <input type="number" id="input-coc-cur-hp" class="modal-input" value="13" style="text-align: center;" />
+                <span style="color: #64748b;">/</span>
+                <input type="number" id="input-coc-max-hp" class="modal-input" value="13" style="text-align: center;" />
+              </div>
+              <label style="font-size: 0.65rem; color: #94a3b8; display: flex; align-items: center; gap: 4px; margin-top: 4px; cursor: pointer;">
+                <input type="checkbox" id="chk-coc-major-wound" /> Major Wound
+              </label>
+            </div>
+            <!-- Sanity -->
+            <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 6px; padding: 8px;">
+              <div style="font-size: 0.75rem; font-weight: 700; color: #c084fc; margin-bottom: 4px;">🌀 SANITY (SAN)</div>
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <input type="number" id="input-coc-cur-san" class="modal-input" value="50" style="text-align: center;" min="0" max="99" />
+                <span style="color: #64748b;">/</span>
+                <input type="number" id="input-coc-max-san" class="modal-input" value="99" style="text-align: center;" min="1" max="99" />
+              </div>
+              <div style="font-size: 0.65rem; color: #94a3b8; display: flex; gap: 8px; margin-top: 4px;">
+                <label style="display: flex; align-items: center; gap: 2px; cursor: pointer;"><input type="checkbox" id="chk-coc-temp-insane" /> Temp</label>
+                <label style="display: flex; align-items: center; gap: 2px; cursor: pointer;"><input type="checkbox" id="chk-coc-indef-insane" /> Indef</label>
+              </div>
+            </div>
+            <!-- Luck -->
+            <div style="background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.3); border-radius: 6px; padding: 8px;">
+              <div style="font-size: 0.75rem; font-weight: 700; color: #facc15; margin-bottom: 4px;">🍀 LUCK</div>
+              <input type="number" id="input-coc-luck" class="modal-input" value="55" min="0" max="99" style="text-align: center; font-size: 1rem; font-weight: 700;" />
+              <div style="font-size: 0.65rem; color: #94a3b8; margin-top: 4px; text-align: center;">Spent Luck Tracker</div>
+            </div>
+            <!-- Magic Points -->
+            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 8px;">
+              <div style="font-size: 0.75rem; font-weight: 700; color: #38bdf8; margin-bottom: 4px;">✨ MAGIC POINTS (MP)</div>
+              <div style="display: flex; gap: 4px; align-items: center;">
+                <input type="number" id="input-coc-cur-mp" class="modal-input" value="10" style="text-align: center;" />
+                <span style="color: #64748b;">/</span>
+                <input type="number" id="input-coc-max-mp" class="modal-input" value="10" style="text-align: center;" />
+              </div>
+              <div style="font-size: 0.65rem; color: #94a3b8; margin-top: 4px; text-align: center;">POW / 5</div>
+            </div>
+          </div>
+
+          <!-- Combat Profile (Damage Bonus, Build, Dodge) -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 8px; margin-bottom: 12px; background: rgba(15, 23, 42, 0.35); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 6px; padding: 8px;">
+            <div class="modal-field">
+              <label for="input-coc-db" class="modal-label">Damage Bonus (DB)</label>
+              <input type="text" id="input-coc-db" class="modal-input" placeholder="none, +1d4, +1d6" value="none" />
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-build" class="modal-label">Build</label>
+              <input type="number" id="input-coc-build" class="modal-input" value="0" />
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-dodge" class="modal-label">Dodge (DEX / 2)</label>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <input type="number" id="input-coc-dodge" class="modal-input coc-dodge-input" value="40" min="0" max="100" style="width: 80px;" />
+                <span style="font-size: 0.75rem; color: #94a3b8;">½: <strong id="coc-half-dodge" style="color: #38bdf8;">20</strong> | ⅕: <strong id="coc-fifth-dodge" style="color: #eab308;">8</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Weapons & Attacks -->
+          <div style="margin-bottom: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 8px; padding: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">⚔️ Weapons &amp; Combat Attacks</span>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-weapon-coc" style="padding: 2px 9px; font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Add weapon">+ Add Weapon</button>
+            </div>
+            <div id="coc-weapons-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 6px;"></div>
+            <input type="hidden" id="input-coc-weapons" />
+          </div>
+
+          <!-- Investigator Skills (d100 Percentile Grid) -->
+          <div class="modal-field" style="margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <label class="modal-label" style="margin: 0;">📜 Investigator Skills (d100 Percentile)</label>
+              <span style="font-size: 0.7rem; color: #94a3b8;">Total % listed (Regular / ½ Hard / ⅕ Extreme)</span>
+            </div>
+            <div id="coc-skills-grid-container" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-height: 210px; overflow-y: auto; padding: 6px 8px; background: rgba(11, 17, 24, 0.75); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 6px;">
+              <!-- Dynamic skills injected by renderCocSkillsGrid -->
+            </div>
+          </div>
+
+          <!-- Backstory & Investigator Lore -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+            <div class="modal-field">
+              <label for="input-coc-desc" class="modal-label">Personal Description</label>
+              <textarea id="input-coc-desc" class="modal-input" rows="2" placeholder="Youthful and bright-eyed. Wears fashionable clothing."></textarea>
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-ideology" class="modal-label">Ideology / Beliefs</label>
+              <textarea id="input-coc-ideology" class="modal-input" rows="2" placeholder="Strong faith in God, having been raised in the Church."></textarea>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+            <div class="modal-field">
+              <label for="input-coc-people" class="modal-label">Significant People</label>
+              <textarea id="input-coc-people" class="modal-input" rows="2" placeholder="Her mother, Joyce, who she writes to every week."></textarea>
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-locations" class="modal-label">Meaningful Locations</label>
+              <textarea id="input-coc-locations" class="modal-input" rows="2" placeholder="Her mother's home in Boston."></textarea>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+            <div class="modal-field">
+              <label for="input-coc-possessions" class="modal-label">Treasured Possessions</label>
+              <input type="text" id="input-coc-possessions" class="modal-input" placeholder="Her late father's pocket Bible." />
+            </div>
+            <div class="modal-field">
+              <label for="input-coc-traits" class="modal-label">Traits</label>
+              <input type="text" id="input-coc-traits" class="modal-input" placeholder="Risk taker. Likes to be in the middle of the action." />
+            </div>
+          </div>
+
+          <!-- Gear, Possessions & Cash -->
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 10px;">
+            <div class="modal-field">
+              <label for="input-coc-inventory" class="modal-label">🎒 Gear &amp; Possessions (One per line or comma-separated)</label>
+              <textarea id="input-coc-inventory" class="modal-input" rows="3" placeholder="Satchel, Pencils and fountain pen, Note pad, Pocket Bible, Hair clips"></textarea>
+            </div>
+            <div style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; justify-content: space-between;">
+              <div style="font-size: 0.72rem; font-weight: 700; color: #facc15; text-transform: uppercase;">💵 Cash &amp; Assets</div>
+              <div class="modal-field" style="margin-bottom: 4px;">
+                <label for="input-coc-credit-rating" class="modal-label" style="font-size: 0.65rem;">Credit Rating %</label>
+                <input type="number" id="input-coc-credit-rating" class="modal-input" value="40" min="0" max="99" style="padding: 3px 6px;" />
+              </div>
+              <div class="modal-field" style="margin-bottom: 4px;">
+                <label for="input-coc-cash" class="modal-label" style="font-size: 0.65rem;">Cash ($)</label>
+                <input type="text" id="input-coc-cash" class="modal-input" placeholder="$80" style="padding: 3px 6px;" />
+              </div>
+              <div class="modal-field">
+                <label for="input-coc-assets" class="modal-label" style="font-size: 0.65rem;">Assets ($)</label>
+                <input type="text" id="input-coc-assets" class="modal-input" placeholder="$2,000" style="padding: 3px 6px;" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- =================================================================== -->
         <!-- VIEW 4: UNIVERSAL / AGNOSTIC / CUSTOM VIEW                         -->
         <!-- =================================================================== -->
         <div id="view-char-agnostic" class="ruleset-view-panel" style="display: none;">
@@ -3497,9 +3818,13 @@
             <textarea id="input-rp-char-inventory" class="modal-input" rows="2" placeholder="Potion of Healing, Shield, Rope, Rations..."></textarea>
           </div>
 
-          <div class="modal-field" style="margin-bottom: 10px;">
-            <label for="input-rp-char-spells" class="modal-label">Spells &amp; Cantrips</label>
-            <input type="text" id="input-rp-char-spells" class="modal-input" placeholder="Fire Bolt, Shield, Misty Step" />
+          <div style="margin-bottom: 10px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.78rem; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em;">✨ Spells &amp; Cantrips</span>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-spell-agnostic" style="padding: 2px 9px; font-size: 0.72rem; color: #c084fc; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35);" title="Open popup to add a spell with Level, Damage, DC, and Range fields">+ Add Spell</button>
+            </div>
+            <div id="agnostic-spells-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+            <input type="hidden" id="input-rp-char-spells" />
           </div>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
@@ -3630,6 +3955,106 @@
     </div>
   </div>
 
+  <!-- Modal: Quick Add Spell / Cantrip to Character -->
+  <div id="modal-add-spell" class="modal-overlay hidden" style="z-index: 100050;">
+    <div class="modal-card" style="max-width: 540px; width: 94%;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">✨</span>
+          <h3 id="modal-add-spell-title" style="margin: 0; font-size: 1rem; color: #f1f5f9;">Add Spell / Cantrip</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-spell-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="input-add-spell-char-name" value="" />
+
+        <!-- ⚡ Aether Smart Reformat Bar for Spells -->
+        <div style="margin-bottom: 12px; background: rgba(30, 41, 59, 0.55); border: 1px dashed rgba(168, 85, 247, 0.45); border-radius: 6px; padding: 8px 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <span style="font-size: 0.72rem; font-weight: 700; color: #c084fc;">⚡ AETHER SMART REFORMAT &amp; PARSE</span>
+            <span style="font-size: 0.68rem; color: #94a3b8;">Paste unformatted spell text</span>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="input-spell-smart-raw" class="modal-input" style="font-size: 0.78rem; padding: 5px 8px;" placeholder="Paste e.g. Fireball (3rd level, 8d6 fire, DEX DC 14, 150 ft) or Cure Wounds (1d8+3 healing, touch)" />
+            <button type="button" id="btn-spell-smart-reformat" class="cyber-btn-small" style="padding: 5px 10px; font-size: 0.72rem; white-space: nowrap; color: #c084fc; background: rgba(168, 85, 247, 0.2); border: 1px solid rgba(168, 85, 247, 0.4);">⚡ Reformat</button>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px; margin-bottom: 10px;">
+          <div class="modal-field">
+            <label for="input-spell-name" class="modal-label">Spell Name <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="input-spell-name" class="modal-input" placeholder="e.g. Fire Bolt, Fireball, Cure Wounds" autocomplete="off" />
+          </div>
+          <div class="modal-field">
+            <label for="select-spell-level" class="modal-label">Level / Tier</label>
+            <select id="select-spell-level" class="modal-input" style="padding: 5px 8px;">
+              <option value="Cantrip">Cantrip</option>
+              <option value="1st Level">1st Level</option>
+              <option value="2nd Level">2nd Level</option>
+              <option value="3rd Level">3rd Level</option>
+              <option value="4th Level">4th Level</option>
+              <option value="5th Level">5th Level</option>
+              <option value="6th Level">6th Level</option>
+              <option value="7th Level">7th Level</option>
+              <option value="8th Level">8th Level</option>
+              <option value="9th Level">9th Level</option>
+              <option value="Focus Spell">Focus Spell</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 8px; margin-bottom: 10px;">
+          <div class="modal-field">
+            <label for="input-spell-atk" class="modal-label">Attack / Save DC</label>
+            <input type="text" id="input-spell-atk" class="modal-input" placeholder="e.g. +5 or DC 14 DEX" value="" />
+          </div>
+          <div class="modal-field">
+            <label for="input-spell-dmg" class="modal-label">Damage / Healing</label>
+            <input type="text" id="input-spell-dmg" class="modal-input" placeholder="e.g. 1d10 or 8d6" value="" />
+          </div>
+          <div class="modal-field">
+            <label for="select-spell-dmg-type" class="modal-label">Damage Type / School</label>
+            <select id="select-spell-dmg-type" class="modal-input" style="padding: 5px 8px;">
+              <option value="Fire">Fire</option>
+              <option value="Radiant">Radiant</option>
+              <option value="Healing">Healing</option>
+              <option value="Force">Force</option>
+              <option value="Necrotic">Necrotic</option>
+              <option value="Cold">Cold</option>
+              <option value="Lightning">Lightning</option>
+              <option value="Thunder">Thunder</option>
+              <option value="Acid">Acid</option>
+              <option value="Poison">Poison</option>
+              <option value="Psychic">Psychic</option>
+              <option value="Buff / Utility">Buff / Utility</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 8px; margin-bottom: 10px;">
+          <div class="modal-field">
+            <label for="input-spell-range" class="modal-label">Range / Area</label>
+            <input type="text" id="input-spell-range" class="modal-input" placeholder="e.g. 120 ft., Touch, Self (20 ft)" value="60 ft." />
+          </div>
+          <div class="modal-field">
+            <label for="input-spell-notes" class="modal-label">Casting Time &amp; Components</label>
+            <input type="text" id="input-spell-notes" class="modal-input" placeholder="e.g. 1 Action, V S M, Instantaneous" value="1 Action" />
+          </div>
+        </div>
+
+        <!-- Live Spell Preview -->
+        <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 7px 10px; margin-bottom: 4px;">
+          <div style="font-size: 0.68rem; color: #c084fc; font-weight: 700; margin-bottom: 2px;">LIVE SPELL PREVIEW</div>
+          <div id="preview-spell-formatted" style="font-size: 0.8rem; color: #cbd5e1;">Spell (Cantrip, 60 ft.)</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-spell" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-spell" class="btn-primary-sm" style="padding: 7px 18px; background: #9333ea; border-color: #7e22ce;">Add Spell</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Quick Add Inventory Items to Character -->
   <div id="modal-add-inventory" class="modal-overlay hidden" style="z-index: 100050;">
     <div class="modal-card" style="max-width: 480px; width: 92%;">
@@ -3706,6 +4131,26 @@
       <div class="modal-footer">
         <button type="button" class="btn-primary-sm" id="btn-save-rp-note" style="padding: 7px 16px;">Save Note</button>
         <button type="button" class="btn-secondary-sm" id="btn-cancel-rp-note" style="padding: 7px 16px;">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Sleek In-App Confirm Dialog (eliminates '127.0.0.1 says') -->
+  <div id="modal-rp-confirm" class="modal-overlay hidden" style="z-index: 100060;">
+    <div class="modal-card" style="max-width: 440px; width: 90%;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span id="modal-rp-confirm-icon" style="font-size: 1.2rem;">⚠️</span>
+          <h3 id="modal-rp-confirm-title" style="margin: 0; font-size: 1rem; color: #f1f5f9;">Confirm Action</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-rp-confirm" title="Cancel">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-rp-confirm-message" style="color: #cbd5e1; font-size: 0.92rem; line-height: 1.5; margin: 0;"></p>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" id="btn-cancel-rp-confirm" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-ok-rp-confirm" class="btn-primary-sm" style="padding: 7px 18px; background: #ef4444; border-color: #dc2626;">Confirm</button>
       </div>
     </div>
   </div>

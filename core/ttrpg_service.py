@@ -495,7 +495,8 @@ class TTRPGService:
         filename: str,
         content_bytes: bytes,
         doc_category: str = "ruleset",
-        campaign_id: Optional[str] = None
+        campaign_id: Optional[str] = None,
+        ruleset_override: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Saves an uploaded document (ruleset, campaign module, character sheet, or notes)
@@ -556,24 +557,72 @@ class TTRPGService:
 
         # Check if document is a character sheet (auto-detect via form fields, JSON, OCR, or category)
         imported_characters: List[str] = []
-        parsed_list = self._parse_character_from_document(safe_name, extracted_text, content_bytes)
+        parsed_list = self._parse_character_from_document(safe_name, extracted_text, content_bytes, ruleset_override=ruleset_override)
         is_sheet = (cat == "character_sheet") or bool(parsed_list)
 
         if is_sheet:
+            detected_system_label = "Character Sheet"
             if parsed_list:
                 for ch_payload in parsed_list:
                     c_name = (ch_payload.get("name") or "").strip()
+                    c_ruleset = ruleset_override or ch_payload.get("ruleset") or "unknown"
+                    if c_ruleset == "unknown":
+                        attrs = ch_payload.get("attributes") or ch_payload.get("stats") or ch_payload.get("ability_scores") or {}
+                        if not attrs:
+                            attrs = {k: v for k, v in ch_payload.items() if k in ("STR", "Strength", "DEX", "Dexterity", "CON", "Constitution", "INT", "Intelligence", "WIS", "Wisdom", "CHA", "Charisma", "REF", "TECH", "COOL", "BODY", "EMP", "SAN", "POW", "EDU")}
+                        lower_arch = (ch_payload.get("archetype") or ch_payload.get("character_class") or ch_payload.get("class") or "").lower()
+                        feats_str = " ".join(ch_payload.get("features_and_traits") or ch_payload.get("features") or ch_payload.get("cyberware") or []).lower()
+
+                        dnd_classes = ("fighter", "wizard", "rogue", "cleric", "paladin", "barbarian", "bard", "druid", "ranger", "sorcerer", "warlock", "monk", "elf", "dwarf", "halfling")
+                        cyber_roles = ("rockerboy", "solo", "netrunner", "tech", "medtech", "media", "exec", "lawman", "fixer", "nomad", "edgerunner")
+
+                        if any(k in attrs for k in ("REF", "TECH", "COOL", "EMP", "BODY", "MOVE", "LUCK", "WILL")) or any(w in lower_arch for w in cyber_roles) or "cyber" in feats_str:
+                            c_ruleset = "cyberpunk"
+                        elif any(k in attrs for k in ("SAN", "POW", "EDU", "Sanity")) or "investigator" in lower_arch or "sanity" in feats_str:
+                            c_ruleset = "call_of_cthulhu"
+                        elif "ancestry" in ch_payload or "class_dc" in ch_payload:
+                            c_ruleset = "pathfinder_2e"
+                        elif any(k in attrs for k in ("STR", "Strength", "DEX", "Dexterity", "CON", "Constitution", "Wisdom", "Charisma")) or any(w in lower_arch for w in dnd_classes) or "spell" in feats_str:
+                            c_ruleset = "dnd_5e"
+
+                    if c_ruleset == "unknown":
+                        import base64
+                        return {
+                            "status": "requires_ruleset_selection",
+                            "message": f"Aether could not determine which tabletop system '{c_name or safe_name}' belongs to. Please select your ruleset.",
+                            "character": ch_payload,
+                            "filename": safe_name,
+                            "base64_content": base64.b64encode(content_bytes).decode("utf-8"),
+                            "doc_category": cat,
+                            "campaign_id": cid
+                        }
+
+                    ch_payload["ruleset"] = c_ruleset
+                    detected_system_label = c_ruleset.replace("_", " ").title()
                     if c_name:
                         res_upsert = self.upsert_character_from_sheet(ch_payload, filename=safe_name, target_state=state_obj)
                         if res_upsert.get("status") == "success":
                             imported_characters.append(c_name)
+                            # Auto-save a Canonical Root copy into the Character Vault
+                            try:
+                                from core.character_vault_service import CharacterVaultService
+                                vault_svc = CharacterVaultService()
+                                vault_svc.import_from_document(
+                                    filename=safe_name,
+                                    content_bytes=content_bytes,
+                                    ttrpg_service=self,
+                                    ruleset_override=c_ruleset
+                                )
+                            except Exception as e_vault:
+                                logger.debug(f"[TTRPG] Auto-vault mirror failed: {e_vault}")
             elif cat == "character_sheet":
                 # Fallback: if category was explicitly character_sheet but parser returned empty list
                 fallback_name = os.path.splitext(safe_name)[0].replace("_", " ").title()
+                fallback_ruleset = ruleset_override or (self.manifest.get("campaigns", {}).get(cid, {}).get("system_preset")) or "dnd_5e"
                 res_add = self.add_character({
                     "name": fallback_name,
                     "archetype": "Adventurer",
-                    "ruleset": (self.manifest.get("campaigns", {}).get(cid, {}).get("system_preset")) or "dnd_5e"
+                    "ruleset": fallback_ruleset
                 }, target_state=state_obj)
                 if res_add.get("status") == "success":
                     imported_characters.append(fallback_name)
@@ -599,13 +648,14 @@ class TTRPGService:
                 with open(state_path, "w", encoding="utf-8") as f:
                     json.dump(state_obj, f, indent=2)
 
-            logger.info(f"[TTRPG] Character sheet '{safe_name}' imported into party roster ({imported_characters}) and removed from file library (one-and-done).")
+            logger.info(f"[TTRPG] Character sheet '{safe_name}' imported into party roster ({imported_characters}) as {detected_system_label} and removed from file library (one-and-done).")
             return {
                 "status": "success",
-                "message": f"Character sheet '{safe_name}' successfully imported to Party Roster ({', '.join(imported_characters)}) and removed from file library.",
+                "message": f"Character sheet '{safe_name}' recognized as {detected_system_label} and imported to Party Roster ({', '.join(imported_characters)}) & Character Vault (removed from library to preserve evolved data).",
                 "document": None,
                 "documents": docs_map,
                 "imported_characters": imported_characters,
+                "ruleset": detected_system_label,
                 "removed_after_import": True,
                 "state": self.active_state
             }
@@ -677,12 +727,13 @@ class TTRPGService:
         cur_hp = _int_val(fields.get("CurrentHP"), max_hp)
         guard_val = _int_val(fields.get("AC"), 14)
 
-        might_val = _int_val(fields.get("STR"), 12)
-        agility_val = _int_val(fields.get("DEX"), 12)
-        vigor_val = _int_val(fields.get("CON"), 12)
-        intellect_val = _int_val(fields.get("INT"), 12)
-        wis_val = _int_val(fields.get("WIS"), 12)
-        cha_val = _int_val(fields.get("CHA"), 12)
+        from core.parsers.spell_registry import resolve_dnd_stat
+        might_val = resolve_dnd_stat(fields.get("STR"), fields.get("STRmod") or fields.get("STR Mod"), 10)
+        agility_val = resolve_dnd_stat(fields.get("DEX"), fields.get("DEXmod") or fields.get("DEX Mod"), 10)
+        vigor_val = resolve_dnd_stat(fields.get("CON"), fields.get("CONmod") or fields.get("CON Mod"), 10)
+        intellect_val = resolve_dnd_stat(fields.get("INT"), fields.get("INTmod") or fields.get("INT Mod"), 10)
+        wis_val = resolve_dnd_stat(fields.get("WIS"), fields.get("WISmod") or fields.get("WIS Mod"), 10)
+        cha_val = resolve_dnd_stat(fields.get("CHA"), fields.get("CHamod") or fields.get("CHAmod") or fields.get("CHA Mod"), 10)
         presence_val = max(wis_val, cha_val)
 
         hit_dice = _clean(fields.get("Total", "1d8")) or "1d8"
@@ -763,10 +814,18 @@ class TTRPGService:
             "insight": _int_val(fields.get("Passive2"), 10 + (wis_val - 10)//2),
             "investigation": _int_val(fields.get("Passive3"), 10 + (intellect_val - 10)//2)
         }
-        senses_str = _clean(fields.get("AdditionalSenses") or fields.get("Senses") or fields.get("Vision"))
+        senses_str = _clean(fields.get("AdditionalSenses") or fields.get("Senses") or fields.get("Vision") or fields.get("Senses1"))
+        defenses_str = _clean(
+            fields.get("Defenses")
+            or fields.get("Defenses1")
+            or fields.get("DamageDefenses")
+            or fields.get("Resistances")
+            or fields.get("Resistance")
+            or ""
+        )
 
-        # Initiative
-        raw_init = _clean(fields.get("Initiative") or fields.get("Initiative "))
+        # Initiative (supports 'Init', 'Initiative', 'Initiative ')
+        raw_init = _clean(fields.get("Init") or fields.get("Initiative") or fields.get("Initiative "))
         if raw_init:
             init_val = _int_val(raw_init, (agility_val - 10) // 2)
         else:
@@ -835,6 +894,10 @@ class TTRPGService:
                             seen_feat_names.add(feat_key)
                             features_list.append(line)
 
+        if defenses_str and not any("resist" in f.lower() or "defense" in f.lower() for f in features_list):
+            clean_def = defenses_str if defenses_str.lower().startswith(("resist", "defense", "immune")) else f"Defenses: {defenses_str}"
+            features_list.insert(0, clean_def)
+
         # Skills & Proficiencies
         skill_field_pairs = [
             ("Acrobatics", "Acrobatics"), ("Animal Handling", "Animal"), ("Arcana", "Arcana"),
@@ -850,22 +913,10 @@ class TTRPGService:
             if s_val:
                 skills_dict[s_label] = s_val
 
-        # Spells & Cantrips (Extract numbered D&D Beyond fields and generic spell text)
-        spells_list: List[str] = []
-        for i in range(50):
-            sn = _clean(fields.get(f"SpellName{i}") or fields.get(f"SpellName {i}") or fields.get(f"Spell {i}"))
-            if sn and sn not in spells_list:
-                spells_list.append(sn)
-
-        for k, v in fields.items():
-            k_lower = k.lower()
-            if ("spell" in k_lower or "cantrip" in k_lower) and not k_lower.startswith(("spellcasting", "spellatk", "spellsavedc", "spellattack", "spellsource", "castingtime", "prepared")):
-                clean_v = _clean(v)
-                if clean_v and len(clean_v) > 2 and not clean_v.isdigit() and clean_v not in ("Yes", "Off", "No", "Prepared"):
-                    for s_line in clean_v.splitlines():
-                        s_name = s_line.strip().lstrip("-•* ")
-                        if s_name and len(s_name) > 2 and s_name not in spells_list:
-                            spells_list.append(s_name)
+        # Spells & Cantrips (Structured parsing with level, DC, damage formulas, and header filtering)
+        from core.parsers.spell_registry import parse_structured_spells, sanitize_character_weapons
+        spells_list = parse_structured_spells(fields)
+        weapons = sanitize_character_weapons(weapons, spells_list)
 
         spell_ability = _clean(fields.get("spellCastingAbility0") or fields.get("SpellcastingAbility") or fields.get("SpellAbility") or "")
         spell_save_dc = _clean(fields.get("spellSaveDC0") or fields.get("SpellSaveDC") or "")
@@ -954,6 +1005,8 @@ class TTRPGService:
             "prof_bonus": prof_bonus,
             "passives": passives,
             "senses": senses_str,
+            "defenses": defenses_str,
+            "resistances": defenses_str,
             "initiative": init_str,
             "features_and_traits": features_list,
             "skills": skills_dict,
@@ -992,44 +1045,64 @@ class TTRPGService:
             return None
 
         prompt = """You are an expert tabletop roleplaying game (TTRPG) character sheet reader and OCR parser.
-Analyze this document (which is a tabletop RPG character sheet, e.g. D&D 5e, Pathfinder, or generic TTRPG).
+Analyze this document (which is a tabletop RPG character sheet).
+1. Accurately identify which game system/ruleset the sheet belongs to:
+   - 'pathfinder_2e' (Pathfinder 1E, Pathfinder 2E, Pathfinder Remaster, or Pathfinder Society: Paizo logo, Ancestry or Race, Class DC, Fortitude/Reflex/Will saves, CMB/CMD, Strikes, Bulk, Hero Points, Perception as Initiative)
+   - 'cyberpunk' (e.g. Cyberpunk RED, Cyberpunk 2020: stats INT, REF, DEX, TECH, COOL, WILL, LUCK, MOVE, BODY, EMP, Humanity, Cyberware, Eurodollars/eb, Roles like Rockerboy, Solo, Netrunner)
+   - 'dnd_5e' (D&D 5th Edition: STR, DEX, CON, INT, WIS, CHA, Armor Class, Spellcasting)
+   - 'call_of_cthulhu' (Call of Cthulhu: Sanity, Luck, Magic Points, Investigator, percentile skills)
+   - 'agnostic' (generic / custom homebrew)
+   - 'unknown' (if genuinely indistinguishable)
+
 Extract the character information into valid JSON with this exact schema:
 {
   "is_character_sheet": true,
-  "name": "<character name>",
+  "ruleset": "<one of: 'pathfinder_2e', 'cyberpunk', 'dnd_5e', 'call_of_cthulhu', 'agnostic', or 'unknown'>",
+  "system_name": "<exact detected ruleset or game system name, e.g. 'Pathfinder 2E', 'Pathfinder 1E', 'Cyberpunk RED', 'D&D 5E', 'Call of Cthulhu 7E', or 'Unknown'>",
+  "name": "<character name or handle>",
   "player_name": "<player name or 'Player'>",
-  "archetype": "<class, level, race, archetype>",
-  "level": <integer level, e.g. 1>,
+  "archetype": "<class/role, level/rank, race/ancestry/background, e.g. 'Barbarian 1 (Human, Hunter)' or 'Elf Rogue 1'>",
+  "level": <integer level or role rank, e.g. 1>,
   "experience_points": <integer XP or 0>,
-  "max_health": <integer maximum HP>,
-  "current_health": <integer current HP>,
-  "guard": <integer Armor Class or Defense>,
-  "Might": <integer STR / Might (typically 1-30)>,
-  "Agility": <integer DEX / Agility (typically 1-30)>,
-  "Vigor": <integer CON / Vigor (typically 1-30)>,
-  "Intellect": <integer INT / Intellect (typically 1-30)>,
-  "Presence": <integer WIS / CHA / Presence (typically 1-30)>,
+  "max_health": <integer maximum HP / Hits>,
+  "current_health": <integer current HP / Hits>,
+  "guard": <integer Armor Class or Armor SP>,
+  "attributes": {
+     "INT": <int if cyberpunk>, "REF": <int if cyberpunk>, "DEX": <int>, "TECH": <int if cyberpunk>,
+     "COOL": <int if cyberpunk>, "WILL": <int if cyberpunk>, "LUCK": <int if cyberpunk>, "MOVE": <int if cyberpunk>,
+     "BODY": <int if cyberpunk>, "EMP": <int if cyberpunk>,
+     "Strength": <int if dnd or pathfinder>, "Dexterity": <int if dnd or pathfinder>, "Constitution": <int if dnd or pathfinder>,
+     "Intelligence": <int if dnd or pathfinder>, "Wisdom": <int if dnd or pathfinder>, "Charisma": <int if dnd or pathfinder>,
+     "STR": <int if coc>, "CON": <int if coc>, "SIZ": <int if coc>, "APP": <int if coc>, "POW": <int if coc>, "EDU": <int if coc>,
+     "Might": <int 1-30>, "Agility": <int 1-30>, "Vigor": <int 1-30>, "Intellect": <int 1-30>, "Presence": <int 1-30>
+  },
   "custom_meters": {
      "hit_dice": {"current": 1, "max": 1, "label": "Hit Dice (e.g. 1d10)"},
-     "speed": {"current": 30, "max": 30, "label": "Speed (ft)"}
+     "speed": {"current": 30, "max": 30, "label": "Speed / MOVE"}
   },
-  "conditions": [],
+  "currency": {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0, "eb": 0},
   "weapons": [
-     {"name": "<weapon name>", "atk_bonus": "<e.g. +4>", "damage": "<e.g. 1d8+2 Slashing>", "notes": "<e.g. Versatile>"}
+     {"name": "<weapon name>", "atk_bonus": "<bonus>", "damage": "<dmg>", "notes": "<notes>"}
   ],
-  "inventory": ["<list of equipment, potions, shields, items>"],
-  "proficiencies": "<summary of weapon, armor, tool, language proficiencies>",
-  "initiative": "<initiative modifier, e.g. +3>",
-  "spells": ["<list of cantrips and prepared spells, e.g. Misty Step, Fire Bolt>"],
-  "features_and_traits": ["<list of key class/racial features or feats, e.g. Sneak Attack, Darkvision>"],
-  "skills": {"<SkillName>": "<modifier, e.g. +5>"}
+  "inventory": ["<list of gear, clothing, cyberware, ammo>"],
+  "cyberware": ["<list of cyberware items if cyberpunk>"],
+  "features_and_traits": ["<class/role features, feats, abilities, ancestry traits>"],
+  "skills": {"<SkillName>": "<modifier or total>"},
+  "spellcasting_ability": "<e.g. 'CHA', 'INT', 'WIS' or ''>",
+  "spell_save_dc": "<e.g. '13' or ''>",
+  "spell_attack_bonus": "<e.g. '+5' or ''>",
+  "spells": [
+     {"name": "<spell name, e.g. 'Burning Hands', 'Light'>", "level": "<e.g. 'Cantrip', '1st Level', '2nd Level'>", "atk_bonus": "<e.g. '+5' or 'DEX 13' or ''>", "damage": "<e.g. '3d6 Fire', '1d8 Lightning', or ''>", "range": "<e.g. 'Touch', '120 ft.', 'Self/15 ft. Cone'>", "notes": "<e.g. 'V,S | Instantaneous'>"}
+  ]
 }
+IMPORTANT: DO NOT include table headers (such as '=== CANTRIPS ===', '=== 1st LEVEL ===', '4 Slots OOOO', '(At Will)'), column headers ('PAGE REF', 'SAVE/ATK', 'TIME', 'RANGE', 'COMP', 'DURATION', 'PREP', 'SPELLS'), or citations (such as 'PHB-2024 292') as spells! Extract ONLY real spells into the 'spells' list.
 If this document is a general ruleset, adventure module, or lore book and NOT a character sheet, return:
 {"is_character_sheet": false}
 Respond ONLY with valid JSON."""
 
         try:
             from google.genai import types
+            from core.parsers.spell_registry import sanitize_parsed_spells
             candidate_models = ["gemini-3.8-flash", "gemini-2.5-flash"]
             for model_name in candidate_models:
                 try:
@@ -1048,7 +1121,56 @@ Respond ONLY with valid JSON."""
                     if text:
                         data = json.loads(text)
                         if isinstance(data, dict) and data.get("is_character_sheet") and data.get("name"):
-                            logger.info(f"[TTRPG] Successfully parsed character '{data.get('name')}' via Gemini OCR ({model_name}).")
+                            # Sanitize spells if present
+                            if "spells" in data and isinstance(data["spells"], list):
+                                data["spells"] = sanitize_parsed_spells(data["spells"])
+                            # Normalize ruleset detection
+                            sys_name_low = str(data.get("system_name") or "").lower()
+                            r = (data.get("ruleset") or "").strip().lower()
+
+                            # 1. Direct hit via system_name or ruleset
+                            if any(w in sys_name_low for w in ("pathfinder", "paizo", "pf1e", "pf2e")) or any(w in r for w in ("pathfinder", "paizo", "pf1e", "pf2e")):
+                                r = "pathfinder_2e"
+                            elif any(w in sys_name_low for w in ("cyberpunk", "edgerunner")) or any(w in r for w in ("cyber", "cyberpunk")):
+                                r = "cyberpunk"
+                            elif any(w in sys_name_low for w in ("cthulhu", "coc")) or any(w in r for w in ("cthulhu", "coc")):
+                                r = "call_of_cthulhu"
+                            elif any(w in sys_name_low for w in ("d&d", "dnd", "5e")) or any(w in r for w in ("dnd", "5e")):
+                                r = "dnd_5e"
+
+                            if not r or r in ("unknown", "agnostic"):
+                                arch_low = (data.get("archetype") or "").lower()
+                                feats_low = " ".join(data.get("features_and_traits") or []).lower()
+                                attrs = data.get("attributes") or {}
+
+                                if any(k in attrs for k in ("CMB", "CMD")) or any(w in feats_low for w in ("pathfinder", "paizo", "class dc", "hero points", "ancestry feat", "skill feat", "trapfinding")) or "pathfinder" in arch_low or "ancestry" in arch_low or "paizo" in feats_low:
+                                    r = "pathfinder_2e"
+                                elif any(k in attrs for k in ("REF", "TECH", "COOL", "EMP", "BODY")) or any(w in arch_low for w in ("rockerboy", "solo", "netrunner", "tech", "medtech", "media", "exec", "lawman", "fixer", "nomad")) or "cyber" in feats_low:
+                                    r = "cyberpunk"
+                                elif "sanity" in feats_low or "investigator" in arch_low or any(k in attrs for k in ("SAN", "POW", "EDU")):
+                                    r = "call_of_cthulhu"
+                                elif any(w in arch_low for w in ("fighter", "wizard", "rogue", "cleric", "paladin", "barbarian")):
+                                    r = "dnd_5e"
+                                else:
+                                    r = "unknown"
+
+                            data["ruleset"] = r
+                            if r == "cyberpunk":
+                                data["native_system"] = "cyberpunk_red"
+                                data["native_genre"] = "cybernetic_action"
+                                if "cyberware" in data and data["cyberware"]:
+                                    data["features_and_traits"] = list(set((data.get("features_and_traits") or []) + data["cyberware"]))
+                            elif r == "call_of_cthulhu":
+                                data["native_system"] = "call_of_cthulhu_7e"
+                                data["native_genre"] = "modern_horror"
+                            elif r in ("dnd_5e", "pathfinder_2e", "pathfinder"):
+                                data["ruleset"] = "pathfinder_2e" if "pathfinder" in r else r
+                                data["native_system"] = data["ruleset"]
+                                data["native_genre"] = "heroic_fantasy"
+                            else:
+                                data["native_system"] = "custom"
+                                data["native_genre"] = "custom"
+                            logger.info(f"[TTRPG] Successfully parsed character '{data.get('name')}' (Ruleset: {r}) via Gemini OCR ({model_name}).")
                             return data
                 except Exception as m_err:
                     logger.debug(f"[TTRPG] Gemini OCR model '{model_name}' attempt failed: {m_err}")
@@ -1060,7 +1182,8 @@ Respond ONLY with valid JSON."""
         self,
         filename: str,
         extracted_text: str,
-        raw_bytes: Optional[bytes] = None
+        raw_bytes: Optional[bytes] = None,
+        ruleset_override: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Extracts character data from documents using:
@@ -1073,20 +1196,43 @@ Respond ONLY with valid JSON."""
         safe_name = os.path.basename(filename or "")
         lower_name = safe_name.lower()
 
+        if raw_bytes is None and isinstance(extracted_text, (bytes, bytearray)):
+            raw_bytes = bytes(extracted_text)
+            extracted_text = ""
+
         # Guard: If filename indicates ruleset, adventure module, or handbook, do not parse as a player character
         if any(k in lower_name for k in ("rule", "basic", "handbook", "guide", "adventure", "module", "campaign", "monster", "bestiary", "srd")):
             return []
+
+        def _apply_override(c: Dict[str, Any]) -> Dict[str, Any]:
+            if not c:
+                return c
+            if ruleset_override:
+                c["ruleset"] = ruleset_override
+                if "cyber" in ruleset_override.lower():
+                    c["native_system"] = "cyberpunk_red"
+                    c["native_genre"] = "cybernetic_action"
+                elif "cthulhu" in ruleset_override.lower():
+                    c["native_system"] = "call_of_cthulhu_7e"
+                    c["native_genre"] = "modern_horror"
+                elif "pathfinder" in ruleset_override.lower():
+                    c["native_system"] = "pathfinder_2e"
+                    c["native_genre"] = "heroic_fantasy"
+                elif "dnd" in ruleset_override.lower():
+                    c["native_system"] = "dnd_5e"
+                    c["native_genre"] = "heroic_fantasy"
+            return c
 
         # 1. Try PDF Form Fields (AcroForm widgets)
         if safe_name.lower().endswith(".pdf") and raw_bytes:
             form_fields = ProjectService.extract_pdf_form_fields(raw_bytes)
             char_data = self._parse_character_from_form_fields(form_fields, safe_name)
             if char_data:
-                results.append(char_data)
+                results.append(_apply_override(char_data))
                 return results
 
         # 2. Try structured JSON
-        if safe_name.lower().endswith(".json") or (extracted_text and extracted_text.lstrip().startswith("{")):
+        if safe_name.lower().endswith(".json") or (isinstance(extracted_text, str) and extracted_text.lstrip().startswith("{")):
             try:
                 raw_str = raw_bytes.decode("utf-8", errors="replace") if raw_bytes else extracted_text
                 parsed_json = json.loads(raw_str)
@@ -1094,11 +1240,11 @@ Respond ONLY with valid JSON."""
                     if "characters" in parsed_json and isinstance(parsed_json["characters"], dict):
                         for _, ch_obj in parsed_json["characters"].items():
                             if isinstance(ch_obj, dict) and ch_obj.get("name"):
-                                results.append(ch_obj)
+                                results.append(_apply_override(ch_obj))
                         if results:
                             return results
                     elif parsed_json.get("name"):
-                        results.append(parsed_json)
+                        results.append(_apply_override(parsed_json))
                         return results
             except Exception as e:
                 logger.debug(f"[TTRPG] JSON character parse fallback for '{safe_name}': {e}")
@@ -1109,7 +1255,7 @@ Respond ONLY with valid JSON."""
             if not is_large:
                 gemini_data = self._parse_character_with_gemini(safe_name, raw_bytes)
                 if gemini_data:
-                    results.append(gemini_data)
+                    results.append(_apply_override(gemini_data))
                     return results
 
         # 4. Fallback: Parse structured text regex (Markdown, DOCX, TXT)
@@ -1198,10 +1344,23 @@ Respond ONLY with valid JSON."""
         intellect_val = _extract_attr(["intellect", "intelligence", "int"], 12)
         presence_val = _extract_attr(["presence", "charisma", "cha", "wisdom", "wis"], 12)
 
-        results.append({
+        lower_t = text.lower()
+        det_r = ruleset_override or "unknown"
+        if det_r == "unknown":
+            if any(k in lower_t for k in ("cyberpunk", "rockerboy", "netrunner", "solo", "cyberware", "humanity", "eurodollars")):
+                det_r = "cyberpunk"
+            elif any(k in lower_t for k in ("call of cthulhu", "sanity", "investigator", "cthulhu")):
+                det_r = "call_of_cthulhu"
+            elif any(k in lower_t for k in ("pathfinder", "class dc", "ancestry")):
+                det_r = "pathfinder_2e"
+            elif any(k in lower_t for k in ("dungeon", "d&d", "5e", "spellcasting", "armor class")):
+                det_r = "dnd_5e"
+
+        results.append(_apply_override({
             "name": char_name,
             "player_name": player_name,
             "archetype": archetype,
+            "ruleset": det_r,
             "max_health": max_hp,
             "current_health": cur_hp,
             "guard": guard_val,
@@ -1210,7 +1369,7 @@ Respond ONLY with valid JSON."""
             "Vigor": vigor_val,
             "Intellect": intellect_val,
             "Presence": presence_val
-        })
+        }))
         return results
 
     def _parse_character_from_document_text(
@@ -1308,11 +1467,18 @@ Respond ONLY with valid JSON."""
             existing["armor_class"] = guard_val
 
             existing.setdefault("attributes", {})
-            for attr in ("Might", "Agility", "Vigor", "Intellect", "Presence", "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"):
+            if "attributes" in ch_payload and isinstance(ch_payload["attributes"], dict):
+                for k, v in ch_payload["attributes"].items():
+                    if v is not None:
+                        existing["attributes"][k] = self._safe_int(v, v)
+            for attr in (
+                "Might", "Agility", "Vigor", "Intellect", "Presence",
+                "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma",
+                "INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP",
+                "STR", "CON", "SIZ", "APP", "POW", "EDU", "SAN"
+            ):
                 if attr in ch_payload and ch_payload[attr] is not None:
                     existing["attributes"][attr] = self._safe_int(ch_payload[attr], existing["attributes"].get(attr, 10))
-                elif "attributes" in ch_payload and isinstance(ch_payload["attributes"], dict) and attr in ch_payload["attributes"]:
-                    existing["attributes"][attr] = self._safe_int(ch_payload["attributes"][attr], existing["attributes"].get(attr, 10))
 
             if ch_payload.get("ruleset"):
                 existing["ruleset"] = ch_payload["ruleset"]
@@ -1354,7 +1520,7 @@ Respond ONLY with valid JSON."""
                 existing["spells"] = ch_payload["spells"]
 
             for rich_k in (
-                "senses", "proficiencies_armor", "proficiencies_weapons", "proficiencies_tools",
+                "senses", "defenses", "resistances", "initiative", "proficiencies_armor", "proficiencies_weapons", "proficiencies_tools",
                 "proficiencies_languages", "spellcasting_ability", "spell_save_dc", "spell_attack_bonus",
                 "backstory", "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies"
             ):
@@ -1394,13 +1560,26 @@ Respond ONLY with valid JSON."""
 
         # 1. Idempotency Guard: Prevent accidental template reload overwriting live combat state
         existing_chars = self.active_state.setdefault("characters", {})
-        if char_id in existing_chars and not overwrite_existing:
-            logger.warning(f"[TTRPG] Character '{char_name}' ({char_id}) already active in session. Preserving live state.")
+        matched_id = None
+        if char_id in existing_chars:
+            matched_id = char_id
+        else:
+            for cid, cdata in existing_chars.items():
+                if cdata.get("name", "").strip().lower() == str(char_name).strip().lower():
+                    matched_id = cid
+                    break
+
+        if matched_id and not overwrite_existing:
+            logger.warning(f"[TTRPG] Character '{char_name}' ({matched_id}) already active in session. Preserving live state.")
             return {
                 "status": "already_loaded",
-                "character_id": char_id,
+                "character_id": matched_id,
                 "message": f"Character '{char_name}' is already active in this session. Live state preserved."
             }
+
+        if matched_id and matched_id != char_id:
+            # Clean up old ID key to avoid duplicate characters with the same name
+            existing_chars.pop(matched_id, None)
 
         # 2. Extract Base Vitals from Native System Data or Universal Core
         native = vault_char_data.get("native_system_data", {})
@@ -1447,6 +1626,25 @@ Respond ONLY with valid JSON."""
         weapons = copy.deepcopy(vault_char_data.get("weapons") or native.get("weapons") or [])
         spells = copy.deepcopy(vault_char_data.get("spells") or native.get("spells") or [])
 
+        hp_cur = (
+            vault_char_data.get("vitals", {}).get("health", {}).get("current")
+            if isinstance(vault_char_data.get("vitals"), dict) and "health" in vault_char_data["vitals"]
+            else hp_max
+        )
+
+        r_str = str(vault_char_data.get("ruleset") or native.get("system_name") or "").lower()
+        is_coc_char = "cthulhu" in r_str or "coc" in r_str
+        guard_label = (
+            vault_char_data.get("vitals", {}).get("guard", {}).get("label")
+            if isinstance(vault_char_data.get("vitals"), dict) and "guard" in vault_char_data["vitals"]
+            else ("Dodge Defense" if is_coc_char else "Armor Defense")
+        )
+        guard_cur = (
+            vault_char_data.get("vitals", {}).get("guard", {}).get("current")
+            if isinstance(vault_char_data.get("vitals"), dict) and "guard" in vault_char_data["vitals"]
+            else guard_val
+        )
+
         # 3. Create Isolated Live State Object
         live_instance = {
             "id": char_id,
@@ -1461,8 +1659,8 @@ Respond ONLY with valid JSON."""
             "background": vault_char_data.get("background") or native.get("background", ""),
             "is_player": True,
             "vitals": {
-                "health": {"current": hp_max, "max": hp_max, "label": "Health"},
-                "guard": {"current": guard_val, "max": guard_val, "label": "Guard / Armor"}
+                "health": {"current": hp_cur, "max": hp_max, "label": "Health"},
+                "guard": {"current": guard_cur, "max": guard_val, "label": guard_label}
             },
             "custom_meters": copy.deepcopy(vault_char_data.get("custom_meters") or native.get("custom_meters", {})),
             "attributes": copy.deepcopy(vault_char_data.get("target_system_attributes") or vault_char_data.get("attributes") or core.get("normalized_attributes", {})),
@@ -1480,6 +1678,8 @@ Respond ONLY with valid JSON."""
             "spell_attack_bonus": vault_char_data.get("spell_attack_bonus") or native.get("spell_attack_bonus", ""),
             "passives": copy.deepcopy(vault_char_data.get("passives") or native.get("passives", {})),
             "senses": vault_char_data.get("senses") or native.get("senses", ""),
+            "defenses": vault_char_data.get("defenses") or vault_char_data.get("resistances") or native.get("defenses") or native.get("resistances", ""),
+            "resistances": vault_char_data.get("resistances") or vault_char_data.get("defenses") or native.get("resistances") or native.get("defenses", ""),
             "speed": vault_char_data.get("speed") or native.get("speed", "30 ft."),
             "hit_dice": vault_char_data.get("hit_dice") or native.get("hit_dice", "1d8"),
             "armor_class": guard_val,
@@ -2743,7 +2943,20 @@ Respond in JSON with schema:
         wis_val = self._safe_int(char_payload.get("Wisdom") or raw_attrs.get("Wisdom") or char_payload.get("Presence") or raw_attrs.get("Presence") or prev_attrs.get("Wisdom") or prev_attrs.get("Presence"), 10)
         cha_val = self._safe_int(char_payload.get("Charisma") or raw_attrs.get("Charisma") or prev_attrs.get("Charisma") or wis_val, 10)
 
-        if "Strength" in char_payload or "Strength" in raw_attrs or "dnd" in ruleset.lower() or "pathfinder" in ruleset.lower():
+        if "cyber" in ruleset.lower():
+            for stat in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"):
+                def_stat = self._safe_int(prev_attrs.get(stat), 6)
+                attributes[stat] = self._safe_int(char_payload.get(stat) or raw_attrs.get(stat), def_stat)
+            attributes.setdefault("Might", attributes.get("BODY", 6))
+            attributes.setdefault("Agility", max(attributes.get("REF", 6), attributes.get("DEX", 6)))
+            attributes.setdefault("Vigor", attributes.get("BODY", 6))
+            attributes.setdefault("Intellect", attributes.get("INT", 6))
+            attributes.setdefault("Presence", attributes.get("COOL", 6))
+        elif "cthulhu" in ruleset.lower():
+            for stat in ("STR", "CON", "SIZ", "DEX", "APP", "INT", "POW", "EDU", "SAN"):
+                def_stat = self._safe_int(prev_attrs.get(stat), 50)
+                attributes[stat] = self._safe_int(char_payload.get(stat) or raw_attrs.get(stat), def_stat)
+        elif "dnd" in ruleset.lower() or "pathfinder" in ruleset.lower() or "Strength" in char_payload or "Strength" in raw_attrs:
             attributes["Strength"] = str_val
             attributes["Dexterity"] = dex_val
             attributes["Constitution"] = con_val
@@ -2755,7 +2968,7 @@ Respond in JSON with schema:
             attributes.setdefault("Vigor", con_val)
             attributes.setdefault("Intellect", int_val)
             attributes.setdefault("Presence", max(wis_val, cha_val))
-        elif "INT" in char_payload or "INT" in raw_attrs or "cyber" in ruleset.lower():
+        elif "INT" in char_payload or "INT" in raw_attrs or "REF" in raw_attrs:
             for stat in ("INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"):
                 def_stat = self._safe_int(prev_attrs.get(stat), 6)
                 attributes[stat] = self._safe_int(char_payload.get(stat) or raw_attrs.get(stat), def_stat)
@@ -2839,7 +3052,7 @@ Respond in JSON with schema:
 
         # Preserve optional rich sheet properties
         for opt_key in (
-            "class_and_level", "senses", "proficiencies_armor", "proficiencies_weapons",
+            "class_and_level", "senses", "defenses", "resistances", "proficiencies_armor", "proficiencies_weapons",
             "proficiencies_tools", "proficiencies_languages", "head_sp", "body_sp", "humanity",
             "spellcasting_ability", "spell_save_dc", "spell_attack_bonus",
             "backstory", "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies"
@@ -3035,11 +3248,12 @@ Respond in JSON with schema:
         action: str = "add",
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
+        spells: Optional[List[Any]] = None,
         reason: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Adds or removes items and weapons from a character's inventory in the active campaign.
-        Enables both the user and Aether DM to update gear when items are found, looted, bought, used, or lost.
+        Adds or removes items, weapons, and spells from a character's inventory in the active campaign.
+        Enables both the user and Aether DM to update gear and spells when items are found, looted, bought, used, or lost.
         """
         if not self.active_state:
             return {"status": "error", "message": "No active campaign loaded."}
@@ -3051,10 +3265,12 @@ Respond in JSON with schema:
         action_norm = (action or "add").lower().strip()
         current_inv = char_data.setdefault("inventory", [])
         current_wpns = char_data.setdefault("weapons", [])
+        current_spells = char_data.setdefault("spells", [])
         modified_items: List[str] = []
         modified_weapons: List[str] = []
+        modified_spells: List[str] = []
 
-        if action_norm in ("add", "loot", "receive"):
+        if action_norm in ("add", "loot", "receive", "learn"):
             if items:
                 for it in items:
                     clean_it = str(it).strip()
@@ -3078,8 +3294,32 @@ Respond in JSON with schema:
                         else:
                             current_wpns.append(w_record)
                         modified_weapons.append(w_record["name"])
+            if spells:
+                for s in spells:
+                    if isinstance(s, dict) and s.get("name"):
+                        s_record = {
+                            "name": str(s["name"]).strip(),
+                            "level": str(s.get("level", "Cantrip")).strip(),
+                            "school": str(s.get("school", "")).strip(),
+                            "atk_bonus": str(s.get("atk_bonus", "")).strip(),
+                            "save_dc": str(s.get("save_dc", "")).strip(),
+                            "damage": str(s.get("damage", "")).strip(),
+                            "range": str(s.get("range", "")).strip(),
+                            "notes": str(s.get("notes", "")).strip()
+                        }
+                        existing_s = next((x for x in current_spells if (x.get("name", "") if isinstance(x, dict) else str(x)).lower() == s_record["name"].lower()), None)
+                        if existing_s and isinstance(existing_s, dict):
+                            existing_s.update(s_record)
+                        else:
+                            current_spells.append(s_record)
+                        modified_spells.append(s_record["name"])
+                    elif isinstance(s, str) and s.strip():
+                        clean_s = s.strip()
+                        if clean_s not in current_spells:
+                            current_spells.append(clean_s)
+                        modified_spells.append(clean_s)
 
-        elif action_norm in ("remove", "delete", "use", "consume", "drop", "lose"):
+        elif action_norm in ("remove", "delete", "use", "consume", "drop", "lose", "unlearn"):
             if items:
                 for it in items:
                     target_name = str(it).strip().lower()
@@ -3096,9 +3336,19 @@ Respond in JSON with schema:
                             removed = current_wpns.pop(idx)
                             modified_weapons.append(removed.get("name", w_name))
                             break
+            if spells:
+                for s in spells:
+                    s_name = (s.get("name") if isinstance(s, dict) else str(s)).strip().lower()
+                    for idx, cur_s in enumerate(list(current_spells)):
+                        cur_name = (cur_s.get("name") if isinstance(cur_s, dict) else str(cur_s)).strip().lower()
+                        if cur_name == s_name or s_name in cur_name:
+                            removed = current_spells.pop(idx)
+                            rem_name = removed.get("name", s_name) if isinstance(removed, dict) else str(removed)
+                            modified_spells.append(rem_name)
+                            break
 
         self.save_active_campaign_state()
-        logger.info(f"[TTRPG] Inventory {action_norm} for '{char_data['name']}': Items={modified_items}, Weapons={modified_weapons}. Reason: {reason or 'Manual/DM update'}")
+        logger.info(f"[TTRPG] Inventory/Spells {action_norm} for '{char_data['name']}': Items={modified_items}, Weapons={modified_weapons}, Spells={modified_spells}. Reason: {reason or 'Manual/DM update'}")
 
         return {
             "status": "success",
@@ -3106,10 +3356,13 @@ Respond in JSON with schema:
             "action": action_norm,
             "modified_items": modified_items,
             "modified_weapons": modified_weapons,
+            "modified_spells": modified_spells,
             "total_inventory_count": len(current_inv),
             "total_weapons_count": len(current_wpns),
+            "total_spells_count": len(current_spells),
             "inventory": current_inv,
             "weapons": current_wpns,
+            "spells": current_spells,
             "message": f"Successfully updated inventory for '{char_data['name']}' ({action_norm}: {len(modified_items)} item(s), {len(modified_weapons)} weapon(s))."
         }
 

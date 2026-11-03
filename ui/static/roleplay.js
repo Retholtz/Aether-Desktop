@@ -102,6 +102,103 @@ function escapeRpJs(str) {
         .replace(/"/g, '\\"');
 }
 
+function showAetherConfirm(message, title = "Confirm Action", confirmBtnText = "Confirm", isDestructive = true) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById("modal-rp-confirm");
+        const titleEl = document.getElementById("modal-rp-confirm-title");
+        const msgEl = document.getElementById("modal-rp-confirm-message");
+        const okBtn = document.getElementById("btn-ok-rp-confirm");
+        const cancelBtn = document.getElementById("btn-cancel-rp-confirm");
+        const closeBtn = document.getElementById("btn-close-rp-confirm");
+        const iconEl = document.getElementById("modal-rp-confirm-icon");
+
+        if (!modal || !okBtn || !cancelBtn) {
+            resolve(window.confirm(message));
+            return;
+        }
+
+        if (titleEl) titleEl.textContent = title;
+        if (msgEl) msgEl.textContent = message;
+        if (cancelBtn) cancelBtn.style.display = "inline-block";
+        if (okBtn) {
+            okBtn.textContent = confirmBtnText;
+            if (isDestructive) {
+                okBtn.style.background = "#ef4444";
+                okBtn.style.borderColor = "#dc2626";
+            } else {
+                okBtn.style.background = "#38bdf8";
+                okBtn.style.borderColor = "#0284c7";
+            }
+        }
+        if (iconEl) iconEl.textContent = isDestructive ? "🗑️" : "⚠️";
+
+        function cleanup(result) {
+            modal.classList.add("hidden");
+            okBtn.removeEventListener("click", onOk);
+            cancelBtn.removeEventListener("click", onCancel);
+            if (closeBtn) closeBtn.removeEventListener("click", onCancel);
+            resolve(result);
+        }
+
+        function onOk() { cleanup(true); }
+        function onCancel() { cleanup(false); }
+
+        okBtn.addEventListener("click", onOk);
+        cancelBtn.addEventListener("click", onCancel);
+        if (closeBtn) closeBtn.addEventListener("click", onCancel);
+
+        modal.classList.remove("hidden");
+    });
+}
+window.showAetherConfirm = showAetherConfirm;
+
+function showAetherAlert(message, title = "Notice") {
+    return new Promise((resolve) => {
+        const modal = document.getElementById("modal-rp-confirm");
+        const titleEl = document.getElementById("modal-rp-confirm-title");
+        const msgEl = document.getElementById("modal-rp-confirm-message");
+        const okBtn = document.getElementById("btn-ok-rp-confirm");
+        const cancelBtn = document.getElementById("btn-cancel-rp-confirm");
+        const closeBtn = document.getElementById("btn-close-rp-confirm");
+        const iconEl = document.getElementById("modal-rp-confirm-icon");
+
+        if (!modal || !okBtn) {
+            console.warn("[Aether]", message);
+            resolve();
+            return;
+        }
+
+        if (titleEl) titleEl.textContent = title;
+        if (msgEl) msgEl.textContent = message;
+        if (cancelBtn) cancelBtn.style.display = "none";
+        if (okBtn) {
+            okBtn.textContent = "OK";
+            okBtn.style.background = "#38bdf8";
+            okBtn.style.borderColor = "#0284c7";
+        }
+        if (iconEl) iconEl.textContent = "ℹ️";
+
+        function cleanup() {
+            modal.classList.add("hidden");
+            if (cancelBtn) cancelBtn.style.display = "inline-block";
+            okBtn.removeEventListener("click", onOk);
+            if (closeBtn) closeBtn.removeEventListener("click", onOk);
+            resolve();
+        }
+
+        function onOk() { cleanup(); }
+
+        okBtn.addEventListener("click", onOk);
+        if (closeBtn) closeBtn.addEventListener("click", onOk);
+
+        modal.classList.remove("hidden");
+    });
+}
+window.showAetherAlert = showAetherAlert;
+window.alert = function(msg) {
+    showAetherAlert(String(msg));
+};
+
 async function loadRolePlayUI() {
     try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.get_ttrpg_data) {
@@ -375,9 +472,31 @@ function renderInitiativeLadder() {
 
 function extractCharacterFeatures(ch) {
     if (!ch) return [];
-    let list = ch.features_and_traits || ch.traits_and_abilities || ch.features_traits || ch.features || ch.tagged_traits || [];
-    if (list && Array.isArray(list) && list.length === 0) {
-        list = ch.native_system_data?.features_and_traits || ch.universal_core?.features_and_traits || ch.universal_core?.tagged_traits || [];
+    const candidates = [
+        ch.features_and_traits,
+        ch.traits_and_abilities,
+        ch.features_traits,
+        ch.features,
+        ch.tagged_traits,
+        ch.cyberware,
+        ch.native_system_data?.features_and_traits,
+        ch.native_system_data?.features_traits,
+        ch.native_system_data?.cyberware,
+        ch.universal_core?.features_and_traits,
+        ch.universal_core?.tagged_traits,
+        ch.universal_core?.traits
+    ];
+    let list = [];
+    for (const cand of candidates) {
+        if (!cand) continue;
+        if (typeof cand === "string" && cand.trim().length > 0) {
+            list = cand;
+            break;
+        }
+        if (Array.isArray(cand) && cand.length > 0) {
+            list = cand;
+            break;
+        }
     }
     if (typeof list === "string") {
         return list.split(/\n+|;\s*|,\s*(?![^()]*\))/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
@@ -391,6 +510,45 @@ function extractCharacterFeatures(ch) {
             }
             return String(f || "").trim();
         }).filter(Boolean);
+    }
+    return [];
+}
+
+function extractCharacterInventory(ch) {
+    if (!ch) return [];
+    const candidates = [
+        ch.inventory,
+        ch.live_inventory,
+        ch.native_system_data?.inventory,
+        ch.universal_core?.tagged_inventory,
+        ch.universal_core?.inventory
+    ];
+    for (const cand of candidates) {
+        if (Array.isArray(cand) && cand.length > 0) {
+            return cand.map(i => typeof i === "string" ? i.trim() : (i?.name || String(i || ""))).filter(Boolean);
+        }
+        if (typeof cand === "string" && cand.trim().length > 0) {
+            return cand.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
+        }
+    }
+    return [];
+}
+
+function extractCharacterSpells(ch) {
+    if (!ch) return [];
+    const candidates = [
+        ch.spells,
+        ch.spells_list,
+        ch.native_system_data?.spells,
+        ch.universal_core?.spells
+    ];
+    for (const cand of candidates) {
+        if (Array.isArray(cand) && cand.length > 0) {
+            return cand.map(s => typeof s === "string" ? s.trim() : (s?.name || String(s || ""))).filter(Boolean);
+        }
+        if (typeof cand === "string" && cand.trim().length > 0) {
+            return cand.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
+        }
     }
     return [];
 }
@@ -456,15 +614,22 @@ function renderPartyRoster() {
 
         // Build attributes strip HTML (Canonically adapted for ruleset)
         const attrs = ch.attributes || {};
-        const isDndChar = Boolean(attrs.Strength !== undefined || ch.ruleset === "dnd_5e" || ch.ruleset === "pathfinder_2e");
+        const rLow = String(ch.ruleset || ch.native_system || "").toLowerCase();
         let displayKeys = [];
-        if (isDndChar && attrs.Strength !== undefined) {
-            displayKeys = ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"];
-        } else if (attrs.INT !== undefined && attrs.REF !== undefined) {
+        let isDndChar = false;
+        if (rLow.includes("cyber") || (attrs.REF !== undefined && attrs.TECH !== undefined)) {
             displayKeys = ["INT", "REF", "DEX", "TECH", "COOL", "WILL", "LUCK", "MOVE", "BODY", "EMP"];
+            isDndChar = false;
+        } else if (rLow.includes("cthulhu") || attrs.SAN !== undefined) {
+            displayKeys = ["STR", "CON", "SIZ", "DEX", "APP", "INT", "POW", "EDU", "SAN"].filter(k => attrs[k] !== undefined);
+            isDndChar = false;
+        } else if (rLow.includes("dnd") || rLow.includes("pathfinder") || attrs.Strength !== undefined) {
+            displayKeys = ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"];
+            isDndChar = true;
         } else {
             displayKeys = ["Might", "Agility", "Vigor", "Intellect", "Presence"].filter(k => attrs[k] !== undefined);
             if (displayKeys.length === 0) displayKeys = Object.keys(attrs);
+            isDndChar = false;
         }
 
         let attrsHtml = "";
@@ -541,21 +706,48 @@ function renderPartyRoster() {
 
         // Build Spells & Cantrips Shelf HTML
         const spells = Array.isArray(ch.spells) ? ch.spells : [];
+        const isCaster = (ch.spellcasting_ability && ch.spellcasting_ability !== "none") || spells.length > 0;
         let spellsHtml = "";
-        if (spells.length > 0) {
+        if (isCaster || spells.length > 0) {
             spellsHtml = `
                 <div class="char-spells-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 6px 8px;">
                     <div style="font-size: 10px; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
                         <span>✨ SPELLS &amp; CANTRIPS</span>
-                        <span style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${spells.length} SPELLS</span>
+                        <div style="display: flex; gap: 6px; align-items: center;">
+                            <span style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${spells.length} SPELLS</span>
+                            <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35);" onclick="handleOpenAddSpellModal('${escapeRpJs(ch.name)}')">+ Add Spell</button>
+                        </div>
                     </div>
-                    <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                        ${spells.map(s => `
-                            <span class="rp-spell-badge" style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 4px; padding: 2px 7px; font-size: 10px; color: #e9d5ff;">
-                                ${escapeRpHtml(s)}
-                            </span>
-                        `).join("")}
-                    </div>
+                    ${spells.length > 0 ? spells.map(s => {
+                        const sName = typeof s === "object" ? (s.name || "Spell") : String(s);
+                        const sLvl = typeof s === "object" ? (s.level || "") : "";
+                        const sAtk = typeof s === "object" ? (s.atk_bonus || s.save_dc || "") : "";
+                        const sDmg = typeof s === "object" ? (s.damage || "") : "";
+                        const sRange = typeof s === "object" ? (s.range || "") : "";
+                        const sNotes = typeof s === "object" ? (s.notes || "") : "";
+
+                        // Parse potential damage formula from text if s is a string (e.g. "Fire Bolt (1d10)")
+                        const dmgMatch = sDmg || (sName.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i) ? sName.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i)[0] : "");
+
+                        return `
+                            <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                                <div style="font-size: 11px;">
+                                    <strong style="color: #f1f5f9;">${escapeRpHtml(sName)}</strong>
+                                    ${sLvl ? `<span style="font-size: 9px; color: #c084fc; background: rgba(168, 85, 247, 0.15); padding: 1px 4px; border-radius: 3px; margin-left: 4px;">${escapeRpHtml(sLvl)}</span>` : ""}
+                                    ${sAtk ? `<span style="color: #38bdf8; font-size: 10px; margin-left: 4px;">${escapeRpHtml(sAtk)}</span>` : ""}
+                                    ${dmgMatch ? `<span style="color: #f87171; font-size: 10px; margin-left: 4px;">(${escapeRpHtml(dmgMatch)})</span>` : ""}
+                                    ${sRange ? `<span style="font-size: 9.5px; color: #94a3b8; margin-left: 4px;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
+                                    ${sNotes ? `<span style="font-size: 9px; color: #64748b; margin-left: 4px;">[${escapeRpHtml(sNotes)}]</span>` : ""}
+                                </div>
+                                <div style="display: flex; gap: 4px; align-items: center;">
+                                    <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px; color: #c084fc; border-color: rgba(168, 85, 247, 0.35);" title="Cast Spell / Announce" onclick="handleCastSpell('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}', '${escapeRpJs(sRange)}', '${escapeRpJs(sNotes)}')">✨ Cast</button>
+                                    ${sAtk ? `<button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px;" title="Roll Spell Attack" onclick="handleRollSpellAttack('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}', '${escapeRpJs(sAtk)}')">🎲 Atk</button>` : ""}
+                                    ${dmgMatch ? `<button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px;" title="Roll Damage / Healing" onclick="handleRollSpellDamage('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}', '${escapeRpJs(dmgMatch)}')">💥 Dmg</button>` : ""}
+                                    <button type="button" class="vital-step-btn" style="font-size: 9px; padding: 0 4px; color: #f87171;" title="Remove Spell" onclick="handleDeleteSpell('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}')">✕</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join("") : `<div style="font-size: 10.5px; color: #64748b; font-style: italic; padding: 2px 0;">No spells prepared. Click <strong>+ Add Spell</strong> to add.</div>`}
                 </div>
             `;
         }
@@ -588,13 +780,44 @@ function renderPartyRoster() {
 
         const charLevel = ch.level || 1;
         const charXp = ch.experience_points || 0;
-        const isDnd = Boolean(ch.attributes?.Strength !== undefined || ch.ruleset === "dnd_5e");
-        const acText = isDnd ? `${Number(guard.current)} AC` : `${Number(guard.current)}`;
+        const isCoc = Boolean(rLow.includes("cthulhu") || rLow.includes("coc") || (attrs.STR !== undefined && attrs.SIZ !== undefined));
+        const isCyber = Boolean(rLow.includes("cyber") || (attrs.REF !== undefined && attrs.TECH !== undefined));
+        const isPf = Boolean(rLow.includes("pathfinder") || rLow.includes("pf2e") || rLow.includes("pf1e") || ch.ancestry || ch.class_dc || (attrs.CMB !== undefined || attrs.CMD !== undefined));
+        const isDnd = !isCoc && !isCyber && !isPf && Boolean(ch.attributes?.Strength !== undefined || ch.ruleset === "dnd_5e");
+
+        let acText = `${Number(guard.current)}`;
+        if (isCoc) {
+            acText = `Dodge ${ch.dodge ?? Number(guard.current)}%`;
+        } else if (isCyber) {
+            acText = `SP ${Number(guard.current)}`;
+        } else if (isPf || isDnd) {
+            acText = `${Number(guard.current)} AC`;
+        }
+
         const initBadge = ch.initiative ? `<span class="char-guard-badge" style="color: #fbbf24; border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.1);" title="Initiative Modifier">⚡ Init ${escapeRpHtml(ch.initiative)}</span>` : "";
         const speedBadge = ch.speed ? `<span class="char-guard-badge" style="color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); background: rgba(148, 163, 184, 0.1);" title="Movement Speed">🏃 ${escapeRpHtml(ch.speed)}</span>` : "";
+        const defensesBadge = (ch.defenses || ch.resistances) ? `<span class="char-guard-badge" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.1);" title="Defenses & Resistances">🛡️ ${escapeRpHtml(ch.defenses || ch.resistances)}</span>` : "";
         const sensesBadge = ch.senses ? `<span class="char-guard-badge" style="color: #a78bfa; border-color: rgba(167, 139, 250, 0.35); background: rgba(167, 139, 250, 0.1);" title="Senses & Vision">👁️ ${escapeRpHtml(ch.senses)}</span>` : "";
         const goldVal = ch.currency && typeof ch.currency === "object" ? ch.currency.gp : null;
-        const coinBadge = (goldVal !== null && goldVal !== undefined) ? `<span class="char-guard-badge" style="color: #facc15; border-color: rgba(250, 204, 21, 0.35); background: rgba(250, 204, 21, 0.1);" title="Gold Pieces">🪙 ${goldVal} GP</span>` : "";
+        let coinBadge = "";
+        if (!isCoc) {
+            if (isCyber) {
+                const ebVal = ch.currency?.eb ?? 0;
+                coinBadge = `<span class="char-guard-badge" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.1);" title="Eurodollars">💶 ${ebVal} eb</span>`;
+            } else if (goldVal !== null && goldVal !== undefined) {
+                coinBadge = `<span class="char-guard-badge" style="color: #facc15; border-color: rgba(250, 204, 21, 0.35); background: rgba(250, 204, 21, 0.1);" title="Gold Pieces">🪙 ${goldVal} GP</span>`;
+            }
+        } else {
+            const cashVal = ch.currency?.cash || (ch.credit_rating ? `CR ${ch.credit_rating}%` : "");
+            if (cashVal) {
+                coinBadge = `<span class="char-guard-badge" style="color: #facc15; border-color: rgba(250, 204, 21, 0.35); background: rgba(250, 204, 21, 0.1);" title="Cash / Credit Rating">💵 ${escapeRpHtml(String(cashVal))}</span>`;
+            }
+        }
+
+        let rulesetBadge = `Lv. ${charLevel}`;
+        if (isCoc) rulesetBadge = '🐙 CoC 7E';
+        else if (isCyber) rulesetBadge = '⚡ Cyberpunk';
+        else if (isPf) rulesetBadge = '🗡️ Pathfinder';
 
         card.innerHTML = `
             <div class="card-header char-card-top">
@@ -603,8 +826,8 @@ function renderPartyRoster() {
                         <span class="mic-pulse-indicator" title="Active Single-Mic Speaker">🎙️</span>
                         <h4 class="char-name char-name-title">${escapeRpHtml(ch.name)}</h4>
                         <span class="caller-crown ${isCaller ? 'active' : ''}" title="Designated Party Caller">👑 CALLER</span>
-                        <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; font-size: 10px; padding: 1px 6px;">Lv. ${charLevel}</span>
-                        ${charXp ? `<span style="font-size: 10px; color: #94a3b8;">${charXp} XP</span>` : ""}
+                        <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; font-size: 10px; padding: 1px 6px;">${rulesetBadge}</span>
+                        ${(charXp && !isCoc) ? `<span style="font-size: 10px; color: #94a3b8;">${charXp} XP</span>` : ""}
                     </div>
                     <div class="char-sub-archetype">${escapeRpHtml(ch.archetype || "Adventurer")} ${ch.player_name ? `• ${escapeRpHtml(ch.player_name)}` : ""}</div>
                 </div>
@@ -614,6 +837,7 @@ function renderPartyRoster() {
                     <span class="char-guard-badge" title="${escapeRpHtml(guard.label || "Armor Defense")}">🛡️ ${acText}</span>
                     ${initBadge}
                     ${speedBadge}
+                    ${defensesBadge}
                     ${sensesBadge}
                     ${coinBadge}
                     <button type="button" class="vital-step-btn" title="Save this hero permanently to the Character Vault" onclick="handleExportRosterCharToVault('${escapeRpHtml(ch.name)}')">🏛️</button>
@@ -860,6 +1084,10 @@ async function handlePromptAddCondition(characterName) {
 }
 
 async function handleDeleteCharacter(charId) {
+    const chars = ttrpgData.characters || [];
+    const target = chars.find(c => c.id === charId);
+    const charName = target ? target.name : "this hero";
+    if (!(await showAetherConfirm(`Remove '${charName}' from the active party roster?`, "Remove Character", "Remove", true))) return;
     try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.delete_ttrpg_character) {
             await window.pywebview.api.delete_ttrpg_character(charId);
@@ -908,7 +1136,7 @@ function updateHiddenWeaponInputs() {
         const dmgStr = w.damage || "1d4";
         return `${w.name} (${w.atk_bonus || "+0"}, ${dmgStr}${w.notes ? '; ' + w.notes : ''})`;
     }).join("; ");
-    ["input-dnd-weapons", "input-pf-strikes", "input-cyber-weapons", "input-rp-char-weapons"].forEach(id => {
+    ["input-dnd-weapons", "input-pf-strikes", "input-cyber-weapons", "input-coc-weapons", "input-rp-char-weapons"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = formatted;
     });
@@ -920,6 +1148,7 @@ function renderStagedWeapons() {
         document.getElementById("dnd-weapons-chips-container"),
         document.getElementById("pf-weapons-chips-container"),
         document.getElementById("cyber-weapons-chips-container"),
+        document.getElementById("coc-weapons-chips-container"),
         document.getElementById("agnostic-weapons-chips-container")
     ].filter(Boolean);
 
@@ -949,6 +1178,288 @@ window.handleRemoveStagedWeapon = function(idx) {
         stagedCharacterWeapons.splice(idx, 1);
         renderStagedWeapons();
     }
+};
+
+let stagedCharacterSpells = [];
+
+function updateHiddenSpellInputs() {
+    const formatted = stagedCharacterSpells.map(s => {
+        if (typeof s === "string") return s;
+        const dmgStr = s.damage ? ` (${s.damage})` : "";
+        const atkStr = s.atk_bonus ? ` [${s.atk_bonus}]` : (s.save_dc ? ` [${s.save_dc}]` : "");
+        const lvlStr = s.level ? ` - ${s.level}` : "";
+        return `${s.name}${lvlStr}${atkStr}${dmgStr}`;
+    }).join("; ");
+    ["input-dnd-spells", "input-pf-spells", "input-rp-char-spells"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = formatted;
+    });
+}
+
+function renderStagedSpells() {
+    updateHiddenSpellInputs();
+    const containers = [
+        document.getElementById("dnd-spells-chips-container"),
+        document.getElementById("pf-spells-chips-container"),
+        document.getElementById("agnostic-spells-chips-container")
+    ].filter(Boolean);
+
+    containers.forEach(cont => {
+        if (!stagedCharacterSpells || stagedCharacterSpells.length === 0) {
+            cont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No spells added. Click <strong>+ Add Spell</strong> above to add with level, damage, DC, and range fields.</div>`;
+            return;
+        }
+        cont.innerHTML = stagedCharacterSpells.map((s, idx) => {
+            const sName = typeof s === "string" ? s : s.name;
+            const sLvl = typeof s === "object" ? (s.level || "Cantrip") : "Cantrip";
+            const sDmg = typeof s === "object" ? s.damage : "";
+            const sAtk = typeof s === "object" ? (s.atk_bonus || s.save_dc || "") : "";
+            const sRange = typeof s === "object" ? s.range : "";
+            const sNotes = typeof s === "object" ? s.notes : "";
+            return `
+                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <span style="font-size: 0.85rem;">✨</span>
+                        <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(sName)}</strong>
+                        <span style="color: #c084fc; font-size: 0.68rem; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(sLvl)}</span>
+                        ${sAtk ? `<span style="color: #38bdf8; font-size: 0.74rem; font-weight: 600;">${escapeRpHtml(sAtk)}</span>` : ""}
+                        ${sDmg ? `<span style="color: #f87171; font-size: 0.74rem; font-weight: 600;">(${escapeRpHtml(sDmg)})</span>` : ""}
+                        ${sRange ? `<span style="color: #94a3b8; font-size: 0.7rem;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
+                        ${sNotes ? `<span style="color: #64748b; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(sNotes)}]</span>` : ""}
+                    </div>
+                    <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove spell" onclick="handleRemoveStagedSpell(${idx})">✕</button>
+                </div>
+            `;
+        }).join("");
+    });
+}
+
+window.handleRemoveStagedSpell = function(idx) {
+    if (idx >= 0 && idx < stagedCharacterSpells.length) {
+        stagedCharacterSpells.splice(idx, 1);
+        renderStagedSpells();
+    }
+};
+
+function updateSpellLivePreview() {
+    const previewEl = document.getElementById("preview-spell-formatted");
+    if (!previewEl) return;
+
+    const name = (document.getElementById("input-spell-name")?.value || "").trim() || "Spell";
+    const lvl = document.getElementById("select-spell-level")?.value || "Cantrip";
+    const atk = (document.getElementById("input-spell-atk")?.value || "").trim();
+    const dmg = (document.getElementById("input-spell-dmg")?.value || "").trim();
+    const dmgType = document.getElementById("select-spell-dmg-type")?.value || "";
+    const range = (document.getElementById("input-spell-range")?.value || "").trim();
+
+    let parts = [`<strong>${escapeRpHtml(name)}</strong> (${escapeRpHtml(lvl)})`];
+    if (atk) parts.push(`<span style="color: #38bdf8;">${escapeRpHtml(atk)}</span>`);
+    if (dmg) {
+        const fullDmg = dmgType && !dmg.toLowerCase().includes(dmgType.toLowerCase()) ? `${dmg} ${dmgType}` : dmg;
+        parts.push(`<span style="color: #f87171;">(${escapeRpHtml(fullDmg)})</span>`);
+    }
+    if (range) parts.push(`<span style="color: #94a3b8;">${escapeRpHtml(range)}</span>`);
+
+    previewEl.innerHTML = parts.join(" • ");
+}
+
+window.handleOpenAddSpellModal = function(charNameOrMode) {
+    const modal = document.getElementById("modal-add-spell");
+    const titleEl = document.getElementById("modal-add-spell-title");
+    const charInput = document.getElementById("input-add-spell-char-name");
+    const smartRaw = document.getElementById("input-spell-smart-raw");
+    const nameInput = document.getElementById("input-spell-name");
+    const lvlSelect = document.getElementById("select-spell-level");
+    const atkInput = document.getElementById("input-spell-atk");
+    const dmgInput = document.getElementById("input-spell-dmg");
+    const dmgTypeSelect = document.getElementById("select-spell-dmg-type");
+    const rangeInput = document.getElementById("input-spell-range");
+    const notesInput = document.getElementById("input-spell-notes");
+
+    const isEditMode = (charNameOrMode === "__active_edit__");
+    if (charInput) charInput.value = charNameOrMode || "";
+    if (titleEl) {
+        titleEl.textContent = isEditMode
+            ? "Add Spell / Cantrip to Character Sheet"
+            : `Add Spell / Cantrip for ${charNameOrMode || 'Hero'}`;
+    }
+
+    if (smartRaw) smartRaw.value = "";
+    if (nameInput) nameInput.value = "";
+    if (lvlSelect) lvlSelect.value = "Cantrip";
+    if (atkInput) atkInput.value = "+5";
+    if (dmgInput) dmgInput.value = "1d10";
+    if (dmgTypeSelect) dmgTypeSelect.value = "Fire";
+    if (rangeInput) rangeInput.value = "120 ft.";
+    if (notesInput) notesInput.value = "1 Action";
+
+    updateSpellLivePreview();
+
+    if (modal) {
+        modal.classList.remove("hidden");
+        if (nameInput) setTimeout(() => nameInput.focus(), 60);
+    }
+};
+
+window.handleConfirmAddSpell = async function() {
+    const confirmBtn = document.getElementById("btn-confirm-add-spell");
+    if (confirmBtn && confirmBtn.disabled) return;
+
+    const targetMode = document.getElementById("input-add-spell-char-name")?.value || "";
+    const name = (document.getElementById("input-spell-name")?.value || "").trim();
+    const lvl = document.getElementById("select-spell-level")?.value || "Cantrip";
+    const atk = (document.getElementById("input-spell-atk")?.value || "").trim();
+    const dmg = (document.getElementById("input-spell-dmg")?.value || "").trim();
+    const dmgType = document.getElementById("select-spell-dmg-type")?.value || "";
+    const range = (document.getElementById("input-spell-range")?.value || "60 ft.").trim();
+    const notes = (document.getElementById("input-spell-notes")?.value || "1 Action").trim();
+
+    if (!name) {
+        await showAetherAlert("Please enter a spell name.", "Missing Name");
+        return;
+    }
+
+    const fullDmg = dmg && dmgType && !dmg.toLowerCase().includes(dmgType.toLowerCase()) ? `${dmg} ${dmgType}`.trim() : dmg;
+    const spellObj = {
+        name: name,
+        level: lvl,
+        atk_bonus: atk,
+        damage: fullDmg,
+        range: range,
+        notes: notes
+    };
+
+    const modal = document.getElementById("modal-add-spell");
+
+    if (targetMode === "__active_edit__") {
+        stagedCharacterSpells.push(spellObj);
+        renderStagedSpells();
+        if (modal) modal.classList.add("hidden");
+        return;
+    }
+
+    if (!targetMode) {
+        await showAetherAlert("No target character specified.", "Error");
+        return;
+    }
+
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Adding...";
+    }
+
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.manage_ttrpg_character_inventory) {
+            const res = await window.pywebview.api.manage_ttrpg_character_inventory(targetMode, "add", null, null, [spellObj], `Added spell ${name}`);
+            if (res && res.status === "error") {
+                await showAetherAlert(`Could not add spell: ${res.message}`, "Error");
+                return;
+            }
+        }
+        if (modal) modal.classList.add("hidden");
+        await loadRolePlayUI(true);
+    } catch (err) {
+        console.error("[RolePlay] Error adding spell:", err);
+        await showAetherAlert(`Error adding spell: ${err.message}`, "Error");
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = "Add Spell";
+        }
+    }
+};
+
+window.handleDeleteSpell = async function(charName, spellName) {
+    if (!(await showAetherConfirm(`Remove spell '${spellName}' from ${charName}?`, "Remove Spell", "Remove", true))) return;
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.manage_ttrpg_character_inventory) {
+            await window.pywebview.api.manage_ttrpg_character_inventory(charName, "remove", null, null, [spellName], `Removed spell ${spellName}`);
+            await loadRolePlayUI(true);
+        }
+    } catch (err) {
+        console.error("[RolePlay] Error removing spell:", err);
+        await showAetherAlert(`Error removing spell: ${err.message}`, "Error");
+    }
+};
+
+window.handleRollSpellAttack = function(charName, spellName, atkBonus) {
+    let cleanBonus = String(atkBonus || "+0").trim();
+    if (!cleanBonus.startsWith("+") && !cleanBonus.startsWith("-")) {
+        cleanBonus = "+" + cleanBonus;
+    }
+    const formula = `1d20${cleanBonus}`;
+    handleRollDiceFormula(formula, `${charName} ${spellName} Spell Attack`);
+};
+
+window.handleRollSpellDamage = function(charName, spellName, damageExpr) {
+    let cleanDmg = String(damageExpr || "1d10").trim();
+    const m = cleanDmg.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?|\d+)/i);
+    const formula = m ? m[0].replace(/\s+/g, "") : "1d10";
+    handleRollDiceFormula(formula, `${charName} ${spellName} Damage / Healing`);
+};
+
+window.handleCastSpell = function(charName, spellName, range, notes) {
+    const rangeTxt = range ? ` (${range})` : "";
+    const notesTxt = notes ? ` [${notes}]` : "";
+    const inputEl = document.getElementById("input-rp-dm-prompt");
+    if (inputEl) {
+        inputEl.value = `*[SPELL CAST]* ${charName} casts **${spellName}**${rangeTxt}${notesTxt}.`;
+        const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
+        if (sendBtn) sendBtn.click();
+    }
+};
+
+window.handleSmartReformatSpell = function() {
+    const raw = (document.getElementById("input-spell-smart-raw")?.value || "").trim();
+    if (!raw) return;
+
+    const nameInput = document.getElementById("input-spell-name");
+    const lvlSelect = document.getElementById("select-spell-level");
+    const atkInput = document.getElementById("input-spell-atk");
+    const dmgInput = document.getElementById("input-spell-dmg");
+    const dmgTypeSelect = document.getElementById("select-spell-dmg-type");
+    const rangeInput = document.getElementById("input-spell-range");
+
+    const lvlM = raw.match(/(\d+(?:st|nd|rd|th)\s+level|cantrip|focus(?:\s+spell)?)/i);
+    if (lvlM && lvlSelect) {
+        const foundLvl = lvlM[1].toLowerCase();
+        for (let opt of lvlSelect.options) {
+            if (foundLvl.includes(opt.value.toLowerCase()) || opt.value.toLowerCase().includes(foundLvl)) {
+                lvlSelect.value = opt.value;
+                break;
+            }
+        }
+    }
+
+    const dmgM = raw.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i);
+    if (dmgM && dmgInput) {
+        dmgInput.value = dmgM[1].replace(/\s+/g, "");
+    }
+
+    const dcM = raw.match(/(DC\s*\d+\s*[A-Za-z]+|\+\d+)/i);
+    if (dcM && atkInput) {
+        atkInput.value = dcM[1].trim();
+    }
+
+    const types = ["Fire", "Radiant", "Healing", "Force", "Necrotic", "Cold", "Lightning", "Thunder", "Acid", "Poison", "Psychic", "Buff / Utility"];
+    for (let t of types) {
+        if (raw.toLowerCase().includes(t.toLowerCase()) || (t === "Healing" && raw.toLowerCase().includes("heal"))) {
+            if (dmgTypeSelect) dmgTypeSelect.value = t;
+            break;
+        }
+    }
+
+    const rangeM = raw.match(/(\d+\s*ft\.?|touch|self(?:\s*\([^)]*\))?)/i);
+    if (rangeM && rangeInput) {
+        rangeInput.value = rangeM[1].trim();
+    }
+
+    let cleanName = raw.split(/[,\(]/)[0].trim().replace(/^[-•*]\s*/, "").trim();
+    if (cleanName && nameInput) {
+        nameInput.value = cleanName;
+    }
+
+    updateSpellLivePreview();
 };
 
 function updateWeaponLivePreview() {
@@ -1078,7 +1589,7 @@ window.handleConfirmAddWeapon = async function() {
 };
 
 window.handleDeleteWeapon = async function(charName, weaponName) {
-    if (!confirm(`Remove weapon '${weaponName}' from ${charName}?`)) return;
+    if (!(await showAetherConfirm(`Remove weapon '${weaponName}' from ${charName}?`, "Remove Weapon", "Remove", true))) return;
     try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.manage_ttrpg_character_inventory) {
             await window.pywebview.api.manage_ttrpg_character_inventory(charName, "remove", null, [{ name: weaponName }], `Removed weapon ${weaponName}`);
@@ -1086,7 +1597,7 @@ window.handleDeleteWeapon = async function(charName, weaponName) {
         await loadRolePlayUI(true);
     } catch (err) {
         console.error("[RolePlay] Error removing weapon:", err);
-        alert(`Error removing weapon: ${err.message}`);
+        await showAetherAlert(`Error removing weapon: ${err.message}`, "Error");
     }
 };
 
@@ -1179,7 +1690,7 @@ window.handleConfirmAddInventory = async function() {
 };
 
 window.handleDeleteInventoryItem = async function(charName, itemName) {
-    if (!confirm(`Remove '${itemName}' from ${charName}'s inventory?`)) return;
+    if (!(await showAetherConfirm(`Remove '${itemName}' from ${charName}'s inventory?`, "Remove Item", "Remove", true))) return;
     try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.manage_ttrpg_character_inventory) {
             await window.pywebview.api.manage_ttrpg_character_inventory(charName, "remove", [itemName], null, `Removed item ${itemName}`);
@@ -1187,7 +1698,7 @@ window.handleDeleteInventoryItem = async function(charName, itemName) {
         await loadRolePlayUI(true);
     } catch (err) {
         console.error("[RolePlay] Error removing inventory item:", err);
-        alert(`Error removing item: ${err.message}`);
+        await showAetherAlert(`Error removing item: ${err.message}`, "Error");
     }
 };
 
@@ -1372,25 +1883,150 @@ function updateDndCalculations() {
     }
 }
 
+const COC_7E_SKILLS_DEF = [
+    { name: "Accounting", def: 5 },
+    { name: "Anthropology", def: 1 },
+    { name: "Appraise", def: 5 },
+    { name: "Archaeology", def: 1 },
+    { name: "Art/Craft", def: 5 },
+    { name: "Charm", def: 15 },
+    { name: "Climb", def: 20 },
+    { name: "Credit Rating", def: 0 },
+    { name: "Cthulhu Mythos", def: 0 },
+    { name: "Disguise", def: 5 },
+    { name: "Dodge", def: 20 },
+    { name: "Drive Auto", def: 20 },
+    { name: "Elec Repair", def: 10 },
+    { name: "Fast Talk", def: 5 },
+    { name: "Fighting (Brawl)", def: 25 },
+    { name: "Firearms (Handgun)", def: 20 },
+    { name: "Firearms (Rifle/Shotgun)", def: 25 },
+    { name: "First Aid", def: 30 },
+    { name: "History", def: 5 },
+    { name: "Intimidate", def: 15 },
+    { name: "Jump", def: 20 },
+    { name: "Language (Own)", def: 60 },
+    { name: "Language (Other)", def: 1 },
+    { name: "Law", def: 5 },
+    { name: "Library Use", def: 20 },
+    { name: "Listen", def: 20 },
+    { name: "Locksmith", def: 1 },
+    { name: "Mech. Repair", def: 10 },
+    { name: "Medicine", def: 1 },
+    { name: "Natural World", def: 10 },
+    { name: "Navigate", def: 10 },
+    { name: "Occult", def: 5 },
+    { name: "Op. Hv. Machine", def: 1 },
+    { name: "Persuade", def: 10 },
+    { name: "Pilot", def: 1 },
+    { name: "Psychology", def: 10 },
+    { name: "Psychoanalysis", def: 1 },
+    { name: "Ride", def: 5 },
+    { name: "Science", def: 1 },
+    { name: "Sleight of Hand", def: 10 },
+    { name: "Spot Hidden", def: 25 },
+    { name: "Stealth", def: 20 },
+    { name: "Survival", def: 10 },
+    { name: "Swim", def: 20 },
+    { name: "Throw", def: 20 },
+    { name: "Track", def: 10 }
+];
+
+function updateCocCalculations() {
+    const stats = ["str", "con", "siz", "dex", "app", "int", "pow", "edu"];
+    stats.forEach(st => {
+        const input = document.getElementById(`input-coc-${st}`);
+        const halfEl = document.getElementById(`coc-half-${st}`);
+        const fifthEl = document.getElementById(`coc-fifth-${st}`);
+        if (input && halfEl && fifthEl) {
+            const v = parseInt(input.value || "50", 10) || 0;
+            halfEl.textContent = Math.floor(v / 2);
+            fifthEl.textContent = Math.floor(v / 5);
+        }
+    });
+    const dodgeInp = document.getElementById("input-coc-dodge");
+    const halfDodge = document.getElementById("coc-half-dodge");
+    const fifthDodge = document.getElementById("coc-fifth-dodge");
+    if (dodgeInp && halfDodge && fifthDodge) {
+        const v = parseInt(dodgeInp.value || "40", 10) || 0;
+        halfDodge.textContent = Math.floor(v / 2);
+        fifthDodge.textContent = Math.floor(v / 5);
+    }
+}
+
+function renderCocSkillsGrid(skillsObj = {}) {
+    const container = document.getElementById("coc-skills-grid-container");
+    if (!container) return;
+
+    const getSkillVal = (name, def) => {
+        if (!skillsObj || typeof skillsObj !== "object") return def;
+        const normName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        for (const [k, v] of Object.entries(skillsObj)) {
+            const normK = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+            if (normK === normName || normK.includes(normName) || normName.includes(normK)) {
+                const parsed = parseInt(String(v).replace(/[^0-9]/g, ""), 10);
+                if (!isNaN(parsed)) return parsed;
+            }
+        }
+        return def;
+    };
+
+    container.innerHTML = COC_7E_SKILLS_DEF.map(s => {
+        const val = getSkillVal(s.name, s.def);
+        const half = Math.floor(val / 2);
+        const fifth = Math.floor(val / 5);
+        const cleanKey = s.name.replace(/[^a-zA-Z0-9]/g, "_");
+        const isUpgraded = val > s.def;
+
+        return `
+            <div class="coc-skill-item" style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; background: rgba(15, 23, 42, 0.45); border-radius: 4px; border: 1px solid ${isUpgraded ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 255, 255, 0.05)'};">
+                <span style="font-size: 0.72rem; color: ${isUpgraded ? '#f1f5f9' : '#94a3b8'}; font-weight: ${isUpgraded ? '600' : '400'};" title="${escapeRpHtml(s.name)} (Base: ${s.def}%)">${escapeRpHtml(s.name)}</span>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <input type="number" id="input-coc-skill-${cleanKey}" data-skill="${escapeRpHtml(s.name)}" class="modal-input coc-skill-input" value="${val}" min="0" max="99" style="width: 44px; padding: 2px 4px; font-size: 0.75rem; text-align: center; font-weight: 700; ${isUpgraded ? 'color: #38bdf8;' : ''}" />
+                    <span style="font-size: 0.65rem; color: #64748b;"><span id="half-coc-skill-${cleanKey}" style="color: #38bdf8;">${half}</span>/<span id="fifth-coc-skill-${cleanKey}" style="color: #eab308;">${fifth}</span></span>
+                </div>
+            </div>
+        `;
+    }).join("");
+
+    container.querySelectorAll(".coc-skill-input").forEach(inp => {
+        inp.addEventListener("input", () => {
+            const val = parseInt(inp.value || "0", 10) || 0;
+            const skillName = inp.getAttribute("data-skill") || "";
+            const cleanKey = skillName.replace(/[^a-zA-Z0-9]/g, "_");
+            const halfEl = document.getElementById(`half-coc-skill-${cleanKey}`);
+            const fifthEl = document.getElementById(`fifth-coc-skill-${cleanKey}`);
+            if (halfEl) halfEl.textContent = Math.floor(val / 2);
+            if (fifthEl) fifthEl.textContent = Math.floor(val / 5);
+        });
+    });
+}
+
 function onRulesetDropdownChanged(rulesetId) {
     const norm = (rulesetId || "dnd_5e").toLowerCase();
     const dndPanel = document.getElementById("view-char-dnd5e");
     const pfPanel = document.getElementById("view-char-pathfinder");
     const cyberPanel = document.getElementById("view-char-cyberpunk");
+    const cocPanel = document.getElementById("view-char-coc");
     const agnPanel = document.getElementById("view-char-agnostic");
     const hintEl = document.getElementById("modal-char-ruleset-hint");
 
     if (dndPanel) dndPanel.style.display = "none";
     if (pfPanel) pfPanel.style.display = "none";
     if (cyberPanel) cyberPanel.style.display = "none";
+    if (cocPanel) cocPanel.style.display = "none";
     if (agnPanel) agnPanel.style.display = "none";
 
     if (norm.includes("pathfinder")) {
         if (pfPanel) pfPanel.style.display = "block";
-        if (hintEl) hintEl.innerHTML = "🛡️ Pathfinder 2E Canonical Mode";
+        if (hintEl) hintEl.innerHTML = "📜 Pathfinder 2E Canonical Mode";
     } else if (norm.includes("cyber")) {
         if (cyberPanel) cyberPanel.style.display = "block";
-        if (hintEl) hintEl.innerHTML = "🦾 Cyberpunk RED / 2020 Canonical Mode";
+        if (hintEl) hintEl.innerHTML = "⚡ Cyberpunk RED / 2020 Canonical Mode";
+    } else if (norm.includes("cthulhu") || norm.includes("coc")) {
+        if (cocPanel) cocPanel.style.display = "block";
+        if (hintEl) hintEl.innerHTML = "🐙 Call of Cthulhu (7th Edition) Canonical Mode";
+        updateCocCalculations();
     } else if (norm.includes("agnostic") || norm.includes("sandbox") || norm.includes("custom")) {
         if (agnPanel) agnPanel.style.display = "block";
         if (hintEl) hintEl.innerHTML = "🎲 Universal / Agnostic Mode";
@@ -1401,21 +2037,59 @@ function onRulesetDropdownChanged(rulesetId) {
     }
 }
 
-function handleOpenEditCharacterModal(charId) {
-    const charsObj = (ttrpgData.state && ttrpgData.state.characters) || {};
-    const ch = charsObj[charId];
-    if (!ch) return;
+let editingCharacterSource = "campaign";
+let currentEditingCharacterObj = null;
 
+async function handleOpenEditCharacterModal(charId, source = "campaign") {
     editingCharacterId = charId;
-    const heading = document.getElementById("modal-char-heading");
-    if (heading) heading.textContent = `Edit Character: ${ch.name}`;
+    editingCharacterSource = source;
 
-    // Detect ruleset
-    const rawR = ch.ruleset || ch.native_system || ttrpgData.active_campaign_meta?.system_preset || "dnd_5e";
+    let ch = null;
+    if (source === "vault") {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.get_vault_character) {
+            try {
+                ch = await window.pywebview.api.get_vault_character(charId);
+            } catch (err) {
+                console.error("[Vault] Error fetching character for editing:", err);
+            }
+        }
+    } else {
+        const charsObj = (ttrpgData.state && ttrpgData.state.characters) || {};
+        ch = charsObj[charId];
+    }
+    if (!ch) {
+        alert("Could not load character sheet for editing.");
+        return;
+    }
+    currentEditingCharacterObj = ch;
+
+    const heading = document.getElementById("modal-char-heading");
+    if (heading) {
+        heading.textContent = source === "vault"
+            ? `Edit Vault Character: ${ch.name}`
+            : `Edit Character: ${ch.name}`;
+    }
+
+    // Detect ruleset with robust attribute fallback
+    const attrs = ch.attributes || {};
+    let rawR = (ch.ruleset || ch.native_system || ch.native_genre || "").toLowerCase();
+    if (!rawR) {
+        if (attrs.REF !== undefined || attrs.TECH !== undefined || attrs.EMP !== undefined || attrs.COOL !== undefined || attrs.BODY !== undefined || attrs.WILL !== undefined) {
+            rawR = "cyberpunk";
+        } else if (attrs.SAN !== undefined || attrs.POW !== undefined || attrs.EDU !== undefined) {
+            rawR = "call_of_cthulhu";
+        } else if (ch.ancestry || ch.class_dc) {
+            rawR = "pathfinder_2e";
+        } else if (attrs.Strength !== undefined || attrs.Dexterity !== undefined) {
+            rawR = "dnd_5e";
+        } else {
+            rawR = (ttrpgData.active_campaign_meta?.system_preset || "dnd_5e").toLowerCase();
+        }
+    }
     let normRuleset = "dnd_5e";
     if (rawR.includes("cyber")) normRuleset = "cyberpunk";
     else if (rawR.includes("pathfinder")) normRuleset = "pathfinder_2e";
-    else if (rawR.includes("cthulhu")) normRuleset = "call_of_cthulhu";
+    else if (rawR.includes("cthulhu") || rawR.includes("coc") || attrs.SAN !== undefined || attrs.POW !== undefined || attrs.EDU !== undefined || (attrs.STR !== undefined && attrs.SIZ !== undefined)) normRuleset = "call_of_cthulhu";
     else if (rawR.includes("agnostic") || rawR.includes("sandbox") || rawR.includes("custom")) normRuleset = "agnostic";
 
     const rulesetSelect = document.getElementById("select-rp-char-ruleset");
@@ -1430,17 +2104,14 @@ function handleOpenEditCharacterModal(charId) {
     if (nameEl) nameEl.value = ch.name || "";
     if (playerEl) playerEl.value = ch.player_name || "";
 
-    const attrs = ch.attributes || {};
-    const wpns = Array.isArray(ch.weapons) ? ch.weapons : [];
-    const wpnsFormatted = wpns.map(w => `${w.name} (${w.atk_bonus || "+0"}, ${w.damage || ""}${w.notes ? '; ' + w.notes : ''})`).join("; ");
-    const inv = Array.isArray(ch.inventory) && ch.inventory.length > 0
-        ? ch.inventory
-        : (Array.isArray(ch.live_inventory) ? ch.live_inventory.map(i => typeof i === "string" ? i : (i?.name || "")) : []);
-    const invFormatted = inv.map(i => typeof i === "string" ? i : (i?.name || "")).join(", ");
-    const spells = Array.isArray(ch.spells) && ch.spells.length > 0
-        ? ch.spells
-        : (Array.isArray(ch.spells_list) ? ch.spells_list : []);
-    const spellsFormatted = spells.map(s => typeof s === "string" ? s : (s?.name || "")).join(", ");
+    const wpns = Array.isArray(ch.weapons) && ch.weapons.length > 0
+        ? ch.weapons
+        : (ch.native_system_data?.weapons || []);
+    const wpnsFormatted = wpns.map(w => typeof w === "string" ? w : `${w.name} (${w.atk_bonus || "+0"}, ${w.damage || ""}${w.notes ? '; ' + w.notes : ''})`).join("; ");
+    const inv = extractCharacterInventory(ch);
+    const invFormatted = inv.join(", ");
+    const spells = extractCharacterSpells(ch);
+    const spellsFormatted = spells.join(", ");
     const feats = extractCharacterFeatures(ch);
     const featsFormatted = feats.join("\n");
 
@@ -1479,7 +2150,10 @@ function handleOpenEditCharacterModal(charId) {
     const dndHitDiceEl = document.getElementById("input-dnd-hit-dice");
 
     if (dndAcEl) dndAcEl.value = ch.armor_class ?? ch.vitals?.guard?.current ?? 19;
-    if (dndInitEl) dndInitEl.value = ch.initiative || "+1";
+    if (dndInitEl) {
+        dndInitEl.value = ch.initiative || "+1";
+        dndInitEl.dataset.customized = ch.initiative ? "true" : "false";
+    }
     if (dndSpeedEl) dndSpeedEl.value = ch.speed || "30 ft. (Walking)";
     if (dndProfEl) dndProfEl.value = ch.prof_bonus || "+2";
     if (dndMaxHpEl) dndMaxHpEl.value = ch.vitals?.health?.max ?? 14;
@@ -1512,10 +2186,12 @@ function handleOpenEditCharacterModal(charId) {
     const passInsight = document.getElementById("input-dnd-pass-insight");
     const passInvest = document.getElementById("input-dnd-pass-invest");
     const dndSenses = document.getElementById("input-dnd-senses");
+    const dndDefenses = document.getElementById("input-dnd-defenses");
     if (passPercep) passPercep.value = ch.passives?.perception ?? 12;
     if (passInsight) passInsight.value = ch.passives?.insight ?? 12;
     if (passInvest) passInvest.value = ch.passives?.investigation ?? 13;
     if (dndSenses) dndSenses.value = ch.senses || "";
+    if (dndDefenses) dndDefenses.value = ch.defenses || ch.resistances || "";
 
     // Render Skills Grid
     renderDndSkillsGrid(ch.skills);
@@ -1572,9 +2248,31 @@ function handleOpenEditCharacterModal(charId) {
         spellAtkEl.dataset.customized = "true";
     }
 
-    // Staged weapons array for structured editing
-    stagedCharacterWeapons = Array.isArray(ch.weapons) ? JSON.parse(JSON.stringify(ch.weapons)) : [];
+    // Staged weapons array for structured editing (filter out any cantrip/spell attacks)
+    const spellNameSet = new Set((ch.spells || []).map(s => (typeof s === "object" && s ? s.name : String(s)).trim().toLowerCase()));
+    stagedCharacterWeapons = (Array.isArray(ch.weapons) ? JSON.parse(JSON.stringify(ch.weapons)) : []).filter(w => {
+        const wName = (typeof w === "object" && w ? (w.name || "") : String(w)).trim().toLowerCase();
+        return !spellNameSet.has(wName);
+    });
     renderStagedWeapons();
+
+    // Staged spells array for structured editing
+    const rawSpells = Array.isArray(ch.spells) ? ch.spells : [];
+    stagedCharacterSpells = rawSpells.map(s => {
+        if (typeof s === "object" && s !== null) return JSON.parse(JSON.stringify(s));
+        const sStr = String(s).trim();
+        const dmgM = sStr.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i);
+        const dcM = sStr.match(/(DC\s*\d+\s*[A-Za-z]+|\+\d+)/i);
+        return {
+            name: sStr.replace(/\s*\([^)]*\)/g, "").trim() || sStr,
+            level: "Cantrip/Spell",
+            atk_bonus: dcM ? dcM[0] : "",
+            damage: dmgM ? dmgM[0] : "",
+            range: "60 ft.",
+            notes: ""
+        };
+    });
+    renderStagedSpells();
 
     // Recalculate D&D stats
     updateDndCalculations();
@@ -1621,6 +2319,10 @@ function handleOpenEditCharacterModal(charId) {
     if (pfStrikesEl) pfStrikesEl.value = wpnsFormatted;
     if (pfSkillsEl) pfSkillsEl.value = typeof ch.skills === "object" ? Object.entries(ch.skills).map(([k, v]) => `${k} (${v})`).join(", ") : (ch.proficiencies || "");
     if (pfInvEl) pfInvEl.value = invFormatted;
+    const pfFeatsEl = document.getElementById("input-pf-features");
+    const pfSpellsEl = document.getElementById("input-pf-spells");
+    if (pfFeatsEl) pfFeatsEl.value = featsFormatted;
+    if (pfSpellsEl) pfSpellsEl.value = spellsFormatted;
 
     // Populate Cyberpunk RED View Fields
     const cybRoleEl = document.getElementById("input-cyber-role");
@@ -1669,6 +2371,122 @@ function handleOpenEditCharacterModal(charId) {
     if (cybWareEl) cybWareEl.value = featsFormatted;
     if (cybInvEl) cybInvEl.value = invFormatted;
 
+    // Populate Call of Cthulhu 7E View Fields
+    const cocOccEl = document.getElementById("input-coc-occupation");
+    const cocAgeEl = document.getElementById("input-coc-age");
+    const cocSexEl = document.getElementById("input-coc-sex");
+    const cocResEl = document.getElementById("input-coc-residence");
+    const cocBirthEl = document.getElementById("input-coc-birthplace");
+
+    if (cocOccEl) cocOccEl.value = ch.archetype || ch.occupation || ch.native_system_data?.occupation || "History Student";
+    if (cocAgeEl) cocAgeEl.value = ch.age ?? ch.native_system_data?.age ?? 20;
+    if (cocSexEl) cocSexEl.value = ch.sex || ch.native_system_data?.sex || "";
+    if (cocResEl) cocResEl.value = ch.residence || ch.native_system_data?.residence || "";
+    if (cocBirthEl) cocBirthEl.value = ch.birthplace || ch.native_system_data?.birthplace || "";
+
+    const cocStrEl = document.getElementById("input-coc-str");
+    const cocConEl = document.getElementById("input-coc-con");
+    const cocSizEl = document.getElementById("input-coc-siz");
+    const cocDexEl = document.getElementById("input-coc-dex");
+    const cocAppEl = document.getElementById("input-coc-app");
+    const cocIntEl = document.getElementById("input-coc-int");
+    const cocPowEl = document.getElementById("input-coc-pow");
+    const cocEduEl = document.getElementById("input-coc-edu");
+    const cocMoveEl = document.getElementById("input-coc-move");
+
+    const natChar = ch.native_system_data?.characteristics || {};
+    if (cocStrEl) cocStrEl.value = attrs.STR ?? natChar.STR ?? attrs.Might ?? 70;
+    if (cocConEl) cocConEl.value = attrs.CON ?? natChar.CON ?? attrs.Vigor ?? 80;
+    if (cocSizEl) cocSizEl.value = attrs.SIZ ?? natChar.SIZ ?? 50;
+    if (cocDexEl) cocDexEl.value = attrs.DEX ?? natChar.DEX ?? attrs.Agility ?? 40;
+    if (cocAppEl) cocAppEl.value = attrs.APP ?? natChar.APP ?? attrs.Presence ?? 50;
+    if (cocIntEl) cocIntEl.value = attrs.INT ?? natChar.INT ?? attrs.Intellect ?? 60;
+    if (cocPowEl) cocPowEl.value = attrs.POW ?? natChar.POW ?? 50;
+    if (cocEduEl) cocEduEl.value = attrs.EDU ?? natChar.EDU ?? 60;
+    if (cocMoveEl) cocMoveEl.value = attrs.Move ?? natChar.Move ?? ch.move_rate ?? 8;
+
+    const cocCurHpEl = document.getElementById("input-coc-cur-hp");
+    const cocMaxHpEl = document.getElementById("input-coc-max-hp");
+    const cocMajorWoundChk = document.getElementById("chk-coc-major-wound");
+    const cocCurSanEl = document.getElementById("input-coc-cur-san");
+    const cocMaxSanEl = document.getElementById("input-coc-max-san");
+    const cocTempInsaneChk = document.getElementById("chk-coc-temp-insane");
+    const cocIndefInsaneChk = document.getElementById("chk-coc-indef-insane");
+    const cocLuckEl = document.getElementById("input-coc-luck");
+    const cocCurMpEl = document.getElementById("input-coc-cur-mp");
+    const cocMaxMpEl = document.getElementById("input-coc-max-mp");
+
+    const cMeters = ch.custom_meters || {};
+    const natVitals = ch.native_system_data?.vitals || {};
+    if (cocCurHpEl) cocCurHpEl.value = ch.vitals?.health?.current ?? natVitals.hit_points?.current ?? ch.current_health ?? 13;
+    if (cocMaxHpEl) cocMaxHpEl.value = ch.vitals?.health?.max ?? natVitals.hit_points?.max ?? ch.max_health ?? 13;
+    if (cocMajorWoundChk) cocMajorWoundChk.checked = Boolean(ch.major_wound || natVitals.major_wound);
+    if (cocCurSanEl) cocCurSanEl.value = cMeters.sanity?.current ?? natVitals.sanity?.current ?? ch.sanity ?? attrs.SAN ?? 50;
+    if (cocMaxSanEl) cocMaxSanEl.value = cMeters.sanity?.max ?? natVitals.sanity?.max ?? ch.max_sanity ?? 99;
+    if (cocTempInsaneChk) cocTempInsaneChk.checked = Boolean(ch.temp_insane || natVitals.temp_insane);
+    if (cocIndefInsaneChk) cocIndefInsaneChk.checked = Boolean(ch.indef_insane || natVitals.indef_insane);
+    if (cocLuckEl) cocLuckEl.value = cMeters.luck?.current ?? natVitals.luck?.current ?? ch.luck ?? 55;
+    if (cocCurMpEl) cocCurMpEl.value = cMeters.magic_points?.current ?? natVitals.magic_points?.current ?? ch.magic_points ?? 10;
+    if (cocMaxMpEl) cocMaxMpEl.value = cMeters.magic_points?.max ?? natVitals.magic_points?.max ?? 10;
+
+    const cocDbEl = document.getElementById("input-coc-db");
+    const cocBuildEl = document.getElementById("input-coc-build");
+    const cocDodgeEl = document.getElementById("input-coc-dodge");
+    const natCombat = ch.native_system_data?.combat || {};
+    if (cocDbEl) cocDbEl.value = ch.damage_bonus || natCombat.damage_bonus || "none";
+    if (cocBuildEl) cocBuildEl.value = ch.build ?? natCombat.build ?? 0;
+    if (cocDodgeEl) cocDodgeEl.value = ch.dodge ?? natCombat.dodge ?? ch.vitals?.guard?.current ?? 40;
+
+    // Backstory
+    const cocDescEl = document.getElementById("input-coc-desc");
+    const cocIdeoEl = document.getElementById("input-coc-ideology");
+    const cocPeopEl = document.getElementById("input-coc-people");
+    const cocLocEl = document.getElementById("input-coc-locations");
+    const cocPossEl = document.getElementById("input-coc-possessions");
+    const cocTraitsEl = document.getElementById("input-coc-traits");
+
+    const natBackstory = ch.native_system_data?.backstory || {};
+    let bDesc = ch.personal_description || natBackstory.personal_description || "";
+    let bIdeo = ch.ideology || natBackstory.ideology || "";
+    let bPeop = ch.significant_people || natBackstory.significant_people || "";
+    let bLoc = ch.meaningful_locations || natBackstory.meaningful_locations || "";
+    let bPoss = ch.treasured_possessions || natBackstory.treasured_possessions || "";
+    let bTraits = ch.backstory_traits || natBackstory.traits || "";
+
+    const allFeats = extractCharacterFeatures(ch);
+    allFeats.forEach(f => {
+        const str = typeof f === "string" ? f : (f.name + ": " + (f.description || ""));
+        const low = str.toLowerCase();
+        if (low.includes("personal description:") && !bDesc) bDesc = str.split(/:\s*/)[1] || "";
+        else if (low.includes("ideology") && !bIdeo) bIdeo = str.split(/:\s*/)[1] || "";
+        else if (low.includes("significant people:") && !bPeop) bPeop = str.split(/:\s*/)[1] || "";
+        else if (low.includes("meaningful locations:") && !bLoc) bLoc = str.split(/:\s*/)[1] || "";
+        else if (low.includes("treasured possessions:") && !bPoss) bPoss = str.split(/:\s*/)[1] || "";
+        else if (low.includes("traits:") && !bTraits) bTraits = str.split(/:\s*/)[1] || "";
+    });
+
+    if (cocDescEl) cocDescEl.value = bDesc;
+    if (cocIdeoEl) cocIdeoEl.value = bIdeo;
+    if (cocPeopEl) cocPeopEl.value = bPeop;
+    if (cocLocEl) cocLocEl.value = bLoc;
+    if (cocPossEl) cocPossEl.value = bPoss;
+    if (cocTraitsEl) cocTraitsEl.value = bTraits;
+
+    // Gear & Assets
+    const cocInvEl = document.getElementById("input-coc-inventory");
+    const cocCrEl = document.getElementById("input-coc-credit-rating");
+    const cocCashEl = document.getElementById("input-coc-cash");
+    const cocAssetsEl = document.getElementById("input-coc-assets");
+    if (cocInvEl) cocInvEl.value = invFormatted;
+    if (cocCrEl) cocCrEl.value = ch.credit_rating ?? ch.native_system_data?.credit_rating ?? 40;
+    if (cocCashEl) cocCashEl.value = ch.currency?.cash || ch.cash || "$80";
+    if (cocAssetsEl) cocAssetsEl.value = ch.currency?.assets || ch.assets || "$2,000";
+
+    // Skills Grid & Half/Fifth Calculations
+    const cocSkills = ch.skills || ch.native_system_data?.skills || {};
+    renderCocSkillsGrid(cocSkills);
+    updateCocCalculations();
+
     // Also populate Agnostic Fallback Inputs
     const archEl = document.getElementById("input-rp-char-archetype");
     const hpEl = document.getElementById("input-rp-char-hp");
@@ -1707,6 +2525,22 @@ function handleOpenEditCharacterModal(charId) {
 }
 
 // --- Campaign Document Upload & Review Functions ---
+let pendingRulesetRequest = null;
+
+function promptRulesetSelection(requestData, onSelectedCallback) {
+    pendingRulesetRequest = { requestData, onSelectedCallback };
+    const modal = document.getElementById("ruleset-picker-modal");
+    const fnEl = document.getElementById("ruleset-picker-filename");
+    if (fnEl) fnEl.textContent = requestData.filename || (requestData.character && requestData.character.name) || "Character Sheet";
+    if (modal) modal.style.display = "flex";
+}
+
+function closeRulesetPickerModal() {
+    const modal = document.getElementById("ruleset-picker-modal");
+    if (modal) modal.style.display = "none";
+    pendingRulesetRequest = null;
+}
+
 async function handleUploadRpFiles(fileList) {
     if (!fileList || fileList.length === 0) return;
     const categorySelect = document.getElementById("rp-doc-category-select");
@@ -1726,16 +2560,40 @@ async function handleUploadRpFiles(fileList) {
                             category,
                             ttrpgData.active_campaign
                         );
-                        if (res && res.status === "success" && res.removed_after_import) {
+                        if (res && res.status === "requires_ruleset_selection") {
+                            promptRulesetSelection(res, async (selectedRuleset, req) => {
+                                const retryRes = await window.pywebview.api.upload_ttrpg_document(
+                                    req.filename,
+                                    req.base64_content,
+                                    req.doc_category || "character_sheet",
+                                    req.campaign_id,
+                                    selectedRuleset
+                                );
+                                if (retryRes && retryRes.status === "success") {
+                                    const importedNames = (retryRes.imported_characters && retryRes.imported_characters.length > 0)
+                                        ? retryRes.imported_characters.map(c => typeof c === "object" ? (c.name || c.id) : c).join(", ")
+                                        : "character";
+                                    if (typeof renderRolePlayStoryBubble === "function") {
+                                        renderRolePlayStoryBubble({
+                                            type: "system",
+                                            content: `👤 Imported ${importedNames} into Party Roster & Character Vault (${retryRes.ruleset || 'Hero'})! Sheet file removed from file list (one-and-done) to prevent overwriting evolved character data.`
+                                        });
+                                    }
+                                    alert(`👤 Imported ${importedNames} into Party Roster & Character Vault (${retryRes.ruleset || 'Hero'})!`);
+                                    await loadRolePlayUI(true);
+                                }
+                            });
+                        } else if (res && res.status === "success" && res.removed_after_import) {
+                            const importedNames = (res.imported_characters && res.imported_characters.length > 0)
+                                ? res.imported_characters.map(c => typeof c === "object" ? (c.name || c.id) : c).join(", ")
+                                : "character";
                             if (typeof renderRolePlayStoryBubble === "function") {
-                                const importedNames = (res.imported_characters && res.imported_characters.length > 0)
-                                    ? res.imported_characters.map(c => c.name || c.id).join(", ")
-                                    : "character";
                                 renderRolePlayStoryBubble({
                                     type: "system",
-                                    content: `👤 Imported ${importedNames} into Party Roster! Sheet file removed from file list (one-and-done) to prevent overwriting evolved character data.`
+                                    content: `👤 Imported ${importedNames} into Party Roster & Character Vault (${res.ruleset || 'Hero'})! Sheet file removed from file list (one-and-done) to prevent overwriting evolved character data.`
                                 });
                             }
+                            alert(`👤 Imported ${importedNames} into Party Roster & Character Vault (${res.ruleset || 'Hero'})!`);
                         }
                     }
                 } catch (err) {
@@ -1828,7 +2686,7 @@ async function handleDeleteActiveCampaign() {
     const campaigns = ttrpgData.campaigns || {};
     const meta = campaigns[activeId] || ttrpgData.active_campaign_meta || {};
     const title = meta.title || activeId;
-    if (!confirm(`Delete campaign "${title}"?`)) return;
+    if (!(await showAetherConfirm(`Delete campaign "${title}"? This cannot be undone.`, "Delete Campaign", "Delete", true))) return;
     try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.delete_ttrpg_campaign) {
             await window.pywebview.api.delete_ttrpg_campaign(activeId);
@@ -2044,7 +2902,7 @@ function initRolePlayStoryChatUI() {
         newSceneBtn.onclick = async () => {
             const cid = ttrpgData.active_campaign;
             if (!cid) return;
-            if (!confirm('Start a new scene? This signals the Game Master to set the stage for a new encounter.')) return;
+            if (!(await showAetherConfirm('Start a new scene? This signals the Game Master to set the stage for a new encounter.', 'New Scene', 'Start Scene', false))) return;
             try {
                 renderRolePlayStoryBubble({
                     type: 'system',
@@ -2065,7 +2923,7 @@ function initRolePlayStoryChatUI() {
         clearStoryBtn.onclick = async () => {
             const cid = ttrpgData.active_campaign;
             if (!cid) return;
-            if (!confirm('Clear all story and dialogue logs for this campaign?')) return;
+            if (!(await showAetherConfirm('Clear all story and dialogue logs for this campaign?', 'Clear Logs', 'Clear Logs', true))) return;
             try {
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.clear_workspace_history) {
                     await window.pywebview.api.clear_workspace_history('campaign', cid);
@@ -2562,6 +3420,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (addCharBtn && charModal) {
         addCharBtn.addEventListener("click", () => {
             editingCharacterId = null;
+            editingCharacterSource = "campaign";
+            currentEditingCharacterObj = null;
             if (charHeading) charHeading.textContent = "Add Character to Roster";
 
             const rulesetSelect = document.getElementById("select-rp-char-ruleset");
@@ -2589,12 +3449,18 @@ document.addEventListener("DOMContentLoaded", () => {
             if (dndSpeciesEl) dndSpeciesEl.value = "Human";
             if (dndBgEl) dndBgEl.value = "Noble";
             if (dndXpEl) dndXpEl.value = "0";
+            const dndDefensesReset = document.getElementById("input-dnd-defenses");
+            if (dndDefensesReset) dndDefensesReset.value = "";
+            const dndInitReset = document.getElementById("input-dnd-init");
+            if (dndInitReset) dndInitReset.dataset.customized = "false";
 
             renderDndSkillsGrid({});
             updateDndCalculations();
 
             stagedCharacterWeapons = [];
             renderStagedWeapons();
+            stagedCharacterSpells = [];
+            renderStagedSpells();
 
             charModal.classList.remove("hidden");
         });
@@ -2621,6 +3487,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const dndSpellAbilityEl = document.getElementById("select-dnd-spell-ability");
     if (dndSpellAbilityEl) {
         dndSpellAbilityEl.addEventListener("change", () => updateDndCalculations());
+    }
+    const dndInitInputEl = document.getElementById("input-dnd-init");
+    if (dndInitInputEl) {
+        dndInitInputEl.addEventListener("input", () => {
+            dndInitInputEl.dataset.customized = "true";
+        });
     }
 
     // Modal "Load File" Character Upload Handlers
@@ -2657,15 +3529,73 @@ document.addEventListener("DOMContentLoaded", () => {
                 reader.onload = async (ev) => {
                     try {
                         const base64Data = ev.target.result;
-                        if (window.pywebview && window.pywebview.api && window.pywebview.api.upload_ttrpg_document) {
-                            const res = await window.pywebview.api.upload_ttrpg_document(
-                                file.name,
-                                base64Data,
-                                "character_sheet",
-                                ttrpgData.active_campaign
-                            );
-                            if (res && res.status === "error") {
-                                alert(`Failed to load character: ${res.message || 'Unknown error'}`);
+                        if (editingCharacterSource === "vault") {
+                            const b64 = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
+                            if (window.pywebview && window.pywebview.api && window.pywebview.api.upload_vault_character_document) {
+                                const res = await window.pywebview.api.upload_vault_character_document(file.name, b64);
+                                if (res && res.status === "requires_ruleset_selection") {
+                                    promptRulesetSelection(res, async (selectedRuleset, req) => {
+                                        const retryRes = await window.pywebview.api.upload_vault_character_document(
+                                            req.filename,
+                                            req.base64_content,
+                                            selectedRuleset
+                                        );
+                                        if (retryRes && retryRes.status === "success") {
+                                            alert(`Successfully imported character from '${req.filename}' into Character Vault!`);
+                                            if (charModal) charModal.classList.add("hidden");
+                                            await refreshVaultModalUI();
+                                        } else {
+                                            alert(`Failed to load character: ${retryRes?.message || 'Unknown error'}`);
+                                        }
+                                    });
+                                    return;
+                                } else if (res && res.status === "error") {
+                                    alert(`Failed to load character: ${res.message || 'Unknown error'}`);
+                                } else if (res && res.status === "success") {
+                                    alert(`Successfully imported character from '${file.name}' into Character Vault!`);
+                                    if (charModal) charModal.classList.add("hidden");
+                                    await refreshVaultModalUI();
+                                }
+                            }
+                        } else {
+                            if (window.pywebview && window.pywebview.api && window.pywebview.api.upload_ttrpg_document) {
+                                const res = await window.pywebview.api.upload_ttrpg_document(
+                                    file.name,
+                                    base64Data,
+                                    "character_sheet",
+                                    ttrpgData.active_campaign
+                                );
+                                if (res && res.status === "requires_ruleset_selection") {
+                                    promptRulesetSelection(res, async (selectedRuleset, req) => {
+                                        const retryRes = await window.pywebview.api.upload_ttrpg_document(
+                                            req.filename,
+                                            req.base64_content,
+                                            "character_sheet",
+                                            req.campaign_id,
+                                            selectedRuleset
+                                        );
+                                        if (retryRes && retryRes.status === "success") {
+                                            const importedNames = (retryRes.imported_characters && retryRes.imported_characters.length > 0)
+                                                ? retryRes.imported_characters.map(c => typeof c === "object" ? (c.name || c.id) : c).join(", ")
+                                                : "character";
+                                            alert(`👤 Imported ${importedNames} into Party Roster & Character Vault (${retryRes.ruleset || 'Hero'})!`);
+                                            if (charModal) charModal.classList.add("hidden");
+                                            await loadRolePlayUI(true);
+                                        } else {
+                                            alert(`Failed to load character: ${retryRes?.message || 'Unknown error'}`);
+                                        }
+                                    });
+                                    return;
+                                } else if (res && res.status === "error") {
+                                    alert(`Failed to load character: ${res.message || 'Unknown error'}`);
+                                } else if (res && res.status === "success") {
+                                    const importedNames = (res.imported_characters && res.imported_characters.length > 0)
+                                        ? res.imported_characters.map(c => typeof c === "object" ? (c.name || c.id) : c).join(", ")
+                                        : "character";
+                                    alert(`👤 Imported ${importedNames} into Party Roster & Character Vault (${res.ruleset || 'Hero'})!`);
+                                    if (charModal) charModal.classList.add("hidden");
+                                    await loadRolePlayUI(true);
+                                }
                             }
                         }
                     } catch (err) {
@@ -2681,7 +3611,11 @@ document.addEventListener("DOMContentLoaded", () => {
                             modalLoadCharBodyBtn.disabled = false;
                             modalLoadCharBodyBtn.textContent = "📄 Load File";
                         }
-                        await loadRolePlayUI(true);
+                        if (editingCharacterSource === "vault") {
+                            await refreshVaultModalUI();
+                        } else {
+                            await loadRolePlayUI(true);
+                        }
                     }
                 };
                 reader.readAsDataURL(file);
@@ -2702,12 +3636,16 @@ document.addEventListener("DOMContentLoaded", () => {
     if (closeCharBtn && charModal) {
         closeCharBtn.addEventListener("click", () => {
             editingCharacterId = null;
+            editingCharacterSource = "campaign";
+            currentEditingCharacterObj = null;
             charModal.classList.add("hidden");
         });
     }
     if (cancelCharBtn && charModal) {
         cancelCharBtn.addEventListener("click", () => {
             editingCharacterId = null;
+            editingCharacterSource = "campaign";
+            currentEditingCharacterObj = null;
             charModal.classList.add("hidden");
         });
     }
@@ -2731,7 +3669,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     return isNaN(parsed) ? def : parsed;
                 };
 
-                const existingChar = editingCharacterId ? ((ttrpgData.state && ttrpgData.state.characters) || {})[editingCharacterId] : null;
+                const existingChar = currentEditingCharacterObj || (editingCharacterId ? ((ttrpgData.state && ttrpgData.state.characters) || {})[editingCharacterId] : null);
 
                 let payload = {
                     id: editingCharacterId || undefined,
@@ -2821,7 +3759,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     const featsRaw = (document.getElementById("input-dnd-features")?.value || "").trim();
                     const features = featsRaw ? featsRaw.split(/\n+|;\s*|,\s*(?![^()]*\))/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
                     const spellsRaw = (document.getElementById("input-dnd-spells")?.value || "").trim();
-                    const spells = spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
+                    const spells = (stagedCharacterSpells && stagedCharacterSpells.length > 0)
+                        ? stagedCharacterSpells
+                        : (spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : []);
 
                     const archetype = `${clsLvl}${species || bg ? ' (' + [species, bg].filter(Boolean).join(', ') + ')' : ''}`;
 
@@ -2857,6 +3797,8 @@ document.addEventListener("DOMContentLoaded", () => {
                             investigation: safeInt(document.getElementById("input-dnd-pass-invest")?.value, 10)
                         },
                         senses: (document.getElementById("input-dnd-senses")?.value || "").trim(),
+                        defenses: (document.getElementById("input-dnd-defenses")?.value || "").trim(),
+                        resistances: (document.getElementById("input-dnd-defenses")?.value || "").trim(),
                         proficiencies: profLang,
                         proficiencies_armor: armor,
                         proficiencies_weapons: weaponsProf,
@@ -2925,7 +3867,24 @@ document.addEventListener("DOMContentLoaded", () => {
                                 }).filter(w => Boolean(w.name)) : [];
                             })(),
                         proficiencies: document.getElementById("input-pf-skills")?.value || "",
-                        inventory: (document.getElementById("input-pf-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+                        inventory: (document.getElementById("input-pf-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
+                        features_and_traits: (() => {
+                            const raw = (document.getElementById("input-pf-features")?.value || "").trim();
+                            if (raw) return raw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
+                            return existingChar ? extractCharacterFeatures(existingChar) : [];
+                        })(),
+                        traits_and_abilities: (() => {
+                            const raw = (document.getElementById("input-pf-features")?.value || "").trim();
+                            if (raw) return raw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
+                            return existingChar ? extractCharacterFeatures(existingChar) : [];
+                        })(),
+                        spells: (stagedCharacterSpells && stagedCharacterSpells.length > 0)
+                            ? stagedCharacterSpells
+                            : (() => {
+                                const raw = (document.getElementById("input-pf-spells")?.value || "").trim();
+                                if (raw) return raw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
+                                return existingChar ? extractCharacterSpells(existingChar) : [];
+                            })()
                     };
                 } else if (activeRuleset === "cyberpunk") {
                     const role = (document.getElementById("input-cyber-role")?.value || "Solo 4").trim();
@@ -2965,6 +3924,9 @@ document.addEventListener("DOMContentLoaded", () => {
                             };
                         }).filter(w => Boolean(w.name)) : []);
 
+                    const cyberFeatsRaw = (document.getElementById("input-cyber-cyberware")?.value || "").trim();
+                    const cyberFeatures = cyberFeatsRaw ? cyberFeatsRaw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean) : [];
+
                     payload = {
                         ...payload,
                         archetype: `${role}${origin ? ' (' + origin + ')' : ''}`,
@@ -2987,8 +3949,124 @@ document.addEventListener("DOMContentLoaded", () => {
                             Presence: stats.COOL
                         },
                         weapons: weapons,
-                        features_and_traits: (document.getElementById("input-cyber-cyberware")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
+                        features_and_traits: cyberFeatures.length > 0 ? cyberFeatures : (existingChar ? extractCharacterFeatures(existingChar) : []),
+                        traits_and_abilities: cyberFeatures.length > 0 ? cyberFeatures : (existingChar ? extractCharacterFeatures(existingChar) : []),
                         inventory: (document.getElementById("input-cyber-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+                    };
+                } else if (activeRuleset === "call_of_cthulhu") {
+                    const occ = (document.getElementById("input-coc-occupation")?.value || "Investigator").trim();
+                    const age = safeInt(document.getElementById("input-coc-age")?.value, 20);
+                    const sex = (document.getElementById("input-coc-sex")?.value || "").trim();
+                    const residence = (document.getElementById("input-coc-residence")?.value || "").trim();
+                    const birthplace = (document.getElementById("input-coc-birthplace")?.value || "").trim();
+
+                    const stats = {
+                        STR: safeInt(document.getElementById("input-coc-str")?.value, 50),
+                        CON: safeInt(document.getElementById("input-coc-con")?.value, 50),
+                        SIZ: safeInt(document.getElementById("input-coc-siz")?.value, 50),
+                        DEX: safeInt(document.getElementById("input-coc-dex")?.value, 50),
+                        APP: safeInt(document.getElementById("input-coc-app")?.value, 50),
+                        INT: safeInt(document.getElementById("input-coc-int")?.value, 50),
+                        POW: safeInt(document.getElementById("input-coc-pow")?.value, 50),
+                        EDU: safeInt(document.getElementById("input-coc-edu")?.value, 50),
+                        Move: safeInt(document.getElementById("input-coc-move")?.value, 8)
+                    };
+
+                    const curHp = Math.max(1, safeInt(document.getElementById("input-coc-cur-hp")?.value, 13));
+                    const maxHp = Math.max(1, safeInt(document.getElementById("input-coc-max-hp")?.value, 13));
+                    const curSan = Math.max(0, safeInt(document.getElementById("input-coc-cur-san")?.value, 50));
+                    const maxSan = Math.max(1, safeInt(document.getElementById("input-coc-max-san")?.value, 99));
+                    const luck = Math.max(0, safeInt(document.getElementById("input-coc-luck")?.value, 55));
+                    const curMp = Math.max(0, safeInt(document.getElementById("input-coc-cur-mp")?.value, 10));
+                    const maxMp = Math.max(1, safeInt(document.getElementById("input-coc-max-mp")?.value, 10));
+
+                    const db = (document.getElementById("input-coc-db")?.value || "none").trim();
+                    const build = safeInt(document.getElementById("input-coc-build")?.value, 0);
+                    const dodge = safeInt(document.getElementById("input-coc-dodge")?.value, Math.floor(stats.DEX / 2));
+
+                    // Harvest skills from the rendered skills grid
+                    const skillsObj = {};
+                    document.querySelectorAll(".coc-skill-input").forEach(inp => {
+                        const sName = inp.getAttribute("data-skill");
+                        const sVal = safeInt(inp.value, 0);
+                        if (sName) {
+                            skillsObj[sName] = `${sVal}%`;
+                        }
+                    });
+
+                    // Harvest backstory & lore
+                    const desc = (document.getElementById("input-coc-desc")?.value || "").trim();
+                    const ideology = (document.getElementById("input-coc-ideology")?.value || "").trim();
+                    const people = (document.getElementById("input-coc-people")?.value || "").trim();
+                    const locs = (document.getElementById("input-coc-locations")?.value || "").trim();
+                    const possessions = (document.getElementById("input-coc-possessions")?.value || "").trim();
+                    const traits = (document.getElementById("input-coc-traits")?.value || "").trim();
+
+                    const cocTraitsList = [];
+                    if (desc) cocTraitsList.push(`Personal Description: ${desc}`);
+                    if (ideology) cocTraitsList.push(`Ideology/Beliefs: ${ideology}`);
+                    if (people) cocTraitsList.push(`Significant People: ${people}`);
+                    if (locs) cocTraitsList.push(`Meaningful Locations: ${locs}`);
+                    if (possessions) cocTraitsList.push(`Treasured Possessions: ${possessions}`);
+                    if (traits) cocTraitsList.push(`Traits: ${traits}`);
+
+                    // Weapons
+                    const weapons = (stagedCharacterWeapons && stagedCharacterWeapons.length > 0)
+                        ? stagedCharacterWeapons
+                        : (existingChar?.weapons || [{ name: "Unarmed", atk_bonus: "60%", damage: "1d3 + db", notes: "Attacks: 1" }]);
+
+                    // Inventory & currency
+                    const invRaw = (document.getElementById("input-coc-inventory")?.value || "").trim();
+                    const invList = invRaw ? invRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : (existingChar?.inventory || []);
+                    const cr = safeInt(document.getElementById("input-coc-credit-rating")?.value, 40);
+                    const cash = (document.getElementById("input-coc-cash")?.value || "$80").trim();
+                    const assets = (document.getElementById("input-coc-assets")?.value || "$2,000").trim();
+
+                    payload = {
+                        ...payload,
+                        ruleset: "call_of_cthulhu",
+                        ruleset_label: "Call of Cthulhu",
+                        native_genre: "modern_horror",
+                        native_system: "call_of_cthulhu",
+                        archetype: occ,
+                        age: age,
+                        sex: sex,
+                        residence: residence,
+                        birthplace: birthplace,
+                        level: 1,
+                        experience_points: 0,
+                        max_health: maxHp,
+                        current_health: curHp,
+                        guard: dodge,
+                        armor_class: dodge,
+                        dodge: dodge,
+                        damage_bonus: db,
+                        build: build,
+                        credit_rating: cr,
+                        currency: { cash: cash, assets: assets, cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+                        vitals: {
+                            health: { current: curHp, max: maxHp, label: "Health" },
+                            guard: { current: dodge, max: dodge, label: "Dodge Defense" }
+                        },
+                        custom_meters: {
+                            sanity: { current: curSan, max: maxSan, label: "Sanity" },
+                            luck: { current: luck, max: 99, label: "Luck" },
+                            magic_points: { current: curMp, max: maxMp, label: "Magic Points" },
+                            move_rate: { current: stats.Move, max: stats.Move, label: "Move Rate" }
+                        },
+                        attributes: {
+                            ...stats,
+                            Might: stats.STR,
+                            Agility: stats.DEX,
+                            Vigor: stats.CON,
+                            Intellect: stats.INT,
+                            Presence: Math.max(stats.POW, stats.APP)
+                        },
+                        skills: skillsObj,
+                        weapons: weapons,
+                        inventory: invList,
+                        features_and_traits: cocTraitsList.length > 0 ? cocTraitsList : (existingChar ? extractCharacterFeatures(existingChar) : []),
+                        traits_and_abilities: cocTraitsList.length > 0 ? cocTraitsList : (existingChar ? extractCharacterFeatures(existingChar) : [])
                     };
                 } else {
                     // Agnostic / Custom Fallback
@@ -3030,7 +4108,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         Presence: safeInt(document.getElementById("input-rp-attr-presence")?.value, 12),
                         weapons: weapons,
                         inventory: invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
-                        spells: spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
+                        spells: (stagedCharacterSpells && stagedCharacterSpells.length > 0)
+                            ? stagedCharacterSpells
+                            : (spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : []),
                         features_and_traits: featsRaw ? featsRaw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
                         proficiencies: skillsRaw
                     };
@@ -3040,19 +4120,45 @@ document.addEventListener("DOMContentLoaded", () => {
                 const origText = confirmCharBtn.textContent;
                 confirmCharBtn.textContent = "Saving... ⏳";
                 try {
-                    if (window.pywebview && window.pywebview.api && window.pywebview.api.add_ttrpg_character) {
-                        const res = await window.pywebview.api.add_ttrpg_character(payload);
-                        if (res && res.status === "error") {
-                            alert(`Could not save character: ${res.message || "Unknown error"}`);
-                            return;
+                    if (editingCharacterSource === "vault") {
+                        if (window.pywebview && window.pywebview.api && window.pywebview.api.save_vault_character) {
+                            const res = await window.pywebview.api.save_vault_character(payload);
+                            if (res && res.status === "error") {
+                                alert(`Could not save vault character: ${res.message || "Unknown error"}`);
+                                return;
+                            }
+                            editingCharacterId = null;
+                            editingCharacterSource = "campaign";
+                            currentEditingCharacterObj = null;
+                            charModal.classList.add("hidden");
+                            await refreshVaultModalUI();
+                            if (typeof renderRolePlayStoryBubble === "function") {
+                                renderRolePlayStoryBubble({
+                                    type: "system",
+                                    content: `💾 Character Vault: Successfully updated hero '${payload.name || "Hero"}'!`
+                                });
+                            }
+                            alert(`Hero '${payload.name}' successfully saved in Character Vault!`);
                         }
-                        editingCharacterId = null;
-                        charModal.classList.add("hidden");
-                        await loadRolePlayUI();
                     } else {
-                        console.warn("[RolePlay] pywebview add_ttrpg_character API not available.");
-                        editingCharacterId = null;
-                        charModal.classList.add("hidden");
+                        if (window.pywebview && window.pywebview.api && window.pywebview.api.add_ttrpg_character) {
+                            const res = await window.pywebview.api.add_ttrpg_character(payload);
+                            if (res && res.status === "error") {
+                                alert(`Could not save character: ${res.message || "Unknown error"}`);
+                                return;
+                            }
+                            editingCharacterId = null;
+                            editingCharacterSource = "campaign";
+                            currentEditingCharacterObj = null;
+                            charModal.classList.add("hidden");
+                            await loadRolePlayUI();
+                        } else {
+                            console.warn("[RolePlay] pywebview add_ttrpg_character API not available.");
+                            editingCharacterId = null;
+                            editingCharacterSource = "campaign";
+                            currentEditingCharacterObj = null;
+                            charModal.classList.add("hidden");
+                        }
                     }
                 } finally {
                     confirmCharBtn.disabled = false;
@@ -3237,7 +4343,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Character Sheet In-Modal Add Weapon Buttons
-    ["btn-modal-add-weapon-dnd", "btn-modal-add-weapon-pf", "btn-modal-add-weapon-cyber", "btn-modal-add-weapon-agnostic"].forEach(btnId => {
+    ["btn-modal-add-weapon-dnd", "btn-modal-add-weapon-pf", "btn-modal-add-weapon-cyber", "btn-modal-add-weapon-coc", "btn-modal-add-weapon-agnostic"].forEach(btnId => {
         const btn = document.getElementById(btnId);
         if (btn) {
             btn.addEventListener("click", () => window.handleOpenAddWeaponModal("__active_edit__"));
@@ -3248,6 +4354,60 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnModalAddInvDnd = document.getElementById("btn-modal-add-inventory-dnd");
     if (btnModalAddInvDnd) {
         btnModalAddInvDnd.addEventListener("click", () => window.handleOpenAddInventoryModal("__active_edit__"));
+    }
+
+    // Spell Modal Controls
+    const addSpellModal = document.getElementById("modal-add-spell");
+    const closeAddSpellBtn = document.getElementById("btn-close-add-spell-modal");
+    const cancelAddSpellBtn = document.getElementById("btn-cancel-add-spell");
+    const confirmAddSpellBtn = document.getElementById("btn-confirm-add-spell");
+
+    if (closeAddSpellBtn && addSpellModal) {
+        closeAddSpellBtn.addEventListener("click", () => addSpellModal.classList.add("hidden"));
+    }
+    if (cancelAddSpellBtn && addSpellModal) {
+        cancelAddSpellBtn.addEventListener("click", () => addSpellModal.classList.add("hidden"));
+    }
+    if (confirmAddSpellBtn) {
+        confirmAddSpellBtn.addEventListener("click", () => window.handleConfirmAddSpell());
+    }
+
+    // Character Sheet In-Modal Add Spell Buttons
+    ["btn-modal-add-spell-dnd", "btn-modal-add-spell-pf", "btn-modal-add-spell-agnostic"].forEach(btnId => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+            btn.addEventListener("click", () => window.handleOpenAddSpellModal("__active_edit__"));
+        }
+    });
+
+    // Spell Live Preview Listeners
+    ["input-spell-name", "input-spell-atk", "input-spell-dmg", "input-spell-range", "input-spell-notes"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener("input", () => updateSpellLivePreview());
+            el.addEventListener("change", () => updateSpellLivePreview());
+        }
+    });
+    ["select-spell-level", "select-spell-dmg-type"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", () => updateSpellLivePreview());
+    });
+
+    // ⚡ Aether Smart Reformat Spell Button
+    const btnSmartSpell = document.getElementById("btn-spell-smart-reformat");
+    if (btnSmartSpell) {
+        btnSmartSpell.addEventListener("click", () => window.handleSmartReformatSpell());
+    }
+
+    // Enter key triggers smart reformat on spell raw input
+    const inputSpellSmartRaw = document.getElementById("input-spell-smart-raw");
+    if (inputSpellSmartRaw) {
+        inputSpellSmartRaw.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                window.handleSmartReformatSpell();
+            }
+        });
     }
 
     // Weapon Live Preview Listeners
@@ -3381,53 +4541,172 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Wire Sheet Upload (PDF/JSON) into Vault
+    // Wire Create New Vault Hero button
+    const createVaultCharBtn = document.getElementById("btn-create-vault-char");
+    if (createVaultCharBtn && charModal) {
+        createVaultCharBtn.addEventListener("click", () => {
+            editingCharacterId = null;
+            editingCharacterSource = "vault";
+            currentEditingCharacterObj = null;
+            if (charHeading) charHeading.textContent = "Create New Vault Hero";
+
+            const rulesetSelect = document.getElementById("select-rp-char-ruleset");
+            const campPreset = ttrpgData.active_campaign_meta?.system_preset || "dnd_5e";
+            let defaultRuleset = "dnd_5e";
+            if (campPreset.includes("cyber")) defaultRuleset = "cyberpunk";
+            else if (campPreset.includes("pathfinder")) defaultRuleset = "pathfinder_2e";
+            else if (campPreset.includes("cthulhu")) defaultRuleset = "call_of_cthulhu";
+            else if (campPreset.includes("agnostic") || campPreset.includes("sandbox") || campPreset.includes("custom")) defaultRuleset = "agnostic";
+
+            if (rulesetSelect) rulesetSelect.value = defaultRuleset;
+            onRulesetDropdownChanged(defaultRuleset);
+
+            const nameEl = document.getElementById("input-rp-char-name");
+            const playerEl = document.getElementById("input-rp-char-player");
+            if (nameEl) nameEl.value = "";
+            if (playerEl) playerEl.value = "";
+
+            // Reset D&D fields
+            const dndClassEl = document.getElementById("input-dnd-class-level");
+            const dndSpeciesEl = document.getElementById("input-dnd-species");
+            const dndBgEl = document.getElementById("input-dnd-background");
+            const dndXpEl = document.getElementById("input-dnd-xp");
+            if (dndClassEl) dndClassEl.value = "Fighter 1";
+            if (dndSpeciesEl) dndSpeciesEl.value = "Human";
+            if (dndBgEl) dndBgEl.value = "Noble";
+            if (dndXpEl) dndXpEl.value = "0";
+            const dndDefensesReset = document.getElementById("input-dnd-defenses");
+            if (dndDefensesReset) dndDefensesReset.value = "";
+            const dndInitReset = document.getElementById("input-dnd-init");
+            if (dndInitReset) dndInitReset.dataset.customized = "false";
+
+            renderDndSkillsGrid({});
+            updateDndCalculations();
+
+            stagedCharacterWeapons = [];
+            renderStagedWeapons();
+            stagedCharacterSpells = [];
+            renderStagedSpells();
+
+            charModal.classList.remove("hidden");
+        });
+    }
+
+    // Wire Sheet Upload (PDF/JSON) into Vault (Dropzone and Button)
     const uploadSheetBtn = document.getElementById("btn-upload-vault-char");
     const vaultFileInput = document.getElementById("input-vault-file");
+    const vaultDropzone = document.getElementById("vault-dropzone");
+
+    async function handleUploadVaultFiles(files, rulesetOverride = null) {
+        if (!files || files.length === 0) return;
+        const origText = uploadSheetBtn ? uploadSheetBtn.textContent : "";
+        if (uploadSheetBtn) {
+            uploadSheetBtn.disabled = true;
+            uploadSheetBtn.textContent = "⏳ Parsing Sheet...";
+        }
+
+        try {
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = async (evt) => {
+                        try {
+                            const b64 = evt.target.result.split(",")[1];
+                            if (window.pywebview && window.pywebview.api && window.pywebview.api.upload_vault_character_document) {
+                                const res = await window.pywebview.api.upload_vault_character_document(file.name, b64, rulesetOverride);
+                                if (res && res.status === "requires_ruleset_selection") {
+                                    promptRulesetSelection(res, async (selectedRuleset, req) => {
+                                        const retryRes = await window.pywebview.api.upload_vault_character_document(
+                                            req.filename,
+                                            req.base64_content,
+                                            selectedRuleset
+                                        );
+                                        if (retryRes && retryRes.status === "success") {
+                                            alert(`Successfully imported character(s) from '${req.filename}' into the Character Vault!`);
+                                            await refreshVaultModalUI();
+                                            await loadRolePlayUI(true);
+                                        } else {
+                                            alert(`Failed to import character: ${retryRes?.message || 'Unknown error'}`);
+                                        }
+                                    });
+                                } else if (res && res.status === "success") {
+                                    alert(`Successfully imported character(s) from '${file.name}' into the Character Vault!`);
+                                    await refreshVaultModalUI();
+                                    await loadRolePlayUI(true);
+                                } else {
+                                    alert(`Failed to import character: ${res?.message || 'Unknown error'}`);
+                                }
+                            }
+                        } catch (err) {
+                            console.error("[Vault] Error processing uploaded sheet:", err);
+                            alert(`Error uploading sheet: ${err.message}`);
+                        }
+                        resolve();
+                    };
+                    reader.onerror = () => resolve();
+                    reader.readAsDataURL(file);
+                });
+            }
+        } finally {
+            if (uploadSheetBtn) {
+                uploadSheetBtn.disabled = false;
+                uploadSheetBtn.textContent = origText;
+            }
+        }
+    }
+
     if (uploadSheetBtn && vaultFileInput) {
         uploadSheetBtn.addEventListener("click", () => {
             vaultFileInput.value = "";
             vaultFileInput.click();
         });
         vaultFileInput.addEventListener("change", async (e) => {
-            const file = e.target.files && e.target.files[0];
-            if (!file) return;
-
-            uploadSheetBtn.disabled = true;
-            const origText = uploadSheetBtn.textContent;
-            uploadSheetBtn.textContent = "⏳ Parsing Sheet...";
-
-            try {
-                const reader = new FileReader();
-                reader.onload = async (evt) => {
-                    try {
-                        const b64 = evt.target.result.split(",")[1];
-                        if (window.pywebview && window.pywebview.api && window.pywebview.api.upload_vault_character_document) {
-                            const res = await window.pywebview.api.upload_vault_character_document(file.name, b64);
-                            if (res && res.status === "success") {
-                                alert(`Successfully imported character(s) from '${file.name}' into the Character Vault!`);
-                                await refreshVaultModalUI();
-                                await loadRolePlayUI(true);
-                            } else {
-                                alert(`Failed to import character: ${res?.message || 'Unknown error'}`);
-                            }
-                        }
-                    } catch (err) {
-                        console.error("[Vault] Error processing uploaded sheet:", err);
-                        alert(`Error uploading sheet: ${err.message}`);
-                    } finally {
-                        uploadSheetBtn.disabled = false;
-                        uploadSheetBtn.textContent = origText;
-                    }
-                };
-                reader.readAsDataURL(file);
-            } catch (err) {
-                console.error("[Vault] Error reading file:", err);
-                uploadSheetBtn.disabled = false;
-                uploadSheetBtn.textContent = origText;
+            if (e.target.files && e.target.files.length > 0) {
+                await handleUploadVaultFiles(e.target.files);
             }
         });
     }
+
+    if (vaultDropzone && vaultFileInput) {
+        vaultDropzone.addEventListener("click", () => {
+            vaultFileInput.value = "";
+            vaultFileInput.click();
+        });
+        vaultDropzone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            vaultDropzone.classList.add("drag-over");
+        });
+        vaultDropzone.addEventListener("dragleave", () => {
+            vaultDropzone.classList.remove("drag-over");
+        });
+        vaultDropzone.addEventListener("drop", async (e) => {
+            e.preventDefault();
+            vaultDropzone.classList.remove("drag-over");
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                await handleUploadVaultFiles(e.dataTransfer.files);
+            }
+        });
+    }
+
+    // Wire Ruleset Picker Modal Option Buttons & Cancel Handlers
+    document.querySelectorAll(".btn-ruleset-option").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const ruleset = btn.getAttribute("data-ruleset");
+            if (pendingRulesetRequest && typeof pendingRulesetRequest.onSelectedCallback === "function") {
+                const { requestData, onSelectedCallback } = pendingRulesetRequest;
+                closeRulesetPickerModal();
+                onSelectedCallback(ruleset, requestData);
+            } else {
+                closeRulesetPickerModal();
+            }
+        });
+    });
+
+    const closeRulesetBtn = document.getElementById("close-ruleset-picker-btn");
+    const cancelRulesetBtn = document.getElementById("cancel-ruleset-picker-btn");
+    if (closeRulesetBtn) closeRulesetBtn.addEventListener("click", closeRulesetPickerModal);
+    if (cancelRulesetBtn) cancelRulesetBtn.addEventListener("click", closeRulesetPickerModal);
 
     // Wire Import Active Campaign Character into Vault
     const importFromCampBtn = document.getElementById("btn-import-campaign-to-vault");
@@ -3476,14 +4755,14 @@ document.addEventListener("DOMContentLoaded", () => {
 // Standalone function for Party Roster card "Save to Vault" button
 window.handleExportRosterCharToVault = async function(charName) {
     if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_campaign_character_to_vault) return;
-    if (!confirm(`Save '${charName}' permanently into the Character Vault as a Canonical Root hero?`)) return;
+    if (!(await showAetherConfirm(`Save '${charName}' permanently into the Character Vault as a Canonical Root hero?`, "Save to Vault", "Save Hero", false))) return;
     try {
         const res = await window.pywebview.api.save_campaign_character_to_vault(charName);
         if (res && res.status === "success") {
-            alert(`Hero '${charName}' has been successfully preserved in the Character Vault!`);
+            await showAetherAlert(`Hero '${charName}' has been successfully preserved in the Character Vault!`, "Character Saved");
             await refreshVaultModalUI();
         } else {
-            alert(res?.message || "Failed saving character to vault.");
+            await showAetherAlert(res?.message || "Failed saving character to vault.", "Vault Notice");
         }
     } catch (e) {
         console.error("[Vault] Error saving roster character to vault:", e);
@@ -3547,6 +4826,9 @@ async function refreshVaultModalUI() {
                     <button type="button" class="cyber-btn-small btn-vault-import" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);" title="Import into active campaign">
                         📥 Import
                     </button>
+                    <button type="button" class="cyber-btn-small btn-vault-edit" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="Edit character sheet in Character Editor">
+                        ✏️ Edit
+                    </button>
                     <button type="button" class="cyber-btn-small btn-vault-levelup" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="Level up hero">
                         ⬆️ Level
                     </button>
@@ -3561,6 +4843,9 @@ async function refreshVaultModalUI() {
     // Attach actions to dynamically created buttons
     container.querySelectorAll(".btn-vault-import").forEach(btn => {
         btn.addEventListener("click", () => handleVaultImport(btn.getAttribute("data-char-id")));
+    });
+    container.querySelectorAll(".btn-vault-edit").forEach(btn => {
+        btn.addEventListener("click", () => handleOpenEditCharacterModal(btn.getAttribute("data-char-id"), "vault"));
     });
     container.querySelectorAll(".btn-vault-levelup").forEach(btn => {
         btn.addEventListener("click", () => handleVaultLevelUp(btn.getAttribute("data-char-id")));
@@ -3613,26 +4898,49 @@ function openCrossoverAdjudicationModal(charData, targetGenre) {
 
     const genreLabel = SYSTEM_PRESET_LABELS[targetGenre] || targetGenre.replace(/_/g, " ").toUpperCase();
     const nativeGenreLabel = SYSTEM_PRESET_LABELS[charData.native_genre] || (charData.native_genre || "Heroic Fantasy");
-    const inv = charData.inventory || [];
+
+    const allItems = [];
+    const seen = new Set();
+
+    (charData.inventory || []).forEach(item => {
+        const itName = typeof item === "string" ? item.trim() : (item?.name || item?.item || item?.label || "").trim();
+        if (itName && !seen.has(itName.toLowerCase())) {
+            seen.add(itName.toLowerCase());
+            allItems.push({ name: itName, type: "Gear", original: item });
+        }
+    });
+
+    (charData.weapons || []).forEach(w => {
+        const wName = typeof w === "string" ? w.trim() : (w?.name || "").trim();
+        if (wName && !seen.has(wName.toLowerCase())) {
+            seen.add(wName.toLowerCase());
+            allItems.push({ name: wName, type: "Weapon", original: w });
+        }
+    });
 
     desc.innerHTML = `
         <strong>${escapeRpHtml(charData.name)}</strong> (${escapeRpHtml(nativeGenreLabel)}) is entering a <strong>${escapeRpHtml(genreLabel)}</strong> setting.<br>
-        ${inv.length} item(s) require resolution:
+        ${allItems.length} item(s) require resolution:
     `;
 
-    if (inv.length === 0) {
+    if (allItems.length === 0) {
         container.innerHTML = `
             <div style="color: #64748b; font-size: 12px; padding: 12px 4px; text-align: center;">
                 No physical items requiring cross-genre adjudication.
             </div>
         `;
     } else {
-        container.innerHTML = inv.map(item => {
-            const itName = item.name || "Item";
+        container.innerHTML = allItems.map(item => {
+            const itName = item.name;
+            const icon = item.type === "Weapon" ? "⚔️" : "🎒";
             return `
-                <div class="adjudication-row">
-                    <span class="item-name">${escapeRpHtml(itName)}</span>
-                    <select class="cyber-dropdown select-item-adjudication" data-item-name="${escapeRpHtml(itName)}">
+                <div class="adjudication-row" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        <span style="font-size: 0.85rem;">${icon}</span>
+                        <span class="item-name" style="font-weight: 600; color: #f1f5f9; font-size: 0.82rem;">${escapeRpHtml(itName)}</span>
+                        <span style="font-size: 0.68rem; color: #94a3b8; background: rgba(148, 163, 184, 0.15); padding: 1px 5px; border-radius: 3px;">${item.type}</span>
+                    </div>
+                    <select class="cyber-dropdown select-item-adjudication" data-item-name="${escapeRpHtml(itName)}" style="max-width: 280px; font-size: 0.78rem;">
                         <option value="quarantine">Move to Quarantined Stash (Dormant)</option>
                         <option value="transmute">Transmute to In-Genre Equivalent (Fair Spec)</option>
                         <option value="relic">Permit as Ancient Relic</option>
@@ -3704,7 +5012,7 @@ async function handleVaultLevelUp(charId) {
 }
 
 async function handleVaultDelete(charId) {
-    if (!confirm("Are you sure you want to delete this character from the vault?")) return;
+    if (!(await showAetherConfirm("Are you sure you want to delete this character from the vault?", "Delete Character", "Delete", true))) return;
     try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.delete_vault_character) {
             await window.pywebview.api.delete_vault_character(charId);

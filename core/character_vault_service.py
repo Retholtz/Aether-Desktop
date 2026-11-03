@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from core.logger import get_logger
+from core.parsers.spell_registry import sanitize_parsed_spells, sanitize_character_weapons, is_junk_spell
 
 logger = get_logger("CharacterVault")
 
@@ -32,7 +33,11 @@ RULESET_FAMILIES = {
     # Pathfinder 2E family
     "pathfinder_2e": "pathfinder_2e",
     "pathfinder": "pathfinder_2e",
+    "pathfinder_1e": "pathfinder_2e",
+    "pathfinder_society": "pathfinder_2e",
     "pf2e": "pathfinder_2e",
+    "pf1e": "pathfinder_2e",
+    "paizo": "pathfinder_2e",
 
     # Cyberpunk family
     "cyberpunk": "cyberpunk",
@@ -145,7 +150,13 @@ class CharacterVaultService:
             return None
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if data and "spells" in data and isinstance(data["spells"], list):
+                    if any(isinstance(s, str) and is_junk_spell(s) for s in data["spells"]):
+                        data["spells"] = sanitize_parsed_spells(data["spells"])
+                if data and "weapons" in data and isinstance(data["weapons"], list):
+                    data["weapons"] = sanitize_character_weapons(data["weapons"], data.get("spells"))
+                return data
         except Exception as e:
             logger.error(f"[VAULT] Failed reading character '{char_id}': {e}")
             return None
@@ -242,10 +253,11 @@ class CharacterVaultService:
             active_inv = []
             stash = forked_payload.setdefault("quarantined_stash", [])
             for item in forked_payload.get("inventory", []):
-                item_genre = item.get("genre", native_genre)
+                item_name = item.get("name", str(item)) if isinstance(item, dict) else str(item)
+                item_genre = item.get("genre", native_genre) if isinstance(item, dict) else native_genre
                 if item_genre != target_genre:
                     stash.append({
-                        "name": item.get("name"),
+                        "name": item_name,
                         "original_genre": item_genre,
                         "quarantine_reason": f"Dormant: Not functional in {target_genre} setting."
                     })
@@ -283,7 +295,8 @@ class CharacterVaultService:
                 parsed_characters = ttrpg_service._parse_character_from_document(
                     filename=filename,
                     extracted_text="",
-                    raw_bytes=content_bytes
+                    raw_bytes=content_bytes,
+                    ruleset_override=ruleset_override
                 )
             except Exception as e:
                 logger.warning(f"[VAULT] Failed parsing document via TTRPGService: {e}")
@@ -314,14 +327,74 @@ class CharacterVaultService:
             char_id = f"char_{clean_id_name}_root"
 
             # Determine ruleset
-            assigned_ruleset = ruleset_override or ch.get("native_system") or ch.get("ruleset") or ch.get("system_preset") or "dnd_5e"
-            assigned_genre = ch.get("native_genre") or ("cybernetic_action" if "cyber" in assigned_ruleset.lower() else "heroic_fantasy")
+            assigned_ruleset = ruleset_override or ch.get("ruleset") or ch.get("native_system") or "unknown"
+            sys_name = str(ch.get("system_name") or "").lower()
+
+            if any(w in sys_name for w in ("pathfinder", "paizo", "pf1e", "pf2e")) or any(w in assigned_ruleset.lower() for w in ("pathfinder", "paizo", "pf1e", "pf2e")):
+                assigned_ruleset = "pathfinder_2e"
+            elif any(w in sys_name for w in ("cthulhu", "coc")) or any(w in assigned_ruleset.lower() for w in ("cthulhu", "coc")):
+                assigned_ruleset = "call_of_cthulhu"
+            elif any(w in sys_name for w in ("cyberpunk", "edgerunner")) or any(w in assigned_ruleset.lower() for w in ("cyber", "cyberpunk")):
+                assigned_ruleset = "cyberpunk"
+            elif any(w in sys_name for w in ("d&d", "dnd", "5e")) or any(w in assigned_ruleset.lower() for w in ("dnd", "5e")):
+                assigned_ruleset = "dnd_5e"
+
+            if assigned_ruleset in ("unknown", "agnostic"):
+                attrs = ch.get("attributes") or ch.get("stats") or ch.get("ability_scores") or {}
+                if not attrs:
+                    attrs = {k: v for k, v in ch.items() if k in ("STR", "Strength", "DEX", "Dexterity", "CON", "Constitution", "INT", "Intelligence", "WIS", "Wisdom", "CHA", "Charisma", "REF", "TECH", "COOL", "BODY", "EMP", "SAN", "POW", "EDU")}
+                lower_arch = (ch.get("archetype") or ch.get("character_class") or ch.get("class") or "").lower()
+                feats_str = " ".join(ch.get("features_and_traits") or ch.get("features") or ch.get("cyberware") or []).lower()
+
+                dnd_classes = ("fighter", "wizard", "rogue", "cleric", "paladin", "barbarian", "bard", "druid", "ranger", "sorcerer", "warlock", "monk", "elf", "dwarf", "halfling")
+                cyber_roles = ("rockerboy", "solo", "netrunner", "tech", "medtech", "media", "exec", "lawman", "fixer", "nomad", "edgerunner")
+
+                if any(k in attrs for k in ("CMB", "CMD")) or "ancestry" in ch or "class_dc" in ch or any(w in feats_str for w in ("pathfinder", "paizo", "class dc", "hero points", "ancestry feat", "skill feat", "trapfinding")) or "pathfinder" in lower_arch or "ancestry" in lower_arch:
+                    assigned_ruleset = "pathfinder_2e"
+                elif any(k in attrs for k in ("REF", "TECH", "COOL", "EMP", "BODY", "MOVE", "LUCK", "WILL")) or any(w in lower_arch for w in cyber_roles) or "cyber" in feats_str:
+                    assigned_ruleset = "cyberpunk"
+                elif any(k in attrs for k in ("SAN", "POW", "EDU", "Sanity")) or "investigator" in lower_arch or "sanity" in feats_str:
+                    assigned_ruleset = "call_of_cthulhu"
+                elif any(k in attrs for k in ("STR", "Strength", "DEX", "Dexterity", "CON", "Constitution", "Wisdom", "Charisma")) or any(w in lower_arch for w in dnd_classes) or "spell" in feats_str:
+                    assigned_ruleset = "dnd_5e"
+
+            if assigned_ruleset == "unknown":
+                import base64
+                return {
+                    "status": "requires_ruleset_selection",
+                    "message": f"Could not determine ruleset for '{c_name}'. Please select which tabletop system this character belongs to.",
+                    "character": ch,
+                    "filename": filename,
+                    "base64_content": base64.b64encode(content_bytes).decode("utf-8")
+                }
+
+            if "cyber" in assigned_ruleset.lower():
+                assigned_genre = "cybernetic_action"
+                assigned_ruleset = "cyberpunk"
+            elif "cthulhu" in assigned_ruleset.lower():
+                assigned_genre = "modern_horror"
+                assigned_ruleset = "call_of_cthulhu"
+            elif "pathfinder" in assigned_ruleset.lower():
+                assigned_genre = "heroic_fantasy"
+                assigned_ruleset = "pathfinder_2e"
+            elif "dnd" in assigned_ruleset.lower() or "5e" in assigned_ruleset.lower():
+                assigned_genre = "heroic_fantasy"
+                assigned_ruleset = "dnd_5e"
+            else:
+                assigned_genre = ch.get("native_genre") or "custom"
+                assigned_ruleset = "agnostic"
 
             # Determine health with proper fallbacks and bounds clamping
-            max_hp = int(ch.get("max_health") or ch.get("max_hp") or ch.get("health") or 20)
+            is_coc = "cthulhu" in assigned_ruleset.lower() or "coc" in assigned_ruleset.lower()
+            max_hp = int(ch.get("max_health") or ch.get("max_hp") or ch.get("health") or (13 if is_coc else 20))
             cur_hp = int(ch.get("current_health") or ch.get("current_hp") or ch.get("health") or max_hp)
             cur_hp = max(0, min(max_hp, cur_hp))
-            guard_ac = int(ch.get("guard") or ch.get("armor_class") or ch.get("ac") or 10)
+            if is_coc:
+                guard_ac = int(ch.get("dodge") or ch.get("guard") or ch.get("armor_class") or 40)
+                guard_label = "Dodge Defense"
+            else:
+                guard_ac = int(ch.get("guard") or ch.get("armor_class") or ch.get("ac") or 10)
+                guard_label = "Armor Defense"
 
             raw_vitals = ch.get("vitals")
             if raw_vitals and isinstance(raw_vitals, dict) and "health" in raw_vitals:
@@ -333,7 +406,7 @@ class CharacterVaultService:
             else:
                 final_vitals = {
                     "health": {"current": cur_hp, "max": max(1, max_hp), "label": "Health"},
-                    "guard": {"current": guard_ac, "max": max(1, guard_ac), "label": "Armor Defense"}
+                    "guard": {"current": guard_ac, "max": max(1, guard_ac), "label": guard_label}
                 }
 
             feats = (
@@ -379,16 +452,18 @@ class CharacterVaultService:
                 "hit_dice": ch.get("hit_dice") or "1d8",
                 "saving_throws": ch.get("saving_throws") or {},
                 "currency": ch.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0},
-                "weapons": ch.get("weapons") or [],
+                "weapons": sanitize_character_weapons(ch.get("weapons") or [], ch.get("spells") or []),
                 "inventory": ch.get("inventory") or [],
                 "features_and_traits": feats,
                 "traits_and_abilities": feats,
-                "spells": ch.get("spells") or [],
+                "spells": sanitize_parsed_spells(ch.get("spells") or []),
                 "spellcasting_ability": ch.get("spellcasting_ability") or "",
                 "spell_save_dc": ch.get("spell_save_dc") or "",
                 "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
                 "passives": ch.get("passives") or {},
                 "senses": ch.get("senses") or "",
+                "defenses": ch.get("defenses") or ch.get("resistances") or "",
+                "resistances": ch.get("resistances") or ch.get("defenses") or "",
                 "initiative": ch.get("initiative") or "",
                 "proficiencies": ch.get("proficiencies") or "",
                 "proficiencies_armor": ch.get("proficiencies_armor") or "",
@@ -396,12 +471,19 @@ class CharacterVaultService:
                 "proficiencies_tools": ch.get("proficiencies_tools") or "",
                 "proficiencies_languages": ch.get("proficiencies_languages") or "",
                 "prof_bonus": ch.get("prof_bonus") or "+2",
+                "skills": ch.get("skills") or {},
                 "quarantined_stash": ch.get("quarantined_stash") or [],
                 "source_document": filename,
                 "updated_at": _utc_now_iso(),
                 "universal_core": u_core,
                 "native_system_data": n_data
             }
+            if "head_sp" in ch:
+                char_record["head_sp"] = ch["head_sp"]
+            if "body_sp" in ch:
+                char_record["body_sp"] = ch["body_sp"]
+            if "humanity" in ch:
+                char_record["humanity"] = ch["humanity"]
 
             self._save_character(char_record)
             saved_characters.append(char_record)
@@ -449,24 +531,56 @@ class CharacterVaultService:
                 tagged_inv.append({"name": s_item, "category": cat, "genre": genre, "status": "active"})
 
         raw_attrs = ch.get("attributes") or {}
-        m_val = ch.get("Might") or raw_attrs.get("Might") or raw_attrs.get("Strength") or 10
-        a_val = ch.get("Agility") or raw_attrs.get("Agility") or raw_attrs.get("Dexterity") or 10
-        v_val = ch.get("Vigor") or raw_attrs.get("Vigor") or raw_attrs.get("Constitution") or 10
-        i_val = ch.get("Intellect") or raw_attrs.get("Intellect") or raw_attrs.get("Intelligence") or 10
-        p_val = ch.get("Presence") or raw_attrs.get("Presence") or raw_attrs.get("Charisma") or raw_attrs.get("Wisdom") or 10
+        r_str = str(ch.get("ruleset") or ch.get("native_system") or "").lower()
+        is_cyber = "cyber" in r_str or any(k in raw_attrs for k in ("REF", "TECH", "COOL", "BODY"))
+        is_coc = "cthulhu" in r_str or "coc" in r_str or any(k in raw_attrs for k in ("SAN", "POW", "EDU", "SIZ"))
+
+        if is_cyber:
+            m_val = ch.get("Might") or raw_attrs.get("Might") or raw_attrs.get("BODY") or 6
+            a_val = ch.get("Agility") or raw_attrs.get("Agility") or max(raw_attrs.get("REF", 6), raw_attrs.get("DEX", 6))
+            v_val = ch.get("Vigor") or raw_attrs.get("Vigor") or raw_attrs.get("BODY") or 6
+            i_val = ch.get("Intellect") or raw_attrs.get("Intellect") or raw_attrs.get("INT") or 6
+            p_val = ch.get("Presence") or raw_attrs.get("Presence") or raw_attrs.get("COOL") or 6
+            norm_attrs = {
+                "might": min(100, max(10, int((m_val / 10.0) * 100))),
+                "agility": min(100, max(10, int((a_val / 10.0) * 100))),
+                "vigor": min(100, max(10, int((v_val / 10.0) * 100))),
+                "intellect": min(100, max(10, int((i_val / 10.0) * 100))),
+                "presence": min(100, max(10, int((p_val / 10.0) * 100)))
+            }
+        elif is_coc:
+            m_val = int(raw_attrs.get("STR") or raw_attrs.get("Strength") or ch.get("Might") or 50)
+            a_val = int(raw_attrs.get("DEX") or raw_attrs.get("Dexterity") or ch.get("Agility") or 50)
+            v_val = int(raw_attrs.get("CON") or raw_attrs.get("Constitution") or ch.get("Vigor") or 50)
+            i_val = int(raw_attrs.get("INT") or raw_attrs.get("Intelligence") or ch.get("Intellect") or 50)
+            p_val = int(raw_attrs.get("POW") or raw_attrs.get("APP") or raw_attrs.get("Charisma") or ch.get("Presence") or 50)
+            norm_attrs = {
+                "might": min(100, max(1, m_val)),
+                "agility": min(100, max(1, a_val)),
+                "vigor": min(100, max(1, v_val)),
+                "intellect": min(100, max(1, i_val)),
+                "presence": min(100, max(1, p_val))
+            }
+        else:
+            m_val = ch.get("Might") or raw_attrs.get("Might") or raw_attrs.get("Strength") or 10
+            a_val = ch.get("Agility") or raw_attrs.get("Agility") or raw_attrs.get("Dexterity") or 10
+            v_val = ch.get("Vigor") or raw_attrs.get("Vigor") or raw_attrs.get("Constitution") or 10
+            i_val = ch.get("Intellect") or raw_attrs.get("Intellect") or raw_attrs.get("Intelligence") or 10
+            p_val = ch.get("Presence") or raw_attrs.get("Presence") or raw_attrs.get("Charisma") or raw_attrs.get("Wisdom") or 10
+            norm_attrs = {
+                "might": min(100, max(10, int((m_val / 20.0) * 100))) if m_val <= 20 else min(100, m_val),
+                "agility": min(100, max(10, int((a_val / 20.0) * 100))) if a_val <= 20 else min(100, a_val),
+                "vigor": min(100, max(10, int((v_val / 20.0) * 100))) if v_val <= 20 else min(100, v_val),
+                "intellect": min(100, max(10, int((i_val / 20.0) * 100))) if i_val <= 20 else min(100, i_val),
+                "presence": min(100, max(10, int((p_val / 20.0) * 100))) if p_val <= 20 else min(100, p_val)
+            }
 
         return {
             "name": c_name,
             "player_name": ch.get("player_name") or "Player",
             "archetype": ch.get("archetype") or ch.get("class") or "Adventurer",
             "level": int(ch.get("level") or 1),
-            "normalized_attributes": {
-                "might": min(100, max(10, int((m_val / 20.0) * 100))) if m_val <= 20 else min(100, m_val),
-                "agility": min(100, max(10, int((a_val / 20.0) * 100))) if a_val <= 20 else min(100, a_val),
-                "vigor": min(100, max(10, int((v_val / 20.0) * 100))) if v_val <= 20 else min(100, v_val),
-                "intellect": min(100, max(10, int((i_val / 20.0) * 100))) if i_val <= 20 else min(100, i_val),
-                "presence": min(100, max(10, int((p_val / 20.0) * 100))) if p_val <= 20 else min(100, p_val)
-            },
+            "normalized_attributes": norm_attrs,
             "semantic_skills": ch.get("semantic_skills") or [],
             "tagged_inventory": tagged_inv,
             "tagged_traits": tagged_traits,
@@ -475,20 +589,66 @@ class CharacterVaultService:
 
     def _build_native_system_data(self, ch: Dict[str, Any]) -> Dict[str, Any]:
         ruleset = ch.get("ruleset") or ch.get("native_system") or "dnd_5e"
-        guard_val = ch.get("armor_class") or ch.get("guard") or 14
+        is_coc = "cthulhu" in ruleset.lower() or "coc" in ruleset.lower()
+        guard_val = ch.get("dodge") or ch.get("armor_class") or ch.get("guard") or (40 if is_coc else 14)
         vitals = ch.get("vitals") or {}
         hp_entry = vitals.get("health", {}) if isinstance(vitals, dict) else {}
-        cur_hp = hp_entry.get("current") or ch.get("current_health") or ch.get("health") or 20
-        max_hp = hp_entry.get("max") or ch.get("max_health") or 20
+        cur_hp = hp_entry.get("current") or ch.get("current_health") or ch.get("health") or (13 if is_coc else 20)
+        max_hp = hp_entry.get("max") or ch.get("max_health") or (13 if is_coc else 20)
 
         feats = ch.get("features_and_traits") or ch.get("traits_and_abilities") or ch.get("features") or []
+        raw_attrs = ch.get("attributes") or {}
+
+        if is_coc:
+            custom = ch.get("custom_meters") or {}
+            san_cur = custom.get("sanity", {}).get("current", 50) if isinstance(custom.get("sanity"), dict) else (ch.get("sanity") or 50)
+            luck_cur = custom.get("luck", {}).get("current", 50) if isinstance(custom.get("luck"), dict) else (ch.get("luck") or 50)
+            mp_cur = custom.get("magic_points", {}).get("current", 10) if isinstance(custom.get("magic_points"), dict) else (ch.get("magic_points") or 10)
+            move_val = custom.get("move_rate", {}).get("current", 8) if isinstance(custom.get("move_rate"), dict) else (ch.get("move_rate") or 8)
+
+            return {
+                "system_name": "call_of_cthulhu_7e",
+                "occupation": ch.get("archetype") or ch.get("class") or "Investigator",
+                "age": ch.get("age", 20),
+                "sex": ch.get("sex", ""),
+                "residence": ch.get("residence", ""),
+                "birthplace": ch.get("birthplace", ""),
+                "characteristics": {
+                    "STR": int(raw_attrs.get("STR", 50)),
+                    "CON": int(raw_attrs.get("CON", 50)),
+                    "SIZ": int(raw_attrs.get("SIZ", 50)),
+                    "DEX": int(raw_attrs.get("DEX", 50)),
+                    "APP": int(raw_attrs.get("APP", 50)),
+                    "INT": int(raw_attrs.get("INT", 50)),
+                    "POW": int(raw_attrs.get("POW", 50)),
+                    "EDU": int(raw_attrs.get("EDU", 50)),
+                    "Move": move_val
+                },
+                "vitals": {
+                    "hit_points": {"current": cur_hp, "max": max_hp},
+                    "sanity": {"current": san_cur, "max": 99},
+                    "luck": {"current": luck_cur, "max": 99},
+                    "magic_points": {"current": mp_cur, "max": int(raw_attrs.get("POW", 50)) // 5}
+                },
+                "combat": {
+                    "damage_bonus": ch.get("damage_bonus", "none"),
+                    "build": ch.get("build", 0),
+                    "dodge": int(ch.get("dodge") or int(raw_attrs.get("DEX", 40)) // 2)
+                },
+                "skills": ch.get("skills") or {},
+                "weapons": sanitize_character_weapons(ch.get("weapons") or [], ch.get("spells") or []),
+                "inventory": ch.get("inventory") or [],
+                "features_and_traits": feats,
+                "backstory": ch.get("backstory_details") or {}
+            }
+
         return {
             "system_name": ruleset,
             "class_level": ch.get("archetype") or ch.get("class") or "Adventurer",
             "armor_class": guard_val,
             "speed": ch.get("speed") or "30 ft.",
             "hit_points": {"current": cur_hp, "max": max_hp},
-            "ability_scores": ch.get("attributes") or {},
+            "ability_scores": raw_attrs,
             "saving_throws": ch.get("saving_throws") or {},
             "currency": ch.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0},
             "proficiencies": ch.get("proficiencies") or "",
@@ -515,8 +675,8 @@ class CharacterVaultService:
         char_id = f"char_{clean_id_name}_root"
 
         camp_meta = campaign_meta or {}
-        ruleset = camp_meta.get("system_preset") or camp_meta.get("ruleset") or character_data.get("native_system") or "dnd_5e"
-        genre = camp_meta.get("genre") or character_data.get("native_genre") or ("cybernetic_action" if "cyber" in ruleset.lower() else "heroic_fantasy")
+        ruleset = character_data.get("ruleset") or character_data.get("native_system") or camp_meta.get("system_preset") or camp_meta.get("ruleset") or "dnd_5e"
+        genre = character_data.get("native_genre") or ("cybernetic_action" if "cyber" in ruleset.lower() else ("modern_horror" if "cthulhu" in ruleset.lower() else camp_meta.get("genre", "heroic_fantasy")))
 
         char_record = json.loads(json.dumps(character_data))
         char_record["schema_version"] = "2.0"
@@ -531,6 +691,25 @@ class CharacterVaultService:
         char_record.setdefault("quarantined_stash", [])
         char_record["updated_at"] = _utc_now_iso()
 
+        is_coc = "cthulhu" in ruleset.lower() or "coc" in ruleset.lower()
+        max_hp = int(character_data.get("max_health") or character_data.get("max_hp") or character_data.get("health") or (13 if is_coc else 20))
+        cur_hp = int(character_data.get("current_health") or character_data.get("current_hp") or character_data.get("health") or max_hp)
+        guard_val = int(character_data.get("dodge") or character_data.get("guard") or character_data.get("armor_class") or (40 if is_coc else 10))
+        guard_label = "Dodge Defense" if is_coc else "Armor Defense"
+
+        raw_vitals = char_record.get("vitals")
+        if not raw_vitals or not isinstance(raw_vitals, dict) or "health" not in raw_vitals:
+            char_record["vitals"] = {
+                "health": {"current": cur_hp, "max": max(1, max_hp), "label": "Health"},
+                "guard": {"current": guard_val, "max": max(1, guard_val), "label": guard_label}
+            }
+        else:
+            if is_coc and raw_vitals.get("guard", {}).get("label") in ("Armor Defense", "AC", "Armor Class"):
+                raw_vitals["guard"]["label"] = "Dodge Defense"
+                if "dodge" in character_data:
+                    raw_vitals["guard"]["current"] = int(character_data["dodge"])
+                    raw_vitals["guard"]["max"] = int(character_data["dodge"])
+
         feats = (
             character_data.get("features_and_traits")
             or character_data.get("traits_and_abilities")
@@ -540,6 +719,14 @@ class CharacterVaultService:
         )
         char_record["features_and_traits"] = feats
         char_record["traits_and_abilities"] = feats
+        if "spells" in char_record and isinstance(char_record["spells"], list):
+            from core.parsers.spell_registry import sanitize_parsed_spells
+            char_record["spells"] = sanitize_parsed_spells(char_record["spells"])
+        if "weapons" in char_record and isinstance(char_record["weapons"], list):
+            char_record["weapons"] = sanitize_character_weapons(char_record["weapons"], char_record.get("spells"))
+        if "defenses" in character_data or "resistances" in character_data:
+            char_record["defenses"] = character_data.get("defenses") or character_data.get("resistances") or ""
+            char_record["resistances"] = character_data.get("resistances") or character_data.get("defenses") or ""
 
         # Ensure universal_core & native_system_data exist for schema 2.0
         if "universal_core" not in char_record:
@@ -636,10 +823,28 @@ class CharacterVaultService:
 
         inv = char.setdefault("inventory", [])
         stash = char.setdefault("quarantined_stash", [])
+        wpns = char.setdefault("weapons", [])
 
-        # Find in inventory
-        found_idx = next((i for i, it in enumerate(inv) if it.get("name", "").lower() == item_name.lower()), None)
-        item_data = inv.pop(found_idx) if found_idx is not None else {"name": item_name}
+        # Find in inventory or weapons (supports string or dict records)
+        def _get_item_name(x: Any) -> str:
+            if isinstance(x, dict):
+                return str(x.get("name") or x.get("item") or "").strip()
+            return str(x).strip()
+
+        target_name_lower = str(item_name).strip().lower()
+
+        found_idx = next((i for i, it in enumerate(inv) if _get_item_name(it).lower() == target_name_lower), None)
+        item_data: Dict[str, Any]
+        if found_idx is not None:
+            raw_item = inv.pop(found_idx)
+            item_data = raw_item if isinstance(raw_item, dict) else {"name": str(raw_item)}
+        else:
+            w_idx = next((i for i, w in enumerate(wpns) if _get_item_name(w).lower() == target_name_lower), None)
+            if w_idx is not None:
+                raw_w = wpns.pop(w_idx)
+                item_data = raw_w if isinstance(raw_w, dict) else {"name": str(raw_w)}
+            else:
+                item_data = {"name": item_name}
 
         if resolution == "quarantine":
             stash.append({
@@ -669,14 +874,63 @@ class CharacterVaultService:
         return {"status": "success", "character": char}
 
     def save_character(self, char_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Public method to save or upsert character data."""
-        if not char_data.get("id"):
-            base_name = re.sub(r'[^a-zA-Z0-9_]', '', char_data.get("name", "hero").lower())
+        """Public method to save or upsert character data in the Character Vault."""
+        char_id = char_data.get("id")
+        existing = self.get_character(char_id) if char_id else None
+        merged = json.loads(json.dumps(existing)) if existing else {
+            "schema_version": "2.0",
+            "is_root": True,
+            "parent_id": None,
+            "variant_label": "Canonical Root",
+            "quarantined_stash": []
+        }
+
+        # Merge new incoming data
+        merged.update(char_data)
+        if "spells" in merged and isinstance(merged["spells"], list):
+            from core.parsers.spell_registry import sanitize_parsed_spells
+            merged["spells"] = sanitize_parsed_spells(merged["spells"])
+        if "weapons" in merged and isinstance(merged["weapons"], list):
+            merged["weapons"] = sanitize_character_weapons(merged["weapons"], merged.get("spells"))
+        if not merged.get("id"):
+            base_name = re.sub(r'[^a-zA-Z0-9_]', '', merged.get("name", "hero").lower())
             now_str = _utc_now_iso().replace('-', '').replace(':', '').replace('.', '')[:14]
-            char_data["id"] = f"char_{base_name}_{now_str}"
-        char_data["updated_at"] = _utc_now_iso()
-        self._save_character(char_data)
-        return {"status": "success", "character": char_data}
+            merged["id"] = f"char_{base_name}_{now_str}"
+
+        # Ensure vitals structure is normalized
+        ruleset = merged.get("ruleset") or merged.get("native_system") or "dnd_5e"
+        is_coc = "cthulhu" in ruleset.lower() or "coc" in ruleset.lower()
+        max_hp = int(merged.get("max_health") or merged.get("hp_max") or merged.get("health") or (13 if is_coc else 20))
+        cur_hp = int(merged.get("current_health") or merged.get("hp_current") or max_hp)
+        cur_hp = max(0, min(max_hp, cur_hp))
+
+        if is_coc:
+            guard_val = int(merged.get("dodge") or merged.get("guard") or merged.get("armor_class") or 40)
+            guard_label = "Dodge Defense"
+        else:
+            guard_val = int(merged.get("guard") or merged.get("armor_class") or 10)
+            guard_label = "Armor Defense"
+
+        merged.setdefault("vitals", {})
+        merged["vitals"]["health"] = {"current": cur_hp, "max": max(1, max_hp), "label": "Health"}
+        merged["vitals"]["guard"] = {"current": guard_val, "max": max(1, guard_val), "label": guard_label}
+        merged["armor_class"] = guard_val
+
+        # Update ruleset label & genre
+        ruleset = merged.get("ruleset") or merged.get("native_system") or "dnd_5e"
+        merged["ruleset"] = ruleset
+        merged["ruleset_label"] = get_ruleset_display_label(ruleset)
+        if not merged.get("native_genre"):
+            merged["native_genre"] = "cybernetic_action" if "cyber" in ruleset.lower() else ("modern_horror" if "cthulhu" in ruleset.lower() else "heroic_fantasy")
+
+        # Rebuild Universal Core and Native System Data (Schema 2.0)
+        merged["universal_core"] = self._build_universal_core(merged)
+        merged["native_system_data"] = self._build_native_system_data(merged)
+        merged["updated_at"] = _utc_now_iso()
+
+        self._save_character(merged)
+        logger.info(f"[VAULT] Saved/updated character '{merged.get('name')}' ({merged['id']}) in Character Vault.")
+        return {"status": "success", "character": merged}
 
     def delete_character(self, char_id: str) -> bool:
         """Deletes character file from the vault."""
@@ -710,6 +964,12 @@ class CharacterVaultService:
     def _save_character(self, char_data: Dict[str, Any]):
         genre = char_data.get("native_genre") or char_data.get("current_genre")
         path = self._file_path(char_data["id"], genre=genre)
+        old_path = self._file_path(char_data["id"])
+        if old_path and os.path.exists(old_path) and os.path.abspath(old_path) != os.path.abspath(path):
+            try:
+                os.remove(old_path)
+            except Exception as e_rm:
+                logger.debug(f"[VAULT] Could not remove old file location '{old_path}': {e_rm}")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(char_data, f, indent=2)
