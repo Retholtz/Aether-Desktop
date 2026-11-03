@@ -16,12 +16,16 @@ def delegate_heavy_task(
     open_immediately: bool = False,
     execute_if_code: bool = True,
     paste_to_target: bool = False,
-    target_app: str = "chrome"
+    paste_to_active_doc: Optional[bool] = None,
+    target_app: str = "google docs",
+    **kwargs
 ) -> Dict[str, Any]:
     """Synchronous entrypoint for automation scripts delegating heavy reasoning to Gemini 4 Argon."""
     import json
     import os
     from tools.dispatcher import ToolDispatcher
+
+    should_paste = paste_to_target if paste_to_active_doc is None else bool(paste_to_active_doc)
 
     def _load_default_config() -> dict:
         try:
@@ -51,7 +55,7 @@ def delegate_heavy_task(
             category=category,
             open_immediately=open_immediately,
             execute_if_code=execute_if_code,
-            paste_to_active_doc=paste_to_target,
+            paste_to_active_doc=should_paste,
             target_app=target_app
         )
 

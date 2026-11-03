@@ -948,7 +948,7 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
             },
             "target_app": {
                 "type": "STRING",
-                "description": "The target application name for pasting (e.g. 'chrome', 'google docs', 'notepad', 'winword'). Defaults to 'chrome'."
+                "description": "The target application name for pasting (e.g. 'google docs', 'chrome', 'winword', 'notepad'). Defaults to 'google docs'."
             }
         },
         "required": ["task_type", "title", "instructions"]
@@ -972,7 +972,7 @@ PASTE_TO_DOCUMENT_DECLARATION = {
             },
             "target_app": {
                 "type": "STRING",
-                "description": "The target application name (e.g. 'chrome', 'google docs', 'winword', 'notepad'). Defaults to 'chrome'."
+                "description": "The target application name (e.g. 'google docs', 'chrome', 'winword', 'notepad'). Defaults to 'google docs'."
             }
         },
         "required": ["content_markdown"]
@@ -2429,7 +2429,12 @@ class ToolDispatcher:
                 open_immediately = bool(args.get("open_immediately", False))
                 execute_if_code = bool(args.get("execute_if_code", True))
                 paste_to_active_doc = bool(args.get("paste_to_active_doc", False))
-                target_app = str(args.get("target_app", "chrome")).strip() or "chrome"
+                target_app = str(args.get("target_app", "")).strip()
+                if not target_app or target_app.lower() in ("chrome", "browser"):
+                    if any(kw in instructions.lower() or kw in title.lower() for kw in ("google doc", "google docs", "docs", "doc")):
+                        target_app = "google docs"
+                    elif not target_app:
+                        target_app = "google docs"
 
                 result = await self.execute_heavy_task(
                     task_type=task_type,
@@ -2451,7 +2456,9 @@ class ToolDispatcher:
 
             elif fn_name == "paste_to_document":
                 content_markdown = str(args.get("content_markdown", "")).strip()
-                target_app = str(args.get("target_app", "chrome")).strip() or "chrome"
+                target_app = str(args.get("target_app", "")).strip() or "google docs"
+                if target_app.lower() in ("chrome", "browser"):
+                    target_app = "google docs"
                 if not content_markdown:
                     return {"status": "error", "message": "content_markdown cannot be empty."}
 
@@ -2726,17 +2733,24 @@ class ToolDispatcher:
                     kw in instructions.lower() or kw in title.lower()
                     for kw in ("doc", "google doc", "docs", "document canvas", "active doc", "paste")
                 )
+                effective_target = target_app
+                if not effective_target or effective_target.lower() in ("chrome", "browser"):
+                    if any(kw in instructions.lower() or kw in title.lower() for kw in ("google doc", "google docs", "docs", "doc")):
+                        effective_target = "google docs"
+                    elif not effective_target:
+                        effective_target = "google docs"
+
                 if should_paste:
                     try:
                         paste_res = await asyncio.to_thread(
-                            paste_markdown_to_target_app, markdown_content, app_name=target_app
+                            paste_markdown_to_target_app, markdown_content, app_name=effective_target
                         )
                         if paste_res.get("status") == "success":
-                            pasted_info = f" The draft was automatically pasted into {target_app}."
+                            pasted_info = f" The draft was automatically pasted into {effective_target}."
                             self.notify("chat_event", {
                                 "type": "tool",
                                 "name": "Document Paste",
-                                "content": f"📋 [PASTED] Draft ({len(markdown_content)} chars) pasted into {target_app} via HTML clipboard."
+                                "content": f"📋 [PASTED] Draft ({len(markdown_content)} chars) pasted into {effective_target} via HTML clipboard."
                             })
                     except Exception as pe:
                         logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
@@ -2745,7 +2759,7 @@ class ToolDispatcher:
                 jpeg_bytes = None
                 if is_pasted:
                     directive = (
-                        f"Draft '{title}' successfully generated via Tier 2 ({heavy_model}) and pasted into {target_app}.{pasted_info} "
+                        f"Draft '{title}' successfully generated via Tier 2 ({heavy_model}) and pasted into {effective_target}.{pasted_info} "
                         "Double-check with a quick capture_screen_snapshot to verify the text appears on screen, then deliver a warm, "
                         "crisp 1-to-2 sentence confirmation over voice."
                     )
@@ -2844,17 +2858,24 @@ class ToolDispatcher:
                     kw in instructions.lower() or kw in title.lower()
                     for kw in ("doc", "google doc", "docs", "document canvas", "active doc", "paste")
                 )
+                effective_target = target_app
+                if not effective_target or effective_target.lower() in ("chrome", "browser"):
+                    if any(kw in instructions.lower() or kw in title.lower() for kw in ("google doc", "google docs", "docs", "doc")):
+                        effective_target = "google docs"
+                    elif not effective_target:
+                        effective_target = "google docs"
+
                 if should_paste:
                     try:
                         paste_res = await asyncio.to_thread(
-                            paste_markdown_to_target_app, markdown_content, app_name=target_app
+                            paste_markdown_to_target_app, markdown_content, app_name=effective_target
                         )
                         if paste_res.get("status") == "success":
-                            pasted_info = f" The formatted document with rich tables was automatically pasted into {target_app}."
+                            pasted_info = f" The formatted document with rich tables was automatically pasted into {effective_target}."
                             self.notify("chat_event", {
                                 "type": "tool",
                                 "name": "Document Paste",
-                                "content": f"📋 [PASTED] Full formatted document ({len(markdown_content)} chars) pasted into {target_app} via HTML clipboard."
+                                "content": f"📋 [PASTED] Full formatted document ({len(markdown_content)} chars) pasted into {effective_target} via HTML clipboard."
                             })
                     except Exception as pe:
                         logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
@@ -2863,7 +2884,7 @@ class ToolDispatcher:
                 jpeg_bytes = None
                 if is_pasted:
                     directive = (
-                        f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and pasted into {target_app}.{pasted_info} "
+                        f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and pasted into {effective_target}.{pasted_info} "
                         "Double-check with a quick capture_screen_snapshot to verify the content appears on screen, then deliver a crisp "
                         "2-to-3 sentence conversational executive summary of the key findings over voice."
                     )

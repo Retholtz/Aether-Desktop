@@ -352,6 +352,26 @@ class TestClipboardUtilities(unittest.TestCase):
             mock_nav.assert_called_with("https://docs.new")
             mock_click.assert_called_once()
 
+    def test_paste_markdown_auto_navigates_when_target_app_is_chrome_and_docs_not_open(self):
+        """Verifies paste_markdown_to_target_app auto-navigates to docs.new when target_app is generic chrome."""
+        from tools.clipboard import paste_markdown_to_target_app
+        # First lookup for "google docs" returns None; second lookup after nav returns hwnd
+        call_seq = [None, 88888]
+        def fake_find_hwnd(*args, **kwargs):
+            return call_seq.pop(0) if call_seq else 88888
+
+        with patch("tools.clipboard.set_clipboard_html", return_value=True), \
+             patch("tools.os_controls.find_hwnd_by_query", side_effect=fake_find_hwnd), \
+             patch("tools.os_controls.navigate_browser") as mock_nav, \
+             patch("tools.os_controls.focus_window", return_value=True), \
+             patch("tools.gui_primitives.GuiPrimitivesController.click") as mock_click, \
+             patch("tools.gui_primitives.GuiPrimitivesController.press_key", return_value={}), \
+             patch("time.sleep", return_value=None):
+            res = paste_markdown_to_target_app("# Report", target_app="chrome")
+            self.assertEqual(res["status"], "success")
+            mock_nav.assert_called_with("https://docs.new")
+            mock_click.assert_called_once()
+
 
 class TestCompatibilityModules(unittest.TestCase):
     def test_heavy_reasoning_compatibility(self):

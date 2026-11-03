@@ -154,10 +154,13 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res_char_doc["status"], "success")
         self.assertIn("Seraphina", res_char_doc["imported_characters"])
 
-        # 3. List documents
+        # 3. List documents (character sheets removed after import; only rulesets/campaigns remain)
         listed = self.service.list_campaign_documents()
         self.assertEqual(listed["status"], "success")
-        self.assertEqual(len(listed["documents"]), 2)
+        self.assertEqual(len(listed["documents"]), 1)
+        doc_filenames = [d["filename"] for d in listed["documents"]]
+        self.assertIn("house_rules.md", doc_filenames)
+        self.assertNotIn("seraphina_sheet.json", doc_filenames)
 
         # 4. Read single document and read 'all'
         read_single = self.service.read_campaign_document("house_rules.md")
@@ -166,9 +169,9 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
 
         read_all = self.service.read_campaign_document("all")
         self.assertEqual(read_all["status"], "success")
-        self.assertEqual(read_all["document_count"], 2)
+        self.assertEqual(read_all["document_count"], 1)
         self.assertIn("house_rules.md", read_all["content"])
-        self.assertIn("seraphina_sheet.json", read_all["content"])
+        self.assertNotIn("seraphina_sheet.json", read_all["content"])
 
         # 5. Verify GM context prompt includes campaign, characters, and uploaded docs
         gm_prompt = self.service.build_gm_context_prompt()
@@ -179,7 +182,7 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         # 6. Delete document
         del_res = self.service.delete_campaign_document("house_rules.md")
         self.assertEqual(del_res["status"], "success")
-        self.assertEqual(len(self.service.list_campaign_documents()["documents"]), 1)
+        self.assertEqual(len(self.service.list_campaign_documents()["documents"]), 0)
 
     def test_refresh_campaign_files_and_characters(self):
         # Drop a Markdown character sheet directly into the campaign's files directory
@@ -530,11 +533,15 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("The Lost Sanctum", camp["title"])
         self.assertEqual(camp["party_count"], 1)
 
-        # Characters imported into state
+        # Characters imported into state, character sheet removed (one-and-done)
         state = self.service.active_state
         self.assertIn("documents", state)
-        self.assertIn("eldrin_sheet.json", state["documents"])
+        self.assertNotIn("eldrin_sheet.json", state["documents"])
         self.assertIn("The_Lost_Sanctum_Adventure.md", state["documents"])
+
+        files_dir = os.path.join(self.service.data_dir, camp["id"], "files")
+        self.assertFalse(os.path.exists(os.path.join(files_dir, "eldrin_sheet.json")))
+        self.assertTrue(os.path.exists(os.path.join(files_dir, "The_Lost_Sanctum_Adventure.md")))
 
         # Character roster check
         chars = list(state["characters"].values())
@@ -1048,6 +1055,104 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         bridge_res = GuiBridge.add_ttrpg_character(mock_bridge, edit_payload)
         self.assertEqual(bridge_res["status"], "success")
         mock_bridge._on_engine_event.assert_called_with("ttrpg_state_updated", bridge_res)
+
+    def test_character_sheet_one_and_done_import_and_removal(self):
+        """
+        Verify that uploaded character sheets are imported into the Party Roster
+        and immediately removed from both state['documents'] and disk (files/),
+        preserving evolved character stats across campaign reloads and read_campaign_document('all').
+        """
+        # 1. Create a campaign
+        camp_res = self.service.create_campaign(
+            title="Grim Hollow Saga",
+            system_preset="dnd_5e",
+            campaign_id="grim_hollow"
+        )
+        cid = camp_res["campaign"]["id"]
+
+        # 2. Add an adventure module
+        mod_res = self.service.add_campaign_document(
+            filename="act1_ruins.md",
+            content_bytes=b"# Act 1: The Sunken Ruins\nA gloomy mist envelops the party.",
+            doc_category="campaign",
+            campaign_id=cid
+        )
+        self.assertEqual(mod_res["status"], "success")
+
+        # 3. Add a character sheet JSON (or PDF/text)
+        sheet_data = {
+            "name": "Morgath Stonefist",
+            "character_class": "Fighter",
+            "level": 1,
+            "armor_class": 16,
+            "hp_max": 20,
+            "hp_current": 20,
+            "stats": {"Strength": 16, "Constitution": 14}
+        }
+        sheet_bytes = json.dumps(sheet_data).encode("utf-8")
+
+        res_upload = self.service.add_campaign_document(
+            filename="morgath_sheet.json",
+            content_bytes=sheet_bytes,
+            doc_category="character_sheet",
+            campaign_id=cid
+        )
+
+        self.assertEqual(res_upload["status"], "success")
+        self.assertTrue(res_upload.get("removed_after_import"))
+        self.assertIn("imported", res_upload.get("message", "").lower())
+        self.assertIn("removed", res_upload.get("message", "").lower())
+
+        # 4. Verify character is in Party Roster
+        state = self.service.active_state
+        chars = state.get("characters", {})
+        char_obj = next((c for c in chars.values() if c.get("name") == "Morgath Stonefist"), None)
+        self.assertIsNotNone(char_obj)
+        self.assertEqual(char_obj["name"], "Morgath Stonefist")
+        self.assertEqual(char_obj["vitals"]["health"]["max"], 20)
+        char_id = char_obj["id"]
+
+        # 5. Verify character sheet is NOT in documents
+        self.assertNotIn("morgath_sheet.json", state.get("documents", {}))
+        self.assertIn("act1_ruins.md", state.get("documents", {}))
+
+        # 6. Verify file does not exist on disk
+        files_dir = os.path.join(self.service.data_dir, cid, "files")
+        self.assertFalse(os.path.exists(os.path.join(files_dir, "morgath_sheet.json")))
+        self.assertTrue(os.path.exists(os.path.join(files_dir, "act1_ruins.md")))
+
+        # 7. Verify read_campaign_document('all') only returns adventure/rules, not sheet
+        all_docs = self.service.read_campaign_document("all", campaign_id=cid)
+        self.assertEqual(all_docs["status"], "success")
+        self.assertIn("act1_ruins.md", all_docs["content"])
+        self.assertNotIn("morgath_sheet.json", all_docs["content"])
+
+        # 8. Evolve character stats (Level 3, HP 35, XP 1800, Blessed condition)
+        evolve_payload = {
+            "id": char_id,
+            "name": "Morgath Stonefist",
+            "level": 3,
+            "experience_points": 1800,
+            "max_health": 35,
+            "health": 32,
+            "conditions": ["Blessed"],
+            "campaign_id": cid
+        }
+        res_evolve = self.service.add_character(evolve_payload)
+        self.assertEqual(res_evolve["status"], "success")
+
+        # 9. Reload campaign state
+        self.service.load_active_campaign_state()
+        reloaded_state = self.service.active_state
+
+        # 10. Verify evolved character stats remain untouched and NOT wiped
+        reloaded_char = reloaded_state["characters"][char_id]
+        self.assertEqual(reloaded_char["level"], 3)
+        self.assertEqual(reloaded_char["experience_points"], 1800)
+        self.assertEqual(reloaded_char["vitals"]["health"]["max"], 35)
+        self.assertEqual(reloaded_char["vitals"]["health"]["current"], 32)
+        self.assertIn("Blessed", reloaded_char["conditions"])
+        self.assertNotIn("morgath_sheet.json", reloaded_state.get("documents", {}))
 
 
 if __name__ == "__main__":

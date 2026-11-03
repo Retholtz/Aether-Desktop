@@ -6,6 +6,7 @@ campaign editing, and DM/GM document grounding (rulesets, campaigns, character s
 import os
 import re
 import json
+import copy
 import base64
 import secrets
 import difflib
@@ -170,27 +171,23 @@ class TTRPGService:
                     self.active_state.setdefault("discovered_clues", [])
                     self.active_state.setdefault("campaign_synopsis", {})
 
-                    # Self-healing: if any characters have empty weapons or inventory, hydrate from sheet files on disk
-                    chars = self.active_state.get("characters", {})
-                    needs_hydration = any(not c.get("weapons") and not c.get("inventory") for c in chars.values())
-                    if needs_hydration and active_id:
+                    # Ensure no lingering character sheets remain in documents map or files dir (one-and-done)
+                    docs = self.active_state.get("documents", {})
+                    stale_sheets = [fname for fname, d in docs.items() if d.get("category") == "character_sheet"]
+                    if stale_sheets and active_id:
                         fdir = os.path.join(self.data_dir, active_id, "files")
-                        if os.path.exists(fdir):
-                            for fname in os.listdir(fdir):
-                                if fname.lower().endswith(".pdf") and not any(k in fname.lower() for k in ("rule", "basic", "module", "campaign", "handbook")):
-                                    fpath = os.path.join(fdir, fname)
-                                    try:
-                                        with open(fpath, "rb") as bf:
-                                            b_data = bf.read()
-                                        txt = ProjectService.extract_file_text(fpath)
-                                        parsed = self._parse_character_from_document(fname, txt, b_data)
-                                        if parsed:
-                                            for p_char in parsed:
-                                                self.upsert_character_from_sheet(p_char, filename=fname)
-                                    except Exception as e_hyd:
-                                        logger.debug(f"[TTRPG] Character hydration skip for {fname}: {e_hyd}")
+                        for s_name in stale_sheets:
+                            docs.pop(s_name, None)
+                            s_path = os.path.join(fdir, s_name)
+                            if os.path.exists(s_path):
+                                try:
+                                    os.remove(s_path)
+                                except Exception:
+                                    pass
+                        self.save_active_campaign_state()
 
                     # Ensure all character vitals have valid clamped current health (current <= max)
+                    chars = self.active_state.get("characters", {})
                     for c in chars.values():
                         h = c.get("vitals", {}).get("health")
                         if h and isinstance(h, dict) and "max" in h and "current" in h:
@@ -560,15 +557,58 @@ class TTRPGService:
         # Check if document is a character sheet (auto-detect via form fields, JSON, OCR, or category)
         imported_characters: List[str] = []
         parsed_list = self._parse_character_from_document(safe_name, extracted_text, content_bytes)
-        if parsed_list:
-            cat = "character_sheet"
-            doc_meta["category"] = "character_sheet"
-            for ch_payload in parsed_list:
-                c_name = (ch_payload.get("name") or "").strip()
-                if c_name:
-                    res_upsert = self.upsert_character_from_sheet(ch_payload, filename=safe_name, target_state=state_obj)
-                    if res_upsert.get("status") == "success":
-                        imported_characters.append(c_name)
+        is_sheet = (cat == "character_sheet") or bool(parsed_list)
+
+        if is_sheet:
+            if parsed_list:
+                for ch_payload in parsed_list:
+                    c_name = (ch_payload.get("name") or "").strip()
+                    if c_name:
+                        res_upsert = self.upsert_character_from_sheet(ch_payload, filename=safe_name, target_state=state_obj)
+                        if res_upsert.get("status") == "success":
+                            imported_characters.append(c_name)
+            elif cat == "character_sheet":
+                # Fallback: if category was explicitly character_sheet but parser returned empty list
+                fallback_name = os.path.splitext(safe_name)[0].replace("_", " ").title()
+                res_add = self.add_character({
+                    "name": fallback_name,
+                    "archetype": "Adventurer",
+                    "ruleset": (self.manifest.get("campaigns", {}).get(cid, {}).get("system_preset")) or "dnd_5e"
+                }, target_state=state_obj)
+                if res_add.get("status") == "success":
+                    imported_characters.append(fallback_name)
+
+            # ONE AND DONE: Remove the character sheet file from disk and do NOT track in documents map.
+            # The campaign document list strictly houses the campaign adventure module and rulesets/notes.
+            docs_map.pop(safe_name, None)
+            if os.path.exists(target_path):
+                try:
+                    os.remove(target_path)
+                except Exception as e_rm:
+                    logger.warning(f"[TTRPG] Could not remove imported character sheet '{target_path}': {e_rm}")
+
+            if cid in self.manifest.get("campaigns", {}):
+                self.manifest["campaigns"][cid]["party_count"] = len(state_obj.get("characters", {}))
+                self.save_manifest()
+
+            if cid == self.manifest.get("active_campaign"):
+                self.save_active_campaign_state()
+            else:
+                state_path = os.path.join(self.data_dir, cid, "state.json")
+                os.makedirs(os.path.dirname(state_path), exist_ok=True)
+                with open(state_path, "w", encoding="utf-8") as f:
+                    json.dump(state_obj, f, indent=2)
+
+            logger.info(f"[TTRPG] Character sheet '{safe_name}' imported into party roster ({imported_characters}) and removed from file library (one-and-done).")
+            return {
+                "status": "success",
+                "message": f"Character sheet '{safe_name}' successfully imported to Party Roster ({', '.join(imported_characters)}) and removed from file library.",
+                "document": None,
+                "documents": docs_map,
+                "imported_characters": imported_characters,
+                "removed_after_import": True,
+                "state": self.active_state
+            }
 
         if cid == self.manifest.get("active_campaign"):
             self.save_active_campaign_state()
@@ -700,11 +740,30 @@ class TTRPGService:
 
         prof_lang = _clean(fields.get("ProficienciesLang"))
         prof_bonus = _clean(fields.get("ProfBonus")) or "+2"
+
+        # Parse sectioned Proficiencies & Training (Armor, Weapons, Tools, Languages)
+        prof_armor = _clean(fields.get("ArmorProficiencies") or fields.get("ProfArmor"))
+        prof_weapons = _clean(fields.get("WeaponProficiencies") or fields.get("ProfWeapons"))
+        prof_tools = _clean(fields.get("ToolProficiencies") or fields.get("ProfTools"))
+        prof_languages = _clean(fields.get("Languages") or fields.get("LanguagesKnown"))
+
+        if prof_lang and not (prof_armor or prof_weapons or prof_tools or prof_languages):
+            norm_pl = prof_lang.replace(r"\n", "\n")
+            armor_m = re.search(r'===\s*ARMOR\s*===\s*\n?([^\n=]+)', norm_pl, re.IGNORECASE)
+            wpn_m = re.search(r'===\s*WEAPONS\s*===\s*\n?([^\n=]+)', norm_pl, re.IGNORECASE)
+            tool_m = re.search(r'===\s*TOOLS\s*===\s*\n?([^\n=]+)', norm_pl, re.IGNORECASE)
+            lang_m = re.search(r'===\s*LANGUAGES\s*===\s*\n?([^\n=]+)', norm_pl, re.IGNORECASE)
+            if armor_m: prof_armor = armor_m.group(1).strip()
+            if wpn_m: prof_weapons = wpn_m.group(1).strip()
+            if tool_m: prof_tools = tool_m.group(1).strip()
+            if lang_m: prof_languages = lang_m.group(1).strip()
+
         passives = {
-            "perception": _int_val(fields.get("Passive1"), 10 + (intellect_val - 10)//2),
+            "perception": _int_val(fields.get("Passive1"), 10 + (wis_val - 10)//2),
             "insight": _int_val(fields.get("Passive2"), 10 + (wis_val - 10)//2),
             "investigation": _int_val(fields.get("Passive3"), 10 + (intellect_val - 10)//2)
         }
+        senses_str = _clean(fields.get("AdditionalSenses") or fields.get("Senses") or fields.get("Vision"))
 
         # Initiative
         raw_init = _clean(fields.get("Initiative") or fields.get("Initiative "))
@@ -714,9 +773,67 @@ class TTRPGService:
             init_val = (agility_val - 10) // 2
         init_str = f"+{init_val}" if init_val >= 0 else str(init_val)
 
-        # Features & Traits
-        features_raw = _clean(fields.get("Features and Traits") or fields.get("Features and Traits2") or fields.get("Features_and_Traits") or fields.get("Features"))
-        features_list = [f.strip() for f in features_raw.splitlines() if f.strip()] if features_raw else []
+        # Features & Traits (Supporting D&D Beyond columns, WotC fillable, and generic sheets)
+        raw_feat_sources = [
+            fields.get("FeaturesTraits1"),
+            fields.get("FeaturesTraits2"),
+            fields.get("Features and Traits"),
+            fields.get("Features and Traits2"),
+            fields.get("Features_and_Traits"),
+            fields.get("FeaturesTraits"),
+            fields.get("Features"),
+            fields.get("Feats"),
+            fields.get("Traits"),
+            fields.get("Special Abilities")
+        ]
+
+        features_list: List[str] = []
+        seen_feat_names = set()
+
+        for raw_src in raw_feat_sources:
+            if not raw_src:
+                continue
+            clean_src = str(raw_src).strip()
+            if not clean_src:
+                continue
+
+            if "*" in clean_src:
+                blocks = re.split(r'\n(?=\*\s+)', clean_src)
+                for blk in blocks:
+                    blk = blk.strip()
+                    if not blk:
+                        continue
+                    if blk.startswith("*"):
+                        lines = [l.strip() for l in blk.splitlines() if l.strip()]
+                        hdr = lines[0].lstrip("*").strip()
+                        # Clean out rulebook source tags (e.g. • PHB-2024 91, \200 PHB-2024)
+                        clean_hdr = re.sub(r'[\u2022\u200b\x80\xa0\-\s]*(?:PHB|DMG|XGE|TCE|BR|MM)[\w\s\-\d]*', '', hdr, flags=re.IGNORECASE).strip()
+                        clean_hdr = clean_hdr.rstrip(":-• ").strip()
+                        if not clean_hdr or len(clean_hdr) < 2:
+                            continue
+
+                        body_lines = []
+                        for l in lines[1:]:
+                            if l.startswith("===") and l.endswith("==="):
+                                continue
+                            if re.match(r'^\|\s*\d+', l):
+                                body_lines.append(f"({l.lstrip('|').strip()})")
+                            else:
+                                body_lines.append(l)
+                        body_desc = " ".join(body_lines).strip()
+                        feat_str = f"{clean_hdr}: {body_desc}" if body_desc else clean_hdr
+                        feat_key = clean_hdr.lower()
+                        if feat_key not in seen_feat_names:
+                            seen_feat_names.add(feat_key)
+                            features_list.append(feat_str)
+            else:
+                for line in clean_src.splitlines():
+                    line = line.strip().lstrip("-•* ")
+                    if line and not (line.startswith("===") and line.endswith("===")):
+                        feat_key = line.lower()
+                        if feat_key not in seen_feat_names:
+                            seen_feat_names.add(feat_key)
+                            features_list.append(line)
 
         # Skills & Proficiencies
         skill_field_pairs = [
@@ -733,17 +850,35 @@ class TTRPGService:
             if s_val:
                 skills_dict[s_label] = s_val
 
-        # Spells & Cantrips
+        # Spells & Cantrips (Extract numbered D&D Beyond fields and generic spell text)
         spells_list: List[str] = []
+        for i in range(50):
+            sn = _clean(fields.get(f"SpellName{i}") or fields.get(f"SpellName {i}") or fields.get(f"Spell {i}"))
+            if sn and sn not in spells_list:
+                spells_list.append(sn)
+
         for k, v in fields.items():
             k_lower = k.lower()
-            if ("spell" in k_lower or "cantrip" in k_lower) and v:
+            if ("spell" in k_lower or "cantrip" in k_lower) and not k_lower.startswith(("spellcasting", "spellatk", "spellsavedc", "spellattack", "spellsource", "castingtime", "prepared")):
                 clean_v = _clean(v)
                 if clean_v and len(clean_v) > 2 and not clean_v.isdigit() and clean_v not in ("Yes", "Off", "No", "Prepared"):
                     for s_line in clean_v.splitlines():
                         s_name = s_line.strip().lstrip("-•* ")
                         if s_name and len(s_name) > 2 and s_name not in spells_list:
                             spells_list.append(s_name)
+
+        spell_ability = _clean(fields.get("spellCastingAbility0") or fields.get("SpellcastingAbility") or fields.get("SpellAbility") or "")
+        spell_save_dc = _clean(fields.get("spellSaveDC0") or fields.get("SpellSaveDC") or "")
+        spell_atk_bonus = _clean(fields.get("spellAtkBonus0") or fields.get("SpellAttackBonus") or fields.get("SpellAtkBonus") or "")
+
+        # Roleplay / Narrative Background
+        backstory = _clean(fields.get("Backstory") or fields.get("BackgroundHistory") or "")
+        personality = _clean(fields.get("PersonalityTraits ") or fields.get("PersonalityTraits") or fields.get("Personality") or "")
+        ideals = _clean(fields.get("Ideals") or "")
+        bonds = _clean(fields.get("Bonds") or "")
+        flaws = _clean(fields.get("Flaws") or "")
+        appearance = _clean(fields.get("Appearance") or "")
+        allies = _clean(fields.get("AlliesOrganizations") or fields.get("Allies") or "")
 
         custom_meters = {
             "hit_dice": {"current": char_level, "max": char_level, "label": f"Hit Dice ({hit_dice})"},
@@ -812,12 +947,27 @@ class TTRPGService:
             "weapons": weapons,
             "inventory": inventory,
             "proficiencies": prof_lang,
+            "proficiencies_armor": prof_armor,
+            "proficiencies_weapons": prof_weapons,
+            "proficiencies_tools": prof_tools,
+            "proficiencies_languages": prof_languages,
             "prof_bonus": prof_bonus,
             "passives": passives,
+            "senses": senses_str,
             "initiative": init_str,
             "features_and_traits": features_list,
             "skills": skills_dict,
-            "spells": spells_list
+            "spells": spells_list,
+            "spellcasting_ability": spell_ability,
+            "spell_save_dc": spell_save_dc,
+            "spell_attack_bonus": spell_atk_bonus,
+            "backstory": backstory,
+            "personality_traits": personality,
+            "ideals": ideals,
+            "bonds": bonds,
+            "flaws": flaws,
+            "appearance": appearance,
+            "allies": allies
         }
 
     def _parse_character_with_gemini(self, filename: str, raw_bytes: bytes) -> Optional[Dict[str, Any]]:
@@ -1127,21 +1277,42 @@ Respond ONLY with valid JSON."""
                 existing["archetype"] = ch_payload["archetype"]
             existing["is_player"] = bool(ch_payload.get("is_player", existing.get("is_player", True)))
 
-            max_hp = max(1, int(ch_payload.get("max_health", existing.get("vitals", {}).get("health", {}).get("max", 25))))
-            cur_hp = int(ch_payload.get("current_health", max_hp))
+            # Protect evolved character data: do not downgrade Level, XP, or Max HP
+            cur_level = self._safe_int(existing.get("level"), 1)
+            sheet_level = self._safe_int(ch_payload.get("level"), 1)
+            existing["level"] = max(cur_level, sheet_level)
+
+            cur_xp = self._safe_int(existing.get("experience_points"), 0)
+            sheet_xp = self._safe_int(ch_payload.get("experience_points"), 0)
+            existing["experience_points"] = max(cur_xp, sheet_xp)
+
+            cur_max_hp = self._safe_int(existing.get("vitals", {}).get("health", {}).get("max"), 25)
+            sheet_max_hp = self._safe_int(ch_payload.get("max_health"), 0)
+            max_hp = max(cur_max_hp, sheet_max_hp) if sheet_max_hp > 0 else cur_max_hp
+
+            # Preserve current health modifications unless sheet explicitly specifies otherwise
+            cur_hp = self._safe_int(existing.get("vitals", {}).get("health", {}).get("current"), max_hp)
+            if "current_health" in ch_payload and ch_payload["current_health"] is not None:
+                sheet_cur_hp = self._safe_int(ch_payload["current_health"], cur_hp)
+                cur_hp = max(0, min(max_hp, sheet_cur_hp))
             cur_hp = max(0, min(max_hp, cur_hp))
-            guard_val = int(ch_payload.get("guard", existing.get("vitals", {}).get("guard", {}).get("max", 14)))
+
+            guard_val = self._safe_int(
+                ch_payload.get("guard") or ch_payload.get("armor_class"),
+                self._safe_int(existing.get("vitals", {}).get("guard", {}).get("max") or existing.get("armor_class"), 14)
+            )
 
             existing.setdefault("vitals", {})
             existing["vitals"]["health"] = {"current": cur_hp, "max": max_hp, "label": "Health"}
             existing["vitals"]["guard"] = {"current": guard_val, "max": guard_val, "label": "Armor Defense"}
+            existing["armor_class"] = guard_val
 
             existing.setdefault("attributes", {})
             for attr in ("Might", "Agility", "Vigor", "Intellect", "Presence", "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"):
-                if attr in ch_payload:
-                    existing["attributes"][attr] = int(ch_payload[attr])
-                elif "attributes" in ch_payload and attr in ch_payload["attributes"]:
-                    existing["attributes"][attr] = int(ch_payload["attributes"][attr])
+                if attr in ch_payload and ch_payload[attr] is not None:
+                    existing["attributes"][attr] = self._safe_int(ch_payload[attr], existing["attributes"].get(attr, 10))
+                elif "attributes" in ch_payload and isinstance(ch_payload["attributes"], dict) and attr in ch_payload["attributes"]:
+                    existing["attributes"][attr] = self._safe_int(ch_payload["attributes"][attr], existing["attributes"].get(attr, 10))
 
             if ch_payload.get("ruleset"):
                 existing["ruleset"] = ch_payload["ruleset"]
@@ -1157,36 +1328,38 @@ Respond ONLY with valid JSON."""
                 existing["speed"] = ch_payload["speed"]
             if ch_payload.get("hit_dice"):
                 existing["hit_dice"] = ch_payload["hit_dice"]
-            if ch_payload.get("armor_class"):
-                existing["armor_class"] = int(ch_payload["armor_class"])
-            if "temp_hp" in ch_payload:
-                existing["temp_hp"] = int(ch_payload["temp_hp"])
+            if "temp_hp" in ch_payload and ch_payload["temp_hp"] is not None:
+                existing["temp_hp"] = self._safe_int(ch_payload["temp_hp"], 0)
 
             if ch_payload.get("custom_meters"):
                 existing.setdefault("custom_meters", {}).update(ch_payload["custom_meters"])
 
-            if "level" in ch_payload:
-                existing["level"] = int(ch_payload["level"])
-            if "experience_points" in ch_payload:
-                existing["experience_points"] = int(ch_payload["experience_points"])
-            if "weapons" in ch_payload and ch_payload["weapons"]:
+            if ch_payload.get("weapons"):
                 existing["weapons"] = ch_payload["weapons"]
-            if "inventory" in ch_payload and ch_payload["inventory"]:
+            if ch_payload.get("inventory"):
                 existing["inventory"] = ch_payload["inventory"]
-            if "proficiencies" in ch_payload and ch_payload["proficiencies"]:
+            if ch_payload.get("proficiencies"):
                 existing["proficiencies"] = ch_payload["proficiencies"]
-            if "prof_bonus" in ch_payload:
+            if ch_payload.get("prof_bonus"):
                 existing["prof_bonus"] = ch_payload["prof_bonus"]
-            if "passives" in ch_payload and ch_payload["passives"]:
+            if ch_payload.get("passives"):
                 existing["passives"] = ch_payload["passives"]
-            if "initiative" in ch_payload and ch_payload["initiative"]:
+            if ch_payload.get("initiative"):
                 existing["initiative"] = ch_payload["initiative"]
-            if "features_and_traits" in ch_payload and ch_payload["features_and_traits"]:
+            if ch_payload.get("features_and_traits"):
                 existing["features_and_traits"] = ch_payload["features_and_traits"]
-            if "skills" in ch_payload and ch_payload["skills"]:
+            if ch_payload.get("skills"):
                 existing["skills"] = ch_payload["skills"]
-            if "spells" in ch_payload and ch_payload["spells"]:
+            if ch_payload.get("spells"):
                 existing["spells"] = ch_payload["spells"]
+
+            for rich_k in (
+                "senses", "proficiencies_armor", "proficiencies_weapons", "proficiencies_tools",
+                "proficiencies_languages", "spellcasting_ability", "spell_save_dc", "spell_attack_bonus",
+                "backstory", "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies"
+            ):
+                if ch_payload.get(rich_k):
+                    existing[rich_k] = ch_payload[rich_k]
 
             # Update initiative ladder name if entity is already on the ladder
             for ent in st.get("initiative_order", []):
@@ -1206,6 +1379,138 @@ Respond ONLY with valid JSON."""
         res = self.add_character(ch_payload, target_state=st)
         res["action"] = "created"
         return res
+
+    def import_character_to_active_campaign(self, vault_char_data: Dict[str, Any], overwrite_existing: bool = False) -> Dict[str, Any]:
+        """
+        ONE-WAY INGESTION: Clones a character sheet from the Vault directly into the
+        active campaign's persistent state.json. Severing the template link ensures
+        live in-game updates (HP loss, spent spell slots) NEVER reset on UI refresh.
+        """
+        if not self.active_state:
+            return {"status": "error", "message": "No active campaign session loaded."}
+
+        char_id = vault_char_data.get("id")
+        char_name = vault_char_data.get("universal_core", {}).get("name") or vault_char_data.get("name")
+
+        # 1. Idempotency Guard: Prevent accidental template reload overwriting live combat state
+        existing_chars = self.active_state.setdefault("characters", {})
+        if char_id in existing_chars and not overwrite_existing:
+            logger.warning(f"[TTRPG] Character '{char_name}' ({char_id}) already active in session. Preserving live state.")
+            return {
+                "status": "already_loaded",
+                "character_id": char_id,
+                "message": f"Character '{char_name}' is already active in this session. Live state preserved."
+            }
+
+        # 2. Extract Base Vitals from Native System Data or Universal Core
+        native = vault_char_data.get("native_system_data", {})
+        core = vault_char_data.get("universal_core", {})
+
+        # Default Vitals construction
+        hp_max = 20
+        if "hit_points" in native and isinstance(native["hit_points"], dict):
+            hp_max = native["hit_points"].get("max", 20)
+        elif "vitals" in vault_char_data and isinstance(vault_char_data["vitals"], dict) and "health" in vault_char_data["vitals"]:
+            hp_max = vault_char_data["vitals"]["health"].get("max", 20)
+        elif "max_health" in vault_char_data or "health" in vault_char_data:
+            hp_max = int(vault_char_data.get("max_health") or vault_char_data.get("health") or 20)
+
+        guard_val = (
+            vault_char_data.get("armor_class")
+            or native.get("armor_class")
+            or native.get("armor", {}).get("body_sp")
+            or (vault_char_data.get("vitals", {}).get("guard", {}).get("current") if isinstance(vault_char_data.get("vitals"), dict) else None)
+            or 14
+        )
+
+        # Extract features and traits from all possible representations
+        raw_feats = (
+            vault_char_data.get("features_and_traits")
+            or vault_char_data.get("traits_and_abilities")
+            or vault_char_data.get("features")
+            or native.get("features_and_traits")
+            or native.get("features_traits")
+            or [t["name"] if isinstance(t, dict) else str(t) for t in core.get("tagged_traits", [])]
+            or []
+        )
+        feats_list = copy.deepcopy(raw_feats)
+
+        # Extract inventory
+        raw_inv = vault_char_data.get("inventory") or native.get("inventory")
+        if not raw_inv:
+            raw_inv = [item["name"] if isinstance(item, dict) else str(item) for item in (vault_char_data.get("active_inventory") or core.get("tagged_inventory", []))]
+
+        # Extract currency
+        currency = copy.deepcopy(vault_char_data.get("currency") or native.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0})
+
+        # Extract weapons and spells
+        weapons = copy.deepcopy(vault_char_data.get("weapons") or native.get("weapons") or [])
+        spells = copy.deepcopy(vault_char_data.get("spells") or native.get("spells") or [])
+
+        # 3. Create Isolated Live State Object
+        live_instance = {
+            "id": char_id,
+            "vault_source_id": char_id,
+            "name": char_name,
+            "player_name": vault_char_data.get("player_name") or core.get("player_name", "Player"),
+            "archetype": vault_char_data.get("archetype") or core.get("archetype", "Adventurer"),
+            "level": int(vault_char_data.get("level") or core.get("level", 1)),
+            "experience_points": int(vault_char_data.get("experience_points") or native.get("experience_points", 0)),
+            "ruleset": vault_char_data.get("ruleset") or native.get("system_name") or "dnd_5e",
+            "species": vault_char_data.get("species") or native.get("species", ""),
+            "background": vault_char_data.get("background") or native.get("background", ""),
+            "is_player": True,
+            "vitals": {
+                "health": {"current": hp_max, "max": hp_max, "label": "Health"},
+                "guard": {"current": guard_val, "max": guard_val, "label": "Guard / Armor"}
+            },
+            "custom_meters": copy.deepcopy(vault_char_data.get("custom_meters") or native.get("custom_meters", {})),
+            "attributes": copy.deepcopy(vault_char_data.get("target_system_attributes") or vault_char_data.get("attributes") or core.get("normalized_attributes", {})),
+            "conditions": copy.deepcopy(vault_char_data.get("conditions", [])),
+            "currency": currency,
+            "weapons": weapons,
+            "inventory": copy.deepcopy(raw_inv),
+            "live_inventory": copy.deepcopy(vault_char_data.get("active_inventory") or core.get("tagged_inventory", [])),
+            "features_and_traits": feats_list,
+            "traits_and_abilities": feats_list,
+            "features_traits": feats_list,
+            "spells": spells,
+            "spellcasting_ability": vault_char_data.get("spellcasting_ability") or native.get("spellcasting_ability", ""),
+            "spell_save_dc": vault_char_data.get("spell_save_dc") or native.get("spell_save_dc", ""),
+            "spell_attack_bonus": vault_char_data.get("spell_attack_bonus") or native.get("spell_attack_bonus", ""),
+            "passives": copy.deepcopy(vault_char_data.get("passives") or native.get("passives", {})),
+            "senses": vault_char_data.get("senses") or native.get("senses", ""),
+            "speed": vault_char_data.get("speed") or native.get("speed", "30 ft."),
+            "hit_dice": vault_char_data.get("hit_dice") or native.get("hit_dice", "1d8"),
+            "armor_class": guard_val,
+            "saving_throws": copy.deepcopy(vault_char_data.get("saving_throws") or native.get("saving_throws", {})),
+            "proficiencies": copy.deepcopy(vault_char_data.get("proficiencies") or native.get("proficiencies", "")),
+            "prof_bonus": vault_char_data.get("prof_bonus") or native.get("prof_bonus", "+2"),
+            "initiative": vault_char_data.get("initiative") or native.get("initiative", ""),
+            "skills": copy.deepcopy(vault_char_data.get("skills") or native.get("skills", {})),
+            "ingested_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        for k in ("proficiencies_armor", "proficiencies_weapons", "proficiencies_tools", "proficiencies_languages"):
+            val = vault_char_data.get(k) or native.get(k)
+            if val:
+                live_instance[k] = copy.deepcopy(val)
+
+        # 4. Save Directly to Campaign State File
+        existing_chars[char_id] = live_instance
+        self.save_active_campaign_state()
+
+        logger.info(f"[TTRPG] Successfully performed 'Once and Done' ingestion for '{char_name}'.")
+        return {"status": "success", "character_id": char_id, "character": live_instance}
+
+    def get_campaign_roster(self) -> List[Dict[str, Any]]:
+        """
+        AUTHORITATIVE ROSTER QUERY: All UI refreshes and polling methods MUST call this.
+        Reads strictly from active campaign memory, guaranteeing delta persistence.
+        """
+        if not self.active_state:
+            return []
+        return list(self.active_state.get("characters", {}).values())
 
     def refresh_campaign_files_and_characters(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -1283,13 +1588,21 @@ Respond ONLY with valid JSON."""
                             docs_map[fname]["token_estimate"] = ProjectService.estimate_tokens(extracted_text)
                             docs_map[fname]["preview"] = (extracted_text or "")[:300].strip()
 
-                if parsed_chars:
-                    for ch_payload in parsed_chars:
+                if parsed_chars or (fname in docs_map and docs_map[fname].get("category") == "character_sheet"):
+                    for ch_payload in (parsed_chars or []):
                         c_name = (ch_payload.get("name") or "").strip()
                         if c_name:
                             res_upsert = self.upsert_character_from_sheet(ch_payload, filename=fname)
                             if res_upsert.get("status") == "success":
                                 imported_characters.append(c_name)
+                    # One-and-done: remove character sheet from disk and do not track in documents map
+                    docs_map.pop(fname, None)
+                    if os.path.exists(fpath):
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
+                    continue
 
         self.save_active_campaign_state()
         return {
@@ -1470,9 +1783,8 @@ Respond ONLY with valid JSON."""
                 return {"status": "error", "message": "No documents have been uploaded to this campaign yet."}
 
             combined_parts = []
-            # Order: 1. Campaign Modules, 2. Character Sheets, 3. Rulesets (summarized), 4. Journal
+            # Order: 1. Campaign Modules, 2. Rulesets (summarized), 3. Journal
             module_files = []
-            sheet_files = []
             rules_files = []
 
             for fname in all_files:
@@ -1483,7 +1795,8 @@ Respond ONLY with valid JSON."""
                 if cat in ("campaign", "module") or any(k in fname.lower() for k in ("elfhunt", "module", "adventure", "campaign")):
                     module_files.append(fname)
                 elif cat == "character_sheet" or any(k in fname.lower() for k in ("sheet", "char", "pc")):
-                    sheet_files.append(fname)
+                    # Skip character sheets - characters are tracked on the Party Roster
+                    continue
                 else:
                     rules_files.append(fname)
 
@@ -1498,20 +1811,14 @@ Respond ONLY with valid JSON."""
                     module_content = text
                 combined_parts.append(f"=== [CAMPAIGN ADVENTURE MODULE] {fname} ===\n{module_content}")
 
-            # 2. Character Sheets
-            for fname in sheet_files:
-                fpath = os.path.join(files_dir, fname)
-                text = ProjectService.extract_file_text(fpath)
-                combined_parts.append(f"=== [CHARACTER SHEET] {fname} ===\n{text[:4000]}")
-
-            # 3. Rulesets (summarized to prevent overwhelming context)
+            # 2. Rulesets (summarized to prevent overwhelming context)
             for fname in rules_files:
                 fpath = os.path.join(files_dir, fname)
                 text = ProjectService.extract_file_text(fpath)
                 truncated_rules = text[:2500] + ("\n...(Rulebook reference text truncated for brevity)..." if len(text) > 2500 else "")
                 combined_parts.append(f"=== [RULESET REFERENCE] {fname} ===\n{truncated_rules}")
 
-            # 4. Campaign Journal & Persistent Recap
+            # 3. Campaign Journal & Persistent Recap
             notes = self.get_campaign_notes(cid)
             if notes.get("latest_recap"):
                 combined_parts.append(f"=== [CAMPAIGN PERSISTENT RECAP] ===\n{notes['latest_recap']}\nLocation: {notes.get('current_location')}\nQuest: {notes.get('active_quest')}")
@@ -1544,6 +1851,27 @@ Respond ONLY with valid JSON."""
                 target_path = os.path.join(files_dir, safe_name)
 
         if not os.path.exists(target_path):
+            chars = (self.active_state or {}).get("characters", {})
+            for cid_char, c in chars.items():
+                c_name = c.get("name", "")
+                if c_name and (c_name.lower() in req_target.lower() or req_target.lower() in c_name.lower()):
+                    hp_cur = c.get("vitals", {}).get("health", {}).get("current", 0)
+                    hp_max = c.get("vitals", {}).get("health", {}).get("max", 0)
+                    return {
+                        "status": "success",
+                        "campaign_id": cid,
+                        "filename": req_target,
+                        "category": "character_roster",
+                        "content": (
+                            f"=== [ACTIVE CHARACTER ROSTER] {c_name} ===\n"
+                            f"Character: {c_name} ({c.get('archetype', 'Hero')})\n"
+                            f"Level: {c.get('level', 1)} | HP: {hp_cur}/{hp_max} | AC/Guard: {c.get('armor_class', 14)}\n"
+                            f"Attributes: {c.get('attributes', {})}\n"
+                            f"Weapons: {c.get('weapons', [])}\n"
+                            f"Inventory: {c.get('inventory', [])}\n"
+                            f"Note: Character sheets are imported and managed directly on the Party Roster."
+                        )
+                    }
             return {
                 "status": "error",
                 "message": f"Document '{filename}' not found in campaign '{cid}'.",
@@ -2084,7 +2412,7 @@ Respond in JSON with schema:
         else:
             lines.append(
                 "\n[DICE ROLLING MODE: DIGITAL DICE (AUTOMATIC RESOLUTION)]\n"
-                "* DIGITAL DICE MODE IS ACTIVE: You (the Game Master) handle all dice rolling automatically using the `roll_dice` tool.\n"
+                "* DIGITAL DICE (AETHER ROLLS FOR PLAYERS): You (the Game Master) handle all dice rolling automatically using the `roll_dice` tool.\n"
                 "* CRITICAL RULE — NEVER ASK PLAYERS TO ROLL: Never tell or ask players to roll dice. Do not say 'Eric, roll 1d20+4' or wait for players to roll. Execute `roll_dice` directly in your turn.\n"
                 "* CRITICAL RULE — NO META-NARRATION: Never say 'Aether rolls for Eric', 'I am rolling for you', or narrate in the third person about rolling. The roll is an invisible mechanical resolution.\n"
                 "* NATURAL GM NARRATION: Weave the roll outcome directly and smoothly into the narrative: e.g., 'With an 18 to hit, your blade strikes true, dealing 8 slashing damage!' or 'The lock resists your picks with a total of 9.'"
@@ -2351,9 +2679,11 @@ Respond in JSON with schema:
         prev_vitals = prev.get("vitals", {})
 
         default_max_hp = self._safe_int(prev_vitals.get("health", {}).get("max"), 25)
-        max_hp = max(1, self._safe_int(char_payload.get("max_health"), default_max_hp))
+        raw_max_hp = char_payload.get("max_health") or char_payload.get("hp_max") or char_payload.get("hp")
+        max_hp = max(1, self._safe_int(raw_max_hp, default_max_hp))
         default_cur_hp = self._safe_int(prev_vitals.get("health", {}).get("current"), max_hp)
-        cur_hp = self._safe_int(char_payload.get("current_health"), default_cur_hp)
+        raw_cur_hp = char_payload.get("current_health") or char_payload.get("hp_current") or char_payload.get("health")
+        cur_hp = self._safe_int(raw_cur_hp, default_cur_hp)
         cur_hp = max(0, min(max_hp, cur_hp))
 
         default_guard = self._safe_int(prev_vitals.get("guard", {}).get("current") or prev.get("armor_class"), 14)
@@ -2456,6 +2786,24 @@ Respond in JSON with schema:
         elif "armor_class" in prev and prev["armor_class"] is not None:
             ac_val = self._safe_int(prev["armor_class"], guard_val)
 
+        feats_resolved = (
+            char_payload.get("features_and_traits")
+            or char_payload.get("traits_and_abilities")
+            or char_payload.get("features")
+            or char_payload.get("features_traits")
+            or (prev.get("features_and_traits") if prev else None)
+            or (prev.get("traits_and_abilities") if prev else None)
+            or []
+        )
+        inv_resolved = (
+            char_payload.get("inventory")
+            or char_payload.get("live_inventory")
+            or (prev.get("inventory") if prev else None)
+            or []
+        )
+        if inv_resolved and isinstance(inv_resolved, list) and len(inv_resolved) > 0 and isinstance(inv_resolved[0], dict):
+            inv_resolved = [item.get("name", str(item)) if isinstance(item, dict) else str(item) for item in inv_resolved]
+
         char_entry = {
             "id": char_id,
             "name": name,
@@ -2478,18 +2826,24 @@ Respond in JSON with schema:
             "temp_hp": max(0, self._safe_int(_get_val("temp_hp", 0), 0)),
             "conditions": list(_get_val("conditions", [])),
             "weapons": list(_get_val("weapons", [])),
-            "inventory": list(_get_val("inventory", [])),
+            "inventory": list(inv_resolved),
             "proficiencies": str(_get_val("proficiencies", "")),
             "prof_bonus": str(_get_val("prof_bonus", "+2")),
             "passives": dict(_get_val("passives", {})),
             "initiative": str(_get_val("initiative", "")),
-            "features_and_traits": list(_get_val("features_and_traits", [])),
+            "features_and_traits": list(feats_resolved),
+            "traits_and_abilities": list(feats_resolved),
             "skills": dict(_get_val("skills", {})),
             "spells": list(_get_val("spells", []))
         }
 
         # Preserve optional rich sheet properties
-        for opt_key in ("class_and_level", "senses", "proficiencies_armor", "proficiencies_weapons", "proficiencies_tools", "proficiencies_languages", "head_sp", "body_sp", "humanity"):
+        for opt_key in (
+            "class_and_level", "senses", "proficiencies_armor", "proficiencies_weapons",
+            "proficiencies_tools", "proficiencies_languages", "head_sp", "body_sp", "humanity",
+            "spellcasting_ability", "spell_save_dc", "spell_attack_bonus",
+            "backstory", "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies"
+        ):
             if opt_key in char_payload and char_payload[opt_key] is not None:
                 char_entry[opt_key] = char_payload[opt_key]
             elif opt_key in prev and prev[opt_key] is not None:
@@ -3091,8 +3445,11 @@ Return ONLY valid JSON.
         if not self.active_state:
             return None, None
         chars = self.active_state.get("characters", {})
-        clean = name.lower().strip()
+        clean = (name or "").lower().strip()
         for c_id, c_data in chars.items():
-            if c_data.get("name", "").lower() == clean:
+            if c_data.get("name", "").lower() == clean or c_id.lower() == clean:
+                return c_id, c_data
+        for c_id, c_data in chars.items():
+            if clean in c_data.get("name", "").lower() or clean in c_id.lower():
                 return c_id, c_data
         return None, None

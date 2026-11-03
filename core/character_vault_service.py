@@ -126,8 +126,16 @@ class CharacterVaultService:
         self.vault_dir = os.path.abspath(vault_dir)
         os.makedirs(self.vault_dir, exist_ok=True)
 
-    def _file_path(self, char_id: str) -> str:
+    def _file_path(self, char_id: str, genre: Optional[str] = None) -> str:
         safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', char_id.lower())
+        if genre:
+            genre_dir = os.path.join(self.vault_dir, genre)
+            os.makedirs(genre_dir, exist_ok=True)
+            return os.path.join(genre_dir, f"{safe_id}.json")
+        if os.path.exists(self.vault_dir):
+            for root, dirs, files in os.walk(self.vault_dir):
+                if f"{safe_id}.json" in files:
+                    return os.path.join(root, f"{safe_id}.json")
         return os.path.join(self.vault_dir, f"{safe_id}.json")
 
     # --- Character Retrieval & Listing ---
@@ -147,32 +155,33 @@ class CharacterVaultService:
         results = []
         if not os.path.exists(self.vault_dir):
             return results
-        for fname in os.listdir(self.vault_dir):
-            if fname.endswith(".json"):
-                fpath = os.path.join(self.vault_dir, fname)
-                try:
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        r_id = data.get("ruleset") or data.get("native_system") or data.get("native_genre", "dnd_5e")
-                        results.append({
-                            "id": data.get("id"),
-                            "name": data.get("name"),
-                            "level": data.get("level", 1),
-                            "archetype": data.get("archetype", "Unknown"),
-                            "ruleset": r_id,
-                            "ruleset_label": data.get("ruleset_label") or get_ruleset_display_label(r_id),
-                            "native_system": data.get("native_system") or r_id,
-                            "native_genre": data.get("native_genre", "generic"),
-                            "current_genre": data.get("current_genre", data.get("native_genre", "generic")),
-                            "is_root": data.get("is_root", True),
-                            "parent_id": data.get("parent_id"),
-                            "variant_label": data.get("variant_label", "Canonical Root" if data.get("is_root", True) else "Crossover Variant"),
-                            "inventory_count": len(data.get("inventory", [])),
-                            "quarantine_count": len(data.get("quarantined_stash", [])),
-                            "updated_at": data.get("updated_at")
-                        })
-                except Exception:
-                    pass
+        for root, dirs, files in os.walk(self.vault_dir):
+            for fname in sorted(files):
+                if fname.endswith(".json"):
+                    fpath = os.path.join(root, fname)
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                            r_id = data.get("ruleset") or data.get("native_system") or data.get("native_genre", "dnd_5e")
+                            results.append({
+                                "id": data.get("id"),
+                                "name": data.get("name"),
+                                "level": data.get("level", 1),
+                                "archetype": data.get("archetype", "Unknown"),
+                                "ruleset": r_id,
+                                "ruleset_label": data.get("ruleset_label") or get_ruleset_display_label(r_id),
+                                "native_system": data.get("native_system") or r_id,
+                                "native_genre": data.get("native_genre", "generic"),
+                                "current_genre": data.get("current_genre", data.get("native_genre", "generic")),
+                                "is_root": data.get("is_root", True),
+                                "parent_id": data.get("parent_id"),
+                                "variant_label": data.get("variant_label", "Canonical Root" if data.get("is_root", True) else "Crossover Variant"),
+                                "inventory_count": len(data.get("inventory", []) or data.get("universal_core", {}).get("tagged_inventory", [])),
+                                "quarantine_count": len(data.get("quarantined_stash", [])),
+                                "updated_at": data.get("updated_at")
+                            })
+                    except Exception:
+                        pass
         return sorted(results, key=lambda c: (not c.get("is_root", True), c.get("name", "")))
 
     # --- Cross-Genre Import & Branch Forking ---
@@ -327,8 +336,20 @@ class CharacterVaultService:
                     "guard": {"current": guard_ac, "max": max(1, guard_ac), "label": "Armor Defense"}
                 }
 
+            feats = (
+                ch.get("features_and_traits")
+                or ch.get("traits_and_abilities")
+                or ch.get("features")
+                or ch.get("features_traits")
+                or []
+            )
+
+            # Build Universal Character Core & Native System Data (Schema 2.0)
+            u_core = ch.get("universal_core") or self._build_universal_core(ch)
+            n_data = ch.get("native_system_data") or self._build_native_system_data(ch)
+
             char_record = {
-                "schema_version": "1.0",
+                "schema_version": "2.0",
                 "id": char_id,
                 "parent_id": None,
                 "is_root": True,
@@ -336,7 +357,10 @@ class CharacterVaultService:
                 "variant_label": "Canonical Root",
                 "player_name": ch.get("player_name") or "Player",
                 "level": int(ch.get("level") or 1),
+                "experience_points": int(ch.get("experience_points") or 0),
                 "archetype": ch.get("archetype") or ch.get("class") or "Adventurer",
+                "species": ch.get("species") or ch.get("race") or "",
+                "background": ch.get("background") or "",
                 "ruleset": assigned_ruleset,
                 "ruleset_label": get_ruleset_display_label(assigned_ruleset),
                 "native_genre": assigned_genre,
@@ -350,12 +374,33 @@ class CharacterVaultService:
                     "Intellect": 10,
                     "Presence": 10
                 },
+                "armor_class": guard_ac,
+                "speed": ch.get("speed") or "30 ft.",
+                "hit_dice": ch.get("hit_dice") or "1d8",
+                "saving_throws": ch.get("saving_throws") or {},
+                "currency": ch.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0},
                 "weapons": ch.get("weapons") or [],
                 "inventory": ch.get("inventory") or [],
-                "traits_and_abilities": ch.get("traits_and_abilities") or ch.get("features") or [],
-                "quarantined_stash": [],
+                "features_and_traits": feats,
+                "traits_and_abilities": feats,
+                "spells": ch.get("spells") or [],
+                "spellcasting_ability": ch.get("spellcasting_ability") or "",
+                "spell_save_dc": ch.get("spell_save_dc") or "",
+                "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
+                "passives": ch.get("passives") or {},
+                "senses": ch.get("senses") or "",
+                "initiative": ch.get("initiative") or "",
+                "proficiencies": ch.get("proficiencies") or "",
+                "proficiencies_armor": ch.get("proficiencies_armor") or "",
+                "proficiencies_weapons": ch.get("proficiencies_weapons") or "",
+                "proficiencies_tools": ch.get("proficiencies_tools") or "",
+                "proficiencies_languages": ch.get("proficiencies_languages") or "",
+                "prof_bonus": ch.get("prof_bonus") or "+2",
+                "quarantined_stash": ch.get("quarantined_stash") or [],
                 "source_document": filename,
-                "updated_at": _utc_now_iso()
+                "updated_at": _utc_now_iso(),
+                "universal_core": u_core,
+                "native_system_data": n_data
             }
 
             self._save_character(char_record)
@@ -367,6 +412,94 @@ class CharacterVaultService:
             "characters": saved_characters,
             "count": len(saved_characters),
             "message": f"Successfully imported {len(saved_characters)} character(s) into vault from '{filename}'."
+        }
+
+    def _build_universal_core(self, ch: Dict[str, Any]) -> Dict[str, Any]:
+        c_name = ch.get("name") or "Adventurer"
+        genre = ch.get("native_genre") or "fantasy_d20"
+        feats = ch.get("features_and_traits") or ch.get("traits_and_abilities") or ch.get("features") or []
+        tagged_traits = []
+        for f in feats:
+            if isinstance(f, dict):
+                tagged_traits.append(f)
+            else:
+                parts = str(f).split(":", 1)
+                t_name = parts[0].strip()
+                t_desc = parts[1].strip() if len(parts) > 1 else str(f).strip()
+                tagged_traits.append({"name": t_name, "description": t_desc, "genre": genre})
+
+        tagged_inv = []
+        for item in (ch.get("inventory") or []):
+            if isinstance(item, dict):
+                tagged_inv.append(item)
+            else:
+                s_item = str(item).strip()
+                if not s_item:
+                    continue
+                lower_i = s_item.lower()
+                cat = "utility"
+                if any(w in lower_i for w in ["sword", "dagger", "axe", "mace", "rapier", "blade"]):
+                    cat = "melee_light"
+                elif any(w in lower_i for w in ["bow", "crossbow", "sling"]):
+                    cat = "ranged_light"
+                elif any(w in lower_i for w in ["armor", "shield", "leather", "chain", "plate"]):
+                    cat = "armor_light"
+                elif any(w in lower_i for w in ["tool", "kit", "lockpick", "thieves"]):
+                    cat = "utility_infil"
+                tagged_inv.append({"name": s_item, "category": cat, "genre": genre, "status": "active"})
+
+        raw_attrs = ch.get("attributes") or {}
+        m_val = ch.get("Might") or raw_attrs.get("Might") or raw_attrs.get("Strength") or 10
+        a_val = ch.get("Agility") or raw_attrs.get("Agility") or raw_attrs.get("Dexterity") or 10
+        v_val = ch.get("Vigor") or raw_attrs.get("Vigor") or raw_attrs.get("Constitution") or 10
+        i_val = ch.get("Intellect") or raw_attrs.get("Intellect") or raw_attrs.get("Intelligence") or 10
+        p_val = ch.get("Presence") or raw_attrs.get("Presence") or raw_attrs.get("Charisma") or raw_attrs.get("Wisdom") or 10
+
+        return {
+            "name": c_name,
+            "player_name": ch.get("player_name") or "Player",
+            "archetype": ch.get("archetype") or ch.get("class") or "Adventurer",
+            "level": int(ch.get("level") or 1),
+            "normalized_attributes": {
+                "might": min(100, max(10, int((m_val / 20.0) * 100))) if m_val <= 20 else min(100, m_val),
+                "agility": min(100, max(10, int((a_val / 20.0) * 100))) if a_val <= 20 else min(100, a_val),
+                "vigor": min(100, max(10, int((v_val / 20.0) * 100))) if v_val <= 20 else min(100, v_val),
+                "intellect": min(100, max(10, int((i_val / 20.0) * 100))) if i_val <= 20 else min(100, i_val),
+                "presence": min(100, max(10, int((p_val / 20.0) * 100))) if p_val <= 20 else min(100, p_val)
+            },
+            "semantic_skills": ch.get("semantic_skills") or [],
+            "tagged_inventory": tagged_inv,
+            "tagged_traits": tagged_traits,
+            "backstory": ch.get("backstory") or ""
+        }
+
+    def _build_native_system_data(self, ch: Dict[str, Any]) -> Dict[str, Any]:
+        ruleset = ch.get("ruleset") or ch.get("native_system") or "dnd_5e"
+        guard_val = ch.get("armor_class") or ch.get("guard") or 14
+        vitals = ch.get("vitals") or {}
+        hp_entry = vitals.get("health", {}) if isinstance(vitals, dict) else {}
+        cur_hp = hp_entry.get("current") or ch.get("current_health") or ch.get("health") or 20
+        max_hp = hp_entry.get("max") or ch.get("max_health") or 20
+
+        feats = ch.get("features_and_traits") or ch.get("traits_and_abilities") or ch.get("features") or []
+        return {
+            "system_name": ruleset,
+            "class_level": ch.get("archetype") or ch.get("class") or "Adventurer",
+            "armor_class": guard_val,
+            "speed": ch.get("speed") or "30 ft.",
+            "hit_points": {"current": cur_hp, "max": max_hp},
+            "ability_scores": ch.get("attributes") or {},
+            "saving_throws": ch.get("saving_throws") or {},
+            "currency": ch.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0},
+            "proficiencies": ch.get("proficiencies") or "",
+            "weapons": ch.get("weapons") or [],
+            "features_and_traits": feats,
+            "spells": ch.get("spells") or [],
+            "spellcasting_ability": ch.get("spellcasting_ability") or "",
+            "spell_save_dc": ch.get("spell_save_dc") or "",
+            "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
+            "passives": ch.get("passives") or {},
+            "senses": ch.get("senses") or ""
         }
 
     def import_from_campaign(
@@ -386,6 +519,7 @@ class CharacterVaultService:
         genre = camp_meta.get("genre") or character_data.get("native_genre") or ("cybernetic_action" if "cyber" in ruleset.lower() else "heroic_fantasy")
 
         char_record = json.loads(json.dumps(character_data))
+        char_record["schema_version"] = "2.0"
         char_record["id"] = char_id
         char_record["is_root"] = True
         char_record["parent_id"] = None
@@ -396,6 +530,22 @@ class CharacterVaultService:
         char_record["native_genre"] = genre
         char_record.setdefault("quarantined_stash", [])
         char_record["updated_at"] = _utc_now_iso()
+
+        feats = (
+            character_data.get("features_and_traits")
+            or character_data.get("traits_and_abilities")
+            or character_data.get("features")
+            or character_data.get("features_traits")
+            or []
+        )
+        char_record["features_and_traits"] = feats
+        char_record["traits_and_abilities"] = feats
+
+        # Ensure universal_core & native_system_data exist for schema 2.0
+        if "universal_core" not in char_record:
+            char_record["universal_core"] = self._build_universal_core(char_record)
+        if "native_system_data" not in char_record:
+            char_record["native_system_data"] = self._build_native_system_data(char_record)
 
         self._save_character(char_record)
         logger.info(f"[VAULT] Saved character '{c_name}' from campaign into Vault as Canonical Root (Ruleset: {char_record['ruleset_label']}).")
@@ -558,6 +708,8 @@ class CharacterVaultService:
         }
 
     def _save_character(self, char_data: Dict[str, Any]):
-        path = self._file_path(char_data["id"])
+        genre = char_data.get("native_genre") or char_data.get("current_genre")
+        path = self._file_path(char_data["id"], genre=genre)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(char_data, f, indent=2)

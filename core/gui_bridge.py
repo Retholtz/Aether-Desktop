@@ -2910,7 +2910,7 @@ class GuiBridge:
 
                 try:
 
-                    js_code = f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode({json.dumps(clean_mode)}); }}"
+                    js_code = f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{clean_mode}'); }}"
 
                     self._overlay_window.evaluate_js(js_code)
 
@@ -6996,9 +6996,9 @@ class GuiBridge:
 
         prompt = custom_prompt or (
             f"Please act as our Dungeon Master (DM) / Game Master for the campaign '{camp_title}'. "
-            f"First, call `read_campaign_document(filename='all')` to review our uploaded documents ({doc_names}). "
-            f"If there are character sheets among the documents, add or update them on the Party Roster using `upsert_ttrpg_character`. "
-            f"Then give us a brief summary of the ruleset, campaign premise, and party, and set the opening scene!"
+            f"First, call `read_campaign_document(filename='all')` to review our uploaded campaign adventure and ruleset documents ({doc_names}). "
+            f"Ground your narration in the adventure module and rules, consult the Party Roster for our active characters, "
+            f"give us a brief summary of the campaign premise and party, and set the opening scene!"
         )
         if active_id:
             return self.send_workspace_message("campaign", active_id, prompt)
@@ -7119,8 +7119,11 @@ class GuiBridge:
     def add_ttrpg_character(self, char_payload: Dict[str, Any]) -> Dict[str, Any]:
         try:
             logger.info(f"[TTRPG] add_ttrpg_character requested for: {char_payload.get('name')} (ID: {char_payload.get('id')})")
-            res = self.ttrpg_service.add_character(char_payload)
-            if res.get("status") == "success":
+            if "universal_core" in char_payload or "target_system_attributes" in char_payload:
+                res = self.ttrpg_service.import_character_to_active_campaign(char_payload)
+            else:
+                res = self.ttrpg_service.add_character(char_payload)
+            if res.get("status") in ("success", "already_loaded"):
                 self._on_engine_event("ttrpg_state_updated", res)
             else:
                 logger.warning(f"[TTRPG] add_ttrpg_character error: {res.get('message')}")
@@ -7128,6 +7131,16 @@ class GuiBridge:
         except Exception as e:
             logger.error(f"[TTRPG] Exception in add_ttrpg_character: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
+
+    def get_ttrpg_campaign_roster(self) -> List[Dict[str, Any]]:
+        """Authoritative live campaign party roster query."""
+        return self.ttrpg_service.get_campaign_roster()
+
+    def import_character_to_active_campaign(self, vault_char_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Once-and-done state clone from vault template into active campaign."""
+        res = self.ttrpg_service.import_character_to_active_campaign(vault_char_data)
+        self._on_engine_event("ttrpg_state_updated", res)
+        return res
 
     def delete_ttrpg_character(self, character_id_or_name: str) -> Dict[str, Any]:
         res = self.ttrpg_service.delete_character(character_id_or_name)
@@ -7364,8 +7377,11 @@ class GuiBridge:
                 )
             char_data = svc.get_character(char_data["id"]) or char_data
 
-        # Add character to campaign party roster
-        self.ttrpg_service.add_character(char_data)
+        # Add character to campaign party roster (using Once and Done state isolation if schema 2.0 or universal core)
+        if "universal_core" in char_data or "target_system_attributes" in char_data:
+            self.ttrpg_service.import_character_to_active_campaign(char_data, overwrite_existing=True)
+        else:
+            self.ttrpg_service.add_character(char_data)
         self._on_engine_event("ttrpg_state_updated", {"status": "success", "imported_vault_char": char_data["id"]})
         self._on_engine_event("vault_character_updated", {"character_id": char_data["id"]})
 

@@ -428,14 +428,68 @@ class ProjectService:
         objects = content.split(b"endobj")
         for obj in objects:
             if b"/Subtype/Widget" in obj or b"/Subtype /Widget" in obj or b"/FT" in obj:
-                t_m = re.search(rb'/T\s*\(([^)]+)\)', obj)
-                v_m = re.search(rb'/V\s*(?:\(([^)]*)\)|/([A-Za-z0-9_]+))', obj)
-                if t_m and v_m:
-                    k = t_m.group(1).decode("latin-1", errors="ignore").strip()
-                    v = (v_m.group(1) or v_m.group(2) or b"").decode("latin-1", errors="ignore").strip()
-                    v = v.replace("\\(", "(").replace("\\)", ")")
-                    if k and v:
-                        fields[k] = v
+                # 1. Field name /T (literal string or hex string)
+                k = None
+                t_hex = re.search(rb'/T\s*<([0-9A-Fa-f\s]+)>', obj)
+                if t_hex:
+                    h = re.sub(rb'\s+', b'', t_hex.group(1))
+                    try:
+                        raw_k = bytes.fromhex(h.decode('ascii'))
+                        k = raw_k.decode('utf-16-be' if raw_k.startswith(b'\xfe\xff') else 'utf-8', errors='ignore').lstrip('\ufeff').strip()
+                    except Exception:
+                        k = t_hex.group(1).decode('latin-1', errors='ignore').strip()
+                else:
+                    t_lit = re.search(rb'/T\s*\(([^)]+)\)', obj)
+                    if t_lit:
+                        k = t_lit.group(1).decode("latin-1", errors="ignore").strip()
+
+                if not k:
+                    continue
+
+                # 2. Field value /V (hex string, literal string with escapes, or name/number)
+                v = None
+                v_hex = re.search(rb'/V\s*<([0-9A-Fa-f\s]+)>', obj)
+                if v_hex:
+                    h = re.sub(rb'\s+', b'', v_hex.group(1))
+                    try:
+                        raw_v = bytes.fromhex(h.decode('ascii'))
+                        if raw_v.startswith(b'\xfe\xff'):
+                            v = raw_v.decode('utf-16-be', errors='replace').lstrip('\ufeff').strip()
+                        else:
+                            v = raw_v.decode('utf-8', errors='replace').strip()
+                    except Exception:
+                        v = v_hex.group(1).decode('latin-1', errors='ignore').strip()
+                else:
+                    v_pos = obj.find(b'/V')
+                    if v_pos != -1:
+                        p_start = obj.find(b'(', v_pos)
+                        if p_start != -1 and p_start - v_pos < 12:
+                            depth = 0
+                            idx = p_start
+                            end_pos = -1
+                            while idx < len(obj):
+                                b = obj[idx:idx+1]
+                                if b == b'\\' and idx + 1 < len(obj):
+                                    idx += 2
+                                    continue
+                                elif b == b'(':
+                                    depth += 1
+                                elif b == b')':
+                                    depth -= 1
+                                    if depth == 0:
+                                        end_pos = idx
+                                        break
+                                idx += 1
+                            if end_pos != -1:
+                                raw_lit = obj[p_start+1:end_pos]
+                                v = raw_lit.decode("latin-1", errors="ignore").replace(r"\(", "(").replace(r"\)", ")").replace(r"\r", "\r").replace(r"\n", "\n").strip()
+                    if v is None:
+                        v_name = re.search(rb'/V\s*(?:\/([A-Za-z0-9_]+)|([0-9]+))', obj)
+                        if v_name:
+                            v = (v_name.group(1) or v_name.group(2) or b"").decode("latin-1", errors="ignore").strip()
+
+                if k and v:
+                    fields[k] = v
         return fields
 
     @staticmethod

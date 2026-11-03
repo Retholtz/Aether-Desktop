@@ -81,8 +81,9 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService):
 
     async def read_campaign_document(filename: str = "all", query: Optional[str] = None) -> Dict[str, Any]:
         """
-        Reads the extracted text of an uploaded campaign document (ruleset, campaign adventure,
-        or character sheet) so Aether can review it and act as the Dungeon Master / Game Master.
+        Reads the extracted text of an uploaded campaign document (campaign adventure module, ruleset,
+        or campaign journal notes) so Aether can review it and act as the Dungeon Master / Game Master.
+        Active party characters are maintained directly in the Party Roster.
         Pass query to search for a specific scene, chapter, or NPC (e.g. 'Scene 1', 'Prologue', 'Chapter 1', or an NPC name).
         Pass filename='all' to read all uploaded documents in the active campaign.
         """
@@ -112,7 +113,8 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService):
     ) -> Dict[str, Any]:
         """
         Creates or updates a character sheet on the active Role Play Party Roster.
-        Use this after reviewing an uploaded character sheet document or when a player describes their character.
+        Use this when creating a new character, adding an NPC ally, or when a player introduces a new hero.
+        Do NOT call this during active play to overwrite existing player characters whose stats have evolved.
         """
         payload = {
             "name": name,

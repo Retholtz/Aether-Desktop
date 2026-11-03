@@ -300,7 +300,7 @@ function renderCampaignDocuments() {
     if (docNames.length === 0) {
         listEl.innerHTML = `
             <div style="text-align: center; color: #64748b; font-size: 11px; padding: 6px 4px;">
-                No rulesets, campaigns, or character sheets loaded yet.
+                No adventure modules, rulesets, or notes loaded yet.
             </div>
         `;
         return;
@@ -371,6 +371,28 @@ function renderInitiativeLadder() {
         `;
         ladderEl.appendChild(row);
     });
+}
+
+function extractCharacterFeatures(ch) {
+    if (!ch) return [];
+    let list = ch.features_and_traits || ch.traits_and_abilities || ch.features_traits || ch.features || ch.tagged_traits || [];
+    if (list && Array.isArray(list) && list.length === 0) {
+        list = ch.native_system_data?.features_and_traits || ch.universal_core?.features_and_traits || ch.universal_core?.tagged_traits || [];
+    }
+    if (typeof list === "string") {
+        return list.split(/\n+|;\s*|,\s*(?![^()]*\))/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
+    }
+    if (Array.isArray(list)) {
+        return list.map(f => {
+            if (typeof f === "string") return f.trim();
+            if (f && typeof f === "object") {
+                if (f.name && f.description && f.description !== f.name) return `${f.name}: ${f.description}`;
+                return f.name || f.description || "";
+            }
+            return String(f || "").trim();
+        }).filter(Boolean);
+    }
+    return [];
 }
 
 function renderPartyRoster() {
@@ -539,16 +561,26 @@ function renderPartyRoster() {
         }
 
         // Build Features & Traits Shelf HTML
-        const feats = Array.isArray(ch.features_and_traits) ? ch.features_and_traits : [];
+        const feats = extractCharacterFeatures(ch);
         let featsHtml = "";
         if (feats.length > 0) {
             featsHtml = `
                 <div class="char-features-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
-                    <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px;">
-                        📜 FEATURES &amp; TRAITS
+                    <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
+                        <span>📜 FEATURES &amp; TRAITS</span>
+                        <span style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${feats.length} TRAITS</span>
                     </div>
-                    <div style="font-size: 10.5px; color: #cbd5e1; line-height: 1.4;">
-                        ${feats.map(f => `<div>• ${escapeRpHtml(typeof f === "string" ? f : f.name + (f.description ? ": " + f.description : ""))}</div>`).join("")}
+                    <div style="font-size: 10.5px; color: #cbd5e1; line-height: 1.45; max-height: 160px; overflow-y: auto;">
+                        ${feats.map(f => {
+                            const raw = typeof f === "string" ? f : f.name + (f.description ? ": " + f.description : "");
+                            const colonIdx = raw.indexOf(":");
+                            if (colonIdx !== -1) {
+                                const title = raw.substring(0, colonIdx).trim();
+                                const desc = raw.substring(colonIdx + 1).trim();
+                                return `<div style="margin-bottom: 3px;"><strong style="color: #f1f5f9;">• ${escapeRpHtml(title)}</strong>: <span style="color: #94a3b8; font-size: 10px;">${escapeRpHtml(desc)}</span></div>`;
+                            }
+                            return `<div style="margin-bottom: 3px;"><strong style="color: #f1f5f9;">• ${escapeRpHtml(raw)}</strong></div>`;
+                        }).join("")}
                     </div>
                 </div>
             `;
@@ -560,6 +592,7 @@ function renderPartyRoster() {
         const acText = isDnd ? `${Number(guard.current)} AC` : `${Number(guard.current)}`;
         const initBadge = ch.initiative ? `<span class="char-guard-badge" style="color: #fbbf24; border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.1);" title="Initiative Modifier">⚡ Init ${escapeRpHtml(ch.initiative)}</span>` : "";
         const speedBadge = ch.speed ? `<span class="char-guard-badge" style="color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); background: rgba(148, 163, 184, 0.1);" title="Movement Speed">🏃 ${escapeRpHtml(ch.speed)}</span>` : "";
+        const sensesBadge = ch.senses ? `<span class="char-guard-badge" style="color: #a78bfa; border-color: rgba(167, 139, 250, 0.35); background: rgba(167, 139, 250, 0.1);" title="Senses & Vision">👁️ ${escapeRpHtml(ch.senses)}</span>` : "";
         const goldVal = ch.currency && typeof ch.currency === "object" ? ch.currency.gp : null;
         const coinBadge = (goldVal !== null && goldVal !== undefined) ? `<span class="char-guard-badge" style="color: #facc15; border-color: rgba(250, 204, 21, 0.35); background: rgba(250, 204, 21, 0.1);" title="Gold Pieces">🪙 ${goldVal} GP</span>` : "";
 
@@ -581,6 +614,7 @@ function renderPartyRoster() {
                     <span class="char-guard-badge" title="${escapeRpHtml(guard.label || "Armor Defense")}">🛡️ ${acText}</span>
                     ${initBadge}
                     ${speedBadge}
+                    ${sensesBadge}
                     ${coinBadge}
                     <button type="button" class="vital-step-btn" title="Save this hero permanently to the Character Vault" onclick="handleExportRosterCharToVault('${escapeRpHtml(ch.name)}')">🏛️</button>
                     <button type="button" class="vital-step-btn" title="Award XP or Level Up" onclick="handlePromptProgressCharacter('${escapeRpHtml(ch.name)}')">⭐</button>
@@ -1399,12 +1433,16 @@ function handleOpenEditCharacterModal(charId) {
     const attrs = ch.attributes || {};
     const wpns = Array.isArray(ch.weapons) ? ch.weapons : [];
     const wpnsFormatted = wpns.map(w => `${w.name} (${w.atk_bonus || "+0"}, ${w.damage || ""}${w.notes ? '; ' + w.notes : ''})`).join("; ");
-    const inv = Array.isArray(ch.inventory) ? ch.inventory : [];
-    const invFormatted = inv.join(", ");
-    const spells = Array.isArray(ch.spells) ? ch.spells : [];
-    const spellsFormatted = spells.join(", ");
-    const feats = Array.isArray(ch.features_and_traits) ? ch.features_and_traits : [];
-    const featsFormatted = feats.map(f => typeof f === "string" ? f : f.name).join(", ");
+    const inv = Array.isArray(ch.inventory) && ch.inventory.length > 0
+        ? ch.inventory
+        : (Array.isArray(ch.live_inventory) ? ch.live_inventory.map(i => typeof i === "string" ? i : (i?.name || "")) : []);
+    const invFormatted = inv.map(i => typeof i === "string" ? i : (i?.name || "")).join(", ");
+    const spells = Array.isArray(ch.spells) && ch.spells.length > 0
+        ? ch.spells
+        : (Array.isArray(ch.spells_list) ? ch.spells_list : []);
+    const spellsFormatted = spells.map(s => typeof s === "string" ? s : (s?.name || "")).join(", ");
+    const feats = extractCharacterFeatures(ch);
+    const featsFormatted = feats.join("\n");
 
     // Populate D&D 5E View Fields
     const dndClassEl = document.getElementById("input-dnd-class-level");
@@ -1493,17 +1531,17 @@ function handleOpenEditCharacterModal(charId) {
     if (profLangEl) profLangEl.value = ch.proficiencies_languages || "Common, Draconic, Elvish";
 
     // Currency
-    const cur = ch.currency || {};
+    const cur = ch.currency || ch.native_system_data?.currency || {};
     const coinPp = document.getElementById("input-dnd-coin-pp");
     const coinGp = document.getElementById("input-dnd-coin-gp");
     const coinEp = document.getElementById("input-dnd-coin-ep");
     const coinSp = document.getElementById("input-dnd-coin-sp");
     const coinCp = document.getElementById("input-dnd-coin-cp");
-    if (coinPp) coinPp.value = cur.pp ?? 0;
-    if (coinGp) coinGp.value = cur.gp ?? 13;
-    if (coinEp) coinEp.value = cur.ep ?? 0;
-    if (coinSp) coinSp.value = cur.sp ?? 0;
-    if (coinCp) coinCp.value = cur.cp ?? 0;
+    if (coinPp) coinPp.value = cur.pp !== undefined ? cur.pp : 0;
+    if (coinGp) coinGp.value = cur.gp !== undefined ? cur.gp : (cur.gold !== undefined ? cur.gold : 13);
+    if (coinEp) coinEp.value = cur.ep !== undefined ? cur.ep : 0;
+    if (coinSp) coinSp.value = cur.sp !== undefined ? cur.sp : 0;
+    if (coinCp) coinCp.value = cur.cp !== undefined ? cur.cp : 0;
 
     // Weapons, Inventory, Features, Spells
     const dndWpnsEl = document.getElementById("input-dnd-weapons");
@@ -1514,6 +1552,25 @@ function handleOpenEditCharacterModal(charId) {
     if (dndInvEl) dndInvEl.value = invFormatted;
     if (dndFeatsEl) dndFeatsEl.value = featsFormatted;
     if (dndSpellsEl) dndSpellsEl.value = spellsFormatted;
+
+    const spellAbilityEl = document.getElementById("select-dnd-spell-ability");
+    const spellDcEl = document.getElementById("input-dnd-spell-dc");
+    const spellAtkEl = document.getElementById("input-dnd-spell-atk");
+    if (spellAbilityEl) {
+        const rawSa = (ch.spellcasting_ability || "").trim().toUpperCase();
+        if (rawSa.includes("INT")) spellAbilityEl.value = "INT";
+        else if (rawSa.includes("WIS")) spellAbilityEl.value = "WIS";
+        else if (rawSa.includes("CHA")) spellAbilityEl.value = "CHA";
+        else spellAbilityEl.value = "none";
+    }
+    if (spellDcEl && ch.spell_save_dc) {
+        spellDcEl.value = ch.spell_save_dc;
+        spellDcEl.dataset.customized = "true";
+    }
+    if (spellAtkEl && ch.spell_attack_bonus) {
+        spellAtkEl.value = ch.spell_attack_bonus;
+        spellAtkEl.dataset.customized = "true";
+    }
 
     // Staged weapons array for structured editing
     stagedCharacterWeapons = Array.isArray(ch.weapons) ? JSON.parse(JSON.stringify(ch.weapons)) : [];
@@ -1663,12 +1720,23 @@ async function handleUploadRpFiles(fileList) {
                 try {
                     const base64Data = ev.target.result;
                     if (window.pywebview && window.pywebview.api && window.pywebview.api.upload_ttrpg_document) {
-                        await window.pywebview.api.upload_ttrpg_document(
+                        const res = await window.pywebview.api.upload_ttrpg_document(
                             file.name,
                             base64Data,
                             category,
                             ttrpgData.active_campaign
                         );
+                        if (res && res.status === "success" && res.removed_after_import) {
+                            if (typeof renderRolePlayStoryBubble === "function") {
+                                const importedNames = (res.imported_characters && res.imported_characters.length > 0)
+                                    ? res.imported_characters.map(c => c.name || c.id).join(", ")
+                                    : "character";
+                                renderRolePlayStoryBubble({
+                                    type: "system",
+                                    content: `👤 Imported ${importedNames} into Party Roster! Sheet file removed from file list (one-and-done) to prevent overwriting evolved character data.`
+                                });
+                            }
+                        }
                     }
                 } catch (err) {
                     console.error("[RolePlay] Error uploading document:", err);
@@ -1720,7 +1788,7 @@ async function handleReviewSingleRpDocument(filename, category) {
     if (!filename) return;
     let promptText = `Please call \`read_campaign_document(filename='${filename}')\` to review our uploaded ${category.replace("_", " ")} document '${filename}'.`;
     if (category === "character_sheet") {
-        promptText += ` Extract the character's stats, health, armor defense, and attributes, and add or update them on the Party Roster using \`upsert_ttrpg_character\`, then summarize the character for us!`;
+        promptText += ` Review this document to understand the character's background and abilities, without overwriting any active roster stats, and summarize the character for us!`;
     } else {
         promptText += ` Summarize the key rules, lore, or encounters and get ready to run it as our Dungeon Master (DM)!`;
     }
@@ -2663,6 +2731,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     return isNaN(parsed) ? def : parsed;
                 };
 
+                const existingChar = editingCharacterId ? ((ttrpgData.state && ttrpgData.state.characters) || {})[editingCharacterId] : null;
+
                 let payload = {
                     id: editingCharacterId || undefined,
                     name: name,
@@ -2749,7 +2819,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     const invRaw = (document.getElementById("input-dnd-inventory")?.value || "").trim();
                     const inventory = invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
                     const featsRaw = (document.getElementById("input-dnd-features")?.value || "").trim();
-                    const features = featsRaw ? featsRaw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
+                    const features = featsRaw ? featsRaw.split(/\n+|;\s*|,\s*(?![^()]*\))/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
                     const spellsRaw = (document.getElementById("input-dnd-spells")?.value || "").trim();
                     const spells = spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
 
@@ -2794,8 +2864,12 @@ document.addEventListener("DOMContentLoaded", () => {
                         proficiencies_languages: languages,
                         weapons: weapons,
                         inventory: inventory,
-                        features_and_traits: features,
-                        spells: spells
+                        features_and_traits: features.length > 0 ? features : (existingChar ? extractCharacterFeatures(existingChar) : []),
+                        traits_and_abilities: features.length > 0 ? features : (existingChar ? extractCharacterFeatures(existingChar) : []),
+                        spells: spells,
+                        spellcasting_ability: document.getElementById("select-dnd-spell-ability")?.value || "none",
+                        spell_save_dc: (document.getElementById("input-dnd-spell-dc")?.value || "").trim(),
+                        spell_attack_bonus: (document.getElementById("input-dnd-spell-atk")?.value || "").trim()
                     };
                 } else if (activeRuleset === "pathfinder_2e") {
                     const clsLvl = (document.getElementById("input-pf-class-level")?.value || "Fighter 1").trim();

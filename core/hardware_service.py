@@ -285,7 +285,23 @@ class CpuMonitorBackend:
                     self._hw_computer.IsMotherboardEnabled = False
                     self._hw_computer.IsStorageEnabled = False
                     self._hw_computer.IsNetworkEnabled = False
-                    self._hw_computer.Open()
+                    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        open_future = executor.submit(self._hw_computer.Open)
+                        try:
+                            open_future.result(timeout=3.0)
+                        except TimeoutError:
+                            logger.warning(
+                                "[HARDWARE] LibreHardwareMonitor Computer.Open() timed out after 3.0s "
+                                "(driver mutex likely locked by another instance or lingering process). "
+                                "Falling back to standard CPU telemetry."
+                            )
+                            self._hw_computer = None
+                            continue
+                        except Exception as open_err:
+                            logger.debug(f"[HARDWARE] Error opening LibreHardwareMonitor: {open_err}")
+                            self._hw_computer = None
+                            continue
                     for h in self._hw_computer.Hardware:
                         if h.HardwareType == Hardware.HardwareType.Cpu:
                             self._cpu_hardware = h
