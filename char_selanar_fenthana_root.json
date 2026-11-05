@@ -1,6 +1,8 @@
 {
   "schema_version": "2.1",
   "id": "char_selanar_fenthana_root",
+  "parent_id": null,
+  "is_root": true,
   "name": "Selanar Fenthana",
   "variant_label": "Canonical Root",
   "player_name": "Player",
@@ -42,6 +44,27 @@
   "armor_class": 17,
   "speed": "30 ft. (Walking), 30 ft. (Swimming)",
   "hit_dice": "1d10",
+  "saving_throws": {
+    "Strength": "+0",
+    "STR": 0,
+    "Dexterity": "+5",
+    "DEX": 5,
+    "Constitution": "+2",
+    "CON": 2,
+    "Intelligence": "+4",
+    "INT": 4,
+    "Wisdom": "+1",
+    "WIS": 1,
+    "Charisma": "+0",
+    "CHA": 0
+  },
+  "currency": {
+    "cp": 0,
+    "sp": 0,
+    "ep": 0,
+    "gp": 5,
+    "pp": 0
+  },
   "weapons": [
     {
       "name": "Crossbow, Light",
@@ -62,13 +85,6 @@
       "notes": ""
     }
   ],
-  "currency": {
-    "cp": 0,
-    "sp": 0,
-    "ep": 0,
-    "gp": 5,
-    "pp": 0
-  },
   "inventory": [
     {
       "name": "Studded Leather",
@@ -239,7 +255,34 @@
     "* Friend of the Sea \u2022 MToF 62",
     "Using gestures and sounds, you can communicate simple ideas with any beast that has an innate swimming speed."
   ],
-  "spells": [],
+  "traits_and_abilities": [
+    "* Hunter's Bane \u2022 CR",
+    "You have advantage on Wisdom (Survival) checks to track fey, fiends, or undead, as well as on Intelligence ability checks to recall information about them.",
+    "* Blood Maledict \u2022 CR",
+    "You can invoke a blood curse a number of times per short rest based on your level. You can choose to amplify the curse, losing 1d4 hit points yourself.",
+    "Creatures that do not have blood in their bodies are immune to blood curses, unless you have amplified the curse.",
+    "| 1 / Short Rest \u2022 No Action",
+    "* Blood Curses \u2022 CR",
+    "Your chosen Blood Curses for use with the <em>Blood Maledict</em> feature.",
+    "| Blood Curse of the Eyeless \u2022 CR",
+    "When a creature you can see within 30 feet of you makes an attack roll, you can use your reaction to roll one hemocraft die and subtract the number rolled from the creature\u2019s attack roll. You can choose to use this feature after the creature\u2019s roll, but before the DM determines whether the attack roll succeeds. The creature is immune if it is immune to blindness.",
+    "<em>Amplify.</em> You apply this curse to all of the creature\u2019s attack rolls until the end of the turn. You roll a new hemocraft die for each affected attack.",
+    "| Blood Curse of the Eyeless : 1 Reaction",
+    "* Darkvision \u2022 BR 23",
+    "You can see in darkness (shades of gray) up to 60 ft.",
+    "* Keen Senses \u2022 BR 23",
+    "You have proficiency in the Perception skill.",
+    "* Fey Ancestry \u2022 BR 23",
+    "You have advantage on saves against being charmed, and magic can\u2019t put you to sleep.",
+    "* Trance \u2022 BR 23",
+    "You don't need to sleep, but meditate semiconsciously for 4 hours a day. While meditating, you can dream after a fashion; such dreams are actually mental exercises that have become reflexive through years of practice. After resting in this way, you gain the same benefit that a human does from 8 hours of sleep.",
+    "* Sea Elf Training \u2022 MToF 62",
+    "You have proficiency with the spear, trident, light crossbow, and net.",
+    "* Child of the Sea \u2022 MToF 62",
+    "You have a swimming speed of 30 feet, and you can breathe air and water.",
+    "* Friend of the Sea \u2022 MToF 62",
+    "Using gestures and sounds, you can communicate simple ideas with any beast that has an innate swimming speed."
+  ],
   "spellcasting_ability": "",
   "spell_save_dc": "",
   "spell_attack_bonus": "",
@@ -249,6 +292,8 @@
     "investigation": 12
   },
   "senses": "",
+  "defenses": "",
+  "resistances": "",
   "initiative": "3",
   "proficiencies": {
     "skills": [
@@ -264,6 +309,10 @@
     "tools": "Thieves' Tools",
     "languages": "Common"
   },
+  "proficiencies_armor": "",
+  "proficiencies_weapons": "",
+  "proficiencies_tools": "",
+  "proficiencies_languages": "",
   "prof_bonus": "+2",
   "skills": {
     "Acrobatics": "+3",
@@ -285,68 +334,9 @@
     "Stealth": "+3",
     "Survival": "+3 (Proficient)"
   },
-  "saving_throws": {
-    "Strength": "+0",
-    "STR": 0,
-    "Dexterity": "+5",
-    "DEX": 5,
-    "Constitution": "+2",
-    "CON": 2,
-    "Intelligence": "+4",
-    "INT": 4,
-    "Wisdom": "+1",
-    "WIS": 1,
-    "Charisma": "+0",
-    "CHA": 0
-  },
-  "spell_slots": {
-    "level_1": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_2": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_3": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_4": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_5": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_6": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_7": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_8": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_9": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    }
-  },
-  "max_prepared_leveled_spells": 0,
+  "quarantined_stash": [],
+  "source_document": "DND Blood Hunter 1 [Order of the Ghostslayer] - Selanar Fenthana.pdf",
+  "updated_at": "2026-11-05T22:58:31.532350+00:00",
   "universal_core": {
     "name": "Selanar Fenthana",
     "player_name": "Player",
@@ -666,6 +656,19 @@
         "max": 1,
         "reset_on": "short_rest"
       }
+    },
+    "description": {
+      "gender": "Male",
+      "age": "214",
+      "size": "Medium",
+      "height": "5' 0\"",
+      "weight": "102",
+      "alignment": "Neutral",
+      "faith": "Melora",
+      "skin": "Tan",
+      "eyes": "Ice Blue",
+      "hair": "Blonde",
+      "creature_type": "Humanoid"
     }
   },
   "native_system_data": {
@@ -891,26 +894,146 @@
       "allies_and_organizations": ""
     },
     "inventory": [
-      "Studded Leather",
-      "Shield",
-      "Crossbow, Light",
-      "Shortsword",
-      "Crossbow Bolts",
-      "Backpack",
-      "Bedroll",
-      "Case, Crossbow Bolt",
-      "Clothes, Traveler's",
-      "Flask or Tankard",
-      "Mess Kit",
-      "Pouch",
-      "Rations (1 day)",
-      "Rope, Hempen (50 feet)",
-      "Sack",
-      "Tinderbox",
-      "Torch",
-      "Waterskin",
-      "Whetstone",
-      "Alchemist's Supplies"
+      {
+        "name": "Studded Leather",
+        "qty": "1",
+        "weight": "13 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Shield",
+        "qty": "1",
+        "weight": "6 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow, Light",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Shortsword",
+        "qty": "1",
+        "weight": "2 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow Bolts",
+        "qty": "20",
+        "weight": "1.5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Bedroll",
+        "qty": "1",
+        "weight": "7 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Case, Crossbow Bolt",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Clothes, Traveler's",
+        "qty": "1",
+        "weight": "4 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Flask or Tankard",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Mess Kit",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Pouch",
+        "qty": "2",
+        "weight": "2 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Rations (1 day)",
+        "qty": "10",
+        "weight": "20 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Rope, Hempen (50 feet)",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Sack",
+        "qty": "2",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Torch",
+        "qty": "5",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Waterskin",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Whetstone",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Alchemist's Supplies",
+        "qty": "1",
+        "weight": "8 lb.",
+        "category": "Tool",
+        "notes": ""
+      }
     ],
     "tagged_inventory": [
       {
@@ -1057,6 +1180,19 @@
     "weight_carried": "99.6 lb.",
     "encumbered": "150 lb.",
     "push_drag_lift": "300 lb.",
+    "description": {
+      "gender": "Male",
+      "age": "214",
+      "size": "Medium",
+      "height": "5' 0\"",
+      "weight": "102",
+      "alignment": "Neutral",
+      "faith": "Melora",
+      "skin": "Tan",
+      "eyes": "Ice Blue",
+      "hair": "Blonde",
+      "creature_type": "Humanoid"
+    },
     "gender": "Male",
     "age": "214",
     "size": "Medium",
@@ -1343,7 +1479,43 @@
       "AdditionalNotes2": "The defeat of Vashara had created a power vacuum in the ocean's depths, with new threats rising to claim dominion. Selanar understood that his true calling was to be a guardian of the natural world, both on land and sea. With Liriel by his side, he set out once more, this time as an adventurer, determined to uphold the balance of nature and protect the innocent from the shadows that lurked in the heart of the wild.\r\rThus began the legend of Selanar Fenthana, the Sea Elf Blood Hunter, a beacon of hope in a world teeming with danger and mystery. His journey was a testament to the resilience of the spirit and the unbreakable bond of family, a tale that would echo through the ages as a reminder of the price of freedom and the valor of those who dare to defend it."
     }
   },
+  "weight_carried": "99.6 lb.",
+  "encumbered": "150 lb.",
+  "push_drag_lift": "300 lb.",
+  "description": {
+    "gender": "Male",
+    "age": "214",
+    "size": "Medium",
+    "height": "5' 0\"",
+    "weight": "102",
+    "alignment": "Neutral",
+    "faith": "Melora",
+    "skin": "Tan",
+    "eyes": "Ice Blue",
+    "hair": "Blonde",
+    "creature_type": "Humanoid"
+  },
+  "gender": "Male",
+  "age": "214",
+  "size": "Medium",
+  "height": "5' 0\"",
+  "weight": "102",
+  "alignment": "Neutral",
+  "faith": "Melora",
+  "skin": "Tan",
+  "eyes": "Ice Blue",
+  "hair": "Blonde",
+  "creature_type": "Humanoid",
+  "backstory": "Born amidst the tranquil depths of the Sea of Fallen Stars, Selanar Fenthana was cradled by the undulating embrace of the ocean. The sea elf community of Elun'ethil, hidden beneath the shimmering surface, was his home. Here, life was a harmonious symphony of coral architecture and bioluminescent gardens, with the ancient rhythms of the tides dictating the ebb and flow of existence.\n\nFrom a tender age, Selanar was drawn to the mysteries of the deep. He spent his days exploring the sunken ruins and learning the secrets of the sea from the elders. His heart, however, yearned for the world beyond the aquatic haven. The surface, with its vast forests and open skies, beckoned him with the promise of untold adventures.\n\nAs he came of age, Selanar trained as a hunter, mastering the art of tracking and survival. His skills were not just confined to the water; he adapted them to the land, becoming a guardian of nature both above and below the sea. His reverence for Melora, the Wildmother, deepened, guiding his path as a protector of the natural world.\n\nTragedy struck when a band of sahuagin raiders, driven by insatiable hunger and malice, launched a brutal assault on Elun'ethil. The sea elves fought valiantly, but the surprise attack left them reeling. Selanar, leading a group of defenders, displayed unparalleled bravery. However, amidst the chaos, his younger sister, Liriel, was captured. The raiders vanished into the murky depths, leaving a trail of sorrow and rage in their wake.\n\nDevastated by the loss, Selanar vowed to rescue his sister and bring justice to the sahuagin. He embarked on a relentless quest, tracking the raiders across the sea and onto distant shores. His journey led him to the rugged coastline of the mainland, where the trail went cold. Determined not to return home without Liriel, Selanar ventured inland, adapting to the alien landscape of towering trees and sprawling plains.\n\nDuring his search, Selanar encountered the Order of the Ghostslayer, a group of blood hunters dedicated to combating supernatural threats. Intrigued by their cause and the potential to enhance his abilities, he joined their ranks. Under their tutelage, Selanar learned to harness the power of his own blood to vanquish his foes. He became a formidable warrior, feared by the dark creatures that lurked in the shadows.\n\nAs he delved deeper into the mysteries of the blood hunter, Selanar discovered a chilling truth. The sahuagin raiders were minions of a greater evil, a sea witch named Vashara. She sought to control the oceans by unleashing ancient leviathans, using captured sea elves as sacrifices to fuel her dark rituals. Liriel was to be one of these offerings.\n\nFueled by a burning desire for vengeance, Selanar's quest became a crusade against Vashara and her minions. He battled sea monsters, navigated treacherous waters, and forged alliances with other races to thwart the witch's plans. Along the way, he faced trials that tested his resolve, from the icy grasp of loneliness to the searing pain of loss. Yet, his spirit remained unbroken, driven by the love for his sister and the duty to protect his home.\n\nSelanar's journey led him to the heart of Vashara's lair, a sunken citadel shrouded in darkness. Here, he confronted the sea witch in a fierce battle, the fate of his sister and the sea hanging in the balance. With every ounce of his strength and cunning, Selanar emerged victorious, shattering Vashara's hold over the ocean depths.\n\nIn the aftermath, he found Liriel, weakened but alive, among the ruins of the citadel. Their reunion was a moment of pure joy, a glimmer of light in the darkness. Together, they returned to Elun'ethil, where Selanar was hailed as a hero. But the sea elf knew that his battle was far from over. The defeat of Vashara had created a power vacuum in the ocean's depths, with new threats rising to claim dominion. Selanar understood that his true calling was to be a guardian of the natural world, both on land and sea. With Liriel by his side, he set out once more, this time as an adventurer, determined to uphold the balance of nature and protect the innocent from the shadows that lurked in the heart of the wild.\n\nThus began the legend of Selanar Fenthana, the Sea Elf Blood Hunter, a beacon of hope in a world teeming with danger and mystery. His journey was a testament to the resilience of the spirit and the unbreakable bond of family, a tale that would echo through the ages as a reminder of the price of freedom and the valor of those who dare to defend it.",
+  "additional_notes": "",
   "is_pact_magic": false,
+  "roleplay_anchors": {
+    "personality_traits": "I watch over my friends as if they were a litter of newborn pups. \nI have a lesson for every situation, drawn from observing nature.",
+    "ideals": "Nature. The natural world is more important than all the constructs of civilization. (Neutral)",
+    "bonds": "An injury to the unspoiled wilderness of my home is an injury to me.",
+    "flaws": "I am slow to trust members of other races, tribes, and societies.",
+    "allies_and_organizations": ""
+  },
   "custom_meters": {
     "hit_dice": {
       "label": "Hit Dice (1d10)",
@@ -1358,27 +1530,52 @@
       "reset_on": "short_rest"
     }
   },
-  "roleplay_anchors": {
-    "personality_traits": "I watch over my friends as if they were a litter of newborn pups. \nI have a lesson for every situation, drawn from observing nature.",
-    "ideals": "Nature. The natural world is more important than all the constructs of civilization. (Neutral)",
-    "bonds": "An injury to the unspoiled wilderness of my home is an injury to me.",
-    "flaws": "I am slow to trust members of other races, tribes, and societies.",
-    "allies_and_organizations": ""
+  "spell_slots": {
+    "level_1": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_2": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_3": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_4": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_5": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_6": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_7": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_8": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_9": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    }
   },
-  "backstory": "Born amidst the tranquil depths of the Sea of Fallen Stars, Selanar Fenthana was cradled by the undulating embrace of the ocean. The sea elf community of Elun'ethil, hidden beneath the shimmering surface, was his home. Here, life was a harmonious symphony of coral architecture and bioluminescent gardens, with the ancient rhythms of the tides dictating the ebb and flow of existence.\n\nFrom a tender age, Selanar was drawn to the mysteries of the deep. He spent his days exploring the sunken ruins and learning the secrets of the sea from the elders. His heart, however, yearned for the world beyond the aquatic haven. The surface, with its vast forests and open skies, beckoned him with the promise of untold adventures.\n\nAs he came of age, Selanar trained as a hunter, mastering the art of tracking and survival. His skills were not just confined to the water; he adapted them to the land, becoming a guardian of nature both above and below the sea. His reverence for Melora, the Wildmother, deepened, guiding his path as a protector of the natural world.\n\nTragedy struck when a band of sahuagin raiders, driven by insatiable hunger and malice, launched a brutal assault on Elun'ethil. The sea elves fought valiantly, but the surprise attack left them reeling. Selanar, leading a group of defenders, displayed unparalleled bravery. However, amidst the chaos, his younger sister, Liriel, was captured. The raiders vanished into the murky depths, leaving a trail of sorrow and rage in their wake.\n\nDevastated by the loss, Selanar vowed to rescue his sister and bring justice to the sahuagin. He embarked on a relentless quest, tracking the raiders across the sea and onto distant shores. His journey led him to the rugged coastline of the mainland, where the trail went cold. Determined not to return home without Liriel, Selanar ventured inland, adapting to the alien landscape of towering trees and sprawling plains.\n\nDuring his search, Selanar encountered the Order of the Ghostslayer, a group of blood hunters dedicated to combating supernatural threats. Intrigued by their cause and the potential to enhance his abilities, he joined their ranks. Under their tutelage, Selanar learned to harness the power of his own blood to vanquish his foes. He became a formidable warrior, feared by the dark creatures that lurked in the shadows.\n\nAs he delved deeper into the mysteries of the blood hunter, Selanar discovered a chilling truth. The sahuagin raiders were minions of a greater evil, a sea witch named Vashara. She sought to control the oceans by unleashing ancient leviathans, using captured sea elves as sacrifices to fuel her dark rituals. Liriel was to be one of these offerings.\n\nFueled by a burning desire for vengeance, Selanar's quest became a crusade against Vashara and her minions. He battled sea monsters, navigated treacherous waters, and forged alliances with other races to thwart the witch's plans. Along the way, he faced trials that tested his resolve, from the icy grasp of loneliness to the searing pain of loss. Yet, his spirit remained unbroken, driven by the love for his sister and the duty to protect his home.\n\nSelanar's journey led him to the heart of Vashara's lair, a sunken citadel shrouded in darkness. Here, he confronted the sea witch in a fierce battle, the fate of his sister and the sea hanging in the balance. With every ounce of his strength and cunning, Selanar emerged victorious, shattering Vashara's hold over the ocean depths.\n\nIn the aftermath, he found Liriel, weakened but alive, among the ruins of the citadel. Their reunion was a moment of pure joy, a glimmer of light in the darkness. Together, they returned to Elun'ethil, where Selanar was hailed as a hero. But the sea elf knew that his battle was far from over. The defeat of Vashara had created a power vacuum in the ocean's depths, with new threats rising to claim dominion. Selanar understood that his true calling was to be a guardian of the natural world, both on land and sea. With Liriel by his side, he set out once more, this time as an adventurer, determined to uphold the balance of nature and protect the innocent from the shadows that lurked in the heart of the wild.\n\nThus began the legend of Selanar Fenthana, the Sea Elf Blood Hunter, a beacon of hope in a world teeming with danger and mystery. His journey was a testament to the resilience of the spirit and the unbreakable bond of family, a tale that would echo through the ages as a reminder of the price of freedom and the valor of those who dare to defend it.",
-  "additional_notes": "",
-  "weight_carried": "99.6 lb.",
-  "encumbered": "150 lb.",
-  "push_drag_lift": "300 lb.",
-  "gender": "Male",
-  "age": "214",
-  "size": "Medium",
-  "height": "5' 0\"",
-  "weight": "102",
-  "alignment": "Neutral",
-  "faith": "Melora",
-  "skin": "Tan",
-  "eyes": "Ice Blue",
-  "hair": "Blonde",
-  "creature_type": "Humanoid"
+  "max_prepared_leveled_spells": 0
 }

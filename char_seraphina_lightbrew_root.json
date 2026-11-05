@@ -1,6 +1,8 @@
 {
   "schema_version": "2.1",
   "id": "char_seraphina_lightbrew_root",
+  "parent_id": null,
+  "is_root": true,
   "name": "Seraphina Lightbrew",
   "variant_label": "Canonical Root",
   "player_name": "Player",
@@ -42,6 +44,27 @@
   "armor_class": 12,
   "speed": "30 ft. (Walking)",
   "hit_dice": "1d8",
+  "saving_throws": {
+    "Strength": "-1",
+    "STR": -1,
+    "Dexterity": "+1",
+    "DEX": 1,
+    "Constitution": "+4",
+    "CON": 4,
+    "Intelligence": "+5",
+    "INT": 5,
+    "Wisdom": "+0",
+    "WIS": 0,
+    "Charisma": "+1",
+    "CHA": 1
+  },
+  "currency": {
+    "cp": 10,
+    "sp": 14,
+    "ep": 7,
+    "gp": 20,
+    "pp": 0
+  },
   "weapons": [
     {
       "name": "Crossbow, light",
@@ -62,13 +85,6 @@
       "notes": ""
     }
   ],
-  "currency": {
-    "cp": 10,
-    "sp": 14,
-    "ep": 7,
-    "gp": 20,
-    "pp": 0
-  },
   "inventory": [
     {
       "name": "Leather",
@@ -227,259 +243,35 @@
     "You choose between one of three revelation options: <strong>Necrotic Shroud</strong>, <strong>Radiant Consumption</strong>, or <strong>Radiant Soul</strong>.",
     "Once per long rest, you can use a bonus action to transform using your revelation which lasts for one minute or until you end it as a bonus action."
   ],
-  "spells": [
-    {
-      "name": "Guidance",
-      "level": 0,
-      "is_cantrip": true,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S | Concentration, up to 1 minute"
-    },
-    {
-      "name": "Mending",
-      "level": 0,
-      "is_cantrip": true,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "1m | V,S,M | Instantaneous | V/S/M"
-    },
-    {
-      "name": "Light",
-      "level": 0,
-      "is_cantrip": true,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "Touch/20 ft. Sphere",
-      "components": "V, S",
-      "duration": "V,M | 1 hour"
-    },
-    {
-      "name": "Cure Wounds",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S | Instantaneous | V/S"
-    },
-    {
-      "name": "Detect Magic",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self/30 ft. Sphere",
-      "components": "V, S",
-      "duration": "V,S | Concentration, up to 10 minutes"
-    },
-    {
-      "name": "Faerie Fire",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "60 ft./20 ft. Cube",
-      "components": "V, S",
-      "duration": "V | Concentration, up to 1 minute"
-    },
-    {
-      "name": "Alarm",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "30 ft.",
-      "components": "V, S",
-      "duration": "11m | V,S,M | 8 hours"
-    },
-    {
-      "name": "Disguise Self",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self",
-      "components": "V, S",
-      "duration": "V,S | 1 hour"
-    },
-    {
-      "name": "Expeditious Retreat",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self",
-      "components": "V, S",
-      "duration": "Bonus Action | V,S | Concentration, up to 10 minutes"
-    },
-    {
-      "name": "False Life",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self",
-      "components": "V, S",
-      "duration": "V,S,M | 1 hour"
-    },
-    {
-      "name": "Feather Fall",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "1R | V,M | 1 minute"
-    },
-    {
-      "name": "Grease",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "60 ft./10 ft. Square",
-      "components": "V, S",
-      "duration": "V,S,M | 1 minute"
-    },
-    {
-      "name": "Identify",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "11m | V,S,M | Instantaneous | V/S/M"
-    },
-    {
-      "name": "Jump",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S,M | 1 minute"
-    },
-    {
-      "name": "Longstrider",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S,M | 1 hour"
-    },
-    {
-      "name": "Purify Food and Drink",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "10 ft./5 ft. Sphere",
-      "components": "V, S",
-      "duration": "1A + 10m | V,S | Instantaneous | 5 ft. Sphere, V/S"
-    },
-    {
-      "name": "Sanctuary",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "30 ft.",
-      "components": "V, S",
-      "duration": "Bonus Action | V,S,M | 1 minute"
-    },
-    {
-      "name": "Absorb Elements",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self",
-      "components": "V, S",
-      "duration": "1R | S | 1 round"
-    },
-    {
-      "name": "Catapult",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "S | Instantaneous"
-    },
-    {
-      "name": "Snare",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "1m | S,M | 8 hours"
-    },
-    {
-      "name": "Tasha's Caustic Brew",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self/30 ft. Line",
-      "components": "V, S",
-      "duration": "V,S,M | Concentration, up to 1 minute"
-    }
+  "traits_and_abilities": [
+    "* Magical Tinkering \u2022 TCoE 11",
+    "Imbue a Tiny nonmagical object with a magical property of your choice: 5ft. radius light, up to 6 second long recorded message, emits odor or nonverbal sound, static visual effect including up to 25 words of text. You can affect a maximum of 3 objects at a time.",
+    "| 3 / Other \u2022 1 Action",
+    "You can cast prepared artificer spells using INT as your spellcasting modifier (Spell DC 13, Spell Attack +5) and prepared artificer spells as rituals if they have the ritual tag. You must have a spellcasting focus \u2014 specifically thieves\u2019 tools or some kind of artisan\u2019s tool \u2014 in hand when you cast any spell with this feature.",
+    "* Ability Score Increases \u2022 MotM 5",
+    "When determining your character\u2019s ability scores, increase one score by 2 and increase a different score by 1, or increase three different scores by 1.",
+    "| Increase two scores (+2 / +1) \u2022",
+    "Increase one of these scores by 2 and a different score by 1.",
+    "* Languages \u2022 MotM 5",
+    "Your character can speak, read, and write Common and one other language that you and your DM agree is appropriate for the character.",
+    "* Creature Type \u2022 MotM 7",
+    "You are a Humanoid.",
+    "* Size \u2022 MotM 7",
+    "You are Medium or Small. You choose the size when you select this race.",
+    "* Speed \u2022 MotM 7",
+    "Your walking speed is 30 ft.",
+    "* Celestial Resistance \u2022 MotM 7",
+    "You have resistance to necrotic damage and radiant damage.",
+    "* Darkvision \u2022 MotM 7",
+    "You can see in dim light within 60 ft. of you as if it were bright light and in darkness as if it were dim light. You discern colors in that darkness only as shades of gray.",
+    "* Healing Hands \u2022 MotM 7",
+    "As an action, you can touch a creature and heal it for <strong>2d4</strong> hit points.",
+    "| 1 / Long Rest \u2022 1 Action",
+    "* Light Bearer \u2022 MotM 7",
+    "You learn the <em>light</em> cantrip. Charisma is your spellcasting ability for it.",
+    "* Celestial Revelation \u2022 MotM 7",
+    "You choose between one of three revelation options: <strong>Necrotic Shroud</strong>, <strong>Radiant Consumption</strong>, or <strong>Radiant Soul</strong>.",
+    "Once per long rest, you can use a bonus action to transform using your revelation which lasts for one minute or until you end it as a bonus action."
   ],
   "spellcasting_ability": "INT",
   "spell_save_dc": "13",
@@ -490,6 +282,8 @@
     "investigation": 15
   },
   "senses": "",
+  "defenses": "",
+  "resistances": "",
   "initiative": "1",
   "proficiencies": {
     "skills": [
@@ -503,6 +297,10 @@
     "tools": "Thieves' Tools",
     "languages": "Common"
   },
+  "proficiencies_armor": "",
+  "proficiencies_weapons": "",
+  "proficiencies_tools": "",
+  "proficiencies_languages": "",
   "prof_bonus": "+2",
   "skills": {
     "Acrobatics": "+1",
@@ -524,68 +322,9 @@
     "Stealth": "+1",
     "Survival": "+0"
   },
-  "saving_throws": {
-    "Strength": "-1",
-    "STR": -1,
-    "Dexterity": "+1",
-    "DEX": 1,
-    "Constitution": "+4",
-    "CON": 4,
-    "Intelligence": "+5",
-    "INT": 5,
-    "Wisdom": "+0",
-    "WIS": 0,
-    "Charisma": "+1",
-    "CHA": 1
-  },
-  "spell_slots": {
-    "level_1": {
-      "max": 2,
-      "current": 2,
-      "reset_on": "long_rest"
-    },
-    "level_2": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_3": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_4": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_5": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_6": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_7": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_8": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_9": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    }
-  },
-  "max_prepared_leveled_spells": 3,
+  "quarantined_stash": [],
+  "source_document": "DND Artificer 1 [Alchemist] - Seraphina Lightbrew.pdf",
+  "updated_at": "2026-11-05T22:58:31.337720+00:00",
   "universal_core": {
     "name": "Seraphina Lightbrew",
     "player_name": "Player",
@@ -913,6 +652,19 @@
         "max": 1,
         "reset_on": "long_rest"
       }
+    },
+    "description": {
+      "gender": "Female",
+      "age": "35",
+      "size": "Small",
+      "height": "3' 6\"",
+      "weight": "45",
+      "alignment": "Neutral Good",
+      "faith": "Gond",
+      "skin": "Pale",
+      "eyes": "Bright blue",
+      "hair": "Silvery-white",
+      "creature_type": "Humanoid"
     }
   },
   "native_system_data": {
@@ -1403,24 +1155,132 @@
       "allies_and_organizations": ""
     },
     "inventory": [
-      "Leather",
-      "Dagger",
-      "Crossbow, light",
-      "Crossbow Bolts",
-      "Backpack",
-      "Case, Crossbow Bolt",
-      "Clothes, Common",
-      "Pouch",
-      "Alchemist's Supplies",
-      "Tinker's Tools",
-      "Thieves' Tools",
-      "Bedroll",
-      "Mess Kit",
-      "Rations (1 day)",
-      "Rope, Hempen (50 feet)",
-      "Tinderbox",
-      "Torch",
-      "Waterskin"
+      {
+        "name": "Leather",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Dagger",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow, light",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow Bolts",
+        "qty": "20",
+        "weight": "1.5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Case, Crossbow Bolt",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Clothes, Common",
+        "qty": "1",
+        "weight": "3 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Pouch",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Alchemist's Supplies",
+        "qty": "1",
+        "weight": "8 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Tinker's Tools",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Thieves' Tools",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Bedroll",
+        "qty": "1",
+        "weight": "7 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Mess Kit",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Rations (1 day)",
+        "qty": "10",
+        "weight": "20 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Rope, Hempen (50 feet)",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Torch",
+        "qty": "10",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Waterskin",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Consumable",
+        "notes": ""
+      }
     ],
     "tagged_inventory": [
       {
@@ -1553,6 +1413,19 @@
     "weight_carried": "101.52 lb.",
     "encumbered": "120 lb.",
     "push_drag_lift": "240 lb.",
+    "description": {
+      "gender": "Female",
+      "age": "35",
+      "size": "Small",
+      "height": "3' 6\"",
+      "weight": "45",
+      "alignment": "Neutral Good",
+      "faith": "Gond",
+      "skin": "Pale",
+      "eyes": "Bright blue",
+      "hair": "Silvery-white",
+      "creature_type": "Humanoid"
+    },
     "gender": "Female",
     "age": "35",
     "size": "Small",
@@ -2343,7 +2216,43 @@
       "Notes49": ""
     }
   },
+  "weight_carried": "101.52 lb.",
+  "encumbered": "120 lb.",
+  "push_drag_lift": "240 lb.",
+  "description": {
+    "gender": "Female",
+    "age": "35",
+    "size": "Small",
+    "height": "3' 6\"",
+    "weight": "45",
+    "alignment": "Neutral Good",
+    "faith": "Gond",
+    "skin": "Pale",
+    "eyes": "Bright blue",
+    "hair": "Silvery-white",
+    "creature_type": "Humanoid"
+  },
+  "gender": "Female",
+  "age": "35",
+  "size": "Small",
+  "height": "3' 6\"",
+  "weight": "45",
+  "alignment": "Neutral Good",
+  "faith": "Gond",
+  "skin": "Pale",
+  "eyes": "Bright blue",
+  "hair": "Silvery-white",
+  "creature_type": "Humanoid",
+  "backstory": "Seraphina Lightbrew's story begins in the tranquil town of Eldoria, nestled in the heart of a lush valley. Born to a family of modest means, her early years were filled with the simple joys of childhood. However, Seraphina was no ordinary child. From a young age, she exhibited an innate connection to the celestial realm, a gift from her Aasimar heritage. Her eyes shimmered with a golden light, and her presence brought a sense of calm to those around her.\n\nAs Seraphina grew, so did her curiosity about the world and her place in it. She spent countless hours in the town's library, poring over ancient texts and alchemical treatises. Her fascination with alchemy was not just academic; she felt a deep, personal connection to the art of transformation and creation. It was as if the celestial spark within her resonated with the alchemical process of turning base materials into something greater.\n\nHer talents did not go unnoticed. The local alchemist, a wise and kindly old gnome named Tiberius, took Seraphina under his wing. Under his tutelage, she honed her skills, mastering the delicate balance of ingredients and the precise timing required for successful alchemy. Tiberius also taught her the importance of using her abilities for the greater good, a lesson that resonated deeply with her Aasimar nature.\n\nAs Seraphina's expertise grew, so did her reputation. People came from far and wide to seek her remedies and potions. She found joy in helping others, and her celestial heritage allowed her to heal wounds and ailments with a touch, a gift she used sparingly but effectively.\n\nHowever, Seraphina's peaceful life took a dramatic turn when a mysterious illness struck Eldoria. The disease spread rapidly, and the town's healers were powerless to stop it. Desperate for a cure, Seraphina turned to her alchemy, working tirelessly in her laboratory. After many sleepless nights, she finally developed a potion that halted the disease's progress.\n\nThe town hailed her as a hero, but Seraphina felt no pride in her accomplishment. The experience had exposed her to the harsh realities of the world outside her peaceful valley. She realized that her gifts could make a real difference, not just in Eldoria but in the wider world.\n\nWith a heavy heart, she bid farewell to her family and Tiberius, setting out on a journey to learn more about her celestial heritage and to use her alchemy to help those in need. Her travels took her to distant lands, where she encountered creatures and cultures she had only read about in books. She faced challenges that tested her skills and her spirit, but she met each one with courage and determination.\n\nOne of her most significant encounters was with a group of adventurers who were on a quest to stop a dark cult from summoning a powerful demon. Seraphina's knowledge of alchemy proved invaluable, and she played a crucial role in thwarting the cult's plans. The experience taught her the importance of teamwork and the strength that comes from diverse skills and perspectives.\n\nAs she continued her journey, Seraphina's understanding of her celestial heritage deepened. She learned to harness the radiant energy within her, using it to enhance her alchemical creations and to protect herself and her allies in battle. Her wings, once a mere shimmer, now unfurled in their full glory, a manifestation of her divine nature.\n\nDespite the dangers she faced, Seraphina never lost sight of her goal: to use her gifts to bring light to the darkest corners of the world. She became a beacon of hope to those she helped, her name synonymous with healing and compassion.\n\nSeraphina's journey is far from over. She knows that there are still many mysteries to uncover and countless people in need of her aid. But she faces the future with confidence, secure in the knowledge that she is walking the path that was meant for her, guided by the celestial spark that burns brightly within her soul.",
+  "additional_notes": "",
   "is_pact_magic": false,
+  "roleplay_anchors": {
+    "personality_traits": "I always want to know how things work and what makes people tick. \nI\u2019m full of witty aphorisms and have a proverb for every occasion.",
+    "ideals": "Generosity. My talents were given to me so that I could use them to benefit the world. (Good)",
+    "bonds": "I will get revenge on the evil forces that destroyed my place of business and ruined my livelihood.",
+    "flaws": "I\u2019m never satisfied with what I have\u2014I always want more.",
+    "allies_and_organizations": ""
+  },
   "custom_meters": {
     "hit_dice": {
       "label": "Hit Dice (1d8)",
@@ -2370,27 +2279,306 @@
       "reset_on": "long_rest"
     }
   },
-  "roleplay_anchors": {
-    "personality_traits": "I always want to know how things work and what makes people tick. \nI\u2019m full of witty aphorisms and have a proverb for every occasion.",
-    "ideals": "Generosity. My talents were given to me so that I could use them to benefit the world. (Good)",
-    "bonds": "I will get revenge on the evil forces that destroyed my place of business and ruined my livelihood.",
-    "flaws": "I\u2019m never satisfied with what I have\u2014I always want more.",
-    "allies_and_organizations": ""
+  "spells": [
+    {
+      "name": "Guidance",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Mending",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "1m | V,S,M | Instantaneous | V/S/M"
+    },
+    {
+      "name": "Light",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch/20 ft. Sphere",
+      "components": "V, S",
+      "duration": "V,M | 1 hour"
+    },
+    {
+      "name": "Cure Wounds",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Detect Magic",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self/30 ft. Sphere",
+      "components": "V, S",
+      "duration": "V,S | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Faerie Fire",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "60 ft./20 ft. Cube",
+      "components": "V, S",
+      "duration": "V | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Alarm",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "11m | V,S,M | 8 hours"
+    },
+    {
+      "name": "Disguise Self",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "V,S | 1 hour"
+    },
+    {
+      "name": "Expeditious Retreat",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "Bonus Action | V,S | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "False Life",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "V,S,M | 1 hour"
+    },
+    {
+      "name": "Feather Fall",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "1R | V,M | 1 minute"
+    },
+    {
+      "name": "Grease",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "60 ft./10 ft. Square",
+      "components": "V, S",
+      "duration": "V,S,M | 1 minute"
+    },
+    {
+      "name": "Identify",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "11m | V,S,M | Instantaneous | V/S/M"
+    },
+    {
+      "name": "Jump",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S,M | 1 minute"
+    },
+    {
+      "name": "Longstrider",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S,M | 1 hour"
+    },
+    {
+      "name": "Purify Food and Drink",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "10 ft./5 ft. Sphere",
+      "components": "V, S",
+      "duration": "1A + 10m | V,S | Instantaneous | 5 ft. Sphere, V/S"
+    },
+    {
+      "name": "Sanctuary",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "Bonus Action | V,S,M | 1 minute"
+    },
+    {
+      "name": "Absorb Elements",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "1R | S | 1 round"
+    },
+    {
+      "name": "Catapult",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "S | Instantaneous"
+    },
+    {
+      "name": "Snare",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "1m | S,M | 8 hours"
+    },
+    {
+      "name": "Tasha's Caustic Brew",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self/30 ft. Line",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 1 minute"
+    }
+  ],
+  "spell_slots": {
+    "level_1": {
+      "max": 2,
+      "current": 2,
+      "reset_on": "long_rest"
+    },
+    "level_2": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_3": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_4": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_5": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_6": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_7": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_8": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_9": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    }
   },
-  "backstory": "Seraphina Lightbrew's story begins in the tranquil town of Eldoria, nestled in the heart of a lush valley. Born to a family of modest means, her early years were filled with the simple joys of childhood. However, Seraphina was no ordinary child. From a young age, she exhibited an innate connection to the celestial realm, a gift from her Aasimar heritage. Her eyes shimmered with a golden light, and her presence brought a sense of calm to those around her.\n\nAs Seraphina grew, so did her curiosity about the world and her place in it. She spent countless hours in the town's library, poring over ancient texts and alchemical treatises. Her fascination with alchemy was not just academic; she felt a deep, personal connection to the art of transformation and creation. It was as if the celestial spark within her resonated with the alchemical process of turning base materials into something greater.\n\nHer talents did not go unnoticed. The local alchemist, a wise and kindly old gnome named Tiberius, took Seraphina under his wing. Under his tutelage, she honed her skills, mastering the delicate balance of ingredients and the precise timing required for successful alchemy. Tiberius also taught her the importance of using her abilities for the greater good, a lesson that resonated deeply with her Aasimar nature.\n\nAs Seraphina's expertise grew, so did her reputation. People came from far and wide to seek her remedies and potions. She found joy in helping others, and her celestial heritage allowed her to heal wounds and ailments with a touch, a gift she used sparingly but effectively.\n\nHowever, Seraphina's peaceful life took a dramatic turn when a mysterious illness struck Eldoria. The disease spread rapidly, and the town's healers were powerless to stop it. Desperate for a cure, Seraphina turned to her alchemy, working tirelessly in her laboratory. After many sleepless nights, she finally developed a potion that halted the disease's progress.\n\nThe town hailed her as a hero, but Seraphina felt no pride in her accomplishment. The experience had exposed her to the harsh realities of the world outside her peaceful valley. She realized that her gifts could make a real difference, not just in Eldoria but in the wider world.\n\nWith a heavy heart, she bid farewell to her family and Tiberius, setting out on a journey to learn more about her celestial heritage and to use her alchemy to help those in need. Her travels took her to distant lands, where she encountered creatures and cultures she had only read about in books. She faced challenges that tested her skills and her spirit, but she met each one with courage and determination.\n\nOne of her most significant encounters was with a group of adventurers who were on a quest to stop a dark cult from summoning a powerful demon. Seraphina's knowledge of alchemy proved invaluable, and she played a crucial role in thwarting the cult's plans. The experience taught her the importance of teamwork and the strength that comes from diverse skills and perspectives.\n\nAs she continued her journey, Seraphina's understanding of her celestial heritage deepened. She learned to harness the radiant energy within her, using it to enhance her alchemical creations and to protect herself and her allies in battle. Her wings, once a mere shimmer, now unfurled in their full glory, a manifestation of her divine nature.\n\nDespite the dangers she faced, Seraphina never lost sight of her goal: to use her gifts to bring light to the darkest corners of the world. She became a beacon of hope to those she helped, her name synonymous with healing and compassion.\n\nSeraphina's journey is far from over. She knows that there are still many mysteries to uncover and countless people in need of her aid. But she faces the future with confidence, secure in the knowledge that she is walking the path that was meant for her, guided by the celestial spark that burns brightly within her soul.",
-  "additional_notes": "",
-  "weight_carried": "101.52 lb.",
-  "encumbered": "120 lb.",
-  "push_drag_lift": "240 lb.",
-  "gender": "Female",
-  "age": "35",
-  "size": "Small",
-  "height": "3' 6\"",
-  "weight": "45",
-  "alignment": "Neutral Good",
-  "faith": "Gond",
-  "skin": "Pale",
-  "eyes": "Bright blue",
-  "hair": "Silvery-white",
-  "creature_type": "Humanoid"
+  "max_prepared_leveled_spells": 3
 }

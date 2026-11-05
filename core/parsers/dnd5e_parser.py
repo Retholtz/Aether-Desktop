@@ -59,11 +59,10 @@ def normalize_spell_level(lvl_val: Any) -> int:
 
 
 def sanitize_inventory(raw_inventory: List[Any]) -> List[Any]:
-    """Stacks identical inventory items into a single row with combined quantities."""
+    """Stacks identical inventory items into a single row with combined quantities, always returning uniform structured dicts."""
     if not raw_inventory:
         return []
     stacked = {}
-    is_all_str = all(isinstance(x, str) for x in raw_inventory)
     for item in raw_inventory:
         if isinstance(item, str):
             name = item.strip()
@@ -109,11 +108,13 @@ def sanitize_inventory(raw_inventory: List[Any]) -> List[Any]:
 
         if key in stacked:
             stacked[key]["qty"] += qty
+            if stacked[key]["weight"] in ("--", "", None) and weight not in ("--", "", None):
+                stacked[key]["weight"] = weight
         else:
             entry = {
                 "name": norm_name,
                 "qty": qty,
-                "weight": weight,
+                "weight": weight if weight not in (None, "") else "--",
                 "category": category,
                 "notes": notes
             }
@@ -122,9 +123,6 @@ def sanitize_inventory(raw_inventory: List[Any]) -> List[Any]:
             if status:
                 entry["status"] = status
             stacked[key] = entry
-
-    if is_all_str:
-        return [e["name"] for e in stacked.values()]
 
     # Format quantities back to strings for UI
     results = []
@@ -410,18 +408,34 @@ class DnD5eParser(BaseSheetParser):
             "allies_and_organizations": _clean(fields.get("Allies") or fields.get("AlliesOrganizations") or "") or self._extract_section(text, "ALLIES & ORGANIZATIONS", "PERSONALITY TRAITS")
         }
 
+        # Extract Weight Carried with Automated Fallback Calculation
         weight_carried = _clean(fields.get("Weight Carried") or fields.get("WeightCarried") or "")
         encumbered = _clean(fields.get("Encumbered") or "")
         push_drag_lift = _clean(fields.get("PushDragLift") or fields.get("Push/Drag/Lift") or "")
+
+        # If AcroForm field is empty or evaluates to 0, compute from structured inventory
+        if not weight_carried or weight_carried in ("0 lb.", "--", "0"):
+            total_calc_weight = 0.0
+            for itm in structured_inventory:
+                w_str = str(itm.get("weight", ""))
+                q_val = int(itm.get("qty", 1)) if str(itm.get("qty", "1")).isdigit() else 1
+                m_w = re.search(r'([\d\.]+)', w_str)
+                if m_w:
+                    total_calc_weight += float(m_w.group(1)) * q_val
+            if total_calc_weight > 0:
+                weight_carried = f"{total_calc_weight:.1f} lb."
+            else:
+                weight_carried = "0 lb."
+
         if not encumbered and str_val:
             encumbered = f"{str_val * 15} lb."
         if not push_drag_lift and str_val:
             push_drag_lift = f"{str_val * 30} lb."
 
-        # Physical Appearance
+        # Physical Appearance & Identity Dictionary
         char_gender = _clean(fields.get("GENDER") or fields.get("Gender") or "")
         char_age = _clean(fields.get("AGE") or fields.get("Age") or "")
-        char_size = _clean(fields.get("SIZE") or fields.get("Size") or "")
+        char_size = _clean(fields.get("SIZE") or fields.get("Size") or "") or "Medium"
         char_height = _clean(fields.get("HEIGHT") or fields.get("Height") or "")
         char_weight = _clean(fields.get("WEIGHT") or fields.get("Weight") or "")
         char_alignment = _clean(fields.get("ALIGNMENT") or fields.get("Alignment") or "")
@@ -430,13 +444,29 @@ class DnD5eParser(BaseSheetParser):
         char_eyes = _clean(fields.get("EYES") or fields.get("Eyes") or "")
         char_hair = _clean(fields.get("HAIR") or fields.get("Hair") or "")
 
-        # Creature Type
+        # Creature Type Resolution
         creature_type = ""
         feats_lower = f"{features_text}\n{extracted_race}\n{clean_class}".lower()
         if "you are a humanoid" in feats_lower or "creature type: humanoid" in feats_lower or "humanoid" in feats_lower:
             creature_type = "Humanoid"
-        elif any(r in extracted_race.lower() for r in ["aasimar", "human", "elf", "dwarf", "gnome", "halfling", "tiefling", "dragonborn", "orc"]):
+        elif any(r in extracted_race.lower() for r in ["aasimar", "human", "elf", "dwarf", "gnome", "halfling", "tiefling", "dragonborn", "orc", "lizardfolk", "kobold"]):
             creature_type = "Humanoid"
+        else:
+            creature_type = "Humanoid"
+
+        appearance_dict = {
+            "gender": char_gender,
+            "age": char_age,
+            "size": char_size,
+            "height": char_height,
+            "weight": char_weight,
+            "alignment": char_alignment,
+            "faith": char_faith,
+            "skin": char_skin,
+            "eyes": char_eyes,
+            "hair": char_hair,
+            "creature_type": creature_type
+        }
 
         # Skills & Proficiencies
         dnd_skill_stats = {
@@ -571,7 +601,8 @@ class DnD5eParser(BaseSheetParser):
             tagged_traits=clean_traits_and_headers([{"name": t.split("•")[0].split(":")[0].strip(), "description": t, "genre": "fantasy_d20"} for t in cleaned_traits]),
             backstory=full_backstory or "Adventurer exploring the realms with skill and dedication.",
             roleplay_anchors=roleplay_anchors,
-            custom_meters=custom_meters
+            custom_meters=custom_meters,
+            description=appearance_dict
         )
 
         extracted_weapons = self._extract_weapons(fields, text)
@@ -633,11 +664,12 @@ class DnD5eParser(BaseSheetParser):
             "custom_meters": custom_meters,
             "features_and_traits": cleaned_traits,
             "roleplay_anchors": roleplay_anchors,
-            "inventory": [x["name"] if isinstance(x, dict) else str(x) for x in structured_inventory],
+            "inventory": structured_inventory,
             "tagged_inventory": structured_inventory,
             "weight_carried": weight_carried,
             "encumbered": encumbered,
             "push_drag_lift": push_drag_lift,
+            "description": appearance_dict,
             "gender": char_gender,
             "age": char_age,
             "size": char_size,
@@ -680,6 +712,7 @@ class DnD5eParser(BaseSheetParser):
             "weapons": extracted_weapons,
             "currency": extracted_currency,
             "inventory": structured_inventory,
+            "tagged_inventory": structured_inventory,
             "features_and_traits": cleaned_traits,
             "spells": spells_list,
             "spellcasting_ability": spell_ability,
@@ -704,6 +737,7 @@ class DnD5eParser(BaseSheetParser):
             "weight_carried": weight_carried,
             "encumbered": encumbered,
             "push_drag_lift": push_drag_lift,
+            "description": appearance_dict,
             "gender": char_gender,
             "age": char_age,
             "size": char_size,

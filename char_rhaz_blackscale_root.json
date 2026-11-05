@@ -1,6 +1,8 @@
 {
   "schema_version": "2.1",
   "id": "char_rhaz_blackscale_root",
+  "parent_id": null,
+  "is_root": true,
   "name": "Rhaz Blackscale",
   "variant_label": "Canonical Root",
   "player_name": "Player",
@@ -42,6 +44,27 @@
   "armor_class": 18,
   "speed": "30 ft. (Walking), 30 ft. (Swimming)",
   "hit_dice": "1d8",
+  "saving_throws": {
+    "Strength": "+0",
+    "STR": 0,
+    "Dexterity": "+2",
+    "DEX": 2,
+    "Constitution": "+3",
+    "CON": 3,
+    "Intelligence": "+0",
+    "INT": 0,
+    "Wisdom": "+5",
+    "WIS": 5,
+    "Charisma": "+1",
+    "CHA": 1
+  },
+  "currency": {
+    "cp": 0,
+    "sp": 0,
+    "ep": 0,
+    "gp": 5,
+    "pp": 1
+  },
   "weapons": [
     {
       "name": "Crossbow, Light",
@@ -74,13 +97,6 @@
       "notes": ""
     }
   ],
-  "currency": {
-    "cp": 0,
-    "sp": 0,
-    "ep": 0,
-    "gp": 5,
-    "pp": 1
-  },
   "inventory": [
     {
       "name": "Scale Mail",
@@ -262,271 +278,30 @@
     "Once per short rest as a bonus action, you can make a bite attack. If it hits, you gain 3 temporary HP.",
     "| 1 / Short Rest \u2022 1 Bonus Action"
   ],
-  "spells": [
-    {
-      "name": "Guidance",
-      "level": 0,
-      "is_cantrip": true,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S | Concentration, up to 1 minute"
-    },
-    {
-      "name": "Sacred Flame",
-      "level": 0,
-      "is_cantrip": true,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "V,S | Instantaneous | V/S"
-    },
-    {
-      "name": "Word of Radiance",
-      "level": 0,
-      "is_cantrip": true,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "5 ft.",
-      "components": "V, S",
-      "duration": "V,M | Instantaneous | V/M"
-    },
-    {
-      "name": "Toll the Dead",
-      "level": 0,
-      "is_cantrip": true,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "V,S | Instantaneous | V/S"
-    },
-    {
-      "name": "Healing Word",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "Bonus Action | V | Instantaneous"
-    },
-    {
-      "name": "Guiding Bolt",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "120 ft.",
-      "components": "V, S",
-      "duration": "V,S | 1 round"
-    },
-    {
-      "name": "Bless",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "30 ft.",
-      "components": "V, S",
-      "duration": "V,S,M | Concentration, up to 1 minute"
-    },
-    {
-      "name": "Sanctuary",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "30 ft.",
-      "components": "V, S",
-      "duration": "Bonus Action | V,S,M | 1 minute"
-    },
-    {
-      "name": "False Life",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": true,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "Self",
-      "components": "V, S",
-      "duration": "V,S,M | 1 hour"
-    },
-    {
-      "name": "Ray of Sickness",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": true,
-      "prepared": true,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "V,S | Instantaneous | V/S"
-    },
-    {
-      "name": "Bane",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "30 ft.",
-      "components": "V, S",
-      "duration": "V,S,M | Concentration, up to 1 minute"
-    },
-    {
-      "name": "Command",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "V | 1 round"
-    },
-    {
-      "name": "Create or Destroy Water",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "30 ft./30 ft. Cube",
-      "components": "V, S",
-      "duration": "V,S,M | Instantaneous | 30 ft. Cube, V/S/M"
-    },
-    {
-      "name": "Cure Wounds",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S | Instantaneous | V/S"
-    },
-    {
-      "name": "Detect Evil and Good",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self/30 ft. Sphere",
-      "components": "V, S",
-      "duration": "V,S | Concentration, up to 10 minutes"
-    },
-    {
-      "name": "Detect Magic",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self/30 ft. Sphere",
-      "components": "V, S",
-      "duration": "1A + 10m | V,S | Concentration, up to 10 minutes"
-    },
-    {
-      "name": "Detect Poison and Disease",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Self/30 ft. Sphere",
-      "components": "V, S",
-      "duration": "1A + 10m | V,S,M | Concentration, up to 10 minutes"
-    },
-    {
-      "name": "Inflict Wounds",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S | Instantaneous | V/S"
-    },
-    {
-      "name": "Protection from Evil and Good",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "V,S,M | Concentration, up to 10 minutes"
-    },
-    {
-      "name": "Purify Food and Drink",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "10 ft./5 ft. Sphere",
-      "components": "V, S",
-      "duration": "1A + 10m | V,S | Instantaneous | 5 ft. Sphere, V/S"
-    },
-    {
-      "name": "Shield of Faith",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": false,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "60 ft.",
-      "components": "V, S",
-      "duration": "Bonus Action | V,S,M | Concentration, up to 10 minutes"
-    },
-    {
-      "name": "Ceremony",
-      "level": 1,
-      "is_cantrip": false,
-      "is_ritual": true,
-      "is_always_prepared": false,
-      "prepared": false,
-      "cast_time": "1A",
-      "range": "Touch",
-      "components": "V, S",
-      "duration": "1h + 10m | V,S,M | Instantaneous | V/S/M"
-    }
+  "traits_and_abilities": [
+    "Your Cleric has additional spells available to them, as designated in Tasha's Cauldron of Everything.",
+    "You can cast prepared cleric spells using WIS as your spellcasting modifier (Spell DC 13, Spell Attack +5) and prepared cleric spells as rituals if they have the ritual tag. You can use a holy symbol as a spellcasting focus.",
+    "* Divine Domain \u2022 PHB 58",
+    "You choose a divine domain that grants you additional spells and other features related to your deity.",
+    "| Death Domain",
+    "* Bonus Proficiency \u2022 DMG",
+    "You gain proficiency with martial weapons.",
+    "* Reaper \u2022 DMG",
+    "You learn one necromancy cantrip from any spell list. When you cast a necromancy cantrip that normally targets only one creature, it can instead target two creatures within 5 ft. of each other.",
+    "* Bite \u2022 VGtM",
+    "You have a bite attack for 1d6 +0 piercing damage that can be used instead of the normal damage for an unarmed strike.",
+    "| 1 Action",
+    "* Cunning Artisan \u2022 VGtM",
+    "As part of a short rest, you can create a shield, club, javelin, darts, or blowgun needles from materials from slain creatures.",
+    "* Hold Breath \u2022 VGtM",
+    "You can hold your breath for up to 15 minutes at a time.",
+    "* Hunter\u2019s Lore  \u2022 VGtM",
+    "You gain proficiency with two of the following skills of your choice: Animal Handling, Nature, Perception, Stealth, and Survival.",
+    "* Natural Armor  \u2022 VGtM",
+    "When you aren\u2019t wearing armor, your AC is 13 + your Dexterity modifier. A shield\u2019s benefits apply as normal.",
+    "* Hungry Jaws \u2022 VGtM",
+    "Once per short rest as a bonus action, you can make a bite attack. If it hits, you gain 3 temporary HP.",
+    "| 1 / Short Rest \u2022 1 Bonus Action"
   ],
   "spellcasting_ability": "WIS",
   "spell_save_dc": "13",
@@ -537,6 +312,8 @@
     "investigation": 10
   },
   "senses": "",
+  "defenses": "",
+  "resistances": "",
   "initiative": "2",
   "proficiencies": {
     "skills": [
@@ -552,6 +329,10 @@
     "tools": "Thieves' Tools",
     "languages": "Common"
   },
+  "proficiencies_armor": "",
+  "proficiencies_weapons": "",
+  "proficiencies_tools": "",
+  "proficiencies_languages": "",
   "prof_bonus": "+2",
   "skills": {
     "Acrobatics": "+2",
@@ -573,68 +354,9 @@
     "Stealth": "+2",
     "Survival": "+5 (Proficient)"
   },
-  "saving_throws": {
-    "Strength": "+0",
-    "STR": 0,
-    "Dexterity": "+2",
-    "DEX": 2,
-    "Constitution": "+3",
-    "CON": 3,
-    "Intelligence": "+0",
-    "INT": 0,
-    "Wisdom": "+5",
-    "WIS": 5,
-    "Charisma": "+1",
-    "CHA": 1
-  },
-  "spell_slots": {
-    "level_1": {
-      "max": 2,
-      "current": 2,
-      "reset_on": "long_rest"
-    },
-    "level_2": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_3": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_4": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_5": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_6": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_7": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_8": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    },
-    "level_9": {
-      "max": 0,
-      "current": 0,
-      "reset_on": "long_rest"
-    }
-  },
-  "max_prepared_leveled_spells": 4,
+  "quarantined_stash": [],
+  "source_document": "DND Cleric 1 [Death Domain] - Rhaz Blackscale.pdf",
+  "updated_at": "2026-11-05T22:58:31.782057+00:00",
   "universal_core": {
     "name": "Rhaz Blackscale",
     "player_name": "Player",
@@ -953,6 +675,19 @@
         "max": 1,
         "reset_on": "short_rest"
       }
+    },
+    "description": {
+      "gender": "Female",
+      "age": "14",
+      "size": "Medium",
+      "height": "5' 9\"",
+      "weight": "216",
+      "alignment": "Neutral",
+      "faith": "Kelemvor",
+      "skin": "Black",
+      "eyes": "Yellow",
+      "hair": "None",
+      "creature_type": "Humanoid"
     }
   },
   "native_system_data": {
@@ -1452,28 +1187,160 @@
       "allies_and_organizations": ""
     },
     "inventory": [
-      "Scale Mail",
-      "Shield",
-      "Dagger",
-      "Crossbow, Light",
-      "Warhammer",
-      "Crossbow Bolts",
-      "Potion of Healing",
-      "Backpack",
-      "Bedroll",
-      "Case, Crossbow Bolt",
-      "Clothes, Traveler's",
-      "Flask or Tankard",
-      "Healer's Kit",
-      "Mess Kit",
-      "Emblem",
-      "Rations (1 day)",
-      "Rope, Silk (50 feet)",
-      "Soap",
-      "Tinderbox",
-      "Torch",
-      "Waterskin",
-      "Whetstone"
+      {
+        "name": "Scale Mail",
+        "qty": "1",
+        "weight": "45 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Shield",
+        "qty": "1",
+        "weight": "6 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Dagger",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow, Light",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Warhammer",
+        "qty": "1",
+        "weight": "2 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow Bolts",
+        "qty": "20",
+        "weight": "1.5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Potion of Healing",
+        "qty": "1",
+        "weight": "0.5 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Bedroll",
+        "qty": "1",
+        "weight": "7 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Case, Crossbow Bolt",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Clothes, Traveler's",
+        "qty": "1",
+        "weight": "4 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Flask or Tankard",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Healer's Kit",
+        "qty": "1",
+        "weight": "3 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Mess Kit",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Emblem",
+        "qty": "1",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Rations (1 day)",
+        "qty": "10",
+        "weight": "20 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Rope, Silk (50 feet)",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Soap",
+        "qty": "1",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Torch",
+        "qty": "5",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Waterskin",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Whetstone",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      }
     ],
     "tagged_inventory": [
       {
@@ -1634,6 +1501,19 @@
     "weight_carried": "120.12 lb.",
     "encumbered": "150 lb.",
     "push_drag_lift": "300 lb.",
+    "description": {
+      "gender": "Female",
+      "age": "14",
+      "size": "Medium",
+      "height": "5' 9\"",
+      "weight": "216",
+      "alignment": "Neutral",
+      "faith": "Kelemvor",
+      "skin": "Black",
+      "eyes": "Yellow",
+      "hair": "None",
+      "creature_type": "Humanoid"
+    },
     "gender": "Female",
     "age": "14",
     "size": "Medium",
@@ -1644,7 +1524,7 @@
     "skin": "Black",
     "eyes": "Yellow",
     "hair": "None",
-    "creature_type": "",
+    "creature_type": "Humanoid",
     "backstory": "",
     "additional_notes": "",
     "raw_acro_form_fields": {
@@ -2424,7 +2304,43 @@
       "Notes49": ""
     }
   },
+  "weight_carried": "120.12 lb.",
+  "encumbered": "150 lb.",
+  "push_drag_lift": "300 lb.",
+  "description": {
+    "gender": "Female",
+    "age": "14",
+    "size": "Medium",
+    "height": "5' 9\"",
+    "weight": "216",
+    "alignment": "Neutral",
+    "faith": "Kelemvor",
+    "skin": "Black",
+    "eyes": "Yellow",
+    "hair": "None",
+    "creature_type": "Humanoid"
+  },
+  "gender": "Female",
+  "age": "14",
+  "size": "Medium",
+  "height": "5' 9\"",
+  "weight": "216",
+  "alignment": "Neutral",
+  "faith": "Kelemvor",
+  "skin": "Black",
+  "eyes": "Yellow",
+  "hair": "None",
+  "creature_type": "Humanoid",
+  "backstory": "",
+  "additional_notes": "",
   "is_pact_magic": false,
+  "roleplay_anchors": {
+    "personality_traits": "I see omens in every event and action. The gods try to speak to us, we just need to listen. \nI quote (or misquote) sacred texts",
+    "ideals": "Aspiration. I seek to prove myself worthy of my god\u2019s favor by matching my actions against his or her",
+    "bonds": "I will do anything to protect the temple where I served.",
+    "flaws": "My piety sometimes leads me to blindly trust those that profess faith in my god.",
+    "allies_and_organizations": ""
+  },
   "custom_meters": {
     "hit_dice": {
       "label": "Hit Dice (1d8)",
@@ -2439,27 +2355,318 @@
       "reset_on": "short_rest"
     }
   },
-  "roleplay_anchors": {
-    "personality_traits": "I see omens in every event and action. The gods try to speak to us, we just need to listen. \nI quote (or misquote) sacred texts",
-    "ideals": "Aspiration. I seek to prove myself worthy of my god\u2019s favor by matching my actions against his or her",
-    "bonds": "I will do anything to protect the temple where I served.",
-    "flaws": "My piety sometimes leads me to blindly trust those that profess faith in my god.",
-    "allies_and_organizations": ""
+  "spells": [
+    {
+      "name": "Guidance",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Sacred Flame",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Word of Radiance",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "5 ft.",
+      "components": "V, S",
+      "duration": "V,M | Instantaneous | V/M"
+    },
+    {
+      "name": "Toll the Dead",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Healing Word",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "Bonus Action | V | Instantaneous"
+    },
+    {
+      "name": "Guiding Bolt",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "120 ft.",
+      "components": "V, S",
+      "duration": "V,S | 1 round"
+    },
+    {
+      "name": "Bless",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Sanctuary",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "Bonus Action | V,S,M | 1 minute"
+    },
+    {
+      "name": "False Life",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": true,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "V,S,M | 1 hour"
+    },
+    {
+      "name": "Ray of Sickness",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": true,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Bane",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Command",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V | 1 round"
+    },
+    {
+      "name": "Create or Destroy Water",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "30 ft./30 ft. Cube",
+      "components": "V, S",
+      "duration": "V,S,M | Instantaneous | 30 ft. Cube, V/S/M"
+    },
+    {
+      "name": "Cure Wounds",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Detect Evil and Good",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self/30 ft. Sphere",
+      "components": "V, S",
+      "duration": "V,S | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Detect Magic",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self/30 ft. Sphere",
+      "components": "V, S",
+      "duration": "1A + 10m | V,S | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Detect Poison and Disease",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Self/30 ft. Sphere",
+      "components": "V, S",
+      "duration": "1A + 10m | V,S,M | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Inflict Wounds",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Protection from Evil and Good",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Purify Food and Drink",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "10 ft./5 ft. Sphere",
+      "components": "V, S",
+      "duration": "1A + 10m | V,S | Instantaneous | 5 ft. Sphere, V/S"
+    },
+    {
+      "name": "Shield of Faith",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "Bonus Action | V,S,M | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Ceremony",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": false,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "1h + 10m | V,S,M | Instantaneous | V/S/M"
+    }
+  ],
+  "spell_slots": {
+    "level_1": {
+      "max": 2,
+      "current": 2,
+      "reset_on": "long_rest"
+    },
+    "level_2": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_3": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_4": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_5": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_6": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_7": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_8": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_9": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    }
   },
-  "backstory": "",
-  "additional_notes": "",
-  "weight_carried": "120.12 lb.",
-  "encumbered": "150 lb.",
-  "push_drag_lift": "300 lb.",
-  "gender": "Female",
-  "age": "14",
-  "size": "Medium",
-  "height": "5' 9\"",
-  "weight": "216",
-  "alignment": "Neutral",
-  "faith": "Kelemvor",
-  "skin": "Black",
-  "eyes": "Yellow",
-  "hair": "None",
-  "creature_type": ""
+  "max_prepared_leveled_spells": 4
 }

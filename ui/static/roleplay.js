@@ -517,12 +517,26 @@ function extractCharacterFeatures(ch) {
 function extractCharacterInventory(ch) {
     if (!ch) return [];
     const candidates = [
+        ch.tagged_inventory,
         ch.inventory,
         ch.live_inventory,
         ch.native_system_data?.inventory,
+        ch.native_system_data?.tagged_inventory,
         ch.universal_core?.tagged_inventory,
         ch.universal_core?.inventory
     ];
+    // Prioritize structured arrays containing objects with name or weight
+    for (const cand of candidates) {
+        if (Array.isArray(cand) && cand.length > 0 && cand.some(i => typeof i === "object" && i !== null)) {
+            return cand.map(i => {
+                if (typeof i === "object" && i !== null) return i;
+                let s = String(i || "").trim();
+                if (s.includes("(") && !s.includes(")")) s += ")";
+                return s;
+            }).filter(Boolean);
+        }
+    }
+    // Fallback to flat string arrays or delimiter-separated strings
     for (const cand of candidates) {
         if (Array.isArray(cand) && cand.length > 0) {
             return cand.map(i => {
@@ -3772,7 +3786,7 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
     if (skillsElAgn) skillsElAgn.value = typeof ch.skills === "object" ? Object.entries(ch.skills).map(([k, v]) => `${k} (${v})`).join(", ") : (ch.proficiencies || "");
 
     // Populate Physical Appearance & Character Details (Common for All Systems)
-    const descObj = ch.description || ch.physical_description || ch.native_system_data?.description || {};
+    const descObj = ch.description || ch.physical_description || ch.native_system_data?.description || ch.universal_core?.description || {};
     const genderEl = document.getElementById("input-char-gender");
     const ageEl = document.getElementById("input-char-age");
     const sizeEl = document.getElementById("input-char-size");
@@ -3785,17 +3799,17 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
     const eyesEl = document.getElementById("input-char-eyes");
     const hairEl = document.getElementById("input-char-hair");
 
-    if (genderEl) genderEl.value = descObj.gender || ch.gender || ch.sex || ch.native_system_data?.gender || "";
-    if (ageEl) ageEl.value = descObj.age || ch.age || ch.native_system_data?.age || "";
-    if (sizeEl) sizeEl.value = descObj.size || ch.size || ch.native_system_data?.size || "Medium";
-    if (heightEl) heightEl.value = descObj.height || ch.height || ch.native_system_data?.height || "";
-    if (weightEl) weightEl.value = descObj.weight || ch.weight || ch.native_system_data?.weight || "";
-    if (creatureTypeEl) creatureTypeEl.value = descObj.creature_type || ch.creature_type || ch.native_system_data?.creature_type || "Humanoid";
-    if (alignmentEl) alignmentEl.value = descObj.alignment || ch.alignment || ch.native_system_data?.alignment || "";
-    if (faithEl) faithEl.value = descObj.faith || ch.faith || ch.native_system_data?.faith || "";
-    if (skinEl) skinEl.value = descObj.skin || ch.skin || ch.native_system_data?.skin || "";
-    if (eyesEl) eyesEl.value = descObj.eyes || ch.eyes || ch.native_system_data?.eyes || "";
-    if (hairEl) hairEl.value = descObj.hair || ch.hair || ch.native_system_data?.hair || "";
+    if (genderEl) genderEl.value = descObj.gender || ch.gender || ch.sex || ch.native_system_data?.gender || ch.universal_core?.description?.gender || "";
+    if (ageEl) ageEl.value = descObj.age || ch.age || ch.native_system_data?.age || ch.universal_core?.description?.age || "";
+    if (sizeEl) sizeEl.value = descObj.size || ch.size || ch.native_system_data?.size || ch.universal_core?.description?.size || "Medium";
+    if (heightEl) heightEl.value = descObj.height || ch.height || ch.native_system_data?.height || ch.universal_core?.description?.height || "";
+    if (weightEl) weightEl.value = descObj.weight || ch.weight || ch.native_system_data?.weight || ch.universal_core?.description?.weight || "";
+    if (creatureTypeEl) creatureTypeEl.value = descObj.creature_type || ch.creature_type || ch.native_system_data?.creature_type || ch.universal_core?.description?.creature_type || "Humanoid";
+    if (alignmentEl) alignmentEl.value = descObj.alignment || ch.alignment || ch.native_system_data?.alignment || ch.universal_core?.description?.alignment || "";
+    if (faithEl) faithEl.value = descObj.faith || ch.faith || ch.native_system_data?.faith || ch.universal_core?.description?.faith || "";
+    if (skinEl) skinEl.value = descObj.skin || ch.skin || ch.native_system_data?.skin || ch.universal_core?.description?.skin || "";
+    if (eyesEl) eyesEl.value = descObj.eyes || ch.eyes || ch.native_system_data?.eyes || ch.universal_core?.description?.eyes || "";
+    if (hairEl) hairEl.value = descObj.hair || ch.hair || ch.native_system_data?.hair || ch.universal_core?.description?.hair || "";
 
     // Populate Backstory & Additional Notes
     const backstoryEl = document.getElementById("input-char-backstory");

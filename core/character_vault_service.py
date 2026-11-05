@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from core.logger import get_logger
 from core.parsers.spell_registry import sanitize_parsed_spells, sanitize_character_weapons, is_junk_spell
+from core.parsers.dnd5e_parser import clean_traits_and_headers, sanitize_inventory, normalize_spell_level
 
 logger = get_logger("CharacterVault")
 
@@ -505,7 +506,7 @@ class CharacterVaultService:
                 char_record["humanity"] = ch["humanity"]
 
             for rich_k in (
-                "weight_carried", "encumbered", "push_drag_lift",
+                "weight_carried", "encumbered", "push_drag_lift", "description",
                 "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
                 "creature_type", "backstory", "additional_notes",
                 "inspiration", "ability_save_dc", "attuned_magic_items",
@@ -629,6 +630,9 @@ class CharacterVaultService:
                 "presence": min(100, max(10, int((p_val / 20.0) * 100))) if p_val <= 20 else min(100, p_val)
             }
 
+        desc = ch.get("description") if isinstance(ch.get("description"), dict) else {}
+        u_desc = ch.get("universal_core", {}).get("description") if isinstance(ch.get("universal_core"), dict) else {}
+        n_desc = ch.get("native_system_data", {}).get("description") if isinstance(ch.get("native_system_data"), dict) else {}
         return {
             "name": c_name,
             "player_name": ch.get("player_name") or "Player",
@@ -643,17 +647,17 @@ class CharacterVaultService:
             "roleplay_anchors": ch.get("roleplay_anchors") or (ch.get("universal_core", {}).get("roleplay_anchors") if isinstance(ch.get("universal_core"), dict) else {}),
             "custom_meters": ch.get("custom_meters") or (ch.get("universal_core", {}).get("custom_meters") if isinstance(ch.get("universal_core"), dict) else {}),
             "description": {
-                "gender": ch.get("gender") or "",
-                "age": ch.get("age") or "",
-                "size": ch.get("size") or "",
-                "height": ch.get("height") or "",
-                "weight": ch.get("weight") or "",
-                "alignment": ch.get("alignment") or "",
-                "faith": ch.get("faith") or "",
-                "skin": ch.get("skin") or "",
-                "eyes": ch.get("eyes") or "",
-                "hair": ch.get("hair") or "",
-                "creature_type": ch.get("creature_type") or "",
+                "gender": ch.get("gender") or desc.get("gender") or u_desc.get("gender") or n_desc.get("gender") or "",
+                "age": ch.get("age") or desc.get("age") or u_desc.get("age") or n_desc.get("age") or "",
+                "size": ch.get("size") or desc.get("size") or u_desc.get("size") or n_desc.get("size") or "Medium",
+                "height": ch.get("height") or desc.get("height") or u_desc.get("height") or n_desc.get("height") or "",
+                "weight": ch.get("weight") or desc.get("weight") or u_desc.get("weight") or n_desc.get("weight") or "",
+                "alignment": ch.get("alignment") or desc.get("alignment") or u_desc.get("alignment") or n_desc.get("alignment") or "",
+                "faith": ch.get("faith") or desc.get("faith") or u_desc.get("faith") or n_desc.get("faith") or "",
+                "skin": ch.get("skin") or desc.get("skin") or u_desc.get("skin") or n_desc.get("skin") or "",
+                "eyes": ch.get("eyes") or desc.get("eyes") or u_desc.get("eyes") or n_desc.get("eyes") or "",
+                "hair": ch.get("hair") or desc.get("hair") or u_desc.get("hair") or n_desc.get("hair") or "",
+                "creature_type": ch.get("creature_type") or desc.get("creature_type") or u_desc.get("creature_type") or n_desc.get("creature_type") or "Humanoid",
             }
         }
 
@@ -712,7 +716,7 @@ class CharacterVaultService:
                 "backstory": ch.get("backstory_details") or {}
             }
 
-        from core.parsers.dnd5e_parser import clean_traits_and_headers, normalize_spell_level
+        from core.parsers.dnd5e_parser import clean_traits_and_headers, sanitize_inventory, normalize_spell_level
         class_level_clean = re.sub(r'[\(\[].*?[\)\]]', '', str(ch.get("class_level") or ch.get("archetype") or ch.get("class") or "Adventurer")).strip()
         feats = clean_traits_and_headers(feats)
         spells_clean = []
@@ -765,7 +769,12 @@ class CharacterVaultService:
             "spell_slots": slots,
             "max_prepared_leveled_spells": max_prep,
             "custom_meters": meters,
-            "roleplay_anchors": ch.get("roleplay_anchors") or (ch.get("universal_core", {}).get("roleplay_anchors") if isinstance(ch.get("universal_core"), dict) else {})
+            "roleplay_anchors": ch.get("roleplay_anchors") or (ch.get("universal_core", {}).get("roleplay_anchors") if isinstance(ch.get("universal_core"), dict) else {}),
+            "inventory": sanitize_inventory(ch.get("inventory") or ch.get("tagged_inventory") or []),
+            "description": ch.get("description") or (ch.get("universal_core", {}).get("description") if isinstance(ch.get("universal_core"), dict) else {}),
+            "weight_carried": ch.get("weight_carried") or "",
+            "encumbered": ch.get("encumbered") or "",
+            "push_drag_lift": ch.get("push_drag_lift") or ""
         }
 
     def import_from_campaign(
@@ -994,7 +1003,7 @@ class CharacterVaultService:
         # Merge new incoming data
         merged.update(char_data)
         for rich_k in (
-            "weight_carried", "encumbered", "push_drag_lift",
+            "weight_carried", "encumbered", "push_drag_lift", "description",
             "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
             "creature_type", "backstory", "additional_notes",
             "inspiration", "ability_save_dc", "attuned_magic_items", "spell_slots",
@@ -1002,6 +1011,21 @@ class CharacterVaultService:
         ):
             if rich_k in char_data and char_data[rich_k] is not None:
                 merged[rich_k] = char_data[rich_k]
+
+        desc_src = merged.get("description") if isinstance(merged.get("description"), dict) else {}
+        merged["description"] = {
+            "gender": merged.get("gender") or desc_src.get("gender") or "",
+            "age": merged.get("age") or desc_src.get("age") or "",
+            "size": merged.get("size") or desc_src.get("size") or "Medium",
+            "height": merged.get("height") or desc_src.get("height") or "",
+            "weight": merged.get("weight") or desc_src.get("weight") or "",
+            "alignment": merged.get("alignment") or desc_src.get("alignment") or "",
+            "faith": merged.get("faith") or desc_src.get("faith") or "",
+            "skin": merged.get("skin") or desc_src.get("skin") or "",
+            "eyes": merged.get("eyes") or desc_src.get("eyes") or "",
+            "hair": merged.get("hair") or desc_src.get("hair") or "",
+            "creature_type": merged.get("creature_type") or desc_src.get("creature_type") or "Humanoid"
+        }
         if "spells" in merged and isinstance(merged["spells"], list):
             from core.parsers.spell_registry import sanitize_parsed_spells
             merged["spells"] = sanitize_parsed_spells(merged["spells"])
@@ -1066,11 +1090,15 @@ class CharacterVaultService:
         merged["universal_core"] = self._build_universal_core(merged)
         merged["native_system_data"] = self._build_native_system_data(merged)
 
-        # Eliminate root-level mirrors to prevent desynchronization
-        merged.pop("spells", None)
-        merged.pop("spell_slots", None)
-        merged.pop("custom_meters", None)
-        merged.pop("max_prepared_leveled_spells", None)
+        # Preserve root-level custom_meters, spells, and spell_slots for UI and Schema 2.1 consumers
+        if not merged.get("custom_meters") and isinstance(merged.get("native_system_data"), dict) and merged["native_system_data"].get("custom_meters"):
+            merged["custom_meters"] = merged["native_system_data"]["custom_meters"]
+        if not merged.get("spells") and isinstance(merged.get("native_system_data"), dict) and merged["native_system_data"].get("spells"):
+            merged["spells"] = merged["native_system_data"]["spells"]
+        if not merged.get("spell_slots") and isinstance(merged.get("native_system_data"), dict) and merged["native_system_data"].get("spell_slots"):
+            merged["spell_slots"] = merged["native_system_data"]["spell_slots"]
+        if merged.get("max_prepared_leveled_spells") is None and isinstance(merged.get("native_system_data"), dict) and merged["native_system_data"].get("max_prepared_leveled_spells") is not None:
+            merged["max_prepared_leveled_spells"] = merged["native_system_data"]["max_prepared_leveled_spells"]
 
         merged["updated_at"] = _utc_now_iso()
 

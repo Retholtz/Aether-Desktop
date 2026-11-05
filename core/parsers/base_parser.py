@@ -31,6 +31,7 @@ class UniversalCharacterCore(dict):
         backstory: str = "",
         roleplay_anchors: Optional[Dict[str, Any]] = None,
         custom_meters: Optional[Dict[str, Any]] = None,
+        description: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         super().__init__(
@@ -47,6 +48,7 @@ class UniversalCharacterCore(dict):
             backstory=backstory,
             roleplay_anchors=roleplay_anchors or {},
             custom_meters=custom_meters or {},
+            description=description or {},
             **kwargs
         )
 
