@@ -744,16 +744,37 @@ def register_dm_adjudication_tools(dispatcher, service: TTRPGService, notify_ui_
         spells = native.get("spells") or char.get("spells", [])
         slots = native.get("spell_slots") or char.get("spell_slots", {})
 
-        # Find spell entry
-        spell_entry = next((s for s in spells if s.get("name", "").lower() == spell_name.lower()), None)
+        # Find spell entry (matching with or without [R] tag)
+        import re as _re
+        clean_target = _re.sub(r'\s*\[r\]', '', spell_name, flags=_re.IGNORECASE).strip().lower()
+        spell_entry = next(
+            (
+                s for s in spells
+                if isinstance(s, dict) and (
+                    s.get("name", "").lower() == spell_name.lower()
+                    or _re.sub(r'\s*\[r\]', '', s.get("name", ""), flags=_re.IGNORECASE).strip().lower() == clean_target
+                )
+            ),
+            None
+        )
+
+        class_str = str(native.get("class_level") or char.get("archetype") or char.get("class") or "").lower()
+        is_wizard = "wizard" in class_str
 
         # Leveled Spell Verification
         if spell_level > 0:
-            if spell_entry and not spell_entry.get("prepared", False) and not spell_entry.get("is_ritual", False):
-                return {
-                    "status": "error",
-                    "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."
-                }
+            if spell_entry:
+                is_ritual = bool(
+                    spell_entry.get("is_ritual", False)
+                    or "[r]" in str(spell_entry.get("name", "")).lower()
+                    or "[r]" in spell_name.lower()
+                )
+                is_wizard_ritual = is_wizard and is_ritual
+                if not spell_entry.get("prepared", False) and not is_wizard_ritual:
+                    return {
+                        "status": "error",
+                        "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."
+                    }
 
             slot_key = f"level_{spell_level}"
             if slot_key not in slots or slots[slot_key].get("current", 0) <= 0:
@@ -840,59 +861,6 @@ def register_dm_adjudication_tools(dispatcher, service: TTRPGService, notify_ui_
             "summary": f"{clean_cond} {'applied to' if active else 'removed from'} {character_name}."
         }
 
-    async def execute_rest(rest_type: str = "long") -> Dict[str, Any]:
-        """
-        Executes a Short or Long Rest for the entire active campaign roster.
-        - Short Rest: Resets meters marked reset_on: 'short_rest'.
-        - Long Rest: Restores HP to max, restores all spell slots, recovers 1/2 max Hit Dice,
-                     and resets all meters marked reset_on: 'long_rest' (Sorcery Points, Draconic Cry).
-        """
-        if not service.active_state:
-            return {"status": "error", "message": "No active campaign state."}
-
-        is_long = (rest_type.lower() == "long")
-        chars = service.active_state.get("characters", {})
-
-        for c_id, char in chars.items():
-            vitals = char.setdefault("vitals", {})
-            native = char.get("native_system_data", {})
-            meters = char.get("custom_meters", {})
-
-            if is_long:
-                # 1. Restore HP
-                if "health" in vitals:
-                    vitals["health"]["current"] = vitals["health"]["max"]
-                # 2. Reset Spell Slots
-                slots_dict = native.get("spell_slots") or char.get("spell_slots", {})
-                for s_key, s_data in slots_dict.items():
-                    s_data["current"] = s_data["max"]
-                # 3. Recover 1/2 Max Hit Dice
-                if "hit_dice" in meters:
-                    hd = meters["hit_dice"]
-                    recover_amount = max(1, hd.get("max", 1) // 2)
-                    hd["current"] = min(hd.get("max", 1), hd.get("current", 0) + recover_amount)
-                # 4. Reset Long Rest Resource Pools
-                for m_k, m_v in meters.items():
-                    if m_v.get("reset_on") == "long_rest":
-                        m_v["current"] = m_v["max"]
-
-                # 5. Clear Temporary Conditions
-                char["conditions"] = [c for c in char.get("conditions", []) if c == "Attuned"]
-            else:
-                # Short Rest resets
-                for m_k, m_v in meters.items():
-                    if m_v.get("reset_on") in ("short_rest", "rest"):
-                        m_v["current"] = m_v["max"]
-
-        service.save_active_campaign_state()
-        _notify("roster_updated", service.get_campaign_roster())
-
-        return {
-            "status": "success",
-            "rest_type": "Long Rest" if is_long else "Short Rest",
-            "summary": f"Party completed a {'Long Rest. HP, spell slots, and abilities restored.' if is_long else 'Short Rest.'}"
-        }
-
     # Dispatcher Registrations
     dispatcher.register_tool(
         name="modify_vitals",
@@ -950,16 +918,190 @@ def register_dm_adjudication_tools(dispatcher, service: TTRPGService, notify_ui_
         },
         handler=apply_condition
     )
+    register_enhanced_rest_tools(dispatcher, service, notify_ui_callback)
+
+
+def register_enhanced_rest_tools(dispatcher, service: TTRPGService, notify_ui_callback=None):
+    """
+    Automated vs. Physical Dice Branching and Short Rest Recovery Engine.
+    """
+    def _notify(event: str, data: Any):
+        if callable(notify_ui_callback):
+            try:
+                notify_ui_callback(event, data)
+            except Exception:
+                pass
+
+    async def execute_rest(
+        rest_type: str = "long",
+        dice_mode: str = "digital"
+    ) -> Dict[str, Any]:
+        """
+        Executes a Short or Long Rest across the entire campaign roster.
+        - dice_mode: 'digital' (Aether auto-rolls Hit Dice healing) or 'physical' (prompts player to roll).
+        """
+        if not service.active_state:
+            return {"status": "error", "message": "No active campaign state."}
+
+        is_long = (rest_type.lower() == "long")
+        chars = service.active_state.get("characters", {})
+        prompts = []
+        healed_reports = []
+
+        for c_id, char in chars.items():
+            name = char.get("name", c_id)
+            vitals = char.setdefault("vitals", {})
+            hp_data = vitals.setdefault("health", {"current": 10, "max": 10})
+            native = char.get("native_system_data", {})
+            meters = char.get("custom_meters") or native.get("custom_meters") or {}
+            slots = native.get("spell_slots") or char.get("spell_slots", {})
+
+            if is_long:
+                # 1. Full HP Recovery
+                hp_data["current"] = hp_data["max"]
+                vitals["temp_hp"] = 0
+
+                # 2. Reset All Spell Slots (Standard & Pact)
+                for s_data in slots.values():
+                    if isinstance(s_data, dict) and "max" in s_data:
+                        s_data["current"] = s_data["max"]
+
+                # 3. Recover 1/2 Max Hit Dice
+                if "hit_dice" in meters:
+                    hd = meters["hit_dice"]
+                    recover_amount = max(1, hd["max"] // 2)
+                    hd["current"] = min(hd["max"], hd["current"] + recover_amount)
+
+                # 4. Reset All Long Rest & Short Rest Meters (Lay on Hands, Sorcery Points, etc.)
+                for m_v in meters.values():
+                    if isinstance(m_v, dict) and m_v.get("reset_on") in ("long_rest", "short_rest", "rest"):
+                        m_v["current"] = m_v["max"]
+
+                # 5. Clear Non-Attunement Conditions
+                char["conditions"] = [c for c in char.get("conditions", []) if c == "Attuned"]
+
+            else:
+                # --- SHORT REST EXECUTION ---
+                # 1. Recharge Warlock Pact Magic Slots
+                is_pact = native.get("is_pact_magic", False)
+                for s_key, s_data in slots.items():
+                    if isinstance(s_data, dict) and (is_pact or s_data.get("is_pact_magic") or s_data.get("reset_on") == "short_rest"):
+                        s_data["current"] = s_data["max"]
+
+                # 2. Recharge Short Rest Consumables (Wild Shape, Channel Divinity, Ki, Second Wind)
+                for m_v in meters.values():
+                    if isinstance(m_v, dict) and m_v.get("reset_on") in ("short_rest", "rest"):
+                        m_v["current"] = m_v["max"]
+
+                # 3. Hit Dice Healing Evaluation
+                current_hp = hp_data.get("current", 0)
+                max_hp = hp_data.get("max", 10)
+                hd_entry = meters.get("hit_dice")
+
+                if current_hp < max_hp and hd_entry and hd_entry.get("current", 0) > 0:
+                    con_val = native.get("ability_scores", {}).get("CON", 10)
+                    con_mod = (con_val - 10) // 2
+                    die_str = native.get("hit_dice", {}).get("die", "1d8")
+
+                    if dice_mode == "digital":
+                        spent_count = 0
+                        total_healed = 0
+                        while hp_data["current"] < max_hp and hd_entry["current"] > 0:
+                            roll_res = service.parse_and_roll(die_str)
+                            heal_amt = max(1, roll_res.get("total", 4) + con_mod)
+                            hp_data["current"] = min(max_hp, hp_data["current"] + heal_amt)
+                            hd_entry["current"] -= 1
+                            spent_count += 1
+                            total_healed += heal_amt
+
+                        healed_reports.append(f"{name} spent {spent_count} Hit Dice (+{total_healed} HP, now {hp_data['current']}/{max_hp})")
+                    else:
+                        prompts.append({
+                            "character": name,
+                            "current_hp": current_hp,
+                            "max_hp": max_hp,
+                            "dice_remaining": hd_entry["current"],
+                            "prompt": f"{name} is at {current_hp}/{max_hp} HP. Roll {die_str} + {con_mod} per die spent."
+                        })
+
+        service.save_active_campaign_state()
+        _notify("roster_updated", service.get_campaign_roster())
+
+        return {
+            "status": "success",
+            "rest_type": "Long Rest" if is_long else "Short Rest",
+            "dice_mode": dice_mode,
+            "automated_healing": healed_reports,
+            "physical_prompts": prompts,
+            "summary": (
+                "Party completed a Long Rest: Full HP, spell slots, and abilities restored."
+                if is_long else
+                f"Short Rest completed. Pact slots, Wild Shape, and Channel Divinity recharged. {'; '.join(healed_reports)}"
+            )
+        }
+
+    async def apply_physical_hit_die_roll(
+        character_name: str,
+        roll_total: int,
+        dice_spent: int = 1
+    ) -> Dict[str, Any]:
+        """
+        Receives reported physical dice rolls from players during short rests.
+        Applies healing and decrements the character's Hit Dice pool.
+        """
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        vitals = char.setdefault("vitals", {})
+        hp_data = vitals.setdefault("health", {"current": 10, "max": 10})
+        hd_entry = char.setdefault("custom_meters", {}).setdefault("hit_dice", {"current": 1, "max": 1})
+
+        if hd_entry["current"] < dice_spent:
+            return {"status": "error", "message": f"{character_name} only has {hd_entry['current']} Hit Dice remaining."}
+
+        hd_entry["current"] -= dice_spent
+        old_hp = hp_data["current"]
+        hp_data["current"] = min(hp_data["max"], old_hp + roll_total)
+
+        service.save_active_campaign_state()
+        _notify("roster_updated", service.get_campaign_roster())
+
+        return {
+            "status": "success",
+            "character": character_name,
+            "hp_restored": hp_data["current"] - old_hp,
+            "new_hp": hp_data["current"],
+            "max_hp": hp_data["max"],
+            "hit_dice_remaining": hd_entry["current"],
+            "summary": f"{character_name} healed for {roll_total} HP ({old_hp} -> {hp_data['current']}/{hp_data['max']}). Hit dice remaining: {hd_entry['current']}."
+        }
+
     dispatcher.register_tool(
         name="execute_rest",
-        description="Executes short or long rest recovery for party.",
+        description="Executes short or long rest with digital/physical dice support.",
         parameters={
             "type": "object",
             "properties": {
-                "rest_type": {"type": "string", "enum": ["short", "long"]}
+                "rest_type": {"type": "string", "enum": ["short", "long"]},
+                "dice_mode": {"type": "string", "enum": ["digital", "physical"]}
             }
         },
         handler=execute_rest
+    )
+    dispatcher.register_tool(
+        name="apply_physical_hit_die_roll",
+        description="Applies reported physical dice roll healing during a rest.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string"},
+                "roll_total": {"type": "integer"},
+                "dice_spent": {"type": "integer"}
+            },
+            "required": ["character_name", "roll_total"]
+        },
+        handler=apply_physical_hit_die_roll
     )
 
 

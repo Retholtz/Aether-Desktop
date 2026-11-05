@@ -298,6 +298,17 @@ DND_SPELL_REGISTRY: Dict[str, Dict[str, str]] = {
 }
 
 
+def normalize_spell_level(lvl_val: Any) -> int:
+    """Converts a spell level token ('Cantrip', '1st Level', '2', 0) to a deterministic integer."""
+    if isinstance(lvl_val, int):
+        return lvl_val
+    s = str(lvl_val or "").strip().lower()
+    if "cantrip" in s or s == "0":
+        return 0
+    m = re.search(r'\d+', s)
+    return int(m.group(0)) if m else 1
+
+
 def parse_structured_spells(fields: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Parses AcroForm fields (including D&D Beyond 2024 / 2014 exports and standard WotC sheets)
@@ -347,9 +358,10 @@ def parse_structured_spells(fields: Dict[str, Any]) -> List[Dict[str, Any]]:
                 continue
 
             lower_name = name.lower()
-            if lower_name in seen_names:
+            clean_key = re.sub(r"\s*(?:\[.*?\]|<.*?>|\(.*?\))", "", name).strip().lower()
+            if not clean_key or clean_key in seen_names:
                 continue
-            seen_names.add(lower_name)
+            seen_names.add(clean_key)
 
             save_hit = str(fields.get(f"spellSaveHit{idx}") or fields.get(f"spellSaveHit {idx}") or "").strip()
             casting_time = str(fields.get(f"spellCastingTime{idx}") or fields.get(f"spellCastingTime {idx}") or "").strip()
@@ -358,7 +370,6 @@ def parse_structured_spells(fields: Dict[str, Any]) -> List[Dict[str, Any]]:
             duration = str(fields.get(f"spellDuration{idx}") or fields.get(f"spellDuration {idx}") or "").strip()
             notes = str(fields.get(f"spellNotes{idx}") or fields.get(f"spellNotes {idx}") or "").strip()
 
-            clean_key = re.sub(r"\s*\[.*?\]", "", name).strip().lower()
             reg_info = DND_SPELL_REGISTRY.get(lower_name) or DND_SPELL_REGISTRY.get(clean_key) or {}
 
             # Level resolution
@@ -384,11 +395,12 @@ def parse_structured_spells(fields: Dict[str, Any]) -> List[Dict[str, Any]]:
 
             spells.append({
                 "name": name,
-                "level": lvl,
+                "level": normalize_spell_level(lvl),
                 "atk_bonus": save_hit if save_hit != "--" else "",
                 "damage": dmg,
                 "range": rng,
-                "notes": full_notes
+                "notes": full_notes,
+                "is_ritual": "[r]" in lower_name
             })
 
     # 3. Fallback for non-D&D Beyond standard WotC AcroForms (e.g. Spells 1014, SpellName1, etc.)
@@ -405,20 +417,21 @@ def parse_structured_spells(fields: Dict[str, Any]) -> List[Dict[str, Any]]:
                     if not clean_line or is_junk_spell(clean_line):
                         continue
                     low_l = clean_line.lower()
-                    if low_l in seen_names:
+                    clean_key = re.sub(r"\s*(?:\[.*?\]|<.*?>|\(.*?\))", "", clean_line).strip().lower()
+                    if not clean_key or clean_key in seen_names:
                         continue
-                    seen_names.add(low_l)
+                    seen_names.add(clean_key)
 
-                    clean_key = re.sub(r"\s*\[.*?\]", "", clean_line).strip().lower()
                     reg_info = DND_SPELL_REGISTRY.get(low_l) or DND_SPELL_REGISTRY.get(clean_key) or {}
 
                     spells.append({
                         "name": clean_line,
-                        "level": reg_info.get("level", "Cantrip/Spell"),
+                        "level": normalize_spell_level(reg_info.get("level", "Cantrip/Spell")),
                         "atk_bonus": "",
                         "damage": reg_info.get("damage", ""),
                         "range": reg_info.get("range", "60 ft."),
-                        "notes": ""
+                        "notes": "",
+                        "is_ritual": "[r]" in low_l
                     })
 
     return spells
@@ -445,11 +458,11 @@ def sanitize_parsed_spells(
             if is_junk_spell(name):
                 continue
             low_name = name.lower()
-            if low_name in seen_names:
+            clean_key = re.sub(r"\s*(?:\[.*?\]|<.*?>|\(.*?\))", "", name).strip().lower()
+            if not clean_key or clean_key in seen_names:
                 continue
-            seen_names.add(low_name)
+            seen_names.add(clean_key)
 
-            clean_key = re.sub(r"\s*\[.*?\]", "", name).strip().lower()
             reg_info = DND_SPELL_REGISTRY.get(low_name) or DND_SPELL_REGISTRY.get(clean_key) or {}
 
             lvl = s.get("level")
@@ -466,14 +479,20 @@ def sanitize_parsed_spells(
 
             atk = s.get("atk_bonus") or s.get("save_dc") or ""
 
-            sanitized.append({
+            entry = {
                 "name": name,
-                "level": lvl,
+                "level": normalize_spell_level(lvl),
                 "atk_bonus": atk,
                 "damage": dmg,
                 "range": rng,
                 "notes": str(s.get("notes") or "")
-            })
+            }
+            for extra_k in ("is_cantrip", "is_ritual", "is_always_prepared", "prepared"):
+                if extra_k in s:
+                    entry[extra_k] = s[extra_k]
+            if "[r]" in low_name and "is_ritual" not in entry:
+                entry["is_ritual"] = True
+            sanitized.append(entry)
         elif isinstance(s, str):
             clean_str = s.strip().lstrip("-•* ")
             if is_junk_spell(clean_str):

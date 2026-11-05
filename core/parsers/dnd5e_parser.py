@@ -12,6 +12,135 @@ from core.logger import get_logger
 
 logger = get_logger("DnD5eParser")
 
+# Known Subclass Spells that are ALWAYS prepared and bypass the preparation cap
+ALWAYS_PREPARED_SUBCLASS_SPELLS = {
+    # Paladin Oaths
+    "devotion": ["protection from evil and good", "sanctuary", "lesser restoration", "zone of truth", "beacon of hope", "dispel magic", "freedom of movement", "guardian of faith", "commune", "flame strike"],
+    "vengeance": ["bane", "hunter's mark", "hold person", "misty step", "haste", "protection from energy", "banishment", "dimension door", "hold monster", "scrying"],
+    "ancients": ["ensnaring strike", "speak with animals", "moonbeam", "misty step", "plant growth", "protection from energy", "ice storm", "stoneskin", "commune with nature", "tree stride"],
+    # Druid Circles
+    "land": ["barkskin", "mirror image", "misty step", "water walk", "lightning bolt", "freedom of movement", "solid fog", "divination"],
+    # Cleric Domains
+    "life": ["bless", "cure wounds", "lesser restoration", "spiritual weapon", "beacon of hope", "revivify", "death ward", "guardian of faith", "mass cure wounds", "raise dead"],
+    "light": ["burning hands", "faerie fire", "flaming sphere", "scorching ray", "daylight", "fireball", "guardian of faith", "wall of fire", "flame strike", "scrying"]
+}
+
+WARLOCK_PACT_SLOTS = {
+    1: {"count": 1, "level": 1}, 2: {"count": 2, "level": 1},
+    3: {"count": 2, "level": 2}, 4: {"count": 2, "level": 2},
+    5: {"count": 2, "level": 3}, 6: {"count": 2, "level": 3},
+    7: {"count": 2, "level": 4}, 8: {"count": 2, "level": 4},
+    9: {"count": 2, "level": 5}, 10: {"count": 2, "level": 5},
+    11: {"count": 3, "level": 5}, 12: {"count": 3, "level": 5},
+    13: {"count": 3, "level": 5}, 14: {"count": 3, "level": 5},
+    15: {"count": 3, "level": 5}, 16: {"count": 3, "level": 5},
+    17: {"count": 4, "level": 5}, 18: {"count": 4, "level": 5},
+    19: {"count": 4, "level": 5}, 20: {"count": 4, "level": 5}
+}
+
+
+def normalize_spell_level(lvl_val: Any) -> int:
+    """Converts a spell level token ('Cantrip', '1st Level', '2', 0) to a deterministic integer."""
+    if isinstance(lvl_val, int):
+        return lvl_val
+    s = str(lvl_val or "").strip().lower()
+    if "cantrip" in s or s == "0":
+        return 0
+    m = re.search(r'\d+', s)
+    return int(m.group(0)) if m else 1
+
+
+def sanitize_inventory(raw_inventory: List[Any]) -> List[Any]:
+    """Stacks identical inventory items into a single row with combined quantities."""
+    if not raw_inventory:
+        return []
+    stacked = {}
+    is_all_str = all(isinstance(x, str) for x in raw_inventory)
+    for item in raw_inventory:
+        if isinstance(item, str):
+            name = item.strip()
+            if "(" in name and ")" not in name:
+                name += ")"
+            raw_qty = "1"
+            weight = "--"
+            category = "Gear"
+            notes = ""
+            genre = "fantasy_d20"
+            status = "active"
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            if "(" in name and ")" not in name:
+                name += ")"
+            raw_qty = str(item.get("qty", "1")).strip()
+            weight = item.get("weight", "--")
+            category = item.get("category", "Gear")
+            notes = item.get("notes", "")
+            genre = item.get("genre")
+            status = item.get("status")
+        else:
+            continue
+
+        if not name:
+            continue
+
+        norm_name = name
+        if re.search(r'^oil\b', norm_name, re.IGNORECASE):
+            norm_name = "Oil"
+        elif re.search(r'^holy water\b', norm_name, re.IGNORECASE):
+            norm_name = "Holy Water"
+        elif re.search(r'^(?:lamp|lantern)\b', norm_name, re.IGNORECASE):
+            norm_name = "Lamp / Lantern"
+        elif re.search(r'^ink\b', norm_name, re.IGNORECASE):
+            norm_name = "Ink & Pen"
+        elif re.search(r'^potion of healing\b', norm_name, re.IGNORECASE):
+            norm_name = "Potion of Healing"
+
+        key = norm_name.lower()
+        qty = int(raw_qty) if raw_qty.isdigit() else 1
+
+        if key in stacked:
+            stacked[key]["qty"] += qty
+        else:
+            entry = {
+                "name": norm_name,
+                "qty": qty,
+                "weight": weight,
+                "category": category,
+                "notes": notes
+            }
+            if genre:
+                entry["genre"] = genre
+            if status:
+                entry["status"] = status
+            stacked[key] = entry
+
+    if is_all_str:
+        return [e["name"] for e in stacked.values()]
+
+    # Format quantities back to strings for UI
+    results = []
+    for entry in stacked.values():
+        entry["qty"] = str(entry["qty"])
+        results.append(entry)
+    return results
+
+
+def clean_traits_and_headers(raw_traits: List[Any]) -> List[Any]:
+    """Strips non-trait section titles exported by D&D Beyond."""
+    banned = {"hit points", "proficiencies", "special", "actions", "bonus actions"}
+    cleaned = []
+    for t in raw_traits:
+        if isinstance(t, dict):
+            t_name = str(t.get("name", "")).strip()
+            if t_name.lower() in banned or t_name.lower().startswith("=== ") or t_name.startswith("==="):
+                continue
+            cleaned.append(t)
+        elif isinstance(t, str):
+            t_clean = t.strip()
+            if t_clean.lower() not in banned and not t_clean.lower().startswith("=== ") and not t_clean.startswith("==="):
+                cleaned.append(t_clean)
+    return cleaned
+
 
 def clean_backstory_text(text: str) -> str:
     """Cleans PDF line breaks, PostScript continuations, and broken words into clean prose."""
@@ -37,7 +166,8 @@ class DnD5eParser(BaseSheetParser):
     def identify_system(self, form_fields: Dict[str, Any], raw_text: str) -> bool:
         signatures = [
             "CharacterName", "ProfBonus", "Inspiration", "PassivePerception",
-            "SavingThrows", "Passive1", "STRmod", "DEXmod", "ClassLevel", "CLASS  LEVEL"
+            "SavingThrows", "Passive1", "STRmod", "DEXmod", "ClassLevel", "CLASS  LEVEL",
+            "SpellSaveDC0", "PactMagic"
         ]
         matches = sum(1 for s in signatures if any(s.lower() in k.lower() for k in form_fields.keys()))
         return (
@@ -132,12 +262,16 @@ class DnD5eParser(BaseSheetParser):
         prof_bonus = int(m_pb.group(0)) if m_pb else 2
 
         # Primary Spellcasting Ability & DC
+        is_warlock = "warlock" in clean_class.lower()
+        is_druid = "druid" in clean_class.lower()
+        is_paladin = "paladin" in clean_class.lower()
+
         spell_ability = _clean(fields.get("spellCastingAbility0") or fields.get("SpellcastingAbility") or fields.get("SpellAbility") or "")
         key_mod = int_mod
-        if "sorcerer" in clean_class.lower() or "bard" in clean_class.lower() or "warlock" in clean_class.lower() or "paladin" in clean_class.lower():
+        if is_warlock or is_paladin or "sorcerer" in clean_class.lower() or "bard" in clean_class.lower():
             spell_ability = "CHA"
             key_mod = cha_mod
-        elif "cleric" in clean_class.lower() or "druid" in clean_class.lower() or "ranger" in clean_class.lower():
+        elif is_druid or "cleric" in clean_class.lower() or "ranger" in clean_class.lower():
             spell_ability = "WIS"
             key_mod = wis_mod
         elif not spell_ability:
@@ -155,32 +289,71 @@ class DnD5eParser(BaseSheetParser):
 
         inspiration = str(fields.get("Inspiration", "")).strip().lower() in ("yes", "on", "1", "true")
 
-        # 3. Spell Slots Extraction (Page 4 / AcroForms)
+        # 3. Spell Slots Extraction (Standard vs. Warlock Pact Magic)
         spell_slots = {}
-        for rank in range(1, 10):
-            total_slots = self._get_num(fields, [f"SlotsTotal{rank}", f"SlotsTotal_{rank}", f"SpellSlots_{rank}_Total"], default=0)
-            if total_slots == 0:
+        is_pact_magic = is_warlock or "pact magic" in text.lower() or any("pact" in k.lower() for k in fields.keys())
+
+        if is_pact_magic:
+            pact_info = WARLOCK_PACT_SLOTS.get(min(20, max(1, level)), {"count": 1, "level": 1})
+            pact_lvl = pact_info["level"]
+            pact_total = self._get_num(fields, ["PactMagic_SlotsTotal", "SlotsPactTotal", "SlotsTotalPact"], default=0)
+            if pact_total == 0:
                 for h_idx in range(12):
                     hdr = str(fields.get(f"spellHeader{h_idx}") or "")
                     slot_hdr = str(fields.get(f"spellSlotHeader{h_idx}") or "")
-                    if re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
-                        m_s = re.search(r'(\d+)\s+Slots?', slot_hdr, re.IGNORECASE)
+                    if re.search(rf'{pact_lvl}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
+                        m_s = re.search(r'(\d+)\s+(?:Slots?|Pact)', slot_hdr, re.IGNORECASE)
                         if m_s:
-                            total_slots = int(m_s.group(1))
+                            pact_total = int(m_s.group(1))
                             break
-            if total_slots == 0:
-                slot_regex = re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL===*\s*\n\s*(\d+)\s+Slots', text, re.IGNORECASE)
+            if pact_total == 0:
+                slot_regex = re.search(rf'{pact_lvl}(?:st|nd|rd|th)\s+LEVEL===\s*\n\s*(\d+)\s+(?:Slots|Pact)', text, re.IGNORECASE)
                 if slot_regex:
-                    total_slots = int(slot_regex.group(1))
+                    pact_total = int(slot_regex.group(1))
+            if pact_total == 0:
+                pact_total = pact_info["count"]
 
-            spell_slots[f"level_{rank}"] = {
-                "max": total_slots,
-                "current": self._get_num(fields, [f"SlotsRemaining{rank}", f"SlotsRemaining_{rank}"], default=total_slots)
-            }
+            for rank in range(1, 10):
+                if rank == pact_lvl:
+                    spell_slots[f"level_{rank}"] = {
+                        "max": pact_total,
+                        "current": self._get_num(fields, ["PactMagic_SlotsRemaining", "SlotsRemainingPact"], default=pact_total),
+                        "is_pact_magic": True,
+                        "reset_on": "short_rest"
+                    }
+                else:
+                    spell_slots[f"level_{rank}"] = {"max": 0, "current": 0}
+        else:
+            for rank in range(1, 10):
+                total_slots = self._get_num(fields, [f"SlotsTotal{rank}", f"SlotsTotal_{rank}", f"SpellSlots_{rank}_Total"], default=0)
+                if total_slots == 0:
+                    for h_idx in range(12):
+                        hdr = str(fields.get(f"spellHeader{h_idx}") or "")
+                        slot_hdr = str(fields.get(f"spellSlotHeader{h_idx}") or "")
+                        if re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
+                            m_s = re.search(r'(\d+)\s+(?:Slots?|Pact)', slot_hdr, re.IGNORECASE)
+                            if m_s:
+                                total_slots = int(m_s.group(1))
+                                break
+                if total_slots == 0:
+                    slot_regex = re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL===\s*\n\s*(\d+)\s+(?:Slots|Pact)', text, re.IGNORECASE)
+                    if slot_regex:
+                        total_slots = int(slot_regex.group(1))
 
-        # 4. Spells List & Unprepared Defaults
+                spell_slots[f"level_{rank}"] = {
+                    "max": total_slots,
+                    "current": self._get_num(fields, [f"SlotsRemaining{rank}", f"SlotsRemaining_{rank}"], default=total_slots),
+                    "reset_on": "long_rest"
+                }
+
+        # 4. Spells List & Unprepared Defaults (Flagging Always-Prepared Subclass Spells)
         max_prepared = self._calculate_max_prepared_spells(clean_class, level, key_mod)
-        spells_list = self.parse_spells_list(fields, text)
+        spells_list = self.parse_spells_list(fields, text, clean_class)
+
+        # Force max_prepared = 0 if all spell slots have max == 0 (e.g. Paladin 1, Ranger 1, non-casters)
+        has_slots = any(s.get("max", 0) > 0 for s in spell_slots.values()) if isinstance(spell_slots, dict) else False
+        if not has_slots:
+            max_prepared = 0
 
         # 5. Discrete Limited-Use Resource Meters (from Features & Traits, excluding Speed)
         ft1 = str(fields.get("FeaturesTraits1") or "").strip()
@@ -188,7 +361,7 @@ class DnD5eParser(BaseSheetParser):
         combined_ft = f"{ft1}\n{ft2}".strip() if (ft1 or ft2) else str(fields.get("FeaturesAndTraits") or fields.get("Features and Traits") or "")
         features_text = self._clean_html_text(combined_ft or self._extract_section(text, "FEATURES ===", "EQUIPMENT"))
         all_text = f"{text}\n{features_text}"
-        custom_meters = self.extract_discrete_meters(all_text, level, int_mod, cha_mod)
+        custom_meters = self.extract_discrete_meters(all_text, clean_class, level, int_mod, wis_mod, cha_mod)
 
         # 6. Roleplay Anchors (Page 3)
         roleplay_anchors = {
@@ -232,6 +405,8 @@ class DnD5eParser(BaseSheetParser):
                 {"name": "Crossbow, light", "qty": "1", "weight": "5 lb.", "category": "ranged_light", "genre": "fantasy_d20", "status": "active"},
                 {"name": "Dagger", "qty": "1", "weight": "1 lb.", "category": "melee_light", "genre": "fantasy_d20", "status": "active"}
             ]
+
+        tagged_inventory = sanitize_inventory(tagged_inventory)
 
         weight_carried = _clean(fields.get("Weight Carried") or fields.get("WeightCarried") or "")
         encumbered = _clean(fields.get("Encumbered") or "")
@@ -370,6 +545,8 @@ class DnD5eParser(BaseSheetParser):
 
         defenses_val = _clean(fields.get("Defenses") or fields.get("Resistances") or "")
 
+        hit_die = self._infer_hit_die(clean_class)
+
         # Build Universal Core
         core = UniversalCharacterCore(
             name=clean_name,
@@ -384,11 +561,13 @@ class DnD5eParser(BaseSheetParser):
                 "presence": min(100, max(10, int(((wis_val + cha_val) / 40.0) * 100)))
             },
             semantic_skills=[
-                {"category": "INVESTIGATION_TECH", "tier": "expert", "source_skill": "Investigation"},
-                {"category": "ARCANA_THEORY", "tier": "expert", "source_skill": "Arcana"}
+                {"category": "RELIGION_THEOLOGY", "tier": "proficient", "source_skill": "Religion"} if (is_paladin or "cleric" in clean_class.lower()) else
+                {"category": "NATURE_SURVIVAL", "tier": "proficient", "source_skill": "Nature"} if is_druid else
+                {"category": "OCCULT_ARCANA", "tier": "proficient", "source_skill": "Arcana"},
+                {"category": "INVESTIGATION_TECH", "tier": "expert", "source_skill": "Investigation"}
             ],
             tagged_inventory=tagged_inventory,
-            tagged_traits=[{"name": k, "description": v["label"], "genre": "fantasy_d20"} for k, v in custom_meters.items()],
+            tagged_traits=clean_traits_and_headers([{"name": k, "description": v["label"], "genre": "fantasy_d20"} for k, v in custom_meters.items()]),
             backstory=full_backstory or "Adventurer exploring the realms with skill and dedication.",
             roleplay_anchors=roleplay_anchors,
             custom_meters=custom_meters
@@ -397,6 +576,7 @@ class DnD5eParser(BaseSheetParser):
         native_payload = {
             "system_name": "dnd_5e",
             "class_level": clean_class,
+            "is_pact_magic": is_pact_magic,
             "species": extracted_race,
             "background": extracted_bg,
             "inspiration": inspiration,
@@ -412,7 +592,12 @@ class DnD5eParser(BaseSheetParser):
                 "current": cur_hp,
                 "max": max_hp,
                 "temp": temp_hp,
-                "hit_die": "1d8"
+                "hit_die": f"1d{hit_die}"
+            },
+            "hit_dice": {
+                "current": level,
+                "max": level,
+                "die": f"1d{hit_die}"
             },
             "ability_scores": {
                 "STR": str_val, "DEX": dex_val, "CON": con_val,
@@ -461,10 +646,39 @@ class DnD5eParser(BaseSheetParser):
         }
 
     # --- Processing Subroutines ---
-    def parse_spells_list(self, fields: Dict[str, Any], text: str, int_mod: int = 0, level: int = 1) -> List[Dict[str, Any]]:
-        """Parses spells: Cantrips default to prepared=True; all leveled spells default to prepared=False."""
+    def parse_spells_list(self, fields: Dict[str, Any], text: str, class_str: str = "", int_mod: int = 0, level: int = 1) -> List[Dict[str, Any]]:
+        """Parses spells. Subclass oath/circle spells, known casters & cantrips are marked prepared."""
         spells = []
-        seen_names = set()
+        seen_spells = set()
+
+        # Detect active subclass from sheet, ClassLevel, and FeaturesAndTraits
+        raw_class_field = str(fields.get("ClassLevel") or fields.get("Class & Level") or fields.get("CLASS  LEVEL") or "")
+        raw_feats_field = str(fields.get("FeaturesAndTraits") or fields.get("FeaturesTraits1") or "")
+        subclass_context = f"{text}\n{class_str}\n{raw_class_field}\n{raw_feats_field}".lower()
+        c_lower = f"{class_str} {raw_class_field}".lower()
+        is_known_caster = any(k in c_lower for k in ("warlock", "sorcerer", "bard"))
+
+        active_subclass = ""
+        for sc in ALWAYS_PREPARED_SUBCLASS_SPELLS.keys():
+            if sc in ("devotion", "vengeance", "ancients"):
+                if sc in subclass_context:
+                    active_subclass = sc
+                    break
+            elif sc == "land":
+                if ("druid" in c_lower or "circle" in subclass_context) and sc in subclass_context:
+                    active_subclass = sc
+                    break
+            elif sc in ("life", "light"):
+                if ("cleric" in c_lower or "domain" in subclass_context) and sc in subclass_context:
+                    active_subclass = sc
+                    break
+
+        always_prep_set = set(ALWAYS_PREPARED_SUBCLASS_SPELLS.get(active_subclass, []))
+        cantrip_keywords = [
+            "light", "guidance", "mending", "prestidigitation", "shocking grasp",
+            "sorcerous burst", "eldritch blast", "druidcraft", "sacred flame",
+            "thorn whip", "toll the dead", "fire bolt"
+        ]
 
         # 1. Try structured spells from AcroForm fields first
         spells_from_fields = parse_structured_spells(fields)
@@ -476,21 +690,23 @@ class DnD5eParser(BaseSheetParser):
                 if not clean_name:
                     continue
                 low_n = clean_name.lower()
-                if low_n in seen_names:
+                if low_n in seen_spells:
                     continue
-                seen_names.add(low_n)
+                seen_spells.add(low_n)
 
                 lvl_val = s.get("level", "Cantrip")
                 lvl_str = str(lvl_val).lower()
                 is_cantrip = "cantrip" in lvl_str or lvl_str == "0" or any(
-                    c in low_n for c in ["light", "guidance", "mending", "prestidigitation", "shocking grasp", "sorcerous burst", "fire bolt"]
+                    c in low_n for c in cantrip_keywords
                 )
-                is_prep = True if is_cantrip else False
+                is_subclass_oath = low_n in always_prep_set
+                is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
                 spells.append({
                     "name": clean_name,
-                    "level": 0 if is_cantrip else self._infer_spell_level(clean_name, text),
+                    "level": 0 if is_cantrip else normalize_spell_level(self._infer_spell_level(clean_name, text)),
                     "is_cantrip": is_cantrip,
                     "is_ritual": "[R]" in s_name or s.get("is_ritual", False),
+                    "is_always_prepared": is_subclass_oath,
                     "prepared": is_prep,
                     "cast_time": s.get("cast_time") or "1A",
                     "range": s.get("range") or "Touch",
@@ -501,35 +717,41 @@ class DnD5eParser(BaseSheetParser):
 
         # 2. Text extraction fallback: regex search
         spell_pattern = re.compile(
-            r'([OP\s]+)?\s*([A-Za-z \t\'\-]+(?:\[R\]|<C>|\s)*)\s+(Artificer|Sorcerer|Wizard|Cleric|Druid|Warlock|Bard|Paladin|Ranger|Light Bearer)\s+(?:([0-9A-Za-z\s]+?)\s+)?(Touch|Self|[\d\s]+ft[^\n]*?)\s+([VSM,\s]+)$',
+            r'([OP\s]+)?\s*([A-Za-z \t\'\-]+(?:\[R\]|<C>|\s)*)\s+(Artificer|Sorcerer|Wizard|Cleric|Druid|Paladin|Warlock|Ranger|Bard|Light Bearer)\s+(?:([0-9A-Za-z+\-\s]+?)\s+)?(Touch|Self|[\d\s]+ft[^\n]*?)\s+(V,S,M|V,S|V,M|S,M|V|S|M|[VSM,\s]+)$',
             re.IGNORECASE | re.MULTILINE
         )
         matches = spell_pattern.findall(text)
         for m in matches:
-            prep_char, s_name, source, cast_time, s_range, comps = m
+            prep_char, s_name, source, mid_tokens, s_range, comps = m
             clean_name = s_name.replace("<C>", "").replace("[R]", "").strip()
             clean_name = clean_name.split("\n")[-1].strip()
             if not clean_name:
                 continue
             low_n = clean_name.lower()
-            if low_n in seen_names:
+            if low_n in seen_spells:
                 continue
-            seen_names.add(low_n)
+            seen_spells.add(low_n)
 
             inferred_lvl = self._infer_spell_level(clean_name, text)
-            is_cantrip = (inferred_lvl == 0) or "cantrip" in clean_name.lower() or any(
-                c in clean_name.lower() for c in ["light", "guidance", "mending", "prestidigitation", "shocking grasp", "sorcerous burst", "fire bolt"]
+            is_cantrip = (inferred_lvl == 0) or "cantrip" in low_n or any(
+                c in low_n for c in cantrip_keywords
             )
-            # RULE: Cantrips are always prepared; leveled spells default to FALSE
-            is_prep = True if is_cantrip else False
+            is_subclass_oath = low_n in always_prep_set
+            is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
+
+            cast_time = "1A"
+            if mid_tokens and mid_tokens.strip():
+                tokens = mid_tokens.strip().split()
+                cast_time = tokens[-1] if tokens else mid_tokens.strip()
 
             spells.append({
                 "name": clean_name,
-                "level": 0 if is_cantrip else (inferred_lvl if inferred_lvl > 0 else 1),
+                "level": 0 if is_cantrip else normalize_spell_level(inferred_lvl if inferred_lvl > 0 else 1),
                 "is_cantrip": is_cantrip,
                 "is_ritual": "[R]" in s_name,
+                "is_always_prepared": is_subclass_oath,
                 "prepared": is_prep,
-                "cast_time": cast_time.strip() if cast_time else "1A",
+                "cast_time": cast_time,
                 "range": s_range.strip() if s_range else "Touch",
                 "components": comps.strip(),
                 "duration": "1 minute" if "<C>" in s_name else "Instantaneous"
@@ -552,16 +774,18 @@ class DnD5eParser(BaseSheetParser):
                     if not clean_name:
                         continue
                     low_n = clean_name.lower()
-                    if low_n in seen_names:
+                    if low_n in seen_spells:
                         continue
-                    seen_names.add(low_n)
-                    is_cantrip = any(k in clean_name.lower() for k in ["cantrip", "light", "guidance", "mending", "prestidigitation", "shocking grasp", "sorcerous burst", "fire bolt"])
-                    is_prep = True if is_cantrip else False
+                    seen_spells.add(low_n)
+                    is_cantrip = any(k in low_n for k in ["cantrip"] + cantrip_keywords)
+                    is_subclass_oath = low_n in always_prep_set
+                    is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
                     spells.append({
                         "name": clean_name,
-                        "level": 0 if is_cantrip else self._infer_spell_level(clean_name, text),
+                        "level": 0 if is_cantrip else normalize_spell_level(self._infer_spell_level(clean_name, text)),
                         "is_cantrip": is_cantrip,
                         "is_ritual": "[R]" in s_name,
+                        "is_always_prepared": is_subclass_oath,
                         "prepared": is_prep,
                         "cast_time": cast_time.strip() if cast_time else "1A",
                         "range": s_range.strip() if s_range else "Touch",
@@ -571,12 +795,29 @@ class DnD5eParser(BaseSheetParser):
 
         return spells
 
-    def extract_discrete_meters(self, text: str, level: int, int_mod: int, cha_mod: int) -> Dict[str, Any]:
-        """Extracts consumable pools. Explicitly excludes Speed and passive attributes."""
+    def extract_discrete_meters(
+        self,
+        text: str,
+        class_str: Any = "",
+        level: int = 1,
+        int_mod: int = 0,
+        wis_mod: int = 0,
+        cha_mod: int = 0
+    ) -> Dict[str, Any]:
+        """Extracts consumable pools for Paladins, Druids, Warlocks, Monks, etc. Strictly excludes movement Speed."""
+        # Support legacy 4-arg call signature: (text, level, int_mod, cha_mod)
+        if isinstance(class_str, int):
+            cha_mod = wis_mod
+            int_mod = level
+            level = class_str
+            class_str = ""
+
         meters = {}
+        c_lower = str(class_str).lower()
+        t_lower = text.lower()
 
         # 1. Hit Dice Meter
-        hit_die = self._infer_hit_die(text)
+        hit_die = self._infer_hit_die(class_str if class_str else text)
         meters["hit_dice"] = {
             "label": f"Hit Dice ({level}d{hit_die})",
             "current": level,
@@ -584,18 +825,75 @@ class DnD5eParser(BaseSheetParser):
             "reset_on": "long_rest"
         }
 
-        # 2. Sorcerer: Sorcery Points (Font of Magic)
-        if "Font of Magic" in text or "Sorcery Points" in text:
-            sp_match = re.search(r'(\d+)\s*SP', text)
-            sp_max = int(sp_match.group(1)) if sp_match else level
-            meters["sorcery_points"] = {
-                "label": "Sorcery Points",
-                "current": sp_max,
-                "max": sp_max,
+        # 2. Paladin: Lay on Hands & Divine Sense
+        if "paladin" in c_lower or "lay on hands" in t_lower:
+            loh_match = re.search(r'lay on hands pool:\s*(\d+)', t_lower)
+            loh_val = int(loh_match.group(1)) if loh_match else (level * 5)
+            meters["lay_on_hands"] = {
+                "label": f"Lay on Hands Pool ({loh_val} HP)",
+                "current": loh_val,
+                "max": loh_val,
                 "reset_on": "long_rest"
             }
 
-        # 3. Innate Sorcery (2/Long Rest)
+        if "divine sense" in t_lower:
+            ds_match = re.search(r'(\d+)\s*(?:times\s*per\s*long\s*rest|/\s*long\s*rest)', t_lower)
+            ds_val = int(ds_match.group(1)) if ds_match else max(1, 1 + cha_mod)
+            meters["divine_sense"] = {
+                "label": "Divine Sense",
+                "current": ds_val,
+                "max": ds_val,
+                "reset_on": "long_rest"
+            }
+
+        if ("channel divinity" in t_lower) or ("cleric" in c_lower and level >= 2) or ("paladin" in c_lower and level >= 3):
+            cd_uses = 2 if level >= 6 else 1
+            meters["channel_divinity"] = {
+                "label": "Channel Divinity",
+                "current": cd_uses,
+                "max": cd_uses,
+                "reset_on": "short_rest"
+            }
+
+        # 3. Wizard: Arcane Recovery
+        if "wizard" in c_lower or "arcane recovery" in t_lower:
+            meters["arcane_recovery"] = {
+                "label": "Arcane Recovery",
+                "current": 1,
+                "max": 1,
+                "reset_on": "long_rest"
+            }
+
+        # 4. Druid: Wild Shape (2 uses per Short Rest starting at Level 2)
+        if ("druid" in c_lower or "wild shape" in t_lower) and level >= 2:
+            ws_uses = 3 if level >= 17 else 2
+            meters["wild_shape"] = {
+                "label": "Wild Shape Uses",
+                "current": ws_uses,
+                "max": ws_uses,
+                "reset_on": "short_rest"
+            }
+
+        # 4. Monk: Ki / Focus Points (Level / Short Rest)
+        if "monk" in c_lower or "ki points" in t_lower or "focus points" in t_lower:
+            meters["ki_points"] = {
+                "label": "Ki / Focus Points",
+                "current": level,
+                "max": level,
+                "reset_on": "short_rest"
+            }
+
+        # 5. Sorcerer: Sorcery Points & Innate Sorcery
+        if "sorcerer" in c_lower or "font of magic" in t_lower or "sorcery points" in t_lower:
+            sp_match = re.search(r'(\d+)\s*SP', text)
+            sp_max = int(sp_match.group(1)) if sp_match else (level if level >= 2 else 0)
+            if sp_max > 0:
+                meters["sorcery_points"] = {
+                    "label": "Sorcery Points",
+                    "current": sp_max,
+                    "max": sp_max,
+                    "reset_on": "long_rest"
+                }
         if "Innate Sorcery" in text:
             meters["innate_sorcery"] = {
                 "label": "Innate Sorcery",
@@ -604,7 +902,23 @@ class DnD5eParser(BaseSheetParser):
                 "reset_on": "long_rest"
             }
 
-        # 4. Kobold: Draconic Cry (2/Long Rest)
+        # 6. Fighter: Second Wind & Action Surge
+        if "fighter" in c_lower:
+            meters["second_wind"] = {
+                "label": "Second Wind",
+                "current": 1,
+                "max": 1,
+                "reset_on": "short_rest"
+            }
+            if level >= 2:
+                meters["action_surge"] = {
+                    "label": "Action Surge",
+                    "current": 1,
+                    "max": 1,
+                    "reset_on": "short_rest"
+                }
+
+        # 7. Species & Class Traits (Draconic Cry, Healing Hands, Magical Tinkering, Celestial Revelation, Blood Maledict)
         if "Draconic Cry" in text:
             meters["draconic_cry"] = {
                 "label": "Draconic Cry",
@@ -612,8 +926,6 @@ class DnD5eParser(BaseSheetParser):
                 "max": 2,
                 "reset_on": "long_rest"
             }
-
-        # 5. Aasimar: Healing Hands (1/Long Rest)
         if "Healing Hands" in text:
             meters["healing_hands"] = {
                 "label": "Healing Hands (2d4)",
@@ -621,8 +933,6 @@ class DnD5eParser(BaseSheetParser):
                 "max": 1,
                 "reset_on": "long_rest"
             }
-
-        # 6. Artificer: Magical Tinkering (INT mod objects)
         if "Magical Tinkering" in text:
             tinker_max = max(1, int_mod)
             meters["magical_tinkering"] = {
@@ -631,8 +941,6 @@ class DnD5eParser(BaseSheetParser):
                 "max": tinker_max,
                 "reset_on": "special"
             }
-
-        # 7. Celestial Revelation (1/Long Rest)
         if "Celestial Revelation" in text:
             meters["celestial_revelation"] = {
                 "label": "Celestial Revelation",
@@ -640,8 +948,6 @@ class DnD5eParser(BaseSheetParser):
                 "max": 1,
                 "reset_on": "long_rest"
             }
-
-        # 8. Blood Hunter: Blood Maledict (1/Short Rest)
         if "Blood Maledict" in text:
             meters["blood_maledict"] = {
                 "label": "Blood Maledict",
@@ -655,17 +961,30 @@ class DnD5eParser(BaseSheetParser):
         return meters
 
     def extract_limited_meters(self, text: str, int_mod: int, level: int = 1) -> Dict[str, Any]:
-        return self.extract_discrete_meters(text, level, int_mod, 0)
+        return self.extract_discrete_meters(text, "", level, int_mod, 0, 0)
 
     @staticmethod
     def _calculate_max_prepared_spells(class_str: str, level: int, key_mod: int) -> int:
         cls_lower = class_str.lower()
         if "artificer" in cls_lower:
             return max(1, key_mod + (level // 2))
-        elif "wizard" in cls_lower or "cleric" in cls_lower or "druid" in cls_lower:
-            return max(1, key_mod + level)
         elif "paladin" in cls_lower:
+            if level < 2:
+                return 0
+            return max(1, key_mod + (level // 2))  # Oath spells do not count against this
+        elif "ranger" in cls_lower:
+            if level < 2:
+                return 0
             return max(1, key_mod + (level // 2))
+        elif "druid" in cls_lower or "cleric" in cls_lower or "wizard" in cls_lower:
+            return max(1, key_mod + level)         # Circle / Domain spells do not count
+        elif "warlock" in cls_lower:
+            # Warlock Spells Known progression table
+            warlock_known = {
+                1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 10,
+                11: 11, 12: 11, 13: 12, 14: 12, 15: 13, 16: 13, 17: 14, 18: 14, 19: 15, 20: 15
+            }
+            return warlock_known.get(level, level + 1)
         elif "sorcerer" in cls_lower:
             # D&D 2024 / Standard Sorcerer known/prepared progression
             sorc_table = {1: 2, 2: 4, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10}
@@ -677,9 +996,9 @@ class DnD5eParser(BaseSheetParser):
         c = class_text.lower()
         if "sorcerer" in c or "wizard" in c:
             return 6
-        elif "artificer" in c or "bard" in c or "cleric" in c or "druid" in c or "monk" in c or "rogue" in c or "warlock" in c:
+        elif any(k in c for k in ["artificer", "bard", "cleric", "druid", "monk", "rogue", "warlock"]):
             return 8
-        elif "fighter" in c or "paladin" in c or "ranger" in c or "blood hunter" in c:
+        elif any(k in c for k in ["fighter", "paladin", "ranger", "blood hunter"]):
             return 10
         elif "barbarian" in c:
             return 12
@@ -701,12 +1020,18 @@ class DnD5eParser(BaseSheetParser):
                 rest = re.sub(rf'^{lvl_hdr}[=:\s]*', '', matched_snippet, flags=re.IGNORECASE)
                 if not re.search(r'\d+(?:st|nd|rd|th)\s+LEVEL', rest, re.IGNORECASE):
                     return lvl
-        second_lvl = ["dragon's breath", "spider climb", "misty step", "scorching ray", "shatter", "invisibility"]
-        if any(s in clean for s in second_lvl):
-            return 2
-        third_lvl = ["fireball", "lightning bolt", "counterspell", "fly", "haste"]
+        second_lvl = [
+            "dragon's breath", "spider climb", "misty step", "scorching ray",
+            "shatter", "invisibility", "hold person", "lesser restoration", "mirror image"
+        ]
+        third_lvl = [
+            "fireball", "lightning bolt", "counterspell", "dispel magic",
+            "haste", "revivify", "fly", "hunger of hadar"
+        ]
         if any(s in clean for s in third_lvl):
             return 3
+        if any(s in clean for s in second_lvl):
+            return 2
         return 1
 
     @staticmethod

@@ -1507,7 +1507,8 @@ function updatePreparedSpellsTally() {
     const leveled = (stagedCharacterSpells || []).filter(s => {
         const lvl = typeof s === "object" ? String(s.level || "") : "";
         const cant = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (lvl.toLowerCase().includes("cantrip") || lvl === "0");
-        return !cant;
+        const alwaysPrep = Boolean(s && s.is_always_prepared);
+        return !cant && !alwaysPrep;
     });
     const prepCount = leveled.filter(s => s && s.prepared === true).length;
     const maxAllowed = (typeof activeMaxPreparedSpells === "number" && activeMaxPreparedSpells >= 0) ? activeMaxPreparedSpells : 3;
@@ -1520,13 +1521,13 @@ window.handleToggleStagedSpellPrepared = function(idx, isPrep) {
         const item = stagedCharacterSpells[idx];
         const sLvl = typeof item === "object" ? (item.level || "Cantrip") : "Cantrip";
         const isCantrip = (item && item.is_cantrip !== undefined) ? Boolean(item.is_cantrip) : (String(sLvl).toLowerCase().includes("cantrip") || sLvl === "0" || sLvl === 0);
+        const isAlwaysPrep = Boolean(item && item.is_always_prepared);
 
-        if (isCantrip) {
+        if (isCantrip || isAlwaysPrep) {
             if (typeof stagedCharacterSpells[idx] === "string") {
-                stagedCharacterSpells[idx] = { name: stagedCharacterSpells[idx], prepared: true, is_cantrip: true };
+                stagedCharacterSpells[idx] = { name: stagedCharacterSpells[idx], prepared: true, is_cantrip: isCantrip, is_always_prepared: isAlwaysPrep };
             } else {
                 stagedCharacterSpells[idx].prepared = true;
-                stagedCharacterSpells[idx].is_cantrip = true;
             }
             renderStagedSpells();
             return;
@@ -1548,7 +1549,8 @@ window.handleToggleStagedSpellPrepared = function(idx, isPrep) {
             if (sIdx === idx) return false;
             const lvl = typeof s === "object" ? String(s.level || "") : "";
             const cant = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (lvl.toLowerCase().includes("cantrip") || lvl === "0");
-            return !cant && s && s.prepared === true;
+            const alwaysPrep = Boolean(s && s.is_always_prepared);
+            return !cant && !alwaysPrep && s && s.prepared === true;
         }).length;
 
         const maxAllowed = (typeof activeMaxPreparedSpells === "number" && activeMaxPreparedSpells >= 0) ? activeMaxPreparedSpells : 3;
@@ -1618,9 +1620,10 @@ function renderStagedSpells() {
         const sRange = typeof s === "object" ? s.range : "";
         const sNotes = typeof s === "object" ? s.notes : "";
         const isCantrip = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (String(sLvl).toLowerCase().includes("cantrip") || sLvl === "0" || sLvl === 0);
-        const isPrep = isCantrip ? true : (s && s.prepared === true);
+        const isAlwaysPrep = Boolean(s && s.is_always_prepared);
+        const isPrep = (isCantrip || isAlwaysPrep) ? true : (s && s.prepared === true);
         return `
-            <div class="spell-item-row" data-is-cantrip="${isCantrip ? 'true' : 'false'}" style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 8px;">
+            <div class="spell-item-row" data-is-cantrip="${isCantrip ? 'true' : 'false'}" data-is-always-prepared="${isAlwaysPrep ? 'true' : 'false'}" style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 8px;">
                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                     <span style="font-size: 0.85rem;">✨</span>
                     <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(sName)}</strong>
@@ -1630,8 +1633,8 @@ function renderStagedSpells() {
                     ${sRange ? `<span style="color: #94a3b8; font-size: 0.7rem;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
                     ${sNotes ? `<span style="color: #64748b; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(sNotes)}]</span>` : ""}
                     <label style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.72rem; color: #a78bfa; cursor: pointer; margin-left: 4px;" title="Prepared Spell for Today">
-                        <input type="checkbox" class="spell-prep-checkbox" data-idx="${idx}" ${isCantrip ? 'checked disabled' : (isPrep ? 'checked' : '')} ${isCurrentModalViewOnly ? 'disabled' : ''} onchange="handleToggleStagedSpellPrepared(${idx}, this.checked)" />
-                        <span style="font-size: 0.68rem; font-weight: 600; color: #c084fc;">${isCantrip ? 'At-Will' : 'Prep'}</span>
+                        <input type="checkbox" class="spell-prep-checkbox" data-idx="${idx}" ${(isCantrip || isAlwaysPrep) ? 'checked disabled' : (isPrep ? 'checked' : '')} ${isCurrentModalViewOnly ? 'disabled' : ''} onchange="handleToggleStagedSpellPrepared(${idx}, this.checked)" />
+                        <span style="font-size: 0.68rem; font-weight: 600; color: #c084fc;">${isCantrip ? 'At-Will' : (isAlwaysPrep ? 'Oath/Domain' : 'Prep')}</span>
                     </label>
                 </div>
                 ${isCurrentModalViewOnly ? "" : `
@@ -3394,7 +3397,12 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
     renderStagedWeapons();
 
     // Staged spells array for structured editing
+    const clsLvlStrForSpells = ch.class_and_level || ch.archetype || ch.native_system_data?.class_level || "Fighter 1";
+    window.activeCharacterClass = clsLvlStrForSpells;
+    const isKnownCaster = /warlock|sorcerer|bard/i.test(clsLvlStrForSpells);
+
     const rawSpells = Array.isArray(ch.spells) ? ch.spells : (ch.native_system_data?.spells || []);
+    const seenModalSpells = new Set();
     stagedCharacterSpells = rawSpells.map(s => {
         if (typeof s === "object" && s !== null) {
             const clone = JSON.parse(JSON.stringify(s));
@@ -3403,7 +3411,7 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
                 ? Boolean(clone.is_cantrip)
                 : (String(sLvl).toLowerCase().includes("cantrip") || sLvl === "0" || sLvl === 0);
             clone.is_cantrip = isCantrip;
-            if (isCantrip) {
+            if (isCantrip || isKnownCaster || clone.is_always_prepared) {
                 clone.prepared = true;
             } else if (clone.prepared === undefined || clone.prepared === null) {
                 clone.prepared = false;
@@ -3420,36 +3428,47 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
             name: sStr.replace(/\s*\([^)]*\)/g, "").trim() || sStr,
             level: isCantrip ? "Cantrip" : "1st Level",
             is_cantrip: isCantrip,
-            prepared: isCantrip ? true : false,
+            prepared: (isCantrip || isKnownCaster) ? true : false,
             atk_bonus: dcM ? dcM[0] : "",
             damage: dmgM ? dmgM[0] : "",
             range: "60 ft.",
             notes: ""
         };
+    }).filter(sp => {
+        const key = String(sp.name || "").replace(/\s*(?:\[.*?\]|<.*?>|\(.*?\))/g, "").trim().toLowerCase();
+        if (!key || seenModalSpells.has(key)) return false;
+        seenModalSpells.add(key);
+        return true;
     });
     window.stagedCharacterSpells = stagedCharacterSpells;
 
     let maxPrep = 3;
-    if (ch.native_system_data && typeof ch.native_system_data.max_prepared_leveled_spells === "number") {
+    const clsLower = clsLvlStrForSpells.toLowerCase();
+    const mLvl = clsLvlStrForSpells.match(/\d+/);
+    const lvlNum = mLvl ? parseInt(mLvl[0], 10) : (parseInt(ch.level, 10) || 1);
+    const prepIntMod = calcDndMod(attrs.Intelligence ?? attrs.INT ?? 10);
+    const prepWisMod = calcDndMod(attrs.Wisdom ?? attrs.WIS ?? 10);
+    const prepChaMod = calcDndMod(attrs.Charisma ?? attrs.CHA ?? 10);
+
+    if (clsLower.includes("druid") || clsLower.includes("cleric")) {
+        maxPrep = Math.max(1, prepWisMod + lvlNum);
+    } else if (clsLower.includes("wizard")) {
+        maxPrep = Math.max(1, prepIntMod + lvlNum);
+    } else if (clsLower.includes("paladin")) {
+        maxPrep = Math.max(1, prepChaMod + Math.floor(lvlNum / 2));
+    } else if (clsLower.includes("artificer")) {
+        maxPrep = Math.max(1, prepIntMod + Math.floor(lvlNum / 2));
+    } else if (clsLower.includes("ranger")) {
+        maxPrep = Math.max(1, prepWisMod + Math.floor(lvlNum / 2));
+    } else if (ch.native_system_data && typeof ch.native_system_data.max_prepared_leveled_spells === "number") {
         maxPrep = ch.native_system_data.max_prepared_leveled_spells;
     } else if (typeof ch.max_prepared_leveled_spells === "number") {
         maxPrep = ch.max_prepared_leveled_spells;
     } else {
-        const clsLvlStr = ch.class_and_level || ch.archetype || "Fighter 1";
-        const mLvl = clsLvlStr.match(/\d+/);
-        const lvlNum = mLvl ? parseInt(mLvl[0], 10) : 1;
-        const abMod = calcDndMod(attrs.Intelligence ?? 10);
-        const clsLower = clsLvlStr.toLowerCase();
-        if (clsLower.includes("artificer")) {
-            maxPrep = Math.max(1, abMod + Math.floor(lvlNum / 2));
-        } else if (clsLower.includes("wizard") || clsLower.includes("cleric") || clsLower.includes("druid")) {
-            maxPrep = Math.max(1, abMod + lvlNum);
-        } else {
-            maxPrep = Math.max(1, abMod + lvlNum);
-        }
+        maxPrep = Math.max(1, prepIntMod + lvlNum);
     }
     if (typeof setupSpellPreparationHandlers === "function") {
-        setupSpellPreparationHandlers(maxPrep);
+        setupSpellPreparationHandlers(maxPrep, clsLvlStrForSpells);
     }
 
     renderStagedSpells();

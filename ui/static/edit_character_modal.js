@@ -15,8 +15,16 @@ function getActiveSpellsContainer() {
   return document.getElementById("dnd-spells-chips-container");
 }
 
-function setupSpellPreparationHandlers(maxAllowed) {
+function isKnownCasterClass(clsStr) {
+  const c = String(clsStr || window.activeCharacterClass || document.getElementById('input-rp-char-archetype')?.value || '').toLowerCase();
+  return c.includes('warlock') || c.includes('sorcerer') || c.includes('bard');
+}
+
+function setupSpellPreparationHandlers(maxAllowed, classStr) {
   activeMaxPreparedSpells = (typeof maxAllowed === 'number' && maxAllowed >= 0) ? maxAllowed : 3;
+  if (typeof classStr === 'string' && classStr.trim()) {
+    window.activeCharacterClass = classStr.trim();
+  }
   updatePreparedBadge();
 
   // Remove existing listeners and delegate
@@ -29,9 +37,10 @@ function handleSpellCheckboxChange(e) {
 
   const row = e.target.closest('.spell-item-row') || e.target.closest('tr');
   const isCantrip = row && row.getAttribute('data-is-cantrip') === 'true';
+  const isAlwaysPrepared = row && row.getAttribute('data-is-always-prepared') === 'true';
 
-  // Cantrips are at-will; cannot be unprepared
-  if (isCantrip) {
+  // Cantrips and Subclass Oath/Circle spells cannot be unprepared
+  if (isCantrip || isAlwaysPrepared) {
     e.target.checked = true;
     return;
   }
@@ -47,33 +56,41 @@ function handleSpellCheckboxChange(e) {
     return;
   }
 
-  // IF CHECKING: Calculate currently prepared leveled count BEFORE this check
-  let currentlyChecked = 0;
-  if (typeof window.stagedCharacterSpells !== "undefined" && Array.isArray(window.stagedCharacterSpells)) {
-    currentlyChecked = window.stagedCharacterSpells.filter((s, sIdx) => {
-      if (sIdx === idx) return false;
+  // IF CHECKING: Calculate currently prepared leveled count
+  if (!isNaN(idx) && typeof window.stagedCharacterSpells !== "undefined" && Array.isArray(window.stagedCharacterSpells)) {
+    const currentlyChecked = window.stagedCharacterSpells.filter((s, sIdx) => {
+      if (sIdx === idx || !s) return false;
       const lvl = typeof s === "object" ? String(s.level || "") : "";
       const cant = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (lvl.toLowerCase().includes("cantrip") || lvl === "0");
-      return !cant && s.prepared === true;
+      const alwaysPrep = Boolean(s && s.is_always_prepared);
+      return !cant && !alwaysPrep && s.prepared === true;
     }).length;
-  } else {
-    currentlyChecked = Math.max(0, getCheckedLeveledCount() - 1);
-  }
 
-  if (currentlyChecked >= activeMaxPreparedSpells) {
-    e.preventDefault();
-    e.target.checked = false;
-    if (!isNaN(idx) && typeof window.stagedCharacterSpells !== "undefined" && window.stagedCharacterSpells[idx]) {
-      window.stagedCharacterSpells[idx].prepared = false;
+    if (currentlyChecked >= activeMaxPreparedSpells) {
+      e.preventDefault();
+      e.target.checked = false;
+      if (window.stagedCharacterSpells[idx]) {
+        window.stagedCharacterSpells[idx].prepared = false;
+      }
+      alert(`Preparation limit reached! This character can only prepare ${activeMaxPreparedSpells} leveled spells. Oath and Domain spells do not count against this limit.`);
+      updatePreparedBadge();
+      return;
     }
-    alert(`Preparation limit reached! This character can only prepare ${activeMaxPreparedSpells} leveled spells. Uncheck another spell first.`);
+
+    if (window.stagedCharacterSpells[idx]) {
+      window.stagedCharacterSpells[idx].prepared = true;
+    }
     updatePreparedBadge();
     return;
   }
 
-  // Valid check: sync to staged array
-  if (!isNaN(idx) && typeof window.stagedCharacterSpells !== "undefined" && window.stagedCharacterSpells[idx]) {
-    window.stagedCharacterSpells[idx].prepared = true;
+  const checkedLeveled = getCheckedLeveledCount();
+
+  if (checkedLeveled > activeMaxPreparedSpells) {
+    e.preventDefault();
+    e.target.checked = false;
+    alert(`Preparation limit reached! This character can only prepare ${activeMaxPreparedSpells} leveled spells. Oath and Domain spells do not count against this limit.`);
+    return;
   }
 
   updatePreparedBadge();
@@ -86,18 +103,22 @@ function getCheckedLeveledCount() {
       if (!s) return false;
       const lvl = typeof s === "object" ? String(s.level || "") : "";
       const cant = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (lvl.toLowerCase().includes("cantrip") || lvl === "0");
-      return !cant && s.prepared === true;
+      const alwaysPrep = Boolean(s && s.is_always_prepared);
+      return !cant && !alwaysPrep && s.prepared === true;
     }).length;
   }
 
-  // Fallback: Query DOM ONLY in the active spells container
+  // Fallback: Query DOM
   const container = getActiveSpellsContainer() || document.getElementById("dnd-spells-chips-container") || document;
   const rows = container.querySelectorAll('.spell-item-row, .spell-row');
   let count = 0;
   rows.forEach(r => {
     const isCantrip = r.getAttribute('data-is-cantrip') === 'true';
+    const isAlwaysPrep = r.getAttribute('data-is-always-prepared') === 'true';
     const cb = r.querySelector('.spell-prep-checkbox');
-    if (!isCantrip && cb && cb.checked) {
+
+    // ONLY tally user-prepared leveled spells; exclude cantrips and oath/circle spells
+    if (!isCantrip && !isAlwaysPrep && cb && cb.checked) {
       count++;
     }
   });
@@ -105,11 +126,20 @@ function getCheckedLeveledCount() {
 }
 
 function updatePreparedBadge() {
+  const pill = document.querySelector('.prep-counter-pill');
+  const labelSpan = pill ? pill.querySelector('span') : null;
   const badge = document.getElementById('prep-spells-tally') || document.querySelector('.prep-counter-pill strong');
   if (badge) {
     const count = getCheckedLeveledCount();
-    badge.innerText = `${count} / ${activeMaxPreparedSpells}`;
-    badge.style.color = (count === activeMaxPreparedSpells) ? '#2ecc71' : '#00F3FF';
+    if (isKnownCasterClass()) {
+      if (labelSpan) labelSpan.innerText = 'Spells Known: ';
+      badge.innerText = `${count}`;
+      badge.style.color = '#2ecc71';
+    } else {
+      if (labelSpan) labelSpan.innerText = 'Prepared Leveled Spells: ';
+      badge.innerText = `${count} / ${activeMaxPreparedSpells}`;
+      badge.style.color = (count === activeMaxPreparedSpells) ? '#2ecc71' : '#00F3FF';
+    }
   }
 }
 
@@ -119,6 +149,7 @@ window.updatePreparedBadge = updatePreparedBadge;
 window.getCheckedLeveledCount = getCheckedLeveledCount;
 window.handleSpellCheckboxChange = handleSpellCheckboxChange;
 window.getActiveSpellsContainer = getActiveSpellsContainer;
+window.isKnownCasterClass = isKnownCasterClass;
 
 /**
  * Dynamic 1-9 Spell Slot Handlers

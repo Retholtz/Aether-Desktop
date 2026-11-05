@@ -7250,10 +7250,28 @@ class GuiBridge:
             native = char.get("native_system_data", {})
             slots = native.get("spell_slots") or char.get("spell_slots", {})
             spells = native.get("spells") or char.get("spells", [])
-            spell_entry = next((s for s in spells if isinstance(s, dict) and s.get("name", "").lower() == spell_name.lower()), None)
+            clean_target = re.sub(r'\s*\[r\]', '', spell_name, flags=re.IGNORECASE).strip().lower()
+            spell_entry = next(
+                (
+                    s for s in spells
+                    if isinstance(s, dict) and (
+                        s.get("name", "").lower() == spell_name.lower()
+                        or re.sub(r'\s*\[r\]', '', s.get("name", ""), flags=re.IGNORECASE).strip().lower() == clean_target
+                    )
+                ),
+                None
+            )
+            class_str = str(native.get("class_level") or char.get("archetype") or char.get("class") or "").lower()
+            is_wizard = "wizard" in class_str
             if spell_level > 0:
-                if spell_entry and not spell_entry.get("prepared", False) and not spell_entry.get("is_ritual", False):
-                    return {"status": "error", "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."}
+                if spell_entry:
+                    is_ritual = bool(
+                        spell_entry.get("is_ritual", False)
+                        or "[r]" in str(spell_entry.get("name", "")).lower()
+                        or "[r]" in spell_name.lower()
+                    )
+                    if not spell_entry.get("prepared", False) and not (is_wizard and is_ritual):
+                        return {"status": "error", "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."}
                 slot_key = f"level_{spell_level}"
                 if slot_key not in slots or slots[slot_key].get("current", 0) <= 0:
                     return {"status": "error", "message": f"No Level {spell_level} spell slots remaining for {params.get('character_name')}!"}

@@ -418,8 +418,29 @@ class CharacterVaultService:
             )
 
             # Build Universal Character Core & Native System Data (Schema 2.0)
+            from core.parsers.dnd5e_parser import clean_traits_and_headers, sanitize_inventory, normalize_spell_level
+            feats = clean_traits_and_headers(feats)
+            clean_arch = re.sub(r'\(.*?\)', '', str(ch.get("archetype") or ch.get("class") or "Adventurer")).strip()
+            ch["archetype"] = clean_arch
+            ch["features_and_traits"] = feats
+            ch["traits_and_abilities"] = feats
+
             u_core = ch.get("universal_core") or self._build_universal_core(ch)
             n_data = ch.get("native_system_data") or self._build_native_system_data(ch)
+            if isinstance(u_core, dict):
+                u_core["archetype"] = clean_arch
+                u_core["tagged_traits"] = clean_traits_and_headers(u_core.get("tagged_traits", []))
+                u_core["tagged_inventory"] = sanitize_inventory(u_core.get("tagged_inventory", []))
+            if isinstance(n_data, dict):
+                n_data["class_level"] = clean_arch
+                n_data["features_and_traits"] = clean_traits_and_headers(n_data.get("features_and_traits", []))
+                if "spells" in n_data and isinstance(n_data["spells"], list):
+                    for sp in n_data["spells"]:
+                        if isinstance(sp, dict):
+                            sp["level"] = normalize_spell_level(sp.get("level"))
+                has_slots = any(s.get("max", 0) > 0 for s in n_data.get("spell_slots", {}).values()) if isinstance(n_data.get("spell_slots"), dict) else False
+                if not has_slots:
+                    n_data["max_prepared_leveled_spells"] = 0
 
             char_record = {
                 "schema_version": "2.0",
@@ -431,7 +452,7 @@ class CharacterVaultService:
                 "player_name": ch.get("player_name") or "Player",
                 "level": int(ch.get("level") or 1),
                 "experience_points": int(ch.get("experience_points") or 0),
-                "archetype": ch.get("archetype") or ch.get("class") or "Adventurer",
+                "archetype": clean_arch,
                 "species": ch.get("species") or ch.get("race") or "",
                 "background": ch.get("background") or "",
                 "ruleset": assigned_ruleset,
@@ -439,7 +460,6 @@ class CharacterVaultService:
                 "native_genre": assigned_genre,
                 "native_system": assigned_ruleset,
                 "vitals": final_vitals,
-                "custom_meters": ch.get("custom_meters") or {},
                 "attributes": ch.get("attributes") or {
                     "Might": 10,
                     "Agility": 10,
@@ -452,11 +472,10 @@ class CharacterVaultService:
                 "hit_dice": ch.get("hit_dice") or "1d8",
                 "saving_throws": ch.get("saving_throws") or {},
                 "currency": ch.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0},
-                "weapons": sanitize_character_weapons(ch.get("weapons") or [], ch.get("spells") or []),
-                "inventory": ch.get("inventory") or [],
+                "weapons": sanitize_character_weapons(ch.get("weapons") or [], n_data.get("spells") or ch.get("spells") or []),
+                "inventory": sanitize_inventory(ch.get("inventory") or []),
                 "features_and_traits": feats,
                 "traits_and_abilities": feats,
-                "spells": sanitize_parsed_spells(ch.get("spells") or []),
                 "spellcasting_ability": ch.get("spellcasting_ability") or "",
                 "spell_save_dc": ch.get("spell_save_dc") or "",
                 "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
@@ -488,10 +507,18 @@ class CharacterVaultService:
             for rich_k in (
                 "weight_carried", "encumbered", "push_drag_lift",
                 "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
-                "creature_type", "backstory", "additional_notes"
+                "creature_type", "backstory", "additional_notes",
+                "inspiration", "ability_save_dc", "attuned_magic_items",
+                "is_pact_magic", "roleplay_anchors"
             ):
                 if rich_k in ch and ch[rich_k] is not None:
                     char_record[rich_k] = ch[rich_k]
+
+            # Eliminate root-level mirrors to prevent desynchronization
+            char_record.pop("spells", None)
+            char_record.pop("spell_slots", None)
+            char_record.pop("custom_meters", None)
+            char_record.pop("max_prepared_leveled_spells", None)
 
             self._save_character(char_record)
             saved_characters.append(char_record)
@@ -507,7 +534,8 @@ class CharacterVaultService:
     def _build_universal_core(self, ch: Dict[str, Any]) -> Dict[str, Any]:
         c_name = ch.get("name") or "Adventurer"
         genre = ch.get("native_genre") or "fantasy_d20"
-        feats = ch.get("features_and_traits") or ch.get("traits_and_abilities") or ch.get("features") or []
+        from core.parsers.dnd5e_parser import clean_traits_and_headers, sanitize_inventory
+        feats = clean_traits_and_headers(ch.get("features_and_traits") or ch.get("traits_and_abilities") or ch.get("features") or [])
         tagged_traits = []
         for f in feats:
             if isinstance(f, dict):
@@ -517,6 +545,7 @@ class CharacterVaultService:
                 t_name = parts[0].strip()
                 t_desc = parts[1].strip() if len(parts) > 1 else str(f).strip()
                 tagged_traits.append({"name": t_name, "description": t_desc, "genre": genre})
+        tagged_traits = clean_traits_and_headers(tagged_traits)
 
         tagged_inv = []
         for item in (ch.get("inventory") or []):
@@ -591,11 +620,11 @@ class CharacterVaultService:
         return {
             "name": c_name,
             "player_name": ch.get("player_name") or "Player",
-            "archetype": ch.get("archetype") or ch.get("class") or "Adventurer",
+            "archetype": re.sub(r'\(.*?\)', '', str(ch.get("archetype") or ch.get("class") or "Adventurer")).strip(),
             "level": int(ch.get("level") or 1),
             "normalized_attributes": norm_attrs,
             "semantic_skills": ch.get("semantic_skills") or [],
-            "tagged_inventory": tagged_inv,
+            "tagged_inventory": sanitize_inventory(tagged_inv),
             "tagged_traits": tagged_traits,
             "backstory": ch.get("backstory") or "",
             "additional_notes": ch.get("additional_notes") or "",
@@ -671,9 +700,36 @@ class CharacterVaultService:
                 "backstory": ch.get("backstory_details") or {}
             }
 
+        from core.parsers.dnd5e_parser import clean_traits_and_headers, normalize_spell_level
+        class_level_clean = re.sub(r'\(.*?\)', '', str(ch.get("class_level") or ch.get("archetype") or ch.get("class") or "Adventurer")).strip()
+        feats = clean_traits_and_headers(feats)
+        spells_clean = []
+        for s in (ch.get("spells") or []):
+            if isinstance(s, dict):
+                s["level"] = normalize_spell_level(s.get("level"))
+                spells_clean.append(s)
+            elif isinstance(s, str):
+                spells_clean.append({"name": s, "level": 1, "prepared": False})
+        slots = ch.get("spell_slots") or {}
+        max_prep = ch.get("max_prepared_leveled_spells")
+        has_slots = any(s.get("max", 0) > 0 for s in slots.values()) if isinstance(slots, dict) else False
+        if not has_slots:
+            max_prep = 0
+
+        meters = ch.get("native_system_data", {}).get("custom_meters") or ch.get("custom_meters") or (ch.get("universal_core", {}).get("custom_meters") if isinstance(ch.get("universal_core"), dict) else {}) or {}
+        if not meters or list(meters.keys()) == ["hit_dice"]:
+            from core.parsers.dnd5e_parser import DnD5eParser
+            feats_str = " ".join([str(f) for f in feats])
+            c_lvl = int(ch.get("level") or 1)
+            raw_c_mod = (raw_attrs.get("Charisma") or raw_attrs.get("CHA") or 10)
+            c_mod = (int(raw_c_mod) - 10) // 2
+            inferred_meters = DnD5eParser().extract_discrete_meters(feats_str, class_level_clean, c_lvl, 0, 0, c_mod)
+            if inferred_meters:
+                meters.update(inferred_meters)
+
         return {
             "system_name": ruleset,
-            "class_level": ch.get("archetype") or ch.get("class") or "Adventurer",
+            "class_level": class_level_clean,
             "armor_class": guard_val,
             "speed": ch.get("speed") or "30 ft.",
             "hit_points": {"current": cur_hp, "max": max_hp},
@@ -683,18 +739,20 @@ class CharacterVaultService:
             "proficiencies": ch.get("proficiencies") or "",
             "weapons": ch.get("weapons") or [],
             "features_and_traits": feats,
-            "spells": ch.get("spells") or [],
+            "spells": spells_clean,
             "spellcasting_ability": ch.get("spellcasting_ability") or "",
             "spell_save_dc": ch.get("spell_save_dc") or "",
             "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
             "passives": ch.get("passives") or {},
             "senses": ch.get("senses") or "",
             "inspiration": bool(ch.get("inspiration", False)),
+            "is_pact_magic": bool(ch.get("is_pact_magic", False)),
             "ability_save_dc": ch.get("ability_save_dc") or ch.get("spell_save_dc") or "",
             "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
             "attuned_magic_items": ch.get("attuned_magic_items") or {"current": 0, "max": 3},
-            "spell_slots": ch.get("spell_slots") or {},
-            "custom_meters": ch.get("custom_meters") or (ch.get("universal_core", {}).get("custom_meters") if isinstance(ch.get("universal_core"), dict) else {}),
+            "spell_slots": slots,
+            "max_prepared_leveled_spells": max_prep,
+            "custom_meters": meters,
             "roleplay_anchors": ch.get("roleplay_anchors") or (ch.get("universal_core", {}).get("roleplay_anchors") if isinstance(ch.get("universal_core"), dict) else {})
         }
 
@@ -927,7 +985,8 @@ class CharacterVaultService:
             "weight_carried", "encumbered", "push_drag_lift",
             "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
             "creature_type", "backstory", "additional_notes",
-            "inspiration", "ability_save_dc", "attuned_magic_items", "spell_slots", "custom_meters", "roleplay_anchors"
+            "inspiration", "ability_save_dc", "attuned_magic_items", "spell_slots",
+            "max_prepared_leveled_spells", "is_pact_magic", "custom_meters", "roleplay_anchors"
         ):
             if rich_k in char_data and char_data[rich_k] is not None:
                 merged[rich_k] = char_data[rich_k]
@@ -980,12 +1039,27 @@ class CharacterVaultService:
         ruleset = merged.get("ruleset") or merged.get("native_system") or "dnd_5e"
         merged["ruleset"] = ruleset
         merged["ruleset_label"] = get_ruleset_display_label(ruleset)
+        merged["archetype"] = re.sub(r'\(.*?\)', '', str(merged.get("archetype") or merged.get("class") or "Adventurer")).strip()
         if not merged.get("native_genre"):
             merged["native_genre"] = "cybernetic_action" if "cyber" in ruleset.lower() else ("modern_horror" if "cthulhu" in ruleset.lower() else "heroic_fantasy")
+
+        from core.parsers.dnd5e_parser import clean_traits_and_headers, sanitize_inventory
+        merged["inventory"] = sanitize_inventory(merged.get("inventory") or [])
+        if "features_and_traits" in merged:
+            merged["features_and_traits"] = clean_traits_and_headers(merged["features_and_traits"])
+        if "traits_and_abilities" in merged:
+            merged["traits_and_abilities"] = clean_traits_and_headers(merged["traits_and_abilities"])
 
         # Rebuild Universal Core and Native System Data (Schema 2.0)
         merged["universal_core"] = self._build_universal_core(merged)
         merged["native_system_data"] = self._build_native_system_data(merged)
+
+        # Eliminate root-level mirrors to prevent desynchronization
+        merged.pop("spells", None)
+        merged.pop("spell_slots", None)
+        merged.pop("custom_meters", None)
+        merged.pop("max_prepared_leveled_spells", None)
+
         merged["updated_at"] = _utc_now_iso()
 
         self._save_character(merged)

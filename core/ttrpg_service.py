@@ -736,8 +736,7 @@ class TTRPGService:
                 if not bg and len(p_parts) > 1:
                     bg = p_parts[1]
         clean_cls_lvl = re.sub(r'\(.*?\)', '', cls_lvl).strip()
-        arch_details = ", ".join(filter(None, [race, bg]))
-        archetype = f"{clean_cls_lvl} ({arch_details})" if (clean_cls_lvl and arch_details) else (clean_cls_lvl or arch_details or "Adventurer")
+        archetype = clean_cls_lvl or "Adventurer"
         cls_lvl = clean_cls_lvl
 
         max_hp = _int_val(fields.get("MaxHP"), 25)
@@ -836,6 +835,9 @@ class TTRPGService:
                             "notes": ""
                         })
                         existing_names.add(item_str)
+
+        from core.parsers.dnd5e_parser import sanitize_inventory, clean_traits_and_headers, normalize_spell_level
+        inventory = sanitize_inventory(inventory)
 
         # Encumbrance & Weights (Page 2 Equipment footer)
         weight_carried = _clean(fields.get("Weight Carried") or fields.get("WeightCarried") or "")
@@ -981,6 +983,8 @@ class TTRPGService:
             clean_def = defenses_str if defenses_str.lower().startswith(("resist", "defense", "immune")) else f"Defenses: {defenses_str}"
             features_list.insert(0, clean_def)
 
+        features_list = clean_traits_and_headers(features_list)
+
         # Skills & Proficiencies
         prof_bonus_int = _int_val(fields.get("ProfBonus"), 2)
         str_mod = (might_val - 10) // 2
@@ -1061,14 +1065,43 @@ class TTRPGService:
 
         # Spells & Cantrips (Structured parsing with level, DC, damage formulas, and header filtering)
         from core.parsers.spell_registry import parse_structured_spells, sanitize_character_weapons
+        from core.parsers.dnd5e_parser import ALWAYS_PREPARED_SUBCLASS_SPELLS, WARLOCK_PACT_SLOTS
         spells_list = parse_structured_spells(fields)
+        is_known_caster = any(k in cls_lvl.lower() for k in ("warlock", "sorcerer", "bard"))
+
+        active_subclass = ""
+        sub_ctx = f"{combined_ft}\n{cls_lvl}\n{fields.get('ClassLevel', '')}".lower()
+        for sc in ALWAYS_PREPARED_SUBCLASS_SPELLS.keys():
+            if sc in ("devotion", "vengeance", "ancients") and sc in sub_ctx:
+                active_subclass = sc
+                break
+            elif sc == "land" and ("druid" in cls_lvl.lower() or "circle" in sub_ctx) and sc in sub_ctx:
+                active_subclass = sc
+                break
+            elif sc in ("life", "light") and ("cleric" in cls_lvl.lower() or "domain" in sub_ctx) and sc in sub_ctx:
+                active_subclass = sc
+                break
+        always_prep_set = set(ALWAYS_PREPARED_SUBCLASS_SPELLS.get(active_subclass, []))
+
+        seen_spells = set()
+        deduped_spells = []
         for s in spells_list:
             if isinstance(s, dict):
-                s_name = s.get("name", "")
-                lvl = str(s.get("level", "")).lower()
-                is_cantrip = "cantrip" in lvl or lvl == "0" or any(c in s_name.lower() for c in ["light", "guidance", "mending", "prestidigitation", "shocking grasp", "sorcerous burst", "fire bolt"])
+                s_name = str(s.get("name", "")).strip()
+                norm_key = re.sub(r'\s*(?:\[R\]|<C>)', '', s_name, flags=re.IGNORECASE).strip().lower()
+                if not norm_key or norm_key in seen_spells:
+                    continue
+                seen_spells.add(norm_key)
+                raw_lvl = str(s.get("level", "")).lower()
+                s["level"] = normalize_spell_level(s.get("level"))
+                is_cantrip = (s["level"] == 0) or "cantrip" in raw_lvl or raw_lvl == "0" or any(c in norm_key for c in ["light", "guidance", "mending", "prestidigitation", "shocking grasp", "sorcerous burst", "fire bolt", "eldritch blast", "druidcraft", "sacred flame", "thorn whip", "toll the dead"])
+                is_subclass_oath = norm_key in always_prep_set
                 s["is_cantrip"] = is_cantrip
-                s["prepared"] = True if is_cantrip else False
+                s["is_ritual"] = bool(s.get("is_ritual", False) or "[r]" in s_name.lower())
+                s["is_always_prepared"] = is_subclass_oath
+                s["prepared"] = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
+                deduped_spells.append(s)
+        spells_list = deduped_spells
         weapons = sanitize_character_weapons(weapons, spells_list)
 
         spell_ability = _clean(fields.get("spellCastingAbility0") or fields.get("SpellcastingAbility") or fields.get("SpellAbility") or "")
@@ -1107,6 +1140,9 @@ class TTRPGService:
 
         # Spell Slots Extraction
         spell_slots = {}
+        is_warlock = "warlock" in cls_lvl.lower()
+        is_pact_magic = is_warlock or any("pact" in str(fields.get(f"spellSlotHeader{i}") or "").lower() for i in range(12))
+
         for rank in range(1, 10):
             total_slots = _int_val(fields.get(f"SlotsTotal{rank}") or fields.get(f"SlotsTotal_{rank}") or fields.get(f"SpellSlots_{rank}_Total"), 0)
             if total_slots == 0:
@@ -1114,38 +1150,37 @@ class TTRPGService:
                     hdr = str(fields.get(f"spellHeader{h_idx}") or "")
                     slot_hdr = str(fields.get(f"spellSlotHeader{h_idx}") or "")
                     if re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
-                        m_s = re.search(r'(\d+)\s+Slots?', slot_hdr, re.IGNORECASE)
+                        m_s = re.search(r'(\d+)\s+(?:Slots?|Pact)', slot_hdr, re.IGNORECASE)
                         if m_s:
                             total_slots = int(m_s.group(1))
                             break
-            cur_slots = _int_val(fields.get(f"SlotsRemaining{rank}") or fields.get(f"SlotsRemaining_{rank}"), total_slots)
-            spell_slots[f"level_{rank}"] = {"current": cur_slots, "max": total_slots}
+            if total_slots == 0 and is_pact_magic:
+                pact_info = WARLOCK_PACT_SLOTS.get(min(20, max(1, char_level)), {"count": 1, "level": 1})
+                if rank == pact_info["level"]:
+                    total_slots = _int_val(fields.get("PactMagic_SlotsTotal") or fields.get("SlotsPactTotal") or fields.get("SlotsTotalPact"), pact_info["count"])
 
-        custom_meters = {
-            "hit_dice": {"current": char_level, "max": char_level, "label": f"Hit Dice ({hit_dice})", "reset_on": "long_rest"},
-        }
-        all_features_str = " ".join(features_list)
-        if "Font of Magic" in all_features_str or "Sorcery Points" in all_features_str:
-            sp_match = re.search(r'(\d+)\s*SP', all_features_str)
-            sp_max = int(sp_match.group(1)) if sp_match else char_level
-            custom_meters["sorcery_points"] = {"current": sp_max, "max": sp_max, "label": "Sorcery Points", "reset_on": "long_rest"}
-        if "Innate Sorcery" in all_features_str:
-            custom_meters["innate_sorcery"] = {"current": 2, "max": 2, "label": "Innate Sorcery", "reset_on": "long_rest"}
-        if "Draconic Cry" in all_features_str:
-            custom_meters["draconic_cry"] = {"current": 2, "max": 2, "label": "Draconic Cry", "reset_on": "long_rest"}
-        if "Healing Hands" in all_features_str:
-            custom_meters["healing_hands"] = {"current": 1, "max": 1, "label": "Healing Hands (2d4)", "reset_on": "long_rest"}
-        if "Magical Tinkering" in all_features_str:
-            custom_meters["magical_tinkering"] = {"current": max(1, int_mod), "max": max(1, int_mod), "label": "Magical Tinkering Objects", "reset_on": "other"}
-        if "Celestial Revelation" in all_features_str:
-            custom_meters["celestial_revelation"] = {"current": 1, "max": 1, "label": "Celestial Revelation", "reset_on": "long_rest"}
-        if "Blood Maledict" in all_features_str:
-            custom_meters["blood_maledict"] = {"current": 1, "max": 1, "label": "Blood Maledict", "reset_on": "short_rest"}
-        custom_meters.pop("speed", None)
+            cur_slots = _int_val(fields.get(f"SlotsRemaining{rank}") or fields.get(f"SlotsRemaining_{rank}"), total_slots)
+            slot_entry = {"current": cur_slots, "max": total_slots}
+            if is_pact_magic and total_slots > 0:
+                slot_entry["is_pact_magic"] = True
+                slot_entry["reset_on"] = "short_rest"
+            else:
+                slot_entry["reset_on"] = "long_rest"
+            spell_slots[f"level_{rank}"] = slot_entry
 
         from core.parsers.dnd5e_parser import DnD5eParser
-        key_spell_mod = cha_mod if "sorcerer" in archetype.lower() or "bard" in archetype.lower() or "warlock" in archetype.lower() or "paladin" in archetype.lower() else (wis_mod if "cleric" in archetype.lower() or "druid" in archetype.lower() or "ranger" in archetype.lower() else int_mod)
-        max_prep_spells = DnD5eParser._calculate_max_prepared_spells(archetype, char_level, key_spell_mod)
+        all_features_str = " ".join(features_list)
+        custom_meters = DnD5eParser().extract_discrete_meters(all_features_str, cls_lvl, char_level, int_mod, wis_mod, cha_mod)
+
+        cls_check = cls_lvl.lower()
+        key_spell_mod = (
+            cha_mod if any(c in cls_check for c in ("sorcerer", "bard", "warlock", "paladin"))
+            else (wis_mod if any(c in cls_check for c in ("cleric", "druid", "ranger")) else int_mod)
+        )
+        max_prep_spells = DnD5eParser._calculate_max_prepared_spells(cls_lvl, char_level, key_spell_mod)
+        has_slots = any(s.get("max", 0) > 0 for s in spell_slots.values()) if isinstance(spell_slots, dict) else False
+        if not has_slots:
+            max_prep_spells = 0
 
         # Saving Throws
         save_stat_map = [
@@ -1262,7 +1297,8 @@ class TTRPGService:
             "spellcasting_ability": spell_ability,
             "spell_save_dc": spell_save_dc,
             "spell_attack_bonus": spell_atk_bonus,
-            "ability_save_dc": _int_val(spell_save_dc, 8 + prof_bonus_int + int_mod),
+            "ability_save_dc": _int_val(spell_save_dc, 8 + prof_bonus_int + key_spell_mod),
+            "is_pact_magic": is_pact_magic,
             "inspiration": inspiration,
             "spell_slots": spell_slots,
             "max_prepared_leveled_spells": max_prep_spells,

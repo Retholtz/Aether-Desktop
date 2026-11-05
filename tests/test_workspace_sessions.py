@@ -131,7 +131,8 @@ class TestWorkspaceSessions(unittest.TestCase):
 
     def test_ttrpg_dice_mode_toggle(self):
         from core.ttrpg_service import TTRPGService
-        svc = TTRPGService()
+        test_manifest_path = os.path.join(self.temp_dir, "test_campaigns.json")
+        svc = TTRPGService(data_dir=self.temp_dir, manifest_path=test_manifest_path)
         svc.manifest = {
             "active_campaign": "test_camp",
             "campaigns": {

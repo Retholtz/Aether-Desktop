@@ -88,11 +88,11 @@ class TestSpellPrepAndDMTools(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meters["sorcery_points"]["max"], 3)
         self.assertEqual(meters["draconic_cry"]["max"], 2)
 
-        # 3. Preparation check: Cantrips=True, Leveled=False
+        # 3. Preparation check: Known Casters (Sorcerer/Warlock/Bard) auto-ready all spells on import
         grasp = next(s for s in spells if s["name"] == "Shocking Grasp")
         burning = next(s for s in spells if s["name"] == "Burning Hands")
         self.assertTrue(grasp["prepared"])
-        self.assertFalse(burning["prepared"])
+        self.assertTrue(burning["prepared"])
 
     async def test_cast_spell_deducts_slot_and_rejects_unprepared(self):
         # Extract handlers registered in mock dispatcher
