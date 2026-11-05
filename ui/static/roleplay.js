@@ -525,10 +525,19 @@ function extractCharacterInventory(ch) {
     ];
     for (const cand of candidates) {
         if (Array.isArray(cand) && cand.length > 0) {
-            return cand.map(i => typeof i === "string" ? i.trim() : (i?.name || String(i || ""))).filter(Boolean);
+            return cand.map(i => {
+                if (typeof i === "object" && i !== null) return i;
+                let s = String(i || "").trim();
+                if (s.includes("(") && !s.includes(")")) s += ")";
+                return s;
+            }).filter(Boolean);
         }
         if (typeof cand === "string" && cand.trim().length > 0) {
-            return cand.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
+            return cand.split(/[\n,]+/).map(i => {
+                let s = i.trim().replace(/^[-•*]\s*/, "");
+                if (s.includes("(") && !s.includes(")")) s += ")";
+                return s;
+            }).filter(Boolean);
         }
     }
     return [];
@@ -552,6 +561,239 @@ function extractCharacterSpells(ch) {
     }
     return [];
 }
+
+/**
+ * ui/static/roleplay.js - Party Roster Spell Section Renderer
+ */
+function renderCardSpellsSection(char) {
+  const native = char.native_system_data || {};
+  const allSpells = (Array.isArray(native.spells) && native.spells.length > 0) ? native.spells : (Array.isArray(char.spells) ? char.spells : []);
+  const slots = native.spell_slots || char.spell_slots || {};
+
+  if (allSpells.length === 0 && Object.keys(slots).length === 0) {
+    return ''; // Non-caster (e.g. Pure Fighter)
+  }
+
+  // 1. Filter: Prepared Spells & At-Will Cantrips
+  const activeSpells = allSpells.filter(s => {
+    if (!s) return false;
+    if (typeof s === "string") return true;
+    return Boolean(s.is_cantrip || s.prepared);
+  });
+  const unpreparedSpells = allSpells.filter(s => {
+    if (!s) return false;
+    if (typeof s === "string") return false;
+    return !s.is_cantrip && !s.prepared;
+  });
+
+  const charId = char.id || char.name || "char";
+
+  // 2. Build Interactive Slot Pips Bar
+  let slotsBarHtml = '<div class="card-spell-slots-bar">';
+  let hasSlots = false;
+
+  for (let lvl = 1; lvl <= 9; lvl++) {
+    const sData = slots[`level_${lvl}`];
+    if (sData && sData.max > 0) {
+      hasSlots = true;
+      let pips = '';
+      for (let i = 0; i < sData.max; i++) {
+        const isExpended = i >= sData.current;
+        pips += `<span class="slot-pip ${isExpended ? 'expended' : ''}" 
+                       data-char-id="${escapeRpHtml(String(charId))}" 
+                       data-level="${lvl}" 
+                       data-index="${i}" 
+                       title="Level ${lvl} Slot ${i+1} (${isExpended ? 'Expended - click to recover' : 'Available - click to expend'})"></span>`;
+      }
+      slotsBarHtml += `
+        <div class="card-slot-rank-group">
+          <span class="card-slot-rank-label">L${lvl}:</span>
+          <div class="card-slot-pips">${pips}</div>
+        </div>
+      `;
+    }
+  }
+  slotsBarHtml += '</div>';
+
+  if (!hasSlots) {
+    slotsBarHtml = ''; // Hide slot bar if character has only cantrips
+  }
+
+  // 3. Render Active Spell Items
+  const activeSpellsHtml = activeSpells.map(s => renderSingleSpellRow(charId, s, slots)).join('');
+
+  // 4. Render Collapsible Unprepared Drawer (if any exist)
+  let unpreparedDrawerHtml = '';
+  if (unpreparedSpells.length > 0) {
+    const unprepListHtml = unpreparedSpells.map(s => renderSingleSpellRow(charId, s, slots, true)).join('');
+    const charIdSafe = escapeRpJs(String(charId));
+    unpreparedDrawerHtml = `
+      <button type="button" class="unprepared-drawer-btn" onclick="toggleUnpreparedDrawer('${charIdSafe}')">
+        <span id="drawer-arrow-${charIdSafe}">▶</span> Show ${unpreparedSpells.length} Unprepared Spells
+      </button>
+      <div id="unprepared-container-${charIdSafe}" class="unprepared-spells-container">
+        ${unprepListHtml}
+      </div>
+    `;
+  }
+
+  const charNameSafe = escapeRpJs(String(char.name || charId));
+  return `
+    <div class="card-section spells-section char-spells-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 6px 8px;">
+      <div class="section-header" style="font-size: 10px; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
+        <span class="section-title">✨ SPELLS &amp; CANTRIPS</span>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          <span class="badge-count" style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${activeSpells.length} ACTIVE</span>
+          <button type="button" class="add-sub-item-btn cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35);" onclick="handleOpenAddSpellModal('${charNameSafe}')">+ Add Spell</button>
+        </div>
+      </div>
+      ${slotsBarHtml}
+      <div class="active-spells-list">
+        ${activeSpellsHtml.length ? activeSpellsHtml : '<div class="empty-state" style="font-size: 10.5px; color: #64748b; font-style: italic; padding: 2px 0;">No spells prepared for today.</div>'}
+      </div>
+      ${unpreparedDrawerHtml}
+    </div>
+  `;
+}
+
+function renderSingleSpellRow(charId, spell, slots, isUnprepared = false) {
+  if (typeof spell === "string") {
+    spell = { name: spell, level: 0, is_cantrip: false, prepared: true };
+  }
+  const isCantrip = Boolean(spell.is_cantrip || (typeof spell.level === "string" && spell.level.toLowerCase().includes("cantrip")));
+  let lvl = 0;
+  if (!isCantrip) {
+    if (typeof spell.level === "number") lvl = spell.level;
+    else if (typeof spell.level === "string") {
+      const match = spell.level.match(/\d+/);
+      lvl = match ? parseInt(match[0], 10) : 1;
+    }
+  }
+  const slotData = slots[`level_${lvl}`];
+  
+  // Disable cast button if a leveled spell has 0 slots remaining
+  const isOutOfSlots = !isCantrip && (!slotData || slotData.current <= 0);
+
+  const levelTag = isCantrip ? 'Cantrip' : `${lvl}${getOrdinal(lvl)} Level`;
+  const ritualTag = spell.is_ritual ? ' [R]' : '';
+  const concTag = spell.duration && spell.duration.toLowerCase().includes('concentration') ? ' &lt;C&gt;' : '';
+
+  const charIdSafe = escapeRpJs(String(charId));
+  const spellName = spell.name || "Spell";
+  const spellNameSafe = escapeRpJs(String(spellName));
+  const spellNameHtml = escapeRpHtml(String(spellName));
+  const rangeText = spell.range || "Touch";
+  const castTime = spell.cast_time || spell.casting_time || "1A";
+
+  const hasAtk = Boolean(spell.save_atk || spell.atk_bonus);
+  const dmgMatch = spell.damage || (spellName.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i) ? spellName.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i)[0] : "");
+
+  return `
+    <div class="spell-row-item ${isUnprepared ? 'unprepared-row' : ''}">
+      <div class="spell-main-info">
+        <strong class="spell-title">${spellNameHtml}${ritualTag}${concTag}</strong>
+        <span class="spell-badge-type">${levelTag}</span>
+        <span class="spell-subtext">${escapeRpHtml(rangeText)} | ${escapeRpHtml(castTime)}</span>
+      </div>
+      <div class="spell-action-group">
+        <button type="button" 
+                class="action-btn cast-btn ${isOutOfSlots ? 'out-of-slots' : ''}" 
+                onclick="handleCardCastSpell('${charIdSafe}', '${spellNameSafe}', ${lvl})"
+                title="${isOutOfSlots ? 'No spell slots remaining!' : 'Cast Spell'}">
+          Cast
+        </button>
+        ${hasAtk ? `<button type="button" class="action-btn atk-btn" onclick="handleSpellAtk('${charIdSafe}', '${spellNameSafe}')">Atk</button>` : ''}
+        ${dmgMatch ? `<button type="button" class="action-btn dmg-btn" onclick="handleSpellDmg('${charIdSafe}', '${spellNameSafe}')">Dmg</button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function getOrdinal(n) {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
+}
+
+function toggleUnpreparedDrawer(charId) {
+  const container = document.getElementById(`unprepared-container-${charId}`);
+  const arrow = document.getElementById(`drawer-arrow-${charId}`);
+  if (container) {
+    const isOpen = container.classList.toggle('open');
+    if (arrow) arrow.innerText = isOpen ? '▼' : '▶';
+  }
+}
+
+async function handleCardCastSpell(charId, spellName, spellLevel) {
+  if (spellLevel > 0) {
+    // Leveled spell: Call cast_spell to deduct slot and prompt GM narrative
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.invoke_ttrpg_tool === "function") {
+      const res = await window.pywebview.api.invoke_ttrpg_tool('cast_spell', {
+        character_name: charId,
+        spell_name: spellName,
+        spell_level: spellLevel
+      });
+
+      if (res && res.status === 'error') {
+        alert(res.message);
+        return;
+      }
+    }
+    const inputEl = document.getElementById("input-rp-dm-prompt");
+    if (inputEl) {
+      inputEl.value = `*[SPELL CAST]* ${charId} casts **${spellName}** (Level ${spellLevel}).`;
+      const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
+      if (sendBtn) sendBtn.click();
+    }
+  } else {
+    // Cantrip: At-will cast
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.send_chat_message === "function") {
+      await window.pywebview.api.send_chat_message(`Cast cantrip: ${spellName}`);
+    }
+    const inputEl = document.getElementById("input-rp-dm-prompt");
+    if (inputEl) {
+      inputEl.value = `*[SPELL CAST]* ${charId} casts cantrip **${spellName}**.`;
+      const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
+      if (sendBtn) sendBtn.click();
+    }
+  }
+}
+
+function handleSpellAtk(charId, spellName) {
+  const state = ttrpgData.state || {};
+  const charsObj = state.characters || {};
+  const char = charsObj[charId] || Object.values(charsObj).find(c => c.name === charId);
+  const spells = char?.native_system_data?.spells || char?.spells || [];
+  const sp = spells.find(s => (s.name || s) === spellName);
+  const atk = sp?.atk_bonus || sp?.save_atk || "+5";
+  if (typeof window.handleRollSpellAttack === "function") {
+    window.handleRollSpellAttack(char?.name || charId, spellName, atk);
+  }
+}
+
+function handleSpellDmg(charId, spellName) {
+  const state = ttrpgData.state || {};
+  const charsObj = state.characters || {};
+  const char = charsObj[charId] || Object.values(charsObj).find(c => c.name === charId);
+  const spells = char?.native_system_data?.spells || char?.spells || [];
+  const sp = spells.find(s => (s.name || s) === spellName);
+  const dmg = sp?.damage || "1d10";
+  if (typeof window.handleRollSpellDamage === "function") {
+    window.handleRollSpellDamage(char?.name || charId, spellName, dmg);
+  }
+}
+
+window.renderCardSpellsSection = renderCardSpellsSection;
+window.renderSingleSpellRow = renderSingleSpellRow;
+window.getOrdinal = getOrdinal;
+window.toggleUnpreparedDrawer = toggleUnpreparedDrawer;
+window.handleCardCastSpell = handleCardCastSpell;
+window.handleSpellAtk = handleSpellAtk;
+window.handleSpellDmg = handleSpellDmg;
+window.openAddSpellModal = function(cName) {
+  if (typeof window.handleOpenAddSpellModal === "function") {
+    window.handleOpenAddSpellModal(cName);
+  }
+};
 
 function renderPartyRoster() {
     const gridEl = document.getElementById("party-roster-grid");
@@ -693,64 +935,27 @@ function renderPartyRoster() {
                 </div>
                 ${inv.length > 0 ? `
                     <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                        ${inv.map(item => `
+                        ${inv.map(item => {
+                            const itemName = typeof item === "string" ? item : (item.name || "Item");
+                            const itemQty = typeof item === "object" ? (item.qty || "1") : "1";
+                            const itemWt = typeof item === "object" ? (item.weight || "") : "";
+                            const itemNotes = typeof item === "object" ? (item.notes || "") : "";
+                            const label = `${itemName}${itemQty && itemQty !== "1" ? ' x' + itemQty : ''}${itemWt ? ' [' + itemWt + ']' : ''}${itemNotes ? ' (' + itemNotes + ')' : ''}`;
+                            return `
                             <span class="rp-gear-badge" style="background: rgba(30, 41, 59, 0.85); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 4px; padding: 2px 7px; font-size: 10px; color: #cbd5e1; display: inline-flex; align-items: center; gap: 4px;">
-                                ${escapeRpHtml(item)}
-                                <span style="cursor: pointer; color: #94a3b8; font-size: 9px; margin-left: 2px;" title="Remove Item" onclick="handleDeleteInventoryItem('${escapeRpHtml(ch.name)}', '${escapeRpHtml(item)}')">✕</span>
+                                ${escapeRpHtml(label)}
+                                <span style="cursor: pointer; color: #94a3b8; font-size: 9px; margin-left: 2px;" title="Remove Item" onclick="handleDeleteInventoryItem('${escapeRpJs(ch.name)}', '${escapeRpJs(itemName)}')">✕</span>
                             </span>
-                        `).join("")}
+                            `;
+                        }).join("")}
                     </div>
                 ` : `<div style="font-size: 10.5px; color: #64748b; font-style: italic;">Inventory empty.</div>`}
             </div>
         `;
 
-        // Build Spells & Cantrips Shelf HTML
-        const spells = Array.isArray(ch.spells) ? ch.spells : [];
-        const isCaster = (ch.spellcasting_ability && ch.spellcasting_ability !== "none") || spells.length > 0;
-        let spellsHtml = "";
-        if (isCaster || spells.length > 0) {
-            spellsHtml = `
-                <div class="char-spells-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 6px 8px;">
-                    <div style="font-size: 10px; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
-                        <span>✨ SPELLS &amp; CANTRIPS</span>
-                        <div style="display: flex; gap: 6px; align-items: center;">
-                            <span style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${spells.length} SPELLS</span>
-                            <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35);" onclick="handleOpenAddSpellModal('${escapeRpJs(ch.name)}')">+ Add Spell</button>
-                        </div>
-                    </div>
-                    ${spells.length > 0 ? spells.map(s => {
-                        const sName = typeof s === "object" ? (s.name || "Spell") : String(s);
-                        const sLvl = typeof s === "object" ? (s.level || "") : "";
-                        const sAtk = typeof s === "object" ? (s.atk_bonus || s.save_dc || "") : "";
-                        const sDmg = typeof s === "object" ? (s.damage || "") : "";
-                        const sRange = typeof s === "object" ? (s.range || "") : "";
-                        const sNotes = typeof s === "object" ? (s.notes || "") : "";
-
-                        // Parse potential damage formula from text if s is a string (e.g. "Fire Bolt (1d10)")
-                        const dmgMatch = sDmg || (sName.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i) ? sName.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i)[0] : "");
-
-                        return `
-                            <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
-                                <div style="font-size: 11px;">
-                                    <strong style="color: #f1f5f9;">${escapeRpHtml(sName)}</strong>
-                                    ${sLvl ? `<span style="font-size: 9px; color: #c084fc; background: rgba(168, 85, 247, 0.15); padding: 1px 4px; border-radius: 3px; margin-left: 4px;">${escapeRpHtml(sLvl)}</span>` : ""}
-                                    ${sAtk ? `<span style="color: #38bdf8; font-size: 10px; margin-left: 4px;">${escapeRpHtml(sAtk)}</span>` : ""}
-                                    ${dmgMatch ? `<span style="color: #f87171; font-size: 10px; margin-left: 4px;">(${escapeRpHtml(dmgMatch)})</span>` : ""}
-                                    ${sRange ? `<span style="font-size: 9.5px; color: #94a3b8; margin-left: 4px;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
-                                    ${sNotes ? `<span style="font-size: 9px; color: #64748b; margin-left: 4px;">[${escapeRpHtml(sNotes)}]</span>` : ""}
-                                </div>
-                                <div style="display: flex; gap: 4px; align-items: center;">
-                                    <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px; color: #c084fc; border-color: rgba(168, 85, 247, 0.35);" title="Cast Spell / Announce" onclick="handleCastSpell('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}', '${escapeRpJs(sRange)}', '${escapeRpJs(sNotes)}')">✨ Cast</button>
-                                    ${sAtk ? `<button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px;" title="Roll Spell Attack" onclick="handleRollSpellAttack('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}', '${escapeRpJs(sAtk)}')">🎲 Atk</button>` : ""}
-                                    ${dmgMatch ? `<button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px;" title="Roll Damage / Healing" onclick="handleRollSpellDamage('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}', '${escapeRpJs(dmgMatch)}')">💥 Dmg</button>` : ""}
-                                    <button type="button" class="vital-step-btn" style="font-size: 9px; padding: 0 4px; color: #f87171;" title="Remove Spell" onclick="handleDeleteSpell('${escapeRpJs(ch.name)}', '${escapeRpJs(sName)}')">✕</button>
-                                </div>
-                            </div>
-                        `;
-                    }).join("") : `<div style="font-size: 10.5px; color: #64748b; font-style: italic; padding: 2px 0;">No spells prepared. Click <strong>+ Add Spell</strong> to add.</div>`}
-                </div>
-            `;
-        }
+        // Build Spells & Cantrips Shelf HTML (Dynamic Roster Spell Filter & Live Slot Trackers)
+        if (!ch.id) ch.id = cid;
+        const spellsHtml = renderCardSpellsSection(ch);
 
         // Build Features & Traits Shelf HTML
         const feats = extractCharacterFeatures(ch);
@@ -842,6 +1047,7 @@ function renderPartyRoster() {
                     ${coinBadge}
                     <button type="button" class="vital-step-btn" title="Save this hero permanently to the Character Vault" onclick="handleExportRosterCharToVault('${escapeRpHtml(ch.name)}')">🏛️</button>
                     <button type="button" class="vital-step-btn" title="Award XP or Level Up" onclick="handlePromptProgressCharacter('${escapeRpHtml(ch.name)}')">⭐</button>
+                    <button type="button" class="vital-step-btn" title="View character sheet" onclick="handleOpenViewCharacterModal('${escapeRpHtml(ch.id || cid)}')">👁️</button>
                     <button type="button" class="vital-step-btn" title="Edit character details" onclick="handleOpenEditCharacterModal('${escapeRpHtml(ch.id || cid)}')">✏️</button>
                     <button type="button" class="vital-step-btn" title="Remove character" onclick="handleDeleteCharacter('${escapeRpHtml(ch.id || cid)}')">🗑️</button>
                 </div>
@@ -1142,6 +1348,8 @@ function updateHiddenWeaponInputs() {
     });
 }
 
+let editingStagedWeaponIndex = null;
+
 function renderStagedWeapons() {
     updateHiddenWeaponInputs();
     const containers = [
@@ -1167,7 +1375,12 @@ function renderStagedWeapons() {
                     ${w.type ? `<span style="color: #94a3b8; font-size: 0.68rem; background: rgba(148, 163, 184, 0.15); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(w.type)}</span>` : ""}
                     ${w.notes ? `<span style="color: #64748b; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(w.notes)}]</span>` : ""}
                 </div>
-                <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove weapon" onclick="handleRemoveStagedWeapon(${idx})">✕</button>
+                ${isCurrentModalViewOnly ? "" : `
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <button type="button" class="vital-step-btn" style="color: #38bdf8; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit weapon" onclick="handleEditStagedWeapon(${idx})">✏️</button>
+                    <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove weapon" onclick="handleRemoveStagedWeapon(${idx})">✕</button>
+                </div>
+                `}
             </div>
         `).join("");
     });
@@ -1180,7 +1393,182 @@ window.handleRemoveStagedWeapon = function(idx) {
     }
 };
 
+window.handleEditStagedWeapon = function(idx) {
+    if (idx < 0 || idx >= stagedCharacterWeapons.length) return;
+    editingStagedWeaponIndex = idx;
+    const w = stagedCharacterWeapons[idx];
+    const modal = document.getElementById("modal-add-weapon");
+    const titleEl = document.getElementById("modal-add-weapon-title");
+    const confirmBtn = document.getElementById("btn-confirm-add-weapon");
+    const charInput = document.getElementById("input-add-weapon-char-name");
+
+    if (charInput) charInput.value = "__active_edit__";
+    if (titleEl) titleEl.textContent = `Edit Weapon: ${w.name || 'Weapon'}`;
+    if (confirmBtn) confirmBtn.textContent = "Update Weapon";
+
+    const nameInput = document.getElementById("input-weapon-name");
+    const typeSelect = document.getElementById("select-weapon-type");
+    const atkInput = document.getElementById("input-weapon-atk");
+    const dmgInput = document.getElementById("input-weapon-dmg");
+    const notesInput = document.getElementById("input-weapon-notes");
+
+    if (nameInput) nameInput.value = w.name || "";
+    if (typeSelect && w.type) typeSelect.value = w.type;
+    if (atkInput) atkInput.value = w.atk_bonus || "+0";
+    if (dmgInput) dmgInput.value = w.damage || "1d4";
+    if (notesInput) notesInput.value = w.notes || "";
+
+    updateWeaponLivePreview();
+    if (modal) modal.classList.remove("hidden");
+};
+
 let stagedCharacterSpells = [];
+let editingStagedSpellIndex = null;
+let stagedCustomMeters = {};
+
+function renderStagedCustomMeters(isViewOnly = isCurrentModalViewOnly) {
+    const container = document.getElementById("custom-meters-container");
+    if (!container) return;
+    container.innerHTML = "";
+    const entries = Object.entries(stagedCustomMeters || {});
+    if (entries.length === 0) {
+        container.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px; grid-column: 1 / -1;">No rest meters active. Click <strong>+ Add Tracker</strong> to track class abilities or magic item uses.</div>`;
+        return;
+    }
+
+    entries.forEach(([key, m]) => {
+        const label = m.label || key;
+        const cur = m.current ?? 0;
+        const max = m.max ?? 1;
+        const resetOn = m.reset_on || "long_rest";
+        let resetTag = "Long Rest";
+        if (resetOn === "short_rest") resetTag = "Short Rest";
+        else if (resetOn !== "long_rest") resetTag = "Special / Other";
+
+        const card = document.createElement("div");
+        card.className = "meter-card";
+        card.setAttribute("data-meter-key", key);
+        card.innerHTML = `
+            <div class="meter-header">
+                <span class="meter-title">${escapeRpHtml(label)}</span>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <span class="meter-reset-tag">${escapeRpHtml(resetTag)}</span>
+                    ${isViewOnly ? "" : `<button type="button" class="del-meter-btn" style="background: none; border: none; color: #f87171; cursor: pointer; font-size: 11px; padding: 0 3px;" title="Remove Tracker" onclick="handleRemoveCustomMeter('${escapeRpJs(key)}')">✕</button>`}
+                </div>
+            </div>
+            <div class="meter-stepper">
+                <button type="button" class="meter-btn-step dec" ${isViewOnly ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''} onclick="stepCustomMeter('${escapeRpJs(key)}', -1)">-</button>
+                <span class="meter-val-display" id="meter-val-${escapeRpHtml(key)}">${cur} / ${max}</span>
+                <button type="button" class="meter-btn-step inc" ${isViewOnly ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''} onclick="stepCustomMeter('${escapeRpJs(key)}', 1)">+</button>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+window.stepCustomMeter = function(key, delta) {
+    if (stagedCustomMeters && stagedCustomMeters[key]) {
+        const m = stagedCustomMeters[key];
+        const newCur = Math.max(0, Math.min(m.max, (m.current ?? 0) + delta));
+        m.current = newCur;
+        const disp = document.getElementById(`meter-val-${key}`);
+        if (disp) {
+            disp.textContent = `${newCur} / ${m.max}`;
+        }
+    }
+};
+
+window.handleRemoveCustomMeter = function(key) {
+    if (stagedCustomMeters && stagedCustomMeters[key]) {
+        delete stagedCustomMeters[key];
+        renderStagedCustomMeters(isCurrentModalViewOnly);
+    }
+};
+
+function getActiveSpellsContainer() {
+    const rulesetSelect = document.getElementById("select-rp-char-ruleset");
+    const r = (rulesetSelect ? rulesetSelect.value : "dnd_5e").toLowerCase();
+    if (r.includes("pathfinder")) {
+        return document.getElementById("pf-spells-chips-container");
+    } else if (r.includes("agnostic") || r.includes("sandbox") || r.includes("custom")) {
+        return document.getElementById("agnostic-spells-chips-container");
+    }
+    return document.getElementById("dnd-spells-chips-container");
+}
+
+function updatePreparedSpellsTally() {
+    window.stagedCharacterSpells = stagedCharacterSpells;
+    if (typeof updatePreparedBadge === "function") {
+        updatePreparedBadge();
+        return;
+    }
+    const tallyEl = document.getElementById("prep-spells-tally");
+    if (!tallyEl) return;
+    const leveled = (stagedCharacterSpells || []).filter(s => {
+        const lvl = typeof s === "object" ? String(s.level || "") : "";
+        const cant = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (lvl.toLowerCase().includes("cantrip") || lvl === "0");
+        return !cant;
+    });
+    const prepCount = leveled.filter(s => s && s.prepared === true).length;
+    const maxAllowed = (typeof activeMaxPreparedSpells === "number" && activeMaxPreparedSpells >= 0) ? activeMaxPreparedSpells : 3;
+    tallyEl.textContent = `${prepCount} / ${maxAllowed}`;
+    tallyEl.style.color = (prepCount === maxAllowed) ? '#2ecc71' : '#00F3FF';
+}
+
+window.handleToggleStagedSpellPrepared = function(idx, isPrep) {
+    if (idx >= 0 && idx < stagedCharacterSpells.length) {
+        const item = stagedCharacterSpells[idx];
+        const sLvl = typeof item === "object" ? (item.level || "Cantrip") : "Cantrip";
+        const isCantrip = (item && item.is_cantrip !== undefined) ? Boolean(item.is_cantrip) : (String(sLvl).toLowerCase().includes("cantrip") || sLvl === "0" || sLvl === 0);
+
+        if (isCantrip) {
+            if (typeof stagedCharacterSpells[idx] === "string") {
+                stagedCharacterSpells[idx] = { name: stagedCharacterSpells[idx], prepared: true, is_cantrip: true };
+            } else {
+                stagedCharacterSpells[idx].prepared = true;
+                stagedCharacterSpells[idx].is_cantrip = true;
+            }
+            renderStagedSpells();
+            return;
+        }
+
+        // If unchecking: always allow without limit check!
+        if (!isPrep) {
+            if (typeof stagedCharacterSpells[idx] === "string") {
+                stagedCharacterSpells[idx] = { name: stagedCharacterSpells[idx], prepared: false };
+            } else {
+                stagedCharacterSpells[idx].prepared = false;
+            }
+            updatePreparedSpellsTally();
+            return;
+        }
+
+        // If checking: calculate count of other prepared leveled spells
+        const currentChecked = stagedCharacterSpells.filter((s, sIdx) => {
+            if (sIdx === idx) return false;
+            const lvl = typeof s === "object" ? String(s.level || "") : "";
+            const cant = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (lvl.toLowerCase().includes("cantrip") || lvl === "0");
+            return !cant && s && s.prepared === true;
+        }).length;
+
+        const maxAllowed = (typeof activeMaxPreparedSpells === "number" && activeMaxPreparedSpells >= 0) ? activeMaxPreparedSpells : 3;
+        if (currentChecked >= maxAllowed) {
+            alert(`Preparation limit reached! This character can only prepare ${maxAllowed} leveled spells. Uncheck another spell first.`);
+            if (typeof stagedCharacterSpells[idx] === "object") {
+                stagedCharacterSpells[idx].prepared = false;
+            }
+            renderStagedSpells();
+            return;
+        }
+
+        if (typeof stagedCharacterSpells[idx] === "string") {
+            stagedCharacterSpells[idx] = { name: stagedCharacterSpells[idx], prepared: true };
+        } else {
+            stagedCharacterSpells[idx].prepared = true;
+        }
+        updatePreparedSpellsTally();
+    }
+};
 
 function updateHiddenSpellInputs() {
     const formatted = stagedCharacterSpells.map(s => {
@@ -1198,40 +1586,65 @@ function updateHiddenSpellInputs() {
 
 function renderStagedSpells() {
     updateHiddenSpellInputs();
-    const containers = [
+    window.stagedCharacterSpells = stagedCharacterSpells;
+
+    const activeCont = getActiveSpellsContainer();
+    const allContainers = [
         document.getElementById("dnd-spells-chips-container"),
         document.getElementById("pf-spells-chips-container"),
         document.getElementById("agnostic-spells-chips-container")
     ].filter(Boolean);
 
-    containers.forEach(cont => {
-        if (!stagedCharacterSpells || stagedCharacterSpells.length === 0) {
-            cont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No spells added. Click <strong>+ Add Spell</strong> above to add with level, damage, DC, and range fields.</div>`;
-            return;
+    // Clear inactive containers to prevent duplicate DOM elements / duplicate checkboxes
+    allContainers.forEach(c => {
+        if (c !== activeCont) {
+            c.innerHTML = "";
         }
-        cont.innerHTML = stagedCharacterSpells.map((s, idx) => {
-            const sName = typeof s === "string" ? s : s.name;
-            const sLvl = typeof s === "object" ? (s.level || "Cantrip") : "Cantrip";
-            const sDmg = typeof s === "object" ? s.damage : "";
-            const sAtk = typeof s === "object" ? (s.atk_bonus || s.save_dc || "") : "";
-            const sRange = typeof s === "object" ? s.range : "";
-            const sNotes = typeof s === "object" ? s.notes : "";
-            return `
-                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 8px;">
-                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                        <span style="font-size: 0.85rem;">✨</span>
-                        <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(sName)}</strong>
-                        <span style="color: #c084fc; font-size: 0.68rem; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(sLvl)}</span>
-                        ${sAtk ? `<span style="color: #38bdf8; font-size: 0.74rem; font-weight: 600;">${escapeRpHtml(sAtk)}</span>` : ""}
-                        ${sDmg ? `<span style="color: #f87171; font-size: 0.74rem; font-weight: 600;">(${escapeRpHtml(sDmg)})</span>` : ""}
-                        ${sRange ? `<span style="color: #94a3b8; font-size: 0.7rem;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
-                        ${sNotes ? `<span style="color: #64748b; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(sNotes)}]</span>` : ""}
-                    </div>
+    });
+
+    if (!activeCont) return;
+
+    if (!stagedCharacterSpells || stagedCharacterSpells.length === 0) {
+        activeCont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No spells added. Click <strong>+ Add Spell</strong> above to add with level, damage, DC, and range fields.</div>`;
+        updatePreparedSpellsTally();
+        return;
+    }
+
+    activeCont.innerHTML = stagedCharacterSpells.map((s, idx) => {
+        const sName = typeof s === "string" ? s : s.name;
+        const sLvl = typeof s === "object" ? (s.level || "Cantrip") : "Cantrip";
+        const sDmg = typeof s === "object" ? s.damage : "";
+        const sAtk = typeof s === "object" ? (s.atk_bonus || s.save_dc || "") : "";
+        const sRange = typeof s === "object" ? s.range : "";
+        const sNotes = typeof s === "object" ? s.notes : "";
+        const isCantrip = (s && s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (String(sLvl).toLowerCase().includes("cantrip") || sLvl === "0" || sLvl === 0);
+        const isPrep = isCantrip ? true : (s && s.prepared === true);
+        return `
+            <div class="spell-item-row" data-is-cantrip="${isCantrip ? 'true' : 'false'}" style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 8px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <span style="font-size: 0.85rem;">✨</span>
+                    <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(sName)}</strong>
+                    <span style="color: #c084fc; font-size: 0.68rem; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(sLvl)}</span>
+                    ${sAtk ? `<span style="color: #38bdf8; font-size: 0.74rem; font-weight: 600;">${escapeRpHtml(sAtk)}</span>` : ""}
+                    ${sDmg ? `<span style="color: #f87171; font-size: 0.74rem; font-weight: 600;">(${escapeRpHtml(sDmg)})</span>` : ""}
+                    ${sRange ? `<span style="color: #94a3b8; font-size: 0.7rem;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
+                    ${sNotes ? `<span style="color: #64748b; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(sNotes)}]</span>` : ""}
+                    <label style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.72rem; color: #a78bfa; cursor: pointer; margin-left: 4px;" title="Prepared Spell for Today">
+                        <input type="checkbox" class="spell-prep-checkbox" data-idx="${idx}" ${isCantrip ? 'checked disabled' : (isPrep ? 'checked' : '')} ${isCurrentModalViewOnly ? 'disabled' : ''} onchange="handleToggleStagedSpellPrepared(${idx}, this.checked)" />
+                        <span style="font-size: 0.68rem; font-weight: 600; color: #c084fc;">${isCantrip ? 'At-Will' : 'Prep'}</span>
+                    </label>
+                </div>
+                ${isCurrentModalViewOnly ? "" : `
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <button type="button" class="vital-step-btn" style="color: #c084fc; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(168, 85, 247, 0.3);" title="Edit spell" onclick="handleEditStagedSpell(${idx})">✏️</button>
                     <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove spell" onclick="handleRemoveStagedSpell(${idx})">✕</button>
                 </div>
-            `;
-        }).join("");
-    });
+                `}
+            </div>
+        `;
+    }).join("");
+
+    updatePreparedSpellsTally();
 }
 
 window.handleRemoveStagedSpell = function(idx) {
@@ -1239,6 +1652,553 @@ window.handleRemoveStagedSpell = function(idx) {
         stagedCharacterSpells.splice(idx, 1);
         renderStagedSpells();
     }
+};
+
+window.handleEditStagedSpell = function(idx) {
+    if (idx < 0 || idx >= stagedCharacterSpells.length) return;
+    editingStagedSpellIndex = idx;
+    const s = stagedCharacterSpells[idx];
+    const modal = document.getElementById("modal-add-spell");
+    const titleEl = document.getElementById("modal-add-spell-title");
+    const confirmBtn = document.getElementById("btn-confirm-add-spell");
+    const charInput = document.getElementById("input-add-spell-char-name");
+
+    const sName = typeof s === "string" ? s : (s.name || "");
+    const sLvl = typeof s === "object" ? (s.level || "Cantrip") : "Cantrip";
+    const sAtk = typeof s === "object" ? (s.atk_bonus || s.save_dc || "") : "";
+    const sDmg = typeof s === "object" ? (s.damage || "") : "";
+    const sRange = typeof s === "object" ? (s.range || "60 ft.") : "60 ft.";
+    const sNotes = typeof s === "object" ? (s.notes || "") : "";
+
+    if (charInput) charInput.value = "__active_edit__";
+    if (titleEl) titleEl.textContent = `Edit Spell: ${sName || 'Spell'}`;
+    if (confirmBtn) confirmBtn.textContent = "Update Spell";
+
+    const nameInput = document.getElementById("input-spell-name");
+    const lvlSelect = document.getElementById("select-spell-level");
+    const atkInput = document.getElementById("input-spell-atk");
+    const dmgInput = document.getElementById("input-spell-dmg");
+    const rangeInput = document.getElementById("input-spell-range");
+    const notesInput = document.getElementById("input-spell-notes");
+
+    if (nameInput) nameInput.value = sName;
+    if (lvlSelect) lvlSelect.value = sLvl;
+    if (atkInput) atkInput.value = sAtk;
+    if (dmgInput) dmgInput.value = sDmg;
+    if (rangeInput) rangeInput.value = sRange;
+    if (notesInput) notesInput.value = sNotes;
+
+    updateSpellLivePreview();
+    if (modal) modal.classList.remove("hidden");
+};
+
+/* ===================================================================
+   CYBERPUNK CYBERWARE ENGINE & STAGING
+   =================================================================== */
+let stagedCharacterCyberware = [];
+let editingStagedCyberwareIndex = null;
+
+function updateHiddenCyberwareInputs() {
+    const formatted = stagedCharacterCyberware.map(c => {
+        if (typeof c === "string") return c;
+        const cat = c.category ? ` (${c.category}` : "";
+        const slot = c.slot ? `; ${c.slot}` : "";
+        const det = c.details ? `; ${c.details}` : "";
+        return `${c.name}${cat}${slot}${det}${cat ? ')' : ''}`;
+    }).join("\n");
+    const el = document.getElementById("input-cyber-cyberware");
+    if (el) el.value = formatted;
+}
+
+function renderStagedCyberware() {
+    updateHiddenCyberwareInputs();
+    const cont = document.getElementById("cyber-cyberware-chips-container");
+    if (!cont) return;
+
+    if (!stagedCharacterCyberware || stagedCharacterCyberware.length === 0) {
+        cont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No cyberware implants installed. Click <strong>+ Add Cyberware</strong> above to install neural links, cyberoptics, or armor.</div>`;
+        return;
+    }
+
+    cont.innerHTML = stagedCharacterCyberware.map((cw, idx) => {
+        const name = typeof cw === "string" ? cw : (cw.name || "Cyberware");
+        const cat = typeof cw === "object" ? (cw.category || "") : "";
+        const slot = typeof cw === "object" ? (cw.slot || "") : "";
+        const det = typeof cw === "object" ? (cw.details || "") : "";
+        return `
+            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 5px 8px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <span style="font-size: 0.85rem;">🦾</span>
+                    <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(name)}</strong>
+                    ${cat ? `<span style="color: #38bdf8; font-size: 0.68rem; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(cat)}</span>` : ""}
+                    ${slot ? `<span style="color: #a78bfa; font-size: 0.7rem; font-weight: 500;">[${escapeRpHtml(slot)}]</span>` : ""}
+                    ${det ? `<span style="color: #94a3b8; font-size: 0.7rem; font-style: italic;">${escapeRpHtml(det)}</span>` : ""}
+                </div>
+                ${isCurrentModalViewOnly ? "" : `
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <button type="button" class="vital-step-btn" style="color: #38bdf8; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit cyberware" onclick="handleEditStagedCyberware(${idx})">✏️</button>
+                    <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove cyberware" onclick="handleRemoveStagedCyberware(${idx})">✕</button>
+                </div>
+                `}
+            </div>
+        `;
+    }).join("");
+}
+
+window.handleRemoveStagedCyberware = function(idx) {
+    if (idx >= 0 && idx < stagedCharacterCyberware.length) {
+        stagedCharacterCyberware.splice(idx, 1);
+        renderStagedCyberware();
+    }
+};
+
+function updateCyberwareLivePreview() {
+    const previewEl = document.getElementById("preview-cyberware-formatted");
+    if (!previewEl) return;
+
+    const name = (document.getElementById("input-cyberware-name")?.value || "").trim() || "Cyberware";
+    const cat = document.getElementById("select-cyberware-category")?.value || "Neural Link";
+    const slot = (document.getElementById("input-cyberware-slot")?.value || "").trim();
+    const details = (document.getElementById("input-cyberware-details")?.value || "").trim();
+
+    let parts = [`<strong>${escapeRpHtml(name)}</strong> (${escapeRpHtml(cat)})`];
+    if (slot) parts.push(`<span style="color: #a78bfa;">[${escapeRpHtml(slot)}]</span>`);
+    if (details) parts.push(`<span style="color: #94a3b8; font-style: italic;">${escapeRpHtml(details)}</span>`);
+
+    previewEl.innerHTML = parts.join(" • ");
+}
+
+window.handleOpenAddCyberwareModal = function(charNameOrMode) {
+    const modal = document.getElementById("modal-add-cyberware");
+    const titleEl = document.getElementById("modal-add-cyberware-title");
+    const confirmBtn = document.getElementById("btn-confirm-add-cyberware");
+    const smartRaw = document.getElementById("input-cyberware-smart-raw");
+    const nameInput = document.getElementById("input-cyberware-name");
+    const catSelect = document.getElementById("select-cyberware-category");
+    const slotInput = document.getElementById("input-cyberware-slot");
+    const detInput = document.getElementById("input-cyberware-details");
+
+    editingStagedCyberwareIndex = null;
+    if (titleEl) titleEl.textContent = "Add Cyberware Implant";
+    if (confirmBtn) confirmBtn.textContent = "Add Cyberware";
+    if (smartRaw) smartRaw.value = "";
+    if (nameInput) nameInput.value = "";
+    if (catSelect) catSelect.value = "Neural Link";
+    if (slotInput) slotInput.value = "";
+    if (detInput) detInput.value = "";
+
+    updateCyberwareLivePreview();
+
+    if (modal) {
+        modal.classList.remove("hidden");
+        if (nameInput) setTimeout(() => nameInput.focus(), 60);
+    }
+};
+
+window.handleEditStagedCyberware = function(idx) {
+    if (idx < 0 || idx >= stagedCharacterCyberware.length) return;
+    editingStagedCyberwareIndex = idx;
+    const cw = stagedCharacterCyberware[idx];
+    const modal = document.getElementById("modal-add-cyberware");
+    const titleEl = document.getElementById("modal-add-cyberware-title");
+    const confirmBtn = document.getElementById("btn-confirm-add-cyberware");
+
+    const name = typeof cw === "string" ? cw : (cw.name || "");
+    const cat = typeof cw === "object" ? (cw.category || "Neural Link") : "Neural Link";
+    const slot = typeof cw === "object" ? (cw.slot || "") : "";
+    const det = typeof cw === "object" ? (cw.details || "") : "";
+
+    if (titleEl) titleEl.textContent = `Edit Cyberware: ${name || 'Implant'}`;
+    if (confirmBtn) confirmBtn.textContent = "Update Cyberware";
+
+    const nameInput = document.getElementById("input-cyberware-name");
+    const catSelect = document.getElementById("select-cyberware-category");
+    const slotInput = document.getElementById("input-cyberware-slot");
+    const detInput = document.getElementById("input-cyberware-details");
+
+    if (nameInput) nameInput.value = name;
+    if (catSelect) catSelect.value = cat;
+    if (slotInput) slotInput.value = slot;
+    if (detInput) detInput.value = det;
+
+    updateCyberwareLivePreview();
+
+    if (modal) {
+        modal.classList.remove("hidden");
+        if (nameInput) setTimeout(() => nameInput.focus(), 60);
+    }
+};
+
+window.handleConfirmAddCyberware = function() {
+    const name = (document.getElementById("input-cyberware-name")?.value || "").trim();
+    const cat = document.getElementById("select-cyberware-category")?.value || "Neural Link";
+    const slot = (document.getElementById("input-cyberware-slot")?.value || "").trim();
+    const details = (document.getElementById("input-cyberware-details")?.value || "").trim();
+
+    if (!name) {
+        alert("Please enter a cyberware name.");
+        return;
+    }
+
+    const cyberObj = {
+        name: name,
+        category: cat,
+        slot: slot,
+        details: details
+    };
+
+    if (editingStagedCyberwareIndex !== null && editingStagedCyberwareIndex >= 0 && editingStagedCyberwareIndex < stagedCharacterCyberware.length) {
+        stagedCharacterCyberware[editingStagedCyberwareIndex] = cyberObj;
+    } else {
+        stagedCharacterCyberware.push(cyberObj);
+    }
+    editingStagedCyberwareIndex = null;
+
+    renderStagedCyberware();
+    const modal = document.getElementById("modal-add-cyberware");
+    if (modal) modal.classList.add("hidden");
+};
+
+function extractCharacterCyberware(ch) {
+    if (!ch) return [];
+    const cw = ch.cyberware || ch.native_system_data?.cyberware;
+    if (cw) {
+        if (Array.isArray(cw.installed_items) && cw.installed_items.length > 0) {
+            return JSON.parse(JSON.stringify(cw.installed_items));
+        }
+        if (Array.isArray(cw) && cw.length > 0) {
+            return JSON.parse(JSON.stringify(cw));
+        }
+    }
+    const traits = ch.universal_core?.tagged_traits || ch.features_and_traits || ch.traits_and_abilities || [];
+    const extracted = [];
+    const cyberKeywords = ["cyberware", "cyberaudio", "cybereye", "cyberarm", "cyberleg", "neural link", "chassis", "fashionware", "borgware", "subdermal", "implant", "chemskin", "tech hair", "bioware", "sandevistan", "kerenzikov", "wolvers"];
+    for (const t of traits) {
+        const str = typeof t === "string" ? t : `${t.name || ""}: ${t.description || ""}`;
+        const lower = str.toLowerCase();
+        if (cyberKeywords.some(kw => lower.includes(kw))) {
+            const nameMatch = str.match(/^([^:(]+)/);
+            const catMatch = str.match(/\(([^;)]+)/);
+            const name = nameMatch ? nameMatch[1].trim() : str;
+            const category = catMatch ? catMatch[1].trim() : "Cyberware";
+            const details = str.includes(";") ? str.split(";").slice(1).join(";").replace(/\)$/, "").trim() : (str.includes(":") ? str.split(":").slice(1).join(":").trim() : "");
+            extracted.push({
+                name: name,
+                category: category,
+                slot: "",
+                details: details || ""
+            });
+        }
+    }
+    return extracted;
+}
+
+/* ===================================================================
+   STRUCTURED INVENTORY ENGINE & STAGING
+   =================================================================== */
+let stagedCharacterInventory = [];
+let editingStagedInventoryIndex = null;
+
+function parseInventoryItemString(str) {
+    if (typeof str !== "string") {
+        if (typeof str === "object" && str !== null) {
+            let nm = str.name || "";
+            if (nm.includes("(") && !nm.includes(")")) nm += ")";
+            return {
+                name: nm,
+                qty: str.qty || "1",
+                weight: str.weight || "",
+                category: str.category || "Gear",
+                notes: str.notes || ""
+            };
+        }
+        return str;
+    }
+    let s = str.trim().replace(/^[- *]\s*/, "");
+    if (!s) return null;
+    if (s.includes("(") && !s.includes(")")) {
+        s += ")";
+    }
+
+    let qty = "1";
+    let weight = "";
+    let name = s;
+    let notes = "";
+    let category = "Gear";
+
+    // Extract bracketed weight e.g. [10 lb.] or [1.5 lbs]
+    const wtBracket = name.match(/\[(\d+(?:\.\d+)?\s*(?:lb|lbs|oz|kg))\s*\]/i);
+    if (wtBracket) {
+        weight = wtBracket[1];
+        name = name.replace(wtBracket[0], "").trim();
+    }
+
+    const parenMatch = s.match(/^(.*?)\s*\((.*?)\)$/);
+    if (parenMatch) {
+        const inner = parenMatch[2].trim().toLowerCase();
+        const wtMatch = inner.match(/^(\d+(?:\.\d+)?\s*(?:lb|lbs|oz|kg))$/i);
+        if (wtMatch && !weight) {
+            weight = wtMatch[1];
+            name = parenMatch[1].trim();
+        } else {
+            const isSpec = /^\d+\s*(day|days|ft|feet|lb|lbs|oz|ounce|flask|bottle|torch|rounds|charges|uses)$/i.test(inner) || /^\d+$/.test(inner);
+            if (!isSpec) {
+                name = parenMatch[1].trim();
+                notes = parenMatch[2].trim();
+            }
+        }
+    }
+
+    const qtyMatch = name.match(/^(.*?)\s*x\s*(\d+)$/i) || name.match(/^(.*?)\s*\(x\s*(\d+)\)$/i);
+    if (qtyMatch) {
+        name = qtyMatch[1].trim();
+        qty = qtyMatch[2].trim();
+    } else {
+        const leadQtyMatch = name.match(/^(\d+)\s+(.+)$/);
+        if (leadQtyMatch && parseInt(leadQtyMatch[1], 10) <= 999 && !leadQtyMatch[2].toLowerCase().startsWith("ft")) {
+            qty = leadQtyMatch[1];
+            name = leadQtyMatch[2].trim();
+        }
+    }
+
+    const lower = (name + " " + notes).toLowerCase();
+    if (lower.includes("potion") || lower.includes("ration") || lower.includes("elixir") || lower.includes("scroll") || lower.includes("antitoxin") || lower.includes("pill") || lower.includes("food") || lower.includes("water")) {
+        category = "Consumable";
+    } else if (lower.includes("armor") || lower.includes("shield") || lower.includes("plate") || lower.includes("mail") || lower.includes("vest") || lower.includes("jacket") || lower.includes("helmet") || lower.includes("armorjack")) {
+        category = "Armor";
+    } else if (lower.includes("sword") || lower.includes("dagger") || lower.includes("bow") || lower.includes("axe") || lower.includes("pistol") || lower.includes("rifle") || lower.includes("grenade") || lower.includes("mace") || lower.includes("spear") || lower.includes("blade")) {
+        category = "Weapon";
+    } else if (lower.includes("ammo") || lower.includes("arrow") || lower.includes("bolt") || lower.includes("bullet") || lower.includes("cartridge") || lower.includes("mag")) {
+        category = "Ammunition";
+    } else if (lower.includes("tool") || lower.includes("kit") || lower.includes("instrument") || lower.includes("lockpick") || lower.includes("thieves") || lower.includes("scanner") || lower.includes("laptop") || lower.includes("amp") || lower.includes("camera")) {
+        category = "Tool";
+    } else if (lower.includes("gold") || lower.includes("gem") || lower.includes("coin") || lower.includes("silver") || lower.includes("platinum") || lower.includes("jewelry") || lower.includes("eb") || lower.includes("cash") || lower.includes("eurodollar")) {
+        category = "Treasure";
+    }
+
+    return {
+        name: name,
+        qty: qty || "1",
+        weight: weight,
+        category: category,
+        notes: notes
+    };
+}
+
+function updateHiddenInventoryInputs() {
+    const formatted = stagedCharacterInventory.map(item => {
+        if (typeof item === "string") return item;
+        const qStr = item.qty && item.qty !== "1" ? ` x${item.qty}` : "";
+        const wtStr = item.weight ? ` [${item.weight}]` : "";
+        const noteStr = item.notes ? ` (${item.notes})` : "";
+        return `${item.name}${qStr}${wtStr}${noteStr}`;
+    }).join(", ");
+
+    ["input-dnd-inventory", "input-pf-inventory", "input-cyber-inventory", "input-coc-inventory", "input-rp-char-inventory"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = formatted;
+    });
+}
+
+function renderStagedInventory() {
+    updateHiddenInventoryInputs();
+
+    // Auto-calculate Total Weight Carried across all inventory items
+    let totalWeightNum = 0;
+    (stagedCharacterInventory || []).forEach(item => {
+        if (!item) return;
+        const wtStr = typeof item === "object" ? (item.weight || "") : "";
+        const m = wtStr.match(/(\d+(?:\.\d+)?)/);
+        if (m) {
+            const wVal = parseFloat(m[1]) || 0;
+            const qVal = parseFloat(item.qty) || 1;
+            totalWeightNum += (wVal * qVal);
+        }
+    });
+
+    const carriedInput = document.getElementById("input-dnd-weight-carried");
+    if (carriedInput && (!carriedInput.value || carriedInput.dataset.autoCalculated === "true")) {
+        carriedInput.value = totalWeightNum > 0 ? `${totalWeightNum.toFixed(1).replace(/\.0$/, '')} lb.` : "0 lb.";
+        carriedInput.dataset.autoCalculated = "true";
+    }
+
+    const containers = [
+        document.getElementById("dnd-inventory-chips-container"),
+        document.getElementById("pf-inventory-chips-container"),
+        document.getElementById("cyber-inventory-chips-container"),
+        document.getElementById("coc-inventory-chips-container"),
+        document.getElementById("agnostic-inventory-chips-container")
+    ].filter(Boolean);
+
+    containers.forEach(cont => {
+        if (!stagedCharacterInventory || stagedCharacterInventory.length === 0) {
+            cont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No items in inventory. Click <strong>+ Add Item</strong> above to add gear, loot, potions, or supplies.</div>`;
+            return;
+        }
+
+        cont.innerHTML = stagedCharacterInventory.map((item, idx) => {
+            const name = typeof item === "string" ? item : (item.name || "Item");
+            const qty = typeof item === "object" ? (item.qty || "1") : "1";
+            const wt = typeof item === "object" ? (item.weight || "") : "";
+            const cat = typeof item === "object" ? (item.category || "Gear") : "Gear";
+            const notes = typeof item === "object" ? (item.notes || "") : "";
+
+            let catColor = "#94a3b8";
+            let catBg = "rgba(148, 163, 184, 0.15)";
+            if (cat === "Consumable") { catColor = "#34d399"; catBg = "rgba(52, 211, 153, 0.15)"; }
+            else if (cat === "Armor") { catColor = "#60a5fa"; catBg = "rgba(96, 165, 250, 0.15)"; }
+            else if (cat === "Weapon") { catColor = "#f87171"; catBg = "rgba(248, 113, 113, 0.15)"; }
+            else if (cat === "Treasure") { catColor = "#facc15"; catBg = "rgba(250, 204, 21, 0.15)"; }
+            else if (cat === "Tool") { catColor = "#c084fc"; catBg = "rgba(192, 132, 252, 0.15)"; }
+
+            return `
+                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 6px; padding: 5px 8px;">
+                    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                        <span style="font-size: 0.85rem;">🎒</span>
+                        <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(name)}</strong>
+                        ${qty && qty !== "1" ? `<span style="color: #fbbf24; font-size: 0.72rem; font-weight: 700; background: rgba(251, 191, 36, 0.15); padding: 1px 5px; border-radius: 3px;">x${escapeRpHtml(qty)}</span>` : ""}
+                        ${wt ? `<span style="color: #cbd5e1; font-size: 0.7rem; font-weight: 600; background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.3); padding: 1px 5px; border-radius: 3px;" title="Item Weight">⚖️ ${escapeRpHtml(wt)}</span>` : ""}
+                        ${cat ? `<span style="color: ${catColor}; font-size: 0.68rem; background: ${catBg}; border: 1px solid ${catColor}44; padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(cat)}</span>` : ""}
+                        ${notes ? `<span style="color: #94a3b8; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(notes)}]</span>` : ""}
+                    </div>
+                    ${isCurrentModalViewOnly ? "" : `
+                    <div class="staged-item-controls" style="display: flex; align-items: center; gap: 4px;">
+                        <button type="button" class="vital-step-btn" style="color: #38bdf8; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit item" onclick="handleEditStagedInventory(${idx})">✏️</button>
+                        <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove item" onclick="handleRemoveStagedInventory(${idx})">✕</button>
+                    </div>
+                    `}
+                </div>
+            `;
+        }).join("");
+    });
+}
+
+window.handleRemoveStagedInventory = function(idx) {
+    if (idx >= 0 && idx < stagedCharacterInventory.length) {
+        stagedCharacterInventory.splice(idx, 1);
+        renderStagedInventory();
+    }
+};
+
+function updateItemLivePreview() {
+    const previewEl = document.getElementById("preview-item-formatted");
+    if (!previewEl) return;
+
+    const name = (document.getElementById("input-item-name")?.value || "").trim() || "Item";
+    const qty = (document.getElementById("input-item-qty")?.value || "1").trim();
+    const wt = (document.getElementById("input-item-weight")?.value || "").trim();
+    const cat = document.getElementById("select-item-category")?.value || "Gear";
+    const notes = (document.getElementById("input-item-notes")?.value || "").trim();
+
+    let parts = [`<strong>${escapeRpHtml(name)}</strong>`];
+    if (qty && qty !== "1") parts.push(`<span style="color: #fbbf24; font-weight: 700;">x${escapeRpHtml(qty)}</span>`);
+    if (wt) parts.push(`<span style="color: #cbd5e1; font-weight: 600;">⚖️ ${escapeRpHtml(wt)}</span>`);
+    if (cat) parts.push(`<span style="color: #38bdf8;">(${escapeRpHtml(cat)})</span>`);
+    if (notes) parts.push(`<span style="color: #94a3b8; font-style: italic;">[${escapeRpHtml(notes)}]</span>`);
+
+    previewEl.innerHTML = parts.join(" • ");
+}
+
+window.handleOpenAddItemModal = function(charNameOrMode) {
+    const modal = document.getElementById("modal-add-item");
+    const titleEl = document.getElementById("modal-add-item-title");
+    const confirmBtn = document.getElementById("btn-confirm-add-item");
+    const smartRaw = document.getElementById("input-item-smart-raw");
+    const nameInput = document.getElementById("input-item-name");
+    const qtyInput = document.getElementById("input-item-qty");
+    const weightInput = document.getElementById("input-item-weight");
+    const catSelect = document.getElementById("select-item-category");
+    const notesInput = document.getElementById("input-item-notes");
+
+    editingStagedInventoryIndex = null;
+    if (titleEl) titleEl.textContent = "Add Inventory Item";
+    if (confirmBtn) confirmBtn.textContent = "Add Item";
+    if (smartRaw) smartRaw.value = "";
+    if (nameInput) nameInput.value = "";
+    if (qtyInput) qtyInput.value = "1";
+    if (weightInput) weightInput.value = "";
+    if (catSelect) catSelect.value = "Gear";
+    if (notesInput) notesInput.value = "";
+
+    updateItemLivePreview();
+
+    if (modal) {
+        modal.classList.remove("hidden");
+        if (nameInput) setTimeout(() => nameInput.focus(), 60);
+    }
+};
+
+window.handleEditStagedInventory = function(idx) {
+    if (idx < 0 || idx >= stagedCharacterInventory.length) return;
+    editingStagedInventoryIndex = idx;
+    const item = stagedCharacterInventory[idx];
+    const modal = document.getElementById("modal-add-item");
+    const titleEl = document.getElementById("modal-add-item-title");
+    const confirmBtn = document.getElementById("btn-confirm-add-item");
+
+    const name = typeof item === "string" ? item : (item.name || "");
+    const qty = typeof item === "object" ? (item.qty || "1") : "1";
+    const weight = typeof item === "object" ? (item.weight || "") : "";
+    const cat = typeof item === "object" ? (item.category || "Gear") : "Gear";
+    const notes = typeof item === "object" ? (item.notes || "") : "";
+
+    if (titleEl) titleEl.textContent = `Edit Item: ${name || 'Item'}`;
+    if (confirmBtn) confirmBtn.textContent = "Update Item";
+
+    const nameInput = document.getElementById("input-item-name");
+    const qtyInput = document.getElementById("input-item-qty");
+    const weightInput = document.getElementById("input-item-weight");
+    const catSelect = document.getElementById("select-item-category");
+    const notesInput = document.getElementById("input-item-notes");
+
+    if (nameInput) nameInput.value = name;
+    if (qtyInput) qtyInput.value = qty;
+    if (weightInput) weightInput.value = weight;
+    if (catSelect) catSelect.value = cat;
+    if (notesInput) notesInput.value = notes;
+
+    updateItemLivePreview();
+
+    if (modal) {
+        modal.classList.remove("hidden");
+        if (nameInput) setTimeout(() => nameInput.focus(), 60);
+    }
+};
+
+window.handleConfirmAddItem = function() {
+    let name = (document.getElementById("input-item-name")?.value || "").trim();
+    const qty = (document.getElementById("input-item-qty")?.value || "1").trim();
+    const weight = (document.getElementById("input-item-weight")?.value || "").trim();
+    const cat = document.getElementById("select-item-category")?.value || "Gear";
+    const notes = (document.getElementById("input-item-notes")?.value || "").trim();
+
+    if (!name) {
+        alert("Please enter an item name.");
+        return;
+    }
+
+    if (name.includes("(") && !name.includes(")")) {
+        name += ")";
+    }
+
+    const itemObj = {
+        name: name,
+        qty: qty || "1",
+        weight: weight,
+        category: cat,
+        notes: notes
+    };
+
+    if (editingStagedInventoryIndex !== null && editingStagedInventoryIndex >= 0 && editingStagedInventoryIndex < stagedCharacterInventory.length) {
+        stagedCharacterInventory[editingStagedInventoryIndex] = itemObj;
+    } else {
+        stagedCharacterInventory.push(itemObj);
+    }
+    editingStagedInventoryIndex = null;
+
+    renderStagedInventory();
+    const modal = document.getElementById("modal-add-item");
+    if (modal) modal.classList.add("hidden");
 };
 
 function updateSpellLivePreview() {
@@ -1277,6 +2237,10 @@ window.handleOpenAddSpellModal = function(charNameOrMode) {
     const notesInput = document.getElementById("input-spell-notes");
 
     const isEditMode = (charNameOrMode === "__active_edit__");
+    editingStagedSpellIndex = null;
+    const confirmBtn = document.getElementById("btn-confirm-add-spell");
+    if (confirmBtn) confirmBtn.textContent = "Add Spell";
+
     if (charInput) charInput.value = charNameOrMode || "";
     if (titleEl) {
         titleEl.textContent = isEditMode
@@ -1332,7 +2296,12 @@ window.handleConfirmAddSpell = async function() {
     const modal = document.getElementById("modal-add-spell");
 
     if (targetMode === "__active_edit__") {
-        stagedCharacterSpells.push(spellObj);
+        if (editingStagedSpellIndex !== null && editingStagedSpellIndex >= 0 && editingStagedSpellIndex < stagedCharacterSpells.length) {
+            stagedCharacterSpells[editingStagedSpellIndex] = spellObj;
+        } else {
+            stagedCharacterSpells.push(spellObj);
+        }
+        editingStagedSpellIndex = null;
         renderStagedSpells();
         if (modal) modal.classList.add("hidden");
         return;
@@ -1492,6 +2461,10 @@ window.handleOpenAddWeaponModal = function(charNameOrMode) {
     const notesInput = document.getElementById("input-weapon-notes");
 
     const isEditMode = (charNameOrMode === "__active_edit__");
+    editingStagedWeaponIndex = null;
+    const confirmBtn = document.getElementById("btn-confirm-add-weapon");
+    if (confirmBtn) confirmBtn.textContent = "Add Weapon";
+
     if (charInput) charInput.value = charNameOrMode || "";
     if (titleEl) {
         titleEl.textContent = isEditMode
@@ -1551,7 +2524,12 @@ window.handleConfirmAddWeapon = async function() {
     const modal = document.getElementById("modal-add-weapon");
 
     if (targetMode === "__active_edit__") {
-        stagedCharacterWeapons.push(weaponObj);
+        if (editingStagedWeaponIndex !== null && editingStagedWeaponIndex >= 0 && editingStagedWeaponIndex < stagedCharacterWeapons.length) {
+            stagedCharacterWeapons[editingStagedWeaponIndex] = weaponObj;
+        } else {
+            stagedCharacterWeapons.push(weaponObj);
+        }
+        editingStagedWeaponIndex = null;
         renderStagedWeapons();
         if (modal) modal.classList.add("hidden");
         return;
@@ -1650,13 +2628,11 @@ window.handleConfirmAddInventory = async function() {
     }
 
     if (charName === "__active_edit__") {
-        ["input-dnd-inventory", "input-pf-gear", "input-cyber-gear", "input-rp-char-inventory"].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                const cur = el.value.trim();
-                el.value = cur ? `${cur}, ${items.join(', ')}` : items.join(', ');
-            }
-        });
+        for (const itmStr of items) {
+            const parsed = parseInventoryItemString(itmStr);
+            if (parsed) stagedCharacterInventory.push(parsed);
+        }
+        renderStagedInventory();
         const modal = document.getElementById("modal-add-inventory");
         if (modal) modal.classList.add("hidden");
         return;
@@ -1758,12 +2734,47 @@ function renderDndSkillsGrid(skillsObj) {
     if (!container) return;
 
     skillsObj = skillsObj || {};
+
+    // Read current ability modifiers and prof bonus from the form
+    const profBonusEl = document.getElementById("input-dnd-prof-bonus");
+    const profBonus = profBonusEl ? Math.max(0, parseInt(profBonusEl.value.replace(/[^0-9-]/g, "") || "2", 10)) : 2;
+    const mods = {
+        str: calcDndMod(document.getElementById("input-dnd-str")?.value),
+        dex: calcDndMod(document.getElementById("input-dnd-dex")?.value),
+        con: calcDndMod(document.getElementById("input-dnd-con")?.value),
+        int: calcDndMod(document.getElementById("input-dnd-int")?.value),
+        wis: calcDndMod(document.getElementById("input-dnd-wis")?.value),
+        cha: calcDndMod(document.getElementById("input-dnd-cha")?.value)
+    };
+
     container.innerHTML = DND_5E_SKILLS_DEF.map(s => {
         const cleanKey = s.name.replace(/[^a-zA-Z]/g, '');
         let isProf = false;
-        if (skillsObj[s.name] !== undefined) {
-            const v = String(skillsObj[s.name]);
-            isProf = v.includes("prof") || v.includes("P") || v.startsWith("+") || parseInt(v, 10) > 0;
+        if (skillsObj[s.name] !== undefined && skillsObj[s.name] !== null) {
+            const rawVal = skillsObj[s.name];
+            if (typeof rawVal === "boolean") {
+                isProf = rawVal;
+            } else if (typeof rawVal === "object" && rawVal !== null) {
+                isProf = Boolean(rawVal.proficient);
+            } else {
+                const v = String(rawVal).trim();
+                const vLower = v.toLowerCase();
+                if (vLower.includes("prof") || vLower.includes("expert") || v === "P" || v === "p" || v === "E" || v === "e" || vLower === "true") {
+                    isProf = true;
+                } else if (vLower === "false" || vLower === "none" || vLower === "off") {
+                    isProf = false;
+                } else {
+                    // Compare numeric value against base ability mod + profBonus
+                    const m = v.match(/[-+]?\d+/);
+                    if (m && profBonus > 0) {
+                        const numVal = parseInt(m[0], 10);
+                        const baseMod = mods[s.stat] || 0;
+                        if (numVal >= baseMod + profBonus) {
+                            isProf = true;
+                        }
+                    }
+                }
+            }
         }
 
         return `
@@ -2035,12 +3046,108 @@ function onRulesetDropdownChanged(rulesetId) {
         if (hintEl) hintEl.innerHTML = "⚔️ D&amp;D 5E Canonical Mode";
         updateDndCalculations();
     }
+    renderStagedSpells();
 }
 
 let editingCharacterSource = "campaign";
 let currentEditingCharacterObj = null;
+let isCurrentModalViewOnly = false;
 
-async function handleOpenEditCharacterModal(charId, source = "campaign") {
+function applyCharacterModalViewMode(isViewOnly) {
+    isCurrentModalViewOnly = isViewOnly;
+    const modal = document.getElementById("modal-add-character");
+    if (!modal) return;
+
+    // Toggle readonly / disabled on form inputs
+    const formFields = modal.querySelectorAll("input:not([type='button']), textarea, select");
+    formFields.forEach(el => {
+        if (el.id === "input-modal-char-file") return;
+        el.disabled = isViewOnly;
+        if (isViewOnly) {
+            el.classList.add("modal-view-mode");
+        } else {
+            el.classList.remove("modal-view-mode");
+        }
+    });
+
+    // Checkboxes for saves & skills
+    modal.querySelectorAll("input[type='checkbox']").forEach(chk => {
+        chk.disabled = isViewOnly;
+    });
+
+    // Toggle add action buttons and upload buttons
+    const addActionBtns = [
+        "btn-modal-load-char-file",
+        "btn-modal-load-char-file-body",
+        "btn-modal-add-weapon-dnd",
+        "btn-modal-add-spell-dnd",
+        "btn-modal-add-item-dnd",
+        "btn-modal-add-weapon-pf",
+        "btn-modal-add-spell-pf",
+        "btn-modal-add-item-pf",
+        "btn-modal-add-weapon-cyber",
+        "btn-modal-add-item-cyber",
+        "btn-add-cyberware",
+        "btn-modal-add-weapon-coc",
+        "btn-modal-add-item-coc",
+        "btn-modal-add-weapon-agnostic",
+        "btn-modal-add-spell-agnostic",
+        "btn-modal-add-item-agnostic",
+        "add-custom-meter-btn"
+    ];
+    addActionBtns.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            if (isViewOnly) {
+                btn.classList.add("hidden");
+                btn.style.display = "none";
+            } else {
+                btn.classList.remove("hidden");
+                btn.style.display = "";
+            }
+        }
+    });
+
+    // Footer buttons
+    const confirmBtn = document.getElementById("btn-confirm-char");
+    const toggleEditBtn = document.getElementById("btn-modal-char-view-toggle-edit");
+    const cancelBtn = document.getElementById("btn-cancel-char");
+    const heading = document.getElementById("modal-char-heading");
+
+    if (confirmBtn) {
+        if (isViewOnly) confirmBtn.classList.add("hidden");
+        else confirmBtn.classList.remove("hidden");
+    }
+    if (toggleEditBtn) {
+        if (isViewOnly) toggleEditBtn.classList.remove("hidden");
+        else toggleEditBtn.classList.add("hidden");
+    }
+    if (cancelBtn) {
+        cancelBtn.textContent = isViewOnly ? "Close" : "Cancel";
+    }
+
+    if (heading && currentEditingCharacterObj) {
+        const cName = currentEditingCharacterObj.name || "Hero";
+        if (isViewOnly) {
+            heading.textContent = editingCharacterSource === "vault"
+                ? `👁️ View Vault Character: ${cName}`
+                : `👁️ View Character: ${cName}`;
+        } else {
+            heading.textContent = editingCharacterSource === "vault"
+                ? `✏️ Edit Vault Character: ${cName}`
+                : `✏️ Edit Character: ${cName}`;
+        }
+    }
+
+    // Refresh chips to remove edit/delete icons in view mode
+    renderStagedWeapons();
+    renderStagedSpells();
+    renderStagedInventory();
+    renderStagedCyberware();
+    renderStagedCustomMeters(isViewOnly);
+}
+
+async function handleOpenEditCharacterModal(charId, source = "campaign", isViewOnly = false) {
     editingCharacterId = charId;
     editingCharacterSource = source;
 
@@ -2121,9 +3228,21 @@ async function handleOpenEditCharacterModal(charId, source = "campaign") {
     const dndBgEl = document.getElementById("input-dnd-background");
     const dndXpEl = document.getElementById("input-dnd-xp");
 
-    if (dndClassEl) dndClassEl.value = ch.class_and_level || ch.archetype || "Fighter 1";
-    if (dndSpeciesEl) dndSpeciesEl.value = ch.species || ch.race || "";
-    if (dndBgEl) dndBgEl.value = ch.background || "";
+    let rawClsLvl = ch.class_and_level || ch.archetype || "Fighter 1";
+    let parsedSpecies = ch.species || ch.race || "";
+    let parsedBg = ch.background || "";
+    if (rawClsLvl.includes("(") && rawClsLvl.includes(")")) {
+        const mP = rawClsLvl.match(/\(([^)]+)\)/);
+        if (mP) {
+            const inner = mP[1].split(/,\s*/);
+            if (!parsedSpecies && inner[0]) parsedSpecies = inner[0].trim();
+            if (!parsedBg && inner[1]) parsedBg = inner[1].trim();
+        }
+        rawClsLvl = rawClsLvl.replace(/\s*\([^)]*\)/g, "").trim();
+    }
+    if (dndClassEl) dndClassEl.value = rawClsLvl;
+    if (dndSpeciesEl) dndSpeciesEl.value = parsedSpecies;
+    if (dndBgEl) dndBgEl.value = parsedBg;
     if (dndXpEl) dndXpEl.value = ch.experience_points ?? 0;
 
     const strEl = document.getElementById("input-dnd-str");
@@ -2162,7 +3281,7 @@ async function handleOpenEditCharacterModal(charId, source = "campaign") {
     if (dndHitDiceEl) dndHitDiceEl.value = ch.hit_dice || "1d10";
 
     // Saving Throws Checkboxes
-    const saves = ch.saving_throws || {};
+    const saves = ch.saving_throws || ch.native_system_data?.saving_throws || {};
     const strSaveChk = document.getElementById("chk-dnd-save-str");
     const dexSaveChk = document.getElementById("chk-dnd-save-dex");
     const conSaveChk = document.getElementById("chk-dnd-save-con");
@@ -2170,16 +3289,34 @@ async function handleOpenEditCharacterModal(charId, source = "campaign") {
     const wisSaveChk = document.getElementById("chk-dnd-save-wis");
     const chaSaveChk = document.getElementById("chk-dnd-save-cha");
 
-    const profBonusNum = parseInt((ch.prof_bonus || "+2").replace(/[^0-9-]/g, "") || "2", 10);
     const strMod = calcDndMod(strEl?.value);
+    const dexMod = calcDndMod(dexEl?.value);
     const conMod = calcDndMod(conEl?.value);
+    const intMod = calcDndMod(intEl?.value);
+    const wisMod = calcDndMod(wisEl?.value);
+    const chaMod = calcDndMod(chaEl?.value);
 
-    if (strSaveChk) strSaveChk.checked = Boolean(saves.Strength && (saves.Strength.proficient || parseInt(saves.Strength, 10) > strMod));
-    if (dexSaveChk) dexSaveChk.checked = Boolean(saves.Dexterity && (saves.Dexterity.proficient || parseInt(saves.Dexterity, 10) > calcDndMod(dexEl?.value)));
-    if (conSaveChk) conSaveChk.checked = Boolean(saves.Constitution && (saves.Constitution.proficient || parseInt(saves.Constitution, 10) > conMod));
-    if (intSaveChk) intSaveChk.checked = Boolean(saves.Intelligence && (saves.Intelligence.proficient || parseInt(saves.Intelligence, 10) > calcDndMod(intEl?.value)));
-    if (wisSaveChk) wisSaveChk.checked = Boolean(saves.Wisdom && (saves.Wisdom.proficient || parseInt(saves.Wisdom, 10) > calcDndMod(wisEl?.value)));
-    if (chaSaveChk) chaSaveChk.checked = Boolean(saves.Charisma && (saves.Charisma.proficient || parseInt(saves.Charisma, 10) > calcDndMod(chaEl?.value)));
+    function isSaveProficient(statName, shortStat, statMod) {
+        const saveEntry = saves[statName] ?? saves[shortStat] ?? saves[shortStat.toLowerCase()];
+        if (saveEntry === undefined || saveEntry === null) return false;
+        if (typeof saveEntry === "object") {
+            if (saveEntry.proficient !== undefined) return Boolean(saveEntry.proficient);
+            const val = parseInt(String(saveEntry.value || saveEntry.bonus || 0).replace(/[^0-9-]/g, ""), 10);
+            return val > statMod;
+        }
+        const strVal = String(saveEntry).trim();
+        if (strVal.toLowerCase() === "true") return true;
+        const num = parseInt(strVal.replace(/[^0-9-]/g, ""), 10);
+        if (!isNaN(num)) return num > statMod;
+        return false;
+    }
+
+    if (strSaveChk) strSaveChk.checked = isSaveProficient("Strength", "STR", strMod);
+    if (dexSaveChk) dexSaveChk.checked = isSaveProficient("Dexterity", "DEX", dexMod);
+    if (conSaveChk) conSaveChk.checked = isSaveProficient("Constitution", "CON", conMod);
+    if (intSaveChk) intSaveChk.checked = isSaveProficient("Intelligence", "INT", intMod);
+    if (wisSaveChk) wisSaveChk.checked = isSaveProficient("Wisdom", "WIS", wisMod);
+    if (chaSaveChk) chaSaveChk.checked = isSaveProficient("Charisma", "CHA", chaMod);
 
     // Senses
     const passPercep = document.getElementById("input-dnd-pass-percep");
@@ -2257,22 +3394,116 @@ async function handleOpenEditCharacterModal(charId, source = "campaign") {
     renderStagedWeapons();
 
     // Staged spells array for structured editing
-    const rawSpells = Array.isArray(ch.spells) ? ch.spells : [];
+    const rawSpells = Array.isArray(ch.spells) ? ch.spells : (ch.native_system_data?.spells || []);
     stagedCharacterSpells = rawSpells.map(s => {
-        if (typeof s === "object" && s !== null) return JSON.parse(JSON.stringify(s));
+        if (typeof s === "object" && s !== null) {
+            const clone = JSON.parse(JSON.stringify(s));
+            const sLvl = clone.level || "Cantrip";
+            const isCantrip = (clone.is_cantrip !== undefined)
+                ? Boolean(clone.is_cantrip)
+                : (String(sLvl).toLowerCase().includes("cantrip") || sLvl === "0" || sLvl === 0);
+            clone.is_cantrip = isCantrip;
+            if (isCantrip) {
+                clone.prepared = true;
+            } else if (clone.prepared === undefined || clone.prepared === null) {
+                clone.prepared = false;
+            } else {
+                clone.prepared = Boolean(clone.prepared);
+            }
+            return clone;
+        }
         const sStr = String(s).trim();
         const dmgM = sStr.match(/(\d+d\d+(?:\s*[-+]\s*\d+)?)/i);
         const dcM = sStr.match(/(DC\s*\d+\s*[A-Za-z]+|\+\d+)/i);
+        const isCantrip = sStr.toLowerCase().includes("cantrip");
         return {
             name: sStr.replace(/\s*\([^)]*\)/g, "").trim() || sStr,
-            level: "Cantrip/Spell",
+            level: isCantrip ? "Cantrip" : "1st Level",
+            is_cantrip: isCantrip,
+            prepared: isCantrip ? true : false,
             atk_bonus: dcM ? dcM[0] : "",
             damage: dmgM ? dmgM[0] : "",
             range: "60 ft.",
             notes: ""
         };
     });
+    window.stagedCharacterSpells = stagedCharacterSpells;
+
+    let maxPrep = 3;
+    if (ch.native_system_data && typeof ch.native_system_data.max_prepared_leveled_spells === "number") {
+        maxPrep = ch.native_system_data.max_prepared_leveled_spells;
+    } else if (typeof ch.max_prepared_leveled_spells === "number") {
+        maxPrep = ch.max_prepared_leveled_spells;
+    } else {
+        const clsLvlStr = ch.class_and_level || ch.archetype || "Fighter 1";
+        const mLvl = clsLvlStr.match(/\d+/);
+        const lvlNum = mLvl ? parseInt(mLvl[0], 10) : 1;
+        const abMod = calcDndMod(attrs.Intelligence ?? 10);
+        const clsLower = clsLvlStr.toLowerCase();
+        if (clsLower.includes("artificer")) {
+            maxPrep = Math.max(1, abMod + Math.floor(lvlNum / 2));
+        } else if (clsLower.includes("wizard") || clsLower.includes("cleric") || clsLower.includes("druid")) {
+            maxPrep = Math.max(1, abMod + lvlNum);
+        } else {
+            maxPrep = Math.max(1, abMod + lvlNum);
+        }
+    }
+    if (typeof setupSpellPreparationHandlers === "function") {
+        setupSpellPreparationHandlers(maxPrep);
+    }
+
     renderStagedSpells();
+
+    // Staged inventory array for structured editing
+    const rawInvList = extractCharacterInventory(ch);
+    stagedCharacterInventory = rawInvList.map(i => {
+        if (typeof i === "object" && i !== null) return JSON.parse(JSON.stringify(i));
+        return parseInventoryItemString(String(i));
+    }).filter(Boolean);
+    renderStagedInventory();
+
+    // Staged cyberware array for structured editing
+    const rawCyberList = extractCharacterCyberware(ch);
+    stagedCharacterCyberware = rawCyberList.map(c => {
+        if (typeof c === "object" && c !== null) return JSON.parse(JSON.stringify(c));
+        return { name: String(c), category: "Neural Link", slot: "", details: "" };
+    }).filter(Boolean);
+    renderStagedCyberware();
+
+    // Module B: Staged custom meters for structured editing
+    stagedCustomMeters = JSON.parse(JSON.stringify(ch.custom_meters || ch.native_system_data?.custom_meters || {}));
+    renderStagedCustomMeters(isViewOnly);
+
+    // Module A: Inspiration, Save DC, Attuned Items
+    const charInspToggle = document.getElementById("char-inspiration-toggle");
+    const charAbilitySaveDc = document.getElementById("char-ability-save-dc");
+    const charAttunedCurrent = document.getElementById("char-attuned-current");
+    const charAttunedMax = document.getElementById("char-attuned-max");
+    const natData = ch.native_system_data || {};
+    if (charInspToggle) charInspToggle.checked = Boolean(ch.inspiration ?? natData.inspiration);
+    if (charAbilitySaveDc) charAbilitySaveDc.value = ch.ability_save_dc ?? natData.ability_save_dc ?? (8 + 2 + calcDndMod(intEl?.value));
+    const attunedObj = ch.attuned_magic_items || natData.attuned_magic_items || {};
+    if (charAttunedCurrent) charAttunedCurrent.value = attunedObj.current ?? 0;
+    if (charAttunedMax) charAttunedMax.value = attunedObj.max ?? 3;
+
+    // Module C: Spell Slots Allocation (Levels 1–9 Dynamic)
+    const spellSlots = ch.spell_slots || natData.spell_slots || {};
+    if (typeof window.renderSpellSlotInputs === "function") {
+        window.renderSpellSlotInputs(spellSlots);
+    }
+
+    // Module D: Roleplay Anchors
+    const rpAnchors = ch.roleplay_anchors || natData.roleplay_anchors || ch.universal_core?.roleplay_anchors || {};
+    const rpTraits = document.getElementById("rp-personality-traits");
+    const rpIdeals = document.getElementById("rp-ideals");
+    const rpBonds = document.getElementById("rp-bonds");
+    const rpFlaws = document.getElementById("rp-flaws");
+    const rpAllies = document.getElementById("rp-allies-orgs");
+    if (rpTraits) rpTraits.value = rpAnchors.personality_traits || ch.personality_traits || "";
+    if (rpIdeals) rpIdeals.value = rpAnchors.ideals || ch.ideals || "";
+    if (rpBonds) rpBonds.value = rpAnchors.bonds || ch.bonds || "";
+    if (rpFlaws) rpFlaws.value = rpAnchors.flaws || ch.flaws || "";
+    if (rpAllies) rpAllies.value = rpAnchors.allies_and_organizations || ch.allies || "";
 
     // Recalculate D&D stats
     updateDndCalculations();
@@ -2520,9 +3751,65 @@ async function handleOpenEditCharacterModal(charId, source = "campaign") {
     if (featsElAgn) featsElAgn.value = featsFormatted;
     if (skillsElAgn) skillsElAgn.value = typeof ch.skills === "object" ? Object.entries(ch.skills).map(([k, v]) => `${k} (${v})`).join(", ") : (ch.proficiencies || "");
 
+    // Populate Physical Appearance & Character Details (Common for All Systems)
+    const descObj = ch.description || ch.physical_description || ch.native_system_data?.description || {};
+    const genderEl = document.getElementById("input-char-gender");
+    const ageEl = document.getElementById("input-char-age");
+    const sizeEl = document.getElementById("input-char-size");
+    const heightEl = document.getElementById("input-char-height");
+    const weightEl = document.getElementById("input-char-weight");
+    const creatureTypeEl = document.getElementById("input-char-creature-type");
+    const alignmentEl = document.getElementById("input-char-alignment");
+    const faithEl = document.getElementById("input-char-faith");
+    const skinEl = document.getElementById("input-char-skin");
+    const eyesEl = document.getElementById("input-char-eyes");
+    const hairEl = document.getElementById("input-char-hair");
+
+    if (genderEl) genderEl.value = descObj.gender || ch.gender || ch.sex || ch.native_system_data?.gender || "";
+    if (ageEl) ageEl.value = descObj.age || ch.age || ch.native_system_data?.age || "";
+    if (sizeEl) sizeEl.value = descObj.size || ch.size || ch.native_system_data?.size || "Medium";
+    if (heightEl) heightEl.value = descObj.height || ch.height || ch.native_system_data?.height || "";
+    if (weightEl) weightEl.value = descObj.weight || ch.weight || ch.native_system_data?.weight || "";
+    if (creatureTypeEl) creatureTypeEl.value = descObj.creature_type || ch.creature_type || ch.native_system_data?.creature_type || "Humanoid";
+    if (alignmentEl) alignmentEl.value = descObj.alignment || ch.alignment || ch.native_system_data?.alignment || "";
+    if (faithEl) faithEl.value = descObj.faith || ch.faith || ch.native_system_data?.faith || "";
+    if (skinEl) skinEl.value = descObj.skin || ch.skin || ch.native_system_data?.skin || "";
+    if (eyesEl) eyesEl.value = descObj.eyes || ch.eyes || ch.native_system_data?.eyes || "";
+    if (hairEl) hairEl.value = descObj.hair || ch.hair || ch.native_system_data?.hair || "";
+
+    // Populate Backstory & Additional Notes
+    const backstoryEl = document.getElementById("input-char-backstory");
+    const notesEl = document.getElementById("input-char-additional-notes");
+    if (backstoryEl) backstoryEl.value = ch.backstory || ch.native_system_data?.backstory || ch.personal_description || "";
+    if (notesEl) notesEl.value = ch.additional_notes || ch.notes || ch.native_system_data?.additional_notes || "";
+
+    // Populate D&D Weight Carried, Encumbered, and Push/Drag/Lift
+    const weightCarriedEl = document.getElementById("input-dnd-weight-carried");
+    const encumberedEl = document.getElementById("input-dnd-encumbered");
+    const pushDragLiftEl = document.getElementById("input-dnd-push-drag-lift");
+    const charStrVal = attrs.Strength ?? attrs.Might ?? 10;
+    if (weightCarriedEl) {
+        weightCarriedEl.value = ch.weight_carried || ch.native_system_data?.weight_carried || "";
+        weightCarriedEl.dataset.autoCalculated = ch.weight_carried ? "false" : "true";
+    }
+    if (encumberedEl) {
+        encumberedEl.value = ch.encumbered || ch.native_system_data?.encumbered || `${charStrVal * 15} lb.`;
+    }
+    if (pushDragLiftEl) {
+        pushDragLiftEl.value = ch.push_drag_lift || ch.native_system_data?.push_drag_lift || `${charStrVal * 30} lb.`;
+    }
+
+    // Apply View or Edit mode styling and lock states
+    applyCharacterModalViewMode(isViewOnly);
+
     const charModal = document.getElementById("modal-add-character");
     if (charModal) charModal.classList.remove("hidden");
 }
+
+window.handleOpenViewCharacterModal = async function(charId, source = "campaign") {
+    await handleOpenEditCharacterModal(charId, source, true);
+};
+window.handleOpenEditCharacterModal = handleOpenEditCharacterModal;
 
 // --- Campaign Document Upload & Review Functions ---
 let pendingRulesetRequest = null;
@@ -3461,6 +4748,52 @@ document.addEventListener("DOMContentLoaded", () => {
             renderStagedWeapons();
             stagedCharacterSpells = [];
             renderStagedSpells();
+            stagedCharacterInventory = [];
+            renderStagedInventory();
+            stagedCharacterCyberware = [];
+            renderStagedCyberware();
+            stagedCustomMeters = {};
+            renderStagedCustomMeters(false);
+
+            // Reset Module A & C (Inspiration, DC, Attunement, Spell Slots)
+            const resetInsp = document.getElementById("char-inspiration-toggle");
+            if (resetInsp) resetInsp.checked = false;
+            const resetDc = document.getElementById("char-ability-save-dc");
+            if (resetDc) resetDc.value = "13";
+            const resetAttCur = document.getElementById("char-attuned-current");
+            if (resetAttCur) resetAttCur.value = "0";
+            const resetAttMax = document.getElementById("char-attuned-max");
+            if (resetAttMax) resetAttMax.value = "3";
+            if (typeof window.renderSpellSlotInputs === "function") {
+                window.renderSpellSlotInputs({});
+            }
+            const tallyEl = document.getElementById("prep-spells-tally");
+            if (tallyEl) tallyEl.textContent = "0 / 0";
+
+            // Reset Weight, Encumbrance, Appearance, Roleplay Anchors, and Backstory/Notes
+            const weightCarriedEl = document.getElementById("input-dnd-weight-carried");
+            const encumberedEl = document.getElementById("input-dnd-encumbered");
+            const pushDragLiftEl = document.getElementById("input-dnd-push-drag-lift");
+            if (weightCarriedEl) { weightCarriedEl.value = ""; weightCarriedEl.dataset.autoCalculated = "true"; }
+            if (encumberedEl) encumberedEl.value = "120 lb.";
+            if (pushDragLiftEl) pushDragLiftEl.value = "240 lb.";
+
+            [
+                "input-char-gender", "input-char-age", "input-char-height",
+                "input-char-weight", "input-char-alignment",
+                "input-char-faith", "input-char-skin", "input-char-eyes", "input-char-hair",
+                "input-char-backstory", "input-char-additional-notes",
+                "rp-personality-traits", "rp-ideals", "rp-bonds", "rp-flaws", "rp-allies-orgs"
+            ].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = "";
+            });
+            const sizeReset = document.getElementById("input-char-size");
+            if (sizeReset) sizeReset.value = "Medium";
+            const typeReset = document.getElementById("input-char-creature-type");
+            if (typeReset) typeReset.value = "Humanoid";
+
+            applyCharacterModalViewMode(false);
 
             charModal.classList.remove("hidden");
         });
@@ -3649,6 +4982,12 @@ document.addEventListener("DOMContentLoaded", () => {
             charModal.classList.add("hidden");
         });
     }
+    const toggleEditCharBtn = document.getElementById("btn-modal-char-view-toggle-edit");
+    if (toggleEditCharBtn) {
+        toggleEditCharBtn.addEventListener("click", () => {
+            applyCharacterModalViewMode(false);
+        });
+    }
     if (confirmCharBtn && charModal) {
         confirmCharBtn.addEventListener("click", async () => {
             try {
@@ -3671,11 +5010,56 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const existingChar = currentEditingCharacterObj || (editingCharacterId ? ((ttrpgData.state && ttrpgData.state.characters) || {})[editingCharacterId] : null);
 
+                const gender = (document.getElementById("input-char-gender")?.value || "").trim();
+                const age = (document.getElementById("input-char-age")?.value || "").trim();
+                const size = (document.getElementById("input-char-size")?.value || "").trim() || "Medium";
+                const height = (document.getElementById("input-char-height")?.value || "").trim();
+                const weight = (document.getElementById("input-char-weight")?.value || "").trim();
+                const creatureType = (document.getElementById("input-char-creature-type")?.value || "").trim() || "Humanoid";
+                const alignment = (document.getElementById("input-char-alignment")?.value || "").trim();
+                const faith = (document.getElementById("input-char-faith")?.value || "").trim();
+                const skin = (document.getElementById("input-char-skin")?.value || "").trim();
+                const eyes = (document.getElementById("input-char-eyes")?.value || "").trim();
+                const hair = (document.getElementById("input-char-hair")?.value || "").trim();
+                const backstory = (document.getElementById("input-char-backstory")?.value || "").trim();
+                const additionalNotes = (document.getElementById("input-char-additional-notes")?.value || "").trim();
+
+                const weightCarried = (document.getElementById("input-dnd-weight-carried")?.value || "").trim();
+                const encumbered = (document.getElementById("input-dnd-encumbered")?.value || "").trim();
+                const pushDragLift = (document.getElementById("input-dnd-push-drag-lift")?.value || "").trim();
+
                 let payload = {
                     id: editingCharacterId || undefined,
                     name: name,
                     player_name: playerName,
-                    ruleset: activeRuleset
+                    ruleset: activeRuleset,
+                    gender: gender,
+                    age: age,
+                    size: size,
+                    height: height,
+                    weight: weight,
+                    creature_type: creatureType,
+                    alignment: alignment,
+                    faith: faith,
+                    skin: skin,
+                    eyes: eyes,
+                    hair: hair,
+                    description: {
+                        gender, age, size, height, weight, creature_type: creatureType, alignment, faith, skin, eyes, hair
+                    },
+                    backstory: backstory,
+                    additional_notes: additionalNotes,
+                    weight_carried: weightCarried,
+                    encumbered: encumbered,
+                    push_drag_lift: pushDragLift,
+                    roleplay_anchors: {
+                        personality_traits: (document.getElementById("rp-personality-traits")?.value || "").trim(),
+                        ideals: (document.getElementById("rp-ideals")?.value || "").trim(),
+                        bonds: (document.getElementById("rp-bonds")?.value || "").trim(),
+                        flaws: (document.getElementById("rp-flaws")?.value || "").trim(),
+                        allies_and_organizations: (document.getElementById("rp-allies-orgs")?.value || "").trim()
+                    },
+                    custom_meters: JSON.parse(JSON.stringify(stagedCustomMeters || {}))
                 };
 
                 if (activeRuleset === "dnd_5e") {
@@ -3755,7 +5139,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         }).filter(w => Boolean(w.name)) : []);
 
                     const invRaw = (document.getElementById("input-dnd-inventory")?.value || "").trim();
-                    const inventory = invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
+                    const inventory = (stagedCharacterInventory && stagedCharacterInventory.length > 0)
+                        ? JSON.parse(JSON.stringify(stagedCharacterInventory))
+                        : (invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : []);
                     const featsRaw = (document.getElementById("input-dnd-features")?.value || "").trim();
                     const features = featsRaw ? featsRaw.split(/\n+|;\s*|,\s*(?![^()]*\))/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [];
                     const spellsRaw = (document.getElementById("input-dnd-spells")?.value || "").trim();
@@ -3764,6 +5150,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         : (spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : []);
 
                     const archetype = `${clsLvl}${species || bg ? ' (' + [species, bg].filter(Boolean).join(', ') + ')' : ''}`;
+                    const savedSpellSlots = (typeof window.collectDynamicSpellSlots === "function")
+                        ? window.collectDynamicSpellSlots()
+                        : (existingChar?.spell_slots || existingChar?.native_system_data?.spell_slots || {});
 
                     payload = {
                         ...payload,
@@ -3811,7 +5200,35 @@ document.addEventListener("DOMContentLoaded", () => {
                         spells: spells,
                         spellcasting_ability: document.getElementById("select-dnd-spell-ability")?.value || "none",
                         spell_save_dc: (document.getElementById("input-dnd-spell-dc")?.value || "").trim(),
-                        spell_attack_bonus: (document.getElementById("input-dnd-spell-atk")?.value || "").trim()
+                        spell_attack_bonus: (document.getElementById("input-dnd-spell-atk")?.value || "").trim(),
+                        inspiration: Boolean(document.getElementById("char-inspiration-toggle")?.checked),
+                        ability_save_dc: safeInt(document.getElementById("char-ability-save-dc")?.value, 13),
+                        attuned_magic_items: {
+                            current: Math.min(3, Math.max(0, safeInt(document.getElementById("char-attuned-current")?.value, 0))),
+                            max: 3
+                        },
+                        spell_slots: savedSpellSlots,
+                        native_system_data: {
+                            ...(existingChar?.native_system_data || {}),
+                            inspiration: Boolean(document.getElementById("char-inspiration-toggle")?.checked),
+                            ability_save_dc: safeInt(document.getElementById("char-ability-save-dc")?.value, 13),
+                            spell_attack_bonus: (document.getElementById("input-dnd-spell-atk")?.value || "").trim(),
+                            attuned_magic_items: {
+                                current: Math.min(3, Math.max(0, safeInt(document.getElementById("char-attuned-current")?.value, 0))),
+                                max: 3
+                            },
+                            spell_slots: savedSpellSlots,
+                            custom_meters: JSON.parse(JSON.stringify(stagedCustomMeters || {})),
+                            roleplay_anchors: {
+                                personality_traits: (document.getElementById("rp-personality-traits")?.value || "").trim(),
+                                ideals: (document.getElementById("rp-ideals")?.value || "").trim(),
+                                bonds: (document.getElementById("rp-bonds")?.value || "").trim(),
+                                flaws: (document.getElementById("rp-flaws")?.value || "").trim(),
+                                allies_and_organizations: (document.getElementById("rp-allies-orgs")?.value || "").trim()
+                            },
+                            max_prepared_leveled_spells: (typeof activeMaxPreparedSpells === "number" ? activeMaxPreparedSpells : 3),
+                            spells: spells
+                        }
                     };
                 } else if (activeRuleset === "pathfinder_2e") {
                     const clsLvl = (document.getElementById("input-pf-class-level")?.value || "Fighter 1").trim();
@@ -3867,7 +5284,9 @@ document.addEventListener("DOMContentLoaded", () => {
                                 }).filter(w => Boolean(w.name)) : [];
                             })(),
                         proficiencies: document.getElementById("input-pf-skills")?.value || "",
-                        inventory: (document.getElementById("input-pf-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
+                        inventory: (stagedCharacterInventory && stagedCharacterInventory.length > 0)
+                            ? JSON.parse(JSON.stringify(stagedCharacterInventory))
+                            : (document.getElementById("input-pf-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
                         features_and_traits: (() => {
                             const raw = (document.getElementById("input-pf-features")?.value || "").trim();
                             if (raw) return raw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean);
@@ -3949,9 +5368,18 @@ document.addEventListener("DOMContentLoaded", () => {
                             Presence: stats.COOL
                         },
                         weapons: weapons,
-                        features_and_traits: cyberFeatures.length > 0 ? cyberFeatures : (existingChar ? extractCharacterFeatures(existingChar) : []),
-                        traits_and_abilities: cyberFeatures.length > 0 ? cyberFeatures : (existingChar ? extractCharacterFeatures(existingChar) : []),
-                        inventory: (document.getElementById("input-cyber-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+                        cyberware: (stagedCharacterCyberware && stagedCharacterCyberware.length > 0)
+                            ? { installed_items: stagedCharacterCyberware }
+                            : (existingChar?.cyberware || {}),
+                        features_and_traits: (stagedCharacterCyberware && stagedCharacterCyberware.length > 0)
+                            ? stagedCharacterCyberware.map(c => typeof c === "string" ? c : `${c.name} (${c.category || 'Cyberware'}${c.details ? '; ' + c.details : ''})`)
+                            : (cyberFeatures.length > 0 ? cyberFeatures : (existingChar ? extractCharacterFeatures(existingChar) : [])),
+                        traits_and_abilities: (stagedCharacterCyberware && stagedCharacterCyberware.length > 0)
+                            ? stagedCharacterCyberware.map(c => typeof c === "string" ? c : `${c.name} (${c.category || 'Cyberware'}${c.details ? '; ' + c.details : ''})`)
+                            : (cyberFeatures.length > 0 ? cyberFeatures : (existingChar ? extractCharacterFeatures(existingChar) : [])),
+                        inventory: (stagedCharacterInventory && stagedCharacterInventory.length > 0)
+                            ? JSON.parse(JSON.stringify(stagedCharacterInventory))
+                            : (document.getElementById("input-cyber-inventory")?.value || "").split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
                     };
                 } else if (activeRuleset === "call_of_cthulhu") {
                     const occ = (document.getElementById("input-coc-occupation")?.value || "Investigator").trim();
@@ -4064,7 +5492,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         },
                         skills: skillsObj,
                         weapons: weapons,
-                        inventory: invList,
+                        inventory: (stagedCharacterInventory && stagedCharacterInventory.length > 0)
+                            ? JSON.parse(JSON.stringify(stagedCharacterInventory))
+                            : invList,
                         features_and_traits: cocTraitsList.length > 0 ? cocTraitsList : (existingChar ? extractCharacterFeatures(existingChar) : []),
                         traits_and_abilities: cocTraitsList.length > 0 ? cocTraitsList : (existingChar ? extractCharacterFeatures(existingChar) : [])
                     };
@@ -4107,7 +5537,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         Intellect: safeInt(document.getElementById("input-rp-attr-intellect")?.value, 12),
                         Presence: safeInt(document.getElementById("input-rp-attr-presence")?.value, 12),
                         weapons: weapons,
-                        inventory: invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
+                        inventory: (stagedCharacterInventory && stagedCharacterInventory.length > 0)
+                            ? JSON.parse(JSON.stringify(stagedCharacterInventory))
+                            : (invRaw ? invRaw.split(/[\n,]+/).map(i => i.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : []),
                         spells: (stagedCharacterSpells && stagedCharacterSpells.length > 0)
                             ? stagedCharacterSpells
                             : (spellsRaw ? spellsRaw.split(/[\n,]+/).map(s => s.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : []),
@@ -4350,6 +5782,194 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    // Character Sheet In-Modal Add Item Buttons
+    ["btn-modal-add-item-dnd", "btn-modal-add-item-pf", "btn-modal-add-item-cyber", "btn-modal-add-item-coc", "btn-modal-add-item-agnostic"].forEach(btnId => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+            btn.addEventListener("click", () => window.handleOpenAddItemModal("__active_edit__"));
+        }
+    });
+
+    // Character Sheet In-Modal Add Cyberware Button
+    const btnModalAddCyberware = document.getElementById("btn-modal-add-cyberware");
+    if (btnModalAddCyberware) {
+        btnModalAddCyberware.addEventListener("click", () => window.handleOpenAddCyberwareModal("__active_edit__"));
+    }
+
+    // Character Sheet In-Modal Add Tracker / Meter Button
+    const addMeterBtn = document.getElementById("add-custom-meter-btn");
+    if (addMeterBtn) {
+        addMeterBtn.addEventListener("click", () => {
+            const name = prompt("Enter feature/tracker name (e.g. Healing Hands, Action Surge, Ki Points):");
+            if (!name || !name.trim()) return;
+            const maxValStr = prompt("Max charges / uses:", "1");
+            const maxVal = Math.max(1, parseInt(maxValStr || "1", 10) || 1);
+            const resetOn = prompt("Reset frequency (short_rest, long_rest, other):", "long_rest") || "long_rest";
+            const key = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+            stagedCustomMeters[key] = {
+                label: name.trim(),
+                current: maxVal,
+                max: maxVal,
+                reset_on: resetOn
+            };
+            renderStagedCustomMeters(isCurrentModalViewOnly);
+        });
+    }
+
+    // Item Modal Controls
+    const addItemModal = document.getElementById("modal-add-item");
+    const closeAddItemBtn = document.getElementById("btn-close-add-item-modal");
+    const cancelAddItemBtn = document.getElementById("btn-cancel-add-item");
+    const confirmAddItemBtn = document.getElementById("btn-confirm-add-item");
+
+    if (closeAddItemBtn && addItemModal) {
+        closeAddItemBtn.addEventListener("click", () => addItemModal.classList.add("hidden"));
+    }
+    if (cancelAddItemBtn && addItemModal) {
+        cancelAddItemBtn.addEventListener("click", () => addItemModal.classList.add("hidden"));
+    }
+    if (confirmAddItemBtn) {
+        confirmAddItemBtn.addEventListener("click", () => window.handleConfirmAddItem());
+    }
+
+    // Item Live Preview Listeners
+    ["input-item-name", "input-item-qty", "input-item-notes"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener("input", () => updateItemLivePreview());
+            el.addEventListener("change", () => updateItemLivePreview());
+        }
+    });
+    const itemCatSelect = document.getElementById("select-item-category");
+    if (itemCatSelect) {
+        itemCatSelect.addEventListener("change", () => updateItemLivePreview());
+    }
+
+    const itemWeightInput = document.getElementById("input-item-weight");
+    if (itemWeightInput) {
+        itemWeightInput.addEventListener("input", () => updateItemLivePreview());
+    }
+
+    // Item Preset Pills
+    document.querySelectorAll(".btn-item-preset-pill").forEach(pill => {
+        pill.addEventListener("click", () => {
+            const name = pill.getAttribute("data-name") || "";
+            const cat = pill.getAttribute("data-cat") || "Gear";
+            const wt = pill.getAttribute("data-weight") || "";
+            const notes = pill.getAttribute("data-notes") || "";
+            const nameInput = document.getElementById("input-item-name");
+            const catSelect = document.getElementById("select-item-category");
+            const weightInput = document.getElementById("input-item-weight");
+            const notesInput = document.getElementById("input-item-notes");
+            if (nameInput) nameInput.value = name;
+            if (catSelect) catSelect.value = cat;
+            if (weightInput) weightInput.value = wt;
+            if (notesInput) notesInput.value = notes;
+            updateItemLivePreview();
+        });
+    });
+
+    // ⚡ Item Smart Reformat Button
+    const btnSmartItem = document.getElementById("btn-item-smart-reformat");
+    if (btnSmartItem) {
+        btnSmartItem.addEventListener("click", () => {
+            const rawInput = document.getElementById("input-item-smart-raw");
+            const rawVal = (rawInput?.value || "").trim();
+            if (!rawVal) return;
+            const parsed = parseInventoryItemString(rawVal);
+            if (parsed) {
+                const nameInput = document.getElementById("input-item-name");
+                const qtyInput = document.getElementById("input-item-qty");
+                const weightInput = document.getElementById("input-item-weight");
+                const catSelect = document.getElementById("select-item-category");
+                const notesInput = document.getElementById("input-item-notes");
+                if (nameInput) nameInput.value = parsed.name;
+                if (qtyInput) qtyInput.value = parsed.qty || "1";
+                if (weightInput) weightInput.value = parsed.weight || "";
+                if (catSelect) catSelect.value = parsed.category || "Gear";
+                if (notesInput) notesInput.value = parsed.notes || "";
+                updateItemLivePreview();
+            }
+        });
+    }
+
+    // Cyberware Modal Controls
+    const addCyberModal = document.getElementById("modal-add-cyberware");
+    const closeAddCyberBtn = document.getElementById("btn-close-add-cyberware-modal");
+    const cancelAddCyberBtn = document.getElementById("btn-cancel-add-cyberware");
+    const confirmAddCyberBtn = document.getElementById("btn-confirm-add-cyberware");
+
+    if (closeAddCyberBtn && addCyberModal) {
+        closeAddCyberBtn.addEventListener("click", () => addCyberModal.classList.add("hidden"));
+    }
+    if (cancelAddCyberBtn && addCyberModal) {
+        cancelAddCyberBtn.addEventListener("click", () => addCyberModal.classList.add("hidden"));
+    }
+    if (confirmAddCyberBtn) {
+        confirmAddCyberBtn.addEventListener("click", () => window.handleConfirmAddCyberware());
+    }
+
+    // Cyberware Live Preview Listeners
+    ["input-cyberware-name", "input-cyberware-slot", "input-cyberware-details"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener("input", () => updateCyberwareLivePreview());
+            el.addEventListener("change", () => updateCyberwareLivePreview());
+        }
+    });
+    const cyberCatSelect = document.getElementById("select-cyberware-category");
+    if (cyberCatSelect) {
+        cyberCatSelect.addEventListener("change", () => updateCyberwareLivePreview());
+    }
+
+    // Cyberware Preset Pills
+    document.querySelectorAll(".btn-cyber-preset-pill").forEach(pill => {
+        pill.addEventListener("click", () => {
+            const name = pill.getAttribute("data-name") || "";
+            const cat = pill.getAttribute("data-cat") || "Neural Link";
+            const slot = pill.getAttribute("data-slot") || "";
+            const det = pill.getAttribute("data-det") || "";
+            const nameInput = document.getElementById("input-cyberware-name");
+            const catSelect = document.getElementById("select-cyberware-category");
+            const slotInput = document.getElementById("input-cyberware-slot");
+            const detInput = document.getElementById("input-cyberware-details");
+            if (nameInput) nameInput.value = name;
+            if (catSelect) catSelect.value = cat;
+            if (slotInput) slotInput.value = slot;
+            if (detInput) detInput.value = det;
+            updateCyberwareLivePreview();
+        });
+    });
+
+    // ⚡ Cyberware Smart Reformat Button
+    const btnSmartCyber = document.getElementById("btn-cyberware-smart-reformat");
+    if (btnSmartCyber) {
+        btnSmartCyber.addEventListener("click", () => {
+            const rawInput = document.getElementById("input-cyberware-smart-raw");
+            const rawVal = (rawInput?.value || "").trim();
+            if (!rawVal) return;
+            const nameMatch = rawVal.match(/^([^:(]+)/);
+            const catMatch = rawVal.match(/\(([^;)]+)/);
+            const name = nameMatch ? nameMatch[1].trim() : rawVal;
+            const category = catMatch ? catMatch[1].trim() : "Neural Link";
+            const details = rawVal.includes(";") ? rawVal.split(";").slice(1).join(";").replace(/\)$/, "").trim() : (rawVal.includes(":") ? rawVal.split(":").slice(1).join(":").trim() : "");
+            const nameInput = document.getElementById("input-cyberware-name");
+            const catSelect = document.getElementById("select-cyberware-category");
+            const detInput = document.getElementById("input-cyberware-details");
+            if (nameInput) nameInput.value = name;
+            if (catSelect) {
+                for (const opt of catSelect.options) {
+                    if (opt.value.toLowerCase() === category.toLowerCase() || category.toLowerCase().includes(opt.value.toLowerCase())) {
+                        catSelect.value = opt.value;
+                        break;
+                    }
+                }
+            }
+            if (detInput) detInput.value = details;
+            updateCyberwareLivePreview();
+        });
+    }
+
     // Character Sheet In-Modal Add Inventory Button
     const btnModalAddInvDnd = document.getElementById("btn-modal-add-inventory-dnd");
     if (btnModalAddInvDnd) {
@@ -4587,6 +6207,52 @@ document.addEventListener("DOMContentLoaded", () => {
             renderStagedWeapons();
             stagedCharacterSpells = [];
             renderStagedSpells();
+            stagedCharacterInventory = [];
+            renderStagedInventory();
+            stagedCharacterCyberware = [];
+            renderStagedCyberware();
+            stagedCustomMeters = {};
+            renderStagedCustomMeters(false);
+
+            // Reset Module A & C (Inspiration, DC, Attunement, Spell Slots)
+            const resetInsp = document.getElementById("char-inspiration-toggle");
+            if (resetInsp) resetInsp.checked = false;
+            const resetDc = document.getElementById("char-ability-save-dc");
+            if (resetDc) resetDc.value = "13";
+            const resetAttCur = document.getElementById("char-attuned-current");
+            if (resetAttCur) resetAttCur.value = "0";
+            const resetAttMax = document.getElementById("char-attuned-max");
+            if (resetAttMax) resetAttMax.value = "3";
+            if (typeof window.renderSpellSlotInputs === "function") {
+                window.renderSpellSlotInputs({});
+            }
+            const tallyEl = document.getElementById("prep-spells-tally");
+            if (tallyEl) tallyEl.textContent = "0 / 0";
+
+            // Reset Weight, Encumbrance, Appearance, Roleplay Anchors, and Backstory/Notes
+            const weightCarriedEl = document.getElementById("input-dnd-weight-carried");
+            const encumberedEl = document.getElementById("input-dnd-encumbered");
+            const pushDragLiftEl = document.getElementById("input-dnd-push-drag-lift");
+            if (weightCarriedEl) { weightCarriedEl.value = ""; weightCarriedEl.dataset.autoCalculated = "true"; }
+            if (encumberedEl) encumberedEl.value = "120 lb.";
+            if (pushDragLiftEl) pushDragLiftEl.value = "240 lb.";
+
+            [
+                "input-char-gender", "input-char-age", "input-char-height",
+                "input-char-weight", "input-char-alignment",
+                "input-char-faith", "input-char-skin", "input-char-eyes", "input-char-hair",
+                "input-char-backstory", "input-char-additional-notes",
+                "rp-personality-traits", "rp-ideals", "rp-bonds", "rp-flaws", "rp-allies-orgs"
+            ].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = "";
+            });
+            const sizeReset = document.getElementById("input-char-size");
+            if (sizeReset) sizeReset.value = "Medium";
+            const typeReset = document.getElementById("input-char-creature-type");
+            if (typeReset) typeReset.value = "Humanoid";
+
+            applyCharacterModalViewMode(false);
 
             charModal.classList.remove("hidden");
         });
@@ -4826,6 +6492,9 @@ async function refreshVaultModalUI() {
                     <button type="button" class="cyber-btn-small btn-vault-import" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);" title="Import into active campaign">
                         📥 Import
                     </button>
+                    <button type="button" class="cyber-btn-small btn-vault-view" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4);" title="View character sheet">
+                        👁️ View
+                    </button>
                     <button type="button" class="cyber-btn-small btn-vault-edit" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="Edit character sheet in Character Editor">
                         ✏️ Edit
                     </button>
@@ -4843,6 +6512,9 @@ async function refreshVaultModalUI() {
     // Attach actions to dynamically created buttons
     container.querySelectorAll(".btn-vault-import").forEach(btn => {
         btn.addEventListener("click", () => handleVaultImport(btn.getAttribute("data-char-id")));
+    });
+    container.querySelectorAll(".btn-vault-view").forEach(btn => {
+        btn.addEventListener("click", () => handleOpenViewCharacterModal(btn.getAttribute("data-char-id"), "vault"));
     });
     container.querySelectorAll(".btn-vault-edit").forEach(btn => {
         btn.addEventListener("click", () => handleOpenEditCharacterModal(btn.getAttribute("data-char-id"), "vault"));
@@ -5085,6 +6757,22 @@ document.addEventListener('click', (e) => {
 
     if (window.pywebview && window.pywebview.api && charName) {
       window.pywebview.api.set_party_caller(charName);
+    }
+  }
+
+  // Spell Slot Pip Toggle
+  if (e.target && e.target.classList && e.target.classList.contains('slot-pip')) {
+    const charId = e.target.getAttribute('data-char-id');
+    const level = parseInt(e.target.getAttribute('data-level'), 10);
+    const pipIdx = parseInt(e.target.getAttribute('data-index'), 10);
+    const isExpended = e.target.classList.contains('expended');
+
+    // If clicking an active pip -> expend it (current - 1)
+    // If clicking an expended pip -> recover it (current + 1)
+    const delta = isExpended ? 1 : -1;
+
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.adjust_character_spell_slot === "function") {
+      window.pywebview.api.adjust_character_spell_slot(charId, level, delta);
     }
   }
 });

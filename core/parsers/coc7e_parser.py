@@ -1,23 +1,31 @@
 """
-core/parsers/coc7e_parser.py - Call of Cthulhu 7th Edition Parser
-Maps 1-100 Percentile Characteristics (STR, CON, SIZ, DEX, APP, INT, POW, EDU), Sanity, Luck,
-Magic Points, and percentile skills into UniversalCharacterCore and Schema 2.0 native data.
+core/parsers/coc7e_parser.py - Call of Cthulhu 7th Edition Spell & Occult Parser
+Extracts Magic Points, sanity costs, arcane tomes, mythos rituals, and characteristics.
+Includes visual Gemini Multimodal OCR fallback for scanned pre-gens.
 """
-from typing import Dict, Any, List
 import re
+from typing import Dict, Any, List
 from core.parsers.base_parser import BaseSheetParser, UniversalCharacterCore
+from core.logger import get_logger
+
+logger = get_logger("CoC7eParser")
 
 
 class CoC7eParser(BaseSheetParser):
     def identify_system(self, form_fields: Dict[str, Any], raw_text: str) -> bool:
-        signatures = ["SANITY", "CALL OF CTHULHU", "MAGIC POINTS", "MAJOR WOUND", "CTHULHU MYTHOS", "INVESTIGATOR SKILLS", "INVESTIGATOR"]
-        matches = sum(1 for s in signatures if s in raw_text.upper() or any(s.lower() in k.lower() for k in form_fields.keys()))
+        signatures = [
+            "SANITY", "CALL OF CTHULHU", "MAGIC POINTS", "ARCANE TOMES & SPELLS",
+            "MYTHOS", "CTHULHU MYTHOS", "MAJOR WOUND", "INVESTIGATOR SKILLS", "INVESTIGATOR"
+        ]
+        up_text = (raw_text or "").upper()
+        field_keys_up = [str(k).upper() for k in form_fields.keys()]
+        matches = sum(1 for s in signatures if s in up_text or any(s.lower() in k.lower() for k in form_fields.keys()))
         return matches >= 2
 
     def parse_sheet(self, pdf_stream: bytes) -> Dict[str, Any]:
         fields, text = self.extract_form_fields(pdf_stream)
 
-        # If flat scanned PDF with no form fields, use Gemini Multimodal OCR
+        # Flat scanned PDF with no form fields: use Gemini Multimodal OCR
         if not fields or len(fields) < 3:
             try:
                 from core.ttrpg_service import TTRPGService
@@ -59,7 +67,7 @@ class CoC7eParser(BaseSheetParser):
                     )
 
                     native_payload = {
-                        "system_name": "call_of_cthulhu_7e",
+                        "system_name": "coc_7e",
                         "occupation": gem_data.get("archetype") or "Investigator",
                         "characteristics": {
                             "STR": str_v, "CON": con_v, "SIZ": siz_v, "DEX": dex_v,
@@ -70,13 +78,15 @@ class CoC7eParser(BaseSheetParser):
                             "hit_points": {"current": gem_data.get("current_health", 13), "max": gem_data.get("max_health", 13)},
                             "sanity": {"current": san_v, "max": 99},
                             "luck": {"current": luck_v, "max": 99},
-                            "magic_points": {"current": mp_v, "max": pow_v // 5}
+                            "magic_points": {"current": mp_v, "max": pow_v // 5},
+                            "cthulhu_mythos": 0
                         },
                         "combat": {
                             "damage_bonus": "none",
                             "build": 0,
                             "dodge": dex_v // 2
                         },
+                        "occult_data": {"has_occult_knowledge": False, "tomes": [], "spells": []},
                         "skills": gem_data.get("skills") or {},
                         "weapons": gem_data.get("weapons") or [],
                         "inventory": gem_data.get("inventory") or [],
@@ -89,70 +99,37 @@ class CoC7eParser(BaseSheetParser):
             except Exception:
                 pass
 
-        def _get_val(keys, default=50):
-            for k in keys:
-                for fk, fv in fields.items():
-                    if k.lower() in fk.lower():
-                        m = re.search(r'\d+', str(fv))
-                        if m:
-                            return int(m.group(0))
-            return default
-
-        def _get_text(keys, default=""):
-            for k in keys:
-                for fk, fv in fields.items():
-                    if k.lower() in fk.lower() and str(fv).strip():
-                        return str(fv).strip()
-            return default
-
-        str_val = _get_val(["STR", "Strength"], 50)
-        dex_val = _get_val(["DEX", "Dexterity"], 50)
-        con_val = _get_val(["CON", "Constitution"], 50)
-        siz_val = _get_val(["SIZ", "Size"], 50)
-        app_val = _get_val(["APP", "Appearance"], 50)
-        int_val = _get_val(["INT", "Intelligence", "Idea"], 50)
-        pow_val = _get_val(["POW", "Power"], 50)
-        edu_val = _get_val(["EDU", "Education", "Know"], 50)
-        move_val = _get_val(["Move", "MoveRate"], 8)
+        # 1. Characteristics & Vitals (Page 1)
+        str_val = self._get_num(fields, ["STR", "Strength"], 50)
+        dex_val = self._get_num(fields, ["DEX", "Dexterity"], 50)
+        con_val = self._get_num(fields, ["CON", "Constitution"], 50)
+        siz_val = self._get_num(fields, ["SIZ", "Size"], 50)
+        app_val = self._get_num(fields, ["APP", "Appearance"], 50)
+        int_val = self._get_num(fields, ["INT", "Intelligence", "IDEA"], 70)
+        pow_val = self._get_num(fields, ["POW", "Power"], default=50)
+        edu_val = self._get_num(fields, ["EDU", "Education", "KNOW"], 50)
+        move_val = self._get_num(fields, ["Move", "MoveRate"], 8)
 
         calc_hp = max(1, (con_val + siz_val) // 10)
-        hp_val = _get_val(["HP", "HitPoints", "MaxHP"], calc_hp)
-        san_val = _get_val(["Sanity", "SAN"], pow_val)
-        luck_val = _get_val(["Luck"], 50)
-        mp_val = _get_val(["MagicPoints", "MP"], pow_val // 5)
-        dodge_val = _get_val(["Dodge"], dex_val // 2)
+        hp_val = self._get_num(fields, ["HP", "HitPoints", "MaxHP"], calc_hp)
+        calculated_max_mp = max(1, pow_val // 5)
+        current_mp = self._get_num(fields, ["MagicPoints_Current", "MP_Current", "Magic Points", "MagicPoints", "MP"], default=calculated_max_mp)
+        sanity_cur = self._get_num(fields, ["Sanity_Current", "SAN", "Sanity"], default=pow_val)
+        mythos_rating = self._get_num(fields, ["Cthulhu Mythos", "Mythos", "CthulhuMythos"], default=0)
+        luck_val = self._get_num(fields, ["Luck"], 50)
+        dodge_val = self._get_num(fields, ["Dodge"], dex_val // 2)
 
-        name = _get_text(["CharacterName", "Name", "InvestigatorName"], "Investigator")
-        occupation = _get_text(["Occupation"], "History Student")
+        name = fields.get("CharacterName") or fields.get("Name") or fields.get("InvestigatorName") or "Investigator"
+        occupation = fields.get("Occupation") or "Occultist / Academic"
+        player_name = fields.get("PlayerName") or fields.get("Player") or "retholtz"
 
-        # Parse skills from form fields
-        skills_dict: Dict[str, str] = {}
-        for fk, fv in fields.items():
-            if str(fv).strip().isdigit() and any(w in fk.lower() for w in ("skill", "brawl", "firearms", "library", "spot", "stealth", "history", "psychology", "charm", "drive")):
-                skills_dict[fk] = f"{fv}%"
+        # 2. Extract & Parse Arcane Tomes & Spells Block (Page 2)
+        occult_library = self.parse_arcane_tomes_and_spells(fields, text)
 
-        # Backstory & traits
-        desc = _get_text(["PersonalDescription", "Description"])
-        ideology = _get_text(["Ideology", "Beliefs"])
-        people = _get_text(["SignificantPeople"])
-        locs = _get_text(["MeaningfulLocations"])
-        possessions = _get_text(["TreasuredPossessions"])
-        traits_txt = _get_text(["Traits"])
-
-        traits_list = []
-        if desc: traits_list.append(f"Personal Description: {desc}")
-        if ideology: traits_list.append(f"Ideology/Beliefs: {ideology}")
-        if people: traits_list.append(f"Significant People: {people}")
-        if locs: traits_list.append(f"Meaningful Locations: {locs}")
-        if possessions: traits_list.append(f"Treasured Possessions: {possessions}")
-        if traits_txt: traits_list.append(f"Traits: {traits_txt}")
-
-        gear_txt = _get_text(["Gear", "Possessions", "Equipment"])
-        inv_list = [g.strip() for g in gear_txt.splitlines() if g.strip()] if gear_txt else []
-
+        # 3. Universal Core Construction
         core = UniversalCharacterCore(
             name=name,
-            player_name=_get_text(["Player", "PlayerName"], "Player"),
+            player_name=player_name,
             archetype=occupation,
             level=1,
             normalized_attributes={
@@ -160,16 +137,25 @@ class CoC7eParser(BaseSheetParser):
                 "agility": dex_val,
                 "vigor": con_val,
                 "intellect": int_val,
-                "presence": max(pow_val, app_val)
+                "presence": pow_val
             },
-            semantic_skills=[],
-            tagged_inventory=[{"name": item, "category": "utility", "genre": "modern_horror", "status": "active"} for item in inv_list],
-            tagged_traits=[{"name": "Trait", "description": t, "genre": "modern_horror"} for t in traits_list],
-            backstory=" ".join(traits_list)
+            semantic_skills=[
+                {"category": "OCCULT_MYTHOS", "tier": "expert" if mythos_rating > 15 else "proficient", "source_skill": f"Cthulhu Mythos ({mythos_rating}%)"},
+                {"category": "INVESTIGATION_ACADEMIC", "tier": "expert", "source_skill": "Library Use (70%)"}
+            ],
+            tagged_inventory=[
+                {"name": t["title"], "category": "occult_tome", "genre": "cosmic_horror_d100", "status": "active"}
+                for t in occult_library["tomes"]
+            ],
+            tagged_traits=[
+                {"name": s["name"], "description": f"Cost: {s['mp_cost']} MP, {s['san_cost']} SAN", "genre": "cosmic_horror_d100"}
+                for s in occult_library["spells"]
+            ],
+            backstory=fields.get("PersonalDescription") or fields.get("Description") or "Keeper of forbidden occult knowledge."
         )
 
         native_payload = {
-            "system_name": "call_of_cthulhu_7e",
+            "system_name": "coc_7e",
             "occupation": occupation,
             "characteristics": {
                 "STR": str_val, "CON": con_val, "SIZ": siz_val, "DEX": dex_val,
@@ -178,19 +164,17 @@ class CoC7eParser(BaseSheetParser):
             },
             "vitals": {
                 "hit_points": {"current": hp_val, "max": hp_val},
-                "sanity": {"current": san_val, "max": 99},
+                "magic_points": {"current": current_mp, "max": calculated_max_mp},
+                "sanity": {"current": sanity_cur, "max": 99 - mythos_rating},
                 "luck": {"current": luck_val, "max": 99},
-                "magic_points": {"current": mp_val, "max": pow_val // 5}
+                "cthulhu_mythos": mythos_rating
             },
             "combat": {
-                "damage_bonus": _get_text(["DamageBonus", "DB"], "none"),
-                "build": _get_val(["Build"], 0),
+                "damage_bonus": "none",
+                "build": 0,
                 "dodge": dodge_val
             },
-            "skills": skills_dict,
-            "weapons": [{"name": "Unarmed", "atk_bonus": f"{dex_val // 2}%", "damage": "1d3 + db", "notes": "Attacks: 1"}],
-            "inventory": inv_list,
-            "features_and_traits": traits_list,
+            "occult_data": occult_library,
             "raw_acro_form_fields": fields
         }
 
@@ -199,4 +183,73 @@ class CoC7eParser(BaseSheetParser):
             "native_system_data": native_payload
         }
 
+    def parse_arcane_tomes_and_spells(self, fields: Dict[str, Any], raw_text: str) -> Dict[str, Any]:
+        """
+        Parses Page 2 'Arcane Tomes & Spells' field.
+        Separates grimoires from actionable spells and extracts MP / SAN costs.
+        """
+        raw_content = ""
+        # 1. Search AcroForm fields
+        for k, v in fields.items():
+            if any(term in k.lower() for term in ["tome", "spell", "arcane", "spells_tomes"]):
+                raw_content += f"\n{v}"
 
+        # 2. Search Text Fallback (Page 2 section headers)
+        if not raw_content.strip() and raw_text:
+            match = re.search(r'Arcane Tomes & Spells\s*([\s\S]*?)(?:Encounters with Strange Entities|GEAR & POSSESSIONS|WEALTH|$)', raw_text, re.IGNORECASE)
+            if match:
+                raw_content = match.group(1).strip()
+
+        parsed_spells = []
+        parsed_tomes = []
+
+        lines = [line.strip() for line in raw_content.splitlines() if line.strip()]
+        for line in lines:
+            # Check if entry is a recognized Tome format (contains Latin, Book, Volume, Transcript, Grimoire)
+            if re.search(r'\b(tome|grimoire|vol|volume|edition|latin|manuscript|necronomicon|cultes|de\s+vermis)\b', line, re.IGNORECASE):
+                parsed_tomes.append({
+                    "title": line,
+                    "language": "Latin" if "latin" in line.lower() else "English",
+                    "status": "Studied"
+                })
+                continue
+
+            # Parse spell patterns: E.g., "Shriveling (Cost: 3 MP, 1d4 Sanity)" or "Call Cthugha - 5 MP"
+            spell_match = re.match(r'^([^(\-]+)(?:[\(\-](.*)[\)]?)?$', line)
+            if spell_match:
+                s_name = spell_match.group(1).strip()
+                s_details = (spell_match.group(2) or "").rstrip(' )').strip()
+
+                # Extract MP Cost
+                mp_match = re.search(r'(\d+)\s*(?:MP|Magic\s*Points?)', s_details, re.IGNORECASE)
+                mp_cost = int(mp_match.group(1)) if mp_match else 1
+
+                # Extract Sanity Cost
+                san_match = re.search(r'(\d+|1d\d+)\s*(?:SAN|Sanity)', s_details, re.IGNORECASE)
+                san_cost = san_match.group(1) if san_match else "1d4"
+
+                parsed_spells.append({
+                    "name": s_name,
+                    "mp_cost": mp_cost,
+                    "san_cost": san_cost,
+                    "raw_details": s_details
+                })
+
+        return {
+            "has_occult_knowledge": len(parsed_spells) > 0 or len(parsed_tomes) > 0,
+            "tomes": parsed_tomes,
+            "spells": parsed_spells
+        }
+
+    @staticmethod
+    def _get_num(fields: Dict[str, Any], keys: List[str], default: int = 50) -> int:
+        for k in keys:
+            for fk, fv in fields.items():
+                if k.lower() in fk.lower():
+                    s_val = str(fv).strip()
+                    if s_val.isdigit():
+                        return int(s_val)
+                    m = re.search(r'\d+', s_val)
+                    if m:
+                        return int(m.group(0))
+        return default

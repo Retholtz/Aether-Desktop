@@ -4,12 +4,18 @@ Exposes mathematical dice rolling, vitals modification, turn ladder control,
 campaign document review (rulesets, modules, character sheets), and roster character sync.
 """
 from typing import Dict, Any, Optional
-from core.ttrpg_service import TTRPGService
+from core.ttrpg_service import TTRPGService, level_up_dnd_character
 
 
-def register_ttrpg_tools(dispatcher, service: TTRPGService):
+def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=None):
 
     def emit_update(event_name: str, payload: dict):
+        if callable(notify_ui_callback):
+            try:
+                notify_ui_callback(event_name, payload)
+                return
+            except Exception:
+                pass
         if callable(getattr(dispatcher, "notify", None)):
             try:
                 dispatcher.notify(event_name, payload)
@@ -465,4 +471,548 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService):
             "required": ["character_name", "action"]
         },
         handler=manage_party_inventory
+    )
+
+    # Register modular system adjudication tools (PF2e, CoC, Cyberpunk RED)
+    register_modular_system_tools(dispatcher, service, emit_update)
+
+
+def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_callback=None):
+
+    # 1. Pathfinder 2e Spell Adjudication
+    async def cast_pathfinder_spell(
+        character_name: str,
+        spell_name: str,
+        spell_rank: int,
+        is_focus_spell: bool = False
+    ) -> Dict[str, Any]:
+        """Deducts a prepared/spontaneous spell slot or Focus Point for a Pathfinder 2e character."""
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        native = char.get("native_system_data", {})
+        casting = native.get("spellcasting", {})
+
+        if is_focus_spell:
+            focus = casting.get("focus_magic", {}).get("focus_points", {})
+            current_fp = focus.get("current", 0)
+            if current_fp <= 0:
+                return {"status": "error", "message": f"{character_name} has 0 Focus Points remaining."}
+            focus["current"] = current_fp - 1
+            service.save_active_campaign_state()
+            return {
+                "status": "success",
+                "message": f"{character_name} cast Focus Spell '{spell_name}'. Focus points: {focus['current']}/{focus['max']}."
+            }
+
+        slots = casting.get("spell_slots", {}).get(f"rank_{spell_rank}")
+        if not slots:
+            return {"status": "error", "message": f"Rank {spell_rank} slot not found."}
+
+        if slots.get("current", 0) <= 0:
+            return {"status": "error", "message": f"No Rank {spell_rank} spell slots remaining."}
+
+        slots["current"] -= 1
+        service.save_active_campaign_state()
+        return {
+            "status": "success",
+            "message": f"{character_name} cast '{spell_name}' (Rank {spell_rank}). Slots remaining: {slots['current']}/{slots['max']}."
+        }
+
+    # 2. Call of Cthulhu Occult Spell Adjudication
+    async def cast_coc_spell(
+        character_name: str,
+        spell_name: str,
+        mp_cost: int,
+        san_loss_formula: str = "1d4"
+    ) -> Dict[str, Any]:
+        """Casts a Call of Cthulhu ritual, deducting Magic Points and rolling Sanity loss."""
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Investigator '{character_name}' not found."}
+
+        vitals = char.setdefault("vitals", {})
+        mp_data = vitals.setdefault("magic_points", {"current": 10, "max": 10})
+        cur_mp = mp_data.get("current", 0)
+
+        if cur_mp < mp_cost:
+            return {"status": "error", "message": f"Insufficient Magic Points! Needs {mp_cost} MP, has {cur_mp} MP."}
+
+        mp_data["current"] = cur_mp - mp_cost
+
+        roll_res = service.parse_and_roll(san_loss_formula)
+        san_loss = roll_res["total"] if roll_res.get("status") == "success" else 1
+
+        san_data = vitals.setdefault("sanity", {"current": 50, "max": 99})
+        old_san = san_data.get("current", 50)
+        new_san = max(0, old_san - san_loss)
+        san_data["current"] = new_san
+
+        service.save_active_campaign_state()
+        return {
+            "status": "success",
+            "spell_name": spell_name,
+            "mp_spent": mp_cost,
+            "mp_remaining": mp_data["current"],
+            "sanity_lost": san_loss,
+            "new_sanity": new_san,
+            "summary": f"{character_name} completes the rite '{spell_name}'. Spent {mp_cost} MP, lost {san_loss} Sanity ({new_san} SAN remaining)."
+        }
+
+    # 3. Cyberpunk RED Damage & Ablation Adjudication
+    async def apply_cyberpunk_damage(
+        character_name: str,
+        raw_damage: int,
+        hit_location: str = "body"
+    ) -> Dict[str, Any]:
+        """
+        Applies Cyberpunk RED damage: compares against Armor SP, subtracts absorbed damage,
+        reduces HP on penetration, and ablates Armor SP by 1.
+        """
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        vitals = char.setdefault("vitals", {})
+        armor_dict = vitals.setdefault("armor", {})
+        armor_data = armor_dict.setdefault(hit_location.lower(), {})
+        sp = armor_data.get("sp_current", char.get("armor_class", 0))
+        armor_data["sp_current"] = sp
+
+        if raw_damage <= sp:
+            return {
+                "status": "absorbed",
+                "character_name": character_name,
+                "damage_dealt": 0,
+                "armor_sp": sp,
+                "message": f"The armor absorbs the entire attack! (Damage {raw_damage} <= SP {sp})."
+            }
+
+        penetrating_damage = raw_damage - sp
+        armor_data["sp_current"] = max(0, sp - 1)
+
+        hp_entry = vitals.setdefault("health", {
+            "current": char.get("current_health", 35),
+            "max": char.get("max_health", 35)
+        })
+        hp_entry["current"] = max(0, hp_entry["current"] - penetrating_damage)
+
+        is_seriously_wounded = hp_entry["current"] <= hp_entry.get("max", 35) // 2
+        if is_seriously_wounded and "Seriously Wounded (-2 to Actions)" not in char.get("conditions", []):
+            char.setdefault("conditions", []).append("Seriously Wounded (-2 to Actions)")
+
+        service.save_active_campaign_state()
+
+        return {
+            "status": "penetrated",
+            "character_name": character_name,
+            "damage_dealt": penetrating_damage,
+            "remaining_hp": hp_entry["current"],
+            "new_sp": armor_data["sp_current"],
+            "seriously_wounded": is_seriously_wounded,
+            "summary": f"Attack penetrated {character_name}'s {hit_location} armor! Dealt {penetrating_damage} damage ({hp_entry['current']} HP left). Armor ablated to SP {armor_data['sp_current']}."
+        }
+
+    # Tool Registrations
+    dispatcher.register_tool(
+        name="cast_pathfinder_spell",
+        description="Deducts a prepared/spontaneous spell slot or Focus Point for a Pathfinder 2e character.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string", "description": "Casting character."},
+                "spell_name": {"type": "string", "description": "Spell name."},
+                "spell_rank": {"type": "integer", "description": "Spell rank level (1-10)."},
+                "is_focus_spell": {"type": "boolean", "description": "True if using focus pool."}
+            },
+            "required": ["character_name", "spell_name", "spell_rank"]
+        },
+        handler=cast_pathfinder_spell
+    )
+
+    dispatcher.register_tool(
+        name="cast_coc_spell",
+        description="Casts a Call of Cthulhu ritual, deducting Magic Points and applying Sanity loss.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string", "description": "Investigator name."},
+                "spell_name": {"type": "string", "description": "Ritual name."},
+                "mp_cost": {"type": "integer", "description": "Magic points required."},
+                "san_loss_formula": {"type": "string", "description": "Sanity loss dice formula (e.g. '1d4', '1d6')."}
+            },
+            "required": ["character_name", "spell_name", "mp_cost"]
+        },
+        handler=cast_coc_spell
+    )
+
+    dispatcher.register_tool(
+        name="apply_cyberpunk_damage",
+        description="Applies damage in Cyberpunk RED with Armor SP comparison, penetration, and 1-point armor ablation.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string", "description": "Target character."},
+                "raw_damage": {"type": "integer", "description": "Total damage rolled by attacker."},
+                "hit_location": {"type": "string", "enum": ["body", "head", "shield"], "description": "Armor zone struck."}
+            },
+            "required": ["character_name", "raw_damage"]
+        },
+        handler=apply_cyberpunk_damage
+    )
+
+    register_dm_adjudication_tools(dispatcher, service, notify_ui_callback)
+    register_progression_tools(dispatcher, service, notify_ui_callback)
+
+
+def register_dm_adjudication_tools(dispatcher, service: TTRPGService, notify_ui_callback=None):
+    """
+    Registers runtime DM Adjudication Tools for deterministic mutation of campaign state
+    and real-time IPC/UI event broadcasting.
+    """
+    def _notify(event: str, data: Any):
+        if callable(notify_ui_callback):
+            try:
+                notify_ui_callback(event, data)
+            except Exception:
+                pass
+
+    async def modify_vitals(
+        character_name: str,
+        stat_name: str,
+        delta: int
+    ) -> Dict[str, Any]:
+        """
+        Modifies character vitals: 'health' (HP), 'temp_hp', or 'guard'.
+        Automatically clamps health between 0 and max.
+        """
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        vitals = char.setdefault("vitals", {})
+        stat_key = stat_name.lower().strip()
+
+        if stat_key in ("health", "hp"):
+            hp_data = vitals.setdefault("health", {"current": 10, "max": 10})
+            old_val = hp_data["current"]
+            new_val = max(0, min(hp_data["max"], old_val + delta))
+            hp_data["current"] = new_val
+
+            # Auto-apply Unconscious condition at 0 HP
+            conds = char.setdefault("conditions", [])
+            if new_val == 0 and "Unconscious" not in conds:
+                conds.append("Unconscious")
+            elif new_val > 0 and "Unconscious" in conds:
+                conds.remove("Unconscious")
+
+            service.save_active_campaign_state()
+            _notify("roster_updated", service.get_campaign_roster())
+            return {
+                "status": "success",
+                "character": character_name,
+                "stat": "Health",
+                "old": old_val,
+                "current": new_val,
+                "max": hp_data["max"],
+                "summary": f"{character_name} HP adjusted by {delta:+d} ({old_val} -> {new_val}/{hp_data['max']})."
+            }
+
+        elif stat_key in ("temp_hp", "temphp", "temp"):
+            vitals["temp_hp"] = max(0, vitals.get("temp_hp", 0) + delta)
+            service.save_active_campaign_state()
+            _notify("roster_updated", service.get_campaign_roster())
+            return {"status": "success", "character": character_name, "temp_hp": vitals["temp_hp"]}
+
+        return {"status": "error", "message": f"Unknown vitals field: '{stat_name}'."}
+
+    async def cast_spell(
+        character_name: str,
+        spell_name: str,
+        spell_level: int
+    ) -> Dict[str, Any]:
+        """
+        Deducts an expendable spell slot when a spell is cast.
+        Validates preparation state for leveled spells. Cantrips (Level 0) cost 0 slots.
+        """
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        native = char.get("native_system_data", {})
+        spells = native.get("spells") or char.get("spells", [])
+        slots = native.get("spell_slots") or char.get("spell_slots", {})
+
+        # Find spell entry
+        spell_entry = next((s for s in spells if s.get("name", "").lower() == spell_name.lower()), None)
+
+        # Leveled Spell Verification
+        if spell_level > 0:
+            if spell_entry and not spell_entry.get("prepared", False) and not spell_entry.get("is_ritual", False):
+                return {
+                    "status": "error",
+                    "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."
+                }
+
+            slot_key = f"level_{spell_level}"
+            if slot_key not in slots or slots[slot_key].get("current", 0) <= 0:
+                return {
+                    "status": "error",
+                    "message": f"No Level {spell_level} spell slots remaining for {character_name}!"
+                }
+
+            slots[slot_key]["current"] -= 1
+
+        service.save_active_campaign_state()
+        _notify("roster_updated", service.get_campaign_roster())
+
+        remaining = slots.get(f"level_{spell_level}", {}).get("current", "At-Will")
+        return {
+            "status": "success",
+            "character": character_name,
+            "spell": spell_name,
+            "level": spell_level,
+            "slots_remaining": remaining,
+            "summary": f"{character_name} cast '{spell_name}' (Level {spell_level}). Slots remaining: {remaining}."
+        }
+
+    async def modify_resource_meter(
+        character_name: str,
+        meter_key: str,
+        delta: int
+    ) -> Dict[str, Any]:
+        """
+        Deducts or restores consumable pools: Sorcery Points, Draconic Cry, Healing Hands, Hit Dice.
+        """
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        meters = char.get("custom_meters", {})
+        m_key = meter_key.lower().strip().replace(" ", "_")
+
+        if m_key not in meters:
+            return {"status": "error", "message": f"Meter '{meter_key}' not found on {character_name}."}
+
+        meter = meters[m_key]
+        old_val = meter.get("current", 0)
+        new_val = max(0, min(meter.get("max", old_val), old_val + delta))
+        meter["current"] = new_val
+
+        service.save_active_campaign_state()
+        _notify("roster_updated", service.get_campaign_roster())
+
+        return {
+            "status": "success",
+            "character": character_name,
+            "meter": meter.get("label", meter_key),
+            "current": new_val,
+            "max": meter.get("max", new_val),
+            "summary": f"{character_name}'s {meter.get('label', meter_key)} adjusted by {delta:+d} ({old_val} -> {new_val}/{meter.get('max', new_val)})."
+        }
+
+    async def apply_condition(
+        character_name: str,
+        condition: str,
+        active: bool = True
+    ) -> Dict[str, Any]:
+        """Applies or removes standard conditions (Poisoned, Blinded, Invisible, Prone)."""
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        conds = char.setdefault("conditions", [])
+        clean_cond = condition.strip().title()
+
+        if active and clean_cond not in conds:
+            conds.append(clean_cond)
+        elif not active and clean_cond in conds:
+            conds.remove(clean_cond)
+
+        service.save_active_campaign_state()
+        _notify("roster_updated", service.get_campaign_roster())
+
+        return {
+            "status": "success",
+            "character": character_name,
+            "conditions": conds,
+            "summary": f"{clean_cond} {'applied to' if active else 'removed from'} {character_name}."
+        }
+
+    async def execute_rest(rest_type: str = "long") -> Dict[str, Any]:
+        """
+        Executes a Short or Long Rest for the entire active campaign roster.
+        - Short Rest: Resets meters marked reset_on: 'short_rest'.
+        - Long Rest: Restores HP to max, restores all spell slots, recovers 1/2 max Hit Dice,
+                     and resets all meters marked reset_on: 'long_rest' (Sorcery Points, Draconic Cry).
+        """
+        if not service.active_state:
+            return {"status": "error", "message": "No active campaign state."}
+
+        is_long = (rest_type.lower() == "long")
+        chars = service.active_state.get("characters", {})
+
+        for c_id, char in chars.items():
+            vitals = char.setdefault("vitals", {})
+            native = char.get("native_system_data", {})
+            meters = char.get("custom_meters", {})
+
+            if is_long:
+                # 1. Restore HP
+                if "health" in vitals:
+                    vitals["health"]["current"] = vitals["health"]["max"]
+                # 2. Reset Spell Slots
+                slots_dict = native.get("spell_slots") or char.get("spell_slots", {})
+                for s_key, s_data in slots_dict.items():
+                    s_data["current"] = s_data["max"]
+                # 3. Recover 1/2 Max Hit Dice
+                if "hit_dice" in meters:
+                    hd = meters["hit_dice"]
+                    recover_amount = max(1, hd.get("max", 1) // 2)
+                    hd["current"] = min(hd.get("max", 1), hd.get("current", 0) + recover_amount)
+                # 4. Reset Long Rest Resource Pools
+                for m_k, m_v in meters.items():
+                    if m_v.get("reset_on") == "long_rest":
+                        m_v["current"] = m_v["max"]
+
+                # 5. Clear Temporary Conditions
+                char["conditions"] = [c for c in char.get("conditions", []) if c == "Attuned"]
+            else:
+                # Short Rest resets
+                for m_k, m_v in meters.items():
+                    if m_v.get("reset_on") in ("short_rest", "rest"):
+                        m_v["current"] = m_v["max"]
+
+        service.save_active_campaign_state()
+        _notify("roster_updated", service.get_campaign_roster())
+
+        return {
+            "status": "success",
+            "rest_type": "Long Rest" if is_long else "Short Rest",
+            "summary": f"Party completed a {'Long Rest. HP, spell slots, and abilities restored.' if is_long else 'Short Rest.'}"
+        }
+
+    # Dispatcher Registrations
+    dispatcher.register_tool(
+        name="modify_vitals",
+        description="Adjusts HP, Temp HP, or Guard.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string"},
+                "stat_name": {"type": "string"},
+                "delta": {"type": "integer"}
+            },
+            "required": ["character_name", "stat_name", "delta"]
+        },
+        handler=modify_vitals
+    )
+    dispatcher.register_tool(
+        name="cast_spell",
+        description="Deducts a spell slot and verifies preparation.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string"},
+                "spell_name": {"type": "string"},
+                "spell_level": {"type": "integer"}
+            },
+            "required": ["character_name", "spell_name", "spell_level"]
+        },
+        handler=cast_spell
+    )
+    dispatcher.register_tool(
+        name="modify_resource_meter",
+        description="Deducts/restores Sorcery Points or rest pools.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string"},
+                "meter_key": {"type": "string"},
+                "delta": {"type": "integer"}
+            },
+            "required": ["character_name", "meter_key", "delta"]
+        },
+        handler=modify_resource_meter
+    )
+    dispatcher.register_tool(
+        name="apply_condition",
+        description="Applies or clears conditions like Poisoned or Prone.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string"},
+                "condition": {"type": "string"},
+                "active": {"type": "boolean"}
+            },
+            "required": ["character_name", "condition"]
+        },
+        handler=apply_condition
+    )
+    dispatcher.register_tool(
+        name="execute_rest",
+        description="Executes short or long rest recovery for party.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "rest_type": {"type": "string", "enum": ["short", "long"]}
+            }
+        },
+        handler=execute_rest
+    )
+
+
+def register_progression_tools(dispatcher, service: TTRPGService, notify_ui_callback=None):
+    """
+    Agent tool for programmatic character level scaling.
+    """
+    def _notify(event: str, data: Any):
+        if callable(notify_ui_callback):
+            try:
+                notify_ui_callback(event, data)
+            except Exception:
+                pass
+
+    async def level_up_character(
+        character_name: str,
+        target_level: int
+    ) -> Dict[str, Any]:
+        """
+        Advances a character to target_level (1-20), recomputing Max HP, Hit Dice,
+        Proficiency Bonus, 1st-9th level Spell Slots, and Prepared Spell Caps.
+        """
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        res = level_up_dnd_character(char, target_level)
+        if res.get("status") == "success":
+            service.save_active_campaign_state()
+            _notify("roster_updated", service.get_campaign_roster())
+            return {
+                "status": "success",
+                "character": character_name,
+                "new_level": target_level,
+                "max_hp": res["max_hp"],
+                "proficiency_bonus": res["proficiency_bonus"],
+                "save_dc": res["save_dc"],
+                "max_prepared_spells": res["max_prepared_spells"],
+                "summary": f"{character_name} advanced to Level {target_level}! HP: {res['max_hp']}, Save DC: {res['save_dc']}, Slots & Prepared Spells recomputed."
+            }
+
+        return res
+
+    dispatcher.register_tool(
+        name="level_up_character",
+        description="Advances character level (1-20), updating HP, slots (1st-9th), save DC, and prepared spell cap.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string", "description": "Character name."},
+                "target_level": {"type": "integer", "description": "New target level (1-20)."}
+            },
+            "required": ["character_name", "target_level"]
+        },
+        handler=level_up_character
     )

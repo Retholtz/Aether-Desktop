@@ -4,6 +4,7 @@ Manages local file storage, token calculation, and asynchronous web scraping.
 """
 import asyncio
 import os
+import io
 import re
 import json
 import shutil
@@ -411,7 +412,7 @@ class ProjectService:
     def extract_pdf_form_fields(file_path_or_bytes: Any) -> Dict[str, str]:
         """
         Extracts interactive form fields and AcroForm widget annotations from a PDF file or bytes.
-        Fast, deterministic splitting without regular expression catastrophic backtracking.
+        Fast, deterministic extraction using pypdf with fallback to raw byte splitting.
         """
         try:
             if isinstance(file_path_or_bytes, bytes):
@@ -425,6 +426,38 @@ class ProjectService:
             return {}
 
         fields: Dict[str, str] = {}
+
+        # 1. Primary: Use pypdf to extract fields and annotations (handles /ObjStm object streams and PDF string encodings)
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(content))
+            raw_fields = reader.get_fields()
+            if raw_fields:
+                for k, v in raw_fields.items():
+                    val = v.get('/V') if isinstance(v, dict) else getattr(v, 'value', None)
+                    if val is not None:
+                        fields[str(k).strip()] = str(val).strip()
+            # If get_fields() was empty or missed widget annotations, walk page /Annots
+            if not fields:
+                for page in reader.pages:
+                    annots = page.get('/Annots')
+                    if annots:
+                        annots_list = annots.get_object() if hasattr(annots, 'get_object') else annots
+                        for a in annots_list:
+                            try:
+                                obj = a.get_object() if hasattr(a, 'get_object') else a
+                                t = obj.get('/T')
+                                v = obj.get('/V')
+                                if t is not None:
+                                    fields[str(t).strip()] = str(v) if v is not None else ''
+                            except Exception:
+                                pass
+        except Exception as e:
+            logger.debug(f"[PROJECT] pypdf AcroForm extraction fallback: {e}")
+
+        if fields:
+            return fields
+
         objects = content.split(b"endobj")
         for obj in objects:
             if b"/Subtype/Widget" in obj or b"/Subtype /Widget" in obj or b"/FT" in obj:

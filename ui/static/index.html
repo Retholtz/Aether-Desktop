@@ -3066,6 +3066,29 @@
             </div>
           </div>
 
+          <!-- Module A: Inspiration, Ability Save DC, Attuned Items -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+            <div class="modal-field">
+              <label class="modal-label">✨ Heroic Inspiration</label>
+              <div class="inspiration-toggle-box">
+                <input type="checkbox" id="char-inspiration-toggle" class="cyber-checkbox" style="cursor: pointer;" />
+                <span class="inspiration-label">Inspiration</span>
+              </div>
+            </div>
+            <div class="modal-field">
+              <label for="char-ability-save-dc" class="modal-label">🎯 Ability Save DC</label>
+              <input type="number" id="char-ability-save-dc" class="modal-input" value="13" />
+            </div>
+            <div class="modal-field">
+              <label class="modal-label">🔮 Attuned Items (Max 3)</label>
+              <div class="attunement-input-group">
+                <input type="number" id="char-attuned-current" class="cyber-input-mini" value="0" min="0" max="3" />
+                <span class="slot-slash" style="color: #94a3b8; font-size: 0.9rem;">/</span>
+                <input type="number" id="char-attuned-max" class="cyber-input-mini" value="3" readonly style="opacity: 0.7;" />
+              </div>
+            </div>
+          </div>
+
           <!-- Hit Points & Hit Dice Row -->
           <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px;">
             <div class="modal-field">
@@ -3227,14 +3250,40 @@
                 <input type="number" id="input-dnd-coin-cp" class="modal-input" style="text-align: center; font-size: 0.85rem;" value="0" min="0" />
               </div>
             </div>
-            <!-- Inventory Textarea -->
+            <!-- Inventory Section -->
             <div class="modal-field">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                <label for="input-dnd-inventory" class="modal-label" style="margin: 0;">Inventory &amp; Gear <span style="font-size: 0.7rem; color: #64748b; font-weight: normal;">(One item per line or comma-separated)</span></label>
-                <button type="button" class="cyber-btn-small" id="btn-modal-add-inventory-dnd" style="padding: 1px 7px; font-size: 0.68rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Paste multiple items cleanly">+ Add Items</button>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">🎒 Inventory &amp; Gear</span>
+                <button type="button" class="cyber-btn-small" id="btn-modal-add-item-dnd" style="padding: 2px 9px; font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Add an item with quantity, category, and notes">+ Add Item</button>
               </div>
-              <textarea id="input-dnd-inventory" class="modal-input" rows="3" placeholder="Potion of Healing, Shield, Chain Mail, Backpack, Rope, Rations..."></textarea>
+              <div id="dnd-inventory-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+              
+              <!-- Total Weight Carried & Encumbrance Bar (D&D 5E Canon) -->
+              <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 6px 12px; margin-top: 6px; font-size: 0.76rem; color: #cbd5e1; flex-wrap: wrap; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <span style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.04em;">⚖️ Carried:</span>
+                  <input type="text" id="input-dnd-weight-carried" class="modal-input" style="width: 85px; padding: 2px 6px; font-size: 0.75rem; text-align: center; font-weight: 700; color: #38bdf8;" placeholder="0 lb." />
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <span style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.04em;">🎒 Encumbered:</span>
+                  <input type="text" id="input-dnd-encumbered" class="modal-input" style="width: 85px; padding: 2px 6px; font-size: 0.75rem; text-align: center; font-weight: 600; color: #fbbf24;" placeholder="120 lb." />
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <span style="color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.04em;">🏋️ Push / Drag / Lift:</span>
+                  <input type="text" id="input-dnd-push-drag-lift" class="modal-input" style="width: 85px; padding: 2px 6px; font-size: 0.75rem; text-align: center; font-weight: 600; color: #a78bfa;" placeholder="240 lb." />
+                </div>
+              </div>
+              <textarea id="input-dnd-inventory" class="modal-input hidden" style="display: none;"></textarea>
             </div>
+          </div>
+
+          <!-- Module B: Discrete Limited-Use Class & Racial Meters -->
+          <div style="margin-bottom: 12px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(250, 204, 21, 0.25); border-radius: 8px; padding: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.78rem; font-weight: 700; color: #facc15; text-transform: uppercase; letter-spacing: 0.05em;">⏳ Limited-Use Feature Counters (Rest Meters)</span>
+              <button type="button" id="add-custom-meter-btn" class="cyber-btn-small" style="padding: 2px 9px; font-size: 0.72rem; color: #facc15; background: rgba(250, 204, 21, 0.15); border: 1px solid rgba(250, 204, 21, 0.35);">+ Add Tracker</button>
+            </div>
+            <div id="custom-meters-container" class="meters-grid-container"></div>
           </div>
 
           <!-- D&D Features & Traits / Feats -->
@@ -3250,6 +3299,22 @@
                 ✨ Spells &amp; Cantrips <span style="font-size: 0.7rem; color: #94a3b8; font-weight: normal;">(Optional for spellcasters)</span>
               </div>
               <button type="button" class="cyber-btn-small" id="btn-modal-add-spell-dnd" style="padding: 2px 9px; font-size: 0.72rem; color: #c084fc; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35);" title="Open popup to add a spell with Level, Damage, DC, and Range fields">+ Add Spell</button>
+            </div>
+
+            <!-- Module C: Spell Slots Allocation Bar (Levels 1–9 Dynamic) -->
+            <div class="spell-slots-header-wrap">
+              <div class="spell-slots-meta">
+                <span class="cyber-label-sub">SPELL SLOTS & CAPACITY (LEVELS 1–9)</span>
+                <div class="prep-counter-pill">
+                  <span>Prepared Leveled Spells: </span>
+                  <strong id="prep-spells-tally">0 / 0</strong>
+                </div>
+              </div>
+
+              <!-- Dynamic flex container: populated via renderSpellSlotInputs() -->
+              <div id="spell-slots-grid-container" class="slots-dynamic-grid">
+                <!-- Rendered dynamically: Levels 1 through 9 -->
+              </div>
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 6px;">
               <div class="modal-field">
@@ -3379,8 +3444,12 @@
           </div>
 
           <div class="modal-field" style="margin-bottom: 10px;">
-            <label for="input-pf-inventory" class="modal-label">🎒 Inventory, Gear &amp; Bulk</label>
-            <textarea id="input-pf-inventory" class="modal-input" rows="2" placeholder="Full Plate, Steel Shield, Adventurer's Pack (Bulk 5)"></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">🎒 Inventory, Gear &amp; Bulk</span>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-item-pf" style="padding: 2px 9px; font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Add an item with quantity, category, and notes">+ Add Item</button>
+            </div>
+            <div id="pf-inventory-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+            <textarea id="input-pf-inventory" class="modal-input hidden" style="display: none;"></textarea>
           </div>
 
           <div class="modal-field" style="margin-bottom: 10px;">
@@ -3508,13 +3577,21 @@
           </div>
 
           <div class="modal-field" style="margin-bottom: 10px;">
-            <label for="input-cyber-cyberware" class="modal-label">🦾 Cyberware Implants</label>
-            <textarea id="input-cyber-cyberware" class="modal-input" rows="2" placeholder="Cybereye (Low Light / Infrared), Subdermal Armor (SP 11), Wolvers"></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">🦾 Cyberware Implants</span>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-cyberware" style="padding: 2px 9px; font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Install cyberware with category, slot, and details">+ Add Cyberware</button>
+            </div>
+            <div id="cyber-cyberware-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 6px;"></div>
+            <textarea id="input-cyber-cyberware" class="modal-input hidden" style="display: none;"></textarea>
           </div>
 
           <div class="modal-field">
-            <label for="input-cyber-inventory" class="modal-label">🎒 Gear &amp; Equipment</label>
-            <textarea id="input-cyber-inventory" class="modal-input" rows="2" placeholder="Agent (Smartphone), Trauma Team Silver Card, Kevlar Vest"></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">🎒 Gear &amp; Equipment</span>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-item-cyber" style="padding: 2px 9px; font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Add an item with quantity, category, and notes">+ Add Item</button>
+            </div>
+            <div id="cyber-inventory-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+            <textarea id="input-cyber-inventory" class="modal-input hidden" style="display: none;"></textarea>
           </div>
         </div>
 
@@ -3731,8 +3808,12 @@
           <!-- Gear, Possessions & Cash -->
           <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 8px; margin-bottom: 10px;">
             <div class="modal-field">
-              <label for="input-coc-inventory" class="modal-label">🎒 Gear &amp; Possessions (One per line or comma-separated)</label>
-              <textarea id="input-coc-inventory" class="modal-input" rows="3" placeholder="Satchel, Pencils and fountain pen, Note pad, Pocket Bible, Hair clips"></textarea>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">🎒 Gear &amp; Possessions</span>
+                <button type="button" class="cyber-btn-small" id="btn-modal-add-item-coc" style="padding: 2px 9px; font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Add an item with quantity, category, and notes">+ Add Item</button>
+              </div>
+              <div id="coc-inventory-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+              <textarea id="input-coc-inventory" class="modal-input hidden" style="display: none;"></textarea>
             </div>
             <div style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; justify-content: space-between;">
               <div style="font-size: 0.72rem; font-weight: 700; color: #facc15; text-transform: uppercase;">💵 Cash &amp; Assets</div>
@@ -3814,8 +3895,12 @@
           </div>
 
           <div class="modal-field" style="margin-bottom: 10px;">
-            <label for="input-rp-char-inventory" class="modal-label">Inventory &amp; Gear</label>
-            <textarea id="input-rp-char-inventory" class="modal-input" rows="2" placeholder="Potion of Healing, Shield, Rope, Rations..."></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.78rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em;">🎒 Inventory &amp; Gear</span>
+              <button type="button" class="cyber-btn-small" id="btn-modal-add-item-agnostic" style="padding: 2px 9px; font-size: 0.72rem; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35);" title="Add an item with quantity, category, and notes">+ Add Item</button>
+            </div>
+            <div id="agnostic-inventory-chips-container" style="display: flex; flex-direction: column; gap: 4px; min-height: 24px; margin-bottom: 4px;"></div>
+            <textarea id="input-rp-char-inventory" class="modal-input hidden" style="display: none;"></textarea>
           </div>
 
           <div style="margin-bottom: 10px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px;">
@@ -3839,12 +3924,119 @@
           </div>
         </div>
 
+        <!-- =================================================================== -->
+        <!-- COMMON SECTION: CHARACTER DESCRIPTION, APPEARANCE & CREATURE TYPE  -->
+        <!-- =================================================================== -->
+        <div style="margin-top: 14px; background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+          <div style="font-size: 0.8rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+            <span>👤 Physical Appearance &amp; Character Details</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 8px; margin-bottom: 8px;">
+            <div class="modal-field">
+              <label for="input-char-gender" class="modal-label">Gender</label>
+              <input type="text" id="input-char-gender" class="modal-input" placeholder="e.g. Female" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-age" class="modal-label">Age</label>
+              <input type="text" id="input-char-age" class="modal-input" placeholder="e.g. 35" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-size" class="modal-label">Size</label>
+              <input type="text" id="input-char-size" class="modal-input" placeholder="e.g. Small / Medium" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-height" class="modal-label">Height</label>
+              <input type="text" id="input-char-height" class="modal-input" placeholder="e.g. 3' 6&quot;" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-weight" class="modal-label">Weight</label>
+              <input type="text" id="input-char-weight" class="modal-input" placeholder="e.g. 45 lb." />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-creature-type" class="modal-label">Creature Type</label>
+              <input type="text" id="input-char-creature-type" class="modal-input" placeholder="e.g. Humanoid" />
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 8px;">
+            <div class="modal-field">
+              <label for="input-char-alignment" class="modal-label">Alignment</label>
+              <input type="text" id="input-char-alignment" class="modal-input" placeholder="e.g. Neutral Good" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-faith" class="modal-label">Faith / Deity</label>
+              <input type="text" id="input-char-faith" class="modal-input" placeholder="e.g. Gond" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-skin" class="modal-label">Skin</label>
+              <input type="text" id="input-char-skin" class="modal-input" placeholder="e.g. Pale" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-eyes" class="modal-label">Eyes</label>
+              <input type="text" id="input-char-eyes" class="modal-input" placeholder="e.g. Bright blue" />
+            </div>
+            <div class="modal-field">
+              <label for="input-char-hair" class="modal-label">Hair</label>
+              <input type="text" id="input-char-hair" class="modal-input" placeholder="e.g. Silvery-white" />
+            </div>
+          </div>
+        </div>
+
+        <!-- =================================================================== -->
+        <!-- COMMON SECTION: D&D ROLEPLAY ANCHORS & DM QUEST HOOKS               -->
+        <!-- =================================================================== -->
+        <div style="margin-top: 14px; background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+          <div style="font-size: 0.8rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+            <span>🎭 Roleplay Anchors &amp; DM Quest Hooks</span>
+          </div>
+          <div class="roleplay-anchors-grid">
+            <div class="modal-field">
+              <label for="rp-personality-traits" class="modal-label">Personality Traits</label>
+              <textarea id="rp-personality-traits" class="cyber-textarea-small" rows="2" placeholder="Quirks, mannerisms, social habits..."></textarea>
+            </div>
+            <div class="modal-field">
+              <label for="rp-ideals" class="modal-label">Ideals</label>
+              <textarea id="rp-ideals" class="cyber-textarea-small" rows="2" placeholder="Core moral drivers and philosophies..."></textarea>
+            </div>
+            <div class="modal-field">
+              <label for="rp-bonds" class="modal-label">Bonds</label>
+              <textarea id="rp-bonds" class="cyber-textarea-small" rows="2" placeholder="Ties to people, places, or oaths to avenge..."></textarea>
+            </div>
+            <div class="modal-field">
+              <label for="rp-flaws" class="modal-label">Flaws &amp; Weaknesses</label>
+              <textarea id="rp-flaws" class="cyber-textarea-small" rows="2" placeholder="Vices, compulsions, blind spots..."></textarea>
+            </div>
+          </div>
+          <div class="modal-field" style="margin-top: 8px;">
+            <label for="rp-allies-orgs" class="modal-label">Allies &amp; Guild Organizations</label>
+            <input type="text" id="rp-allies-orgs" class="modal-input" placeholder="e.g. Guild of Alchemists, Tiberius of Eldoria" />
+          </div>
+        </div>
+
+        <!-- =================================================================== -->
+        <!-- COMMON SECTION: CHARACTER BACKSTORY & ADDITIONAL NOTES              -->
+        <!-- =================================================================== -->
+        <div style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px;">
+          <div class="modal-field">
+            <label for="input-char-backstory" class="modal-label">
+              📖 Character Backstory <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal;">(Origins, personal narrative, history for Aether story generation)</span>
+            </label>
+            <textarea id="input-char-backstory" class="modal-input" rows="6" style="min-height: 130px; font-size: 0.82rem; line-height: 1.45;" placeholder="Character backstory, origins, history..."></textarea>
+          </div>
+          <div class="modal-field">
+            <label for="input-char-additional-notes" class="modal-label">
+              📝 Additional Notes &amp; Quest Hooks <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal;">(Allies, organizations, personal goals, DM notes)</span>
+            </label>
+            <textarea id="input-char-additional-notes" class="modal-input" rows="6" style="min-height: 130px; font-size: 0.82rem; line-height: 1.45;" placeholder="Allies, organizations, campaign milestones, reminders..."></textarea>
+          </div>
+        </div>
+
       </div>
       <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
         <div id="modal-char-ruleset-hint" style="font-size: 0.75rem; color: #38bdf8; font-weight: 600;">
           ⚔️ D&amp;D 5E Canonical Mode
         </div>
         <div style="display: flex; gap: 8px;">
+          <button type="button" id="btn-modal-char-view-toggle-edit" class="cyber-btn-small hidden" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.45); padding: 6px 14px; font-weight: 600;" title="Unlock sheet and switch to full editing mode">✏️ Switch to Edit Mode</button>
           <button type="button" id="btn-cancel-char" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
           <button type="button" id="btn-confirm-char" class="btn-primary-sm" style="padding: 7px 22px;">Save Character</button>
         </div>
@@ -4055,6 +4247,173 @@
     </div>
   </div>
 
+  <!-- Modal: Quick Add / Edit Inventory Item -->
+  <div id="modal-add-item" class="modal-overlay hidden" style="z-index: 100050;">
+    <div class="modal-card" style="max-width: 520px; width: 94%;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">🎒</span>
+          <h3 id="modal-add-item-title" style="margin: 0; font-size: 1rem; color: #f1f5f9;">Add Inventory Item</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-item-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="input-add-item-char-name" value="" />
+
+        <!-- ⚡ Aether Smart Reformat & Parse Bar -->
+        <div style="margin-bottom: 12px; background: rgba(30, 41, 59, 0.55); border: 1px dashed rgba(56, 189, 248, 0.45); border-radius: 6px; padding: 8px 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <span style="font-size: 0.72rem; font-weight: 700; color: #38bdf8;">⚡ AETHER SMART REFORMAT &amp; PARSE</span>
+            <span style="font-size: 0.68rem; color: #94a3b8;">Paste item text or comma-separated loot</span>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="input-item-smart-raw" class="modal-input" style="font-size: 0.78rem; padding: 5px 8px;" placeholder="Paste e.g. Potion of Healing x2 (Restores 2d4+2 HP) or Rope, Torch, Rations" />
+            <button type="button" id="btn-item-smart-reformat" class="cyber-btn-small" style="padding: 5px 10px; font-size: 0.72rem; white-space: nowrap; color: #38bdf8; background: rgba(56, 189, 248, 0.2); border: 1px solid rgba(56, 189, 248, 0.4);">⚡ Reformat</button>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 2fr 0.9fr 1.1fr; gap: 10px; margin-bottom: 10px;">
+          <div class="modal-field">
+            <label for="input-item-name" class="modal-label">Item Name <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="input-item-name" class="modal-input" placeholder="e.g. Potion of Healing, Silk Rope, Agent" autocomplete="off" />
+          </div>
+          <div class="modal-field">
+            <label for="input-item-qty" class="modal-label">Quantity</label>
+            <input type="text" id="input-item-qty" class="modal-input" placeholder="1" value="1" />
+          </div>
+          <div class="modal-field">
+            <label for="input-item-weight" class="modal-label">Weight</label>
+            <input type="text" id="input-item-weight" class="modal-input" placeholder="e.g. 10 lb." />
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; margin-bottom: 10px;">
+          <div class="modal-field">
+            <label for="select-item-category" class="modal-label">Category</label>
+            <select id="select-item-category" class="modal-input" style="padding: 5px 8px;">
+              <option value="Gear">Gear &amp; Equipment</option>
+              <option value="Consumable">Consumable / Potion</option>
+              <option value="Armor">Armor &amp; Shield</option>
+              <option value="Weapon">Weapon</option>
+              <option value="Tool">Tool / Kit</option>
+              <option value="Ammunition">Ammunition</option>
+              <option value="Treasure">Treasure &amp; Valuables</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div class="modal-field">
+            <label for="input-item-notes" class="modal-label">Properties &amp; Notes</label>
+            <input type="text" id="input-item-notes" class="modal-input" placeholder="e.g. Restores 2d4+2 HP, Bulk 1" />
+          </div>
+        </div>
+
+        <!-- Quick Item Preset Pills -->
+        <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">
+          <button type="button" class="btn-item-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Potion of Healing" data-cat="Consumable" data-weight="0.5 lb." data-notes="Restores 2d4+2 HP">+ Potion of Healing</button>
+          <button type="button" class="btn-item-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Rations (1 day)" data-cat="Consumable" data-weight="2 lb." data-notes="1 day supply">+ Rations</button>
+          <button type="button" class="btn-item-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="50 ft. Silk Rope" data-cat="Gear" data-weight="5 lb." data-notes="50 ft.">+ Silk Rope</button>
+          <button type="button" class="btn-item-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Torch" data-cat="Gear" data-weight="1 lb." data-notes="Burns 1 hr, 20 ft. bright light">+ Torch</button>
+          <button type="button" class="btn-item-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Thieves' Tools" data-cat="Tool" data-weight="1 lb." data-notes="Lockpicking and trap disarm">+ Thieves' Tools</button>
+          <button type="button" class="btn-item-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Backpack" data-cat="Gear" data-weight="5 lb." data-notes="Holds 30 lbs">+ Backpack</button>
+        </div>
+
+        <!-- Formatted Live Preview -->
+        <div style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(100, 116, 139, 0.3); border-radius: 6px; padding: 6px 10px; font-size: 0.75rem; color: #cbd5e1;">
+          <strong style="color: #94a3b8;">Formatted Preview: </strong>
+          <span id="preview-item-formatted" style="color: #38bdf8; font-weight: 600;">Potion of Healing (Consumable)</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-item" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-item" class="btn-primary-sm" style="padding: 7px 18px;">Add Item</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Quick Add / Edit Cyberpunk Cyberware -->
+  <div id="modal-add-cyberware" class="modal-overlay hidden" style="z-index: 100050;">
+    <div class="modal-card" style="max-width: 530px; width: 94%;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">🦾</span>
+          <h3 id="modal-add-cyberware-title" style="margin: 0; font-size: 1rem; color: #f1f5f9;">Add Cyberware Implant</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-cyberware-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- ⚡ Aether Smart Reformat Bar for Cyberware -->
+        <div style="margin-bottom: 12px; background: rgba(30, 41, 59, 0.55); border: 1px dashed rgba(56, 189, 248, 0.45); border-radius: 6px; padding: 8px 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <span style="font-size: 0.72rem; font-weight: 700; color: #38bdf8;">⚡ AETHER SMART REFORMAT &amp; PARSE</span>
+            <span style="font-size: 0.68rem; color: #94a3b8;">Paste raw cyberware description</span>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <input type="text" id="input-cyberware-smart-raw" class="modal-input" style="font-size: 0.78rem; padding: 5px 8px;" placeholder="Paste e.g. Chemskin (Fashionware; Can change skin color) or Subdermal Armor (SP 11)" />
+            <button type="button" id="btn-cyberware-smart-reformat" class="cyber-btn-small" style="padding: 5px 10px; font-size: 0.72rem; white-space: nowrap; color: #38bdf8; background: rgba(56, 189, 248, 0.2); border: 1px solid rgba(56, 189, 248, 0.4);">⚡ Reformat</button>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px; margin-bottom: 10px;">
+          <div class="modal-field">
+            <label for="input-cyberware-name" class="modal-label">Cyberware Name <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="input-cyberware-name" class="modal-input" placeholder="e.g. Cybereye, Neural Link, Subdermal Armor" autocomplete="off" />
+          </div>
+          <div class="modal-field">
+            <label for="select-cyberware-category" class="modal-label">Category</label>
+            <select id="select-cyberware-category" class="modal-input" style="padding: 5px 8px;">
+              <option value="Neural Link">Neural Link</option>
+              <option value="Cyberaudio Suite">Cyberaudio Suite</option>
+              <option value="Right Cybereye">Right Cybereye</option>
+              <option value="Left Cybereye">Left Cybereye</option>
+              <option value="Right Cyberarm">Right Cyberarm</option>
+              <option value="Left Cyberarm">Left Cyberarm</option>
+              <option value="Right Cyberleg">Right Cyberleg</option>
+              <option value="Left Cyberleg">Left Cyberleg</option>
+              <option value="Internal Cyberware">Internal Cyberware</option>
+              <option value="External Cyberware">External Cyberware</option>
+              <option value="Fashionware">Fashionware</option>
+              <option value="Borgware">Borgware</option>
+              <option value="General">General / Implant</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; margin-bottom: 10px;">
+          <div class="modal-field">
+            <label for="input-cyberware-slot" class="modal-label">Slot / Type / HL</label>
+            <input type="text" id="input-cyberware-slot" class="modal-input" placeholder="e.g. Option Slot, SP 11, HL 2d6" />
+          </div>
+          <div class="modal-field">
+            <label for="input-cyberware-details" class="modal-label">Details &amp; Effects</label>
+            <input type="text" id="input-cyberware-details" class="modal-input" placeholder="e.g. Low Light / Infrared, 3 option slots" />
+          </div>
+        </div>
+
+        <!-- Quick Cyberware Preset Pills -->
+        <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;">
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Neural Link" data-cat="Neural Link" data-slot="Chassis" data-det="Foundational neural processor; 5 option slots">+ Neural Link</button>
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Cybereye" data-cat="Right Cybereye" data-slot="Eye Chassis" data-det="Replacement cybernetic eye; 3 option slots">+ Cybereye</button>
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Cyberaudio Suite" data-cat="Cyberaudio Suite" data-slot="Ear Chassis" data-det="Installed in ear; 3 option slots">+ Cyberaudio</button>
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Subdermal Armor" data-cat="Internal Cyberware" data-slot="SP 11" data-det="Armor plates under skin (SP 11 Body/Head)">+ Subdermal Armor</button>
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Sandevistan" data-cat="Neural Link" data-slot="Neural Option" data-det="Speedware (+3 to Initiative when activated)">+ Sandevistan</button>
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Chemskin" data-cat="Fashionware" data-slot="Skin" data-det="Changes skin tone; +2 Personal Grooming w/tech hair">+ Chemskin</button>
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Tech Hair" data-cat="Fashionware" data-slot="Hair" data-det="Light/color emitting; +2 Personal Grooming w/chemskin">+ Tech Hair</button>
+          <button type="button" class="btn-cyber-preset-pill cyber-btn-small" style="font-size: 0.65rem; padding: 1px 6px;" data-name="Wolvers" data-cat="Right Cyberarm" data-slot="Cyberarm Option" data-det="Concealable blade weapons (3d6 damage)">+ Wolvers</button>
+        </div>
+
+        <!-- Formatted Live Preview -->
+        <div style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 6px 10px; font-size: 0.75rem; color: #cbd5e1;">
+          <strong style="color: #94a3b8;">Formatted Preview: </strong>
+          <span id="preview-cyberware-formatted" style="color: #38bdf8; font-weight: 600;">Neural Link (Neural Link)</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-cyberware" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-cyberware" class="btn-primary-sm" style="padding: 7px 18px;">Add Cyberware</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Quick Add Inventory Items to Character -->
   <div id="modal-add-inventory" class="modal-overlay hidden" style="z-index: 100050;">
     <div class="modal-card" style="max-width: 480px; width: 92%;">
@@ -4159,6 +4518,7 @@
   <script src="games_tab.js"></script>
   <script src="programs_tab.js"></script>
   <script src="projects.js"></script>
+  <script src="edit_character_modal.js"></script>
   <script src="roleplay.js"></script>
   <script src="main.js"></script>
   <script src="app.js"></script>

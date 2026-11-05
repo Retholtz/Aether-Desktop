@@ -1456,6 +1456,416 @@
   border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
+/* Character Sheet View Only Mode */
+.modal-view-mode {
+  opacity: 0.92 !important;
+  cursor: default !important;
+  background: rgba(15, 23, 42, 0.55) !important;
+  border-color: rgba(100, 116, 139, 0.25) !important;
+  color: #f1f5f9 !important;
+  user-select: text !important;
+}
+.modal-view-mode:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* =========================================================================
+   D&D 5E Enhancements: Inspiration, Attunement, Spell Slots, Meters & Anchors
+   ========================================================================= */
+
+/* Inspiration Toggle */
+.inspiration-toggle-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(250, 204, 21, 0.35);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+.inspiration-label {
+  font-size: 0.75rem;
+  color: #ffd700;
+  font-weight: 600;
+}
+
+/* Attunement Inputs */
+.attunement-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cyber-input-mini {
+  width: 44px;
+  background: #111a24;
+  border: 1px solid #283e54;
+  color: #38bdf8;
+  padding: 4px;
+  text-align: center;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+/* Spell Slots Tracker Bar (Legacy) */
+.spell-slots-tracker-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+/* Dynamic 1st-9th Spell Slot Grid */
+.spell-slots-header-wrap {
+  background: #0d1520;
+  border: 1px solid #1c2b3c;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.spell-slots-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cyber-label-sub {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8ea5be;
+  letter-spacing: 0.5px;
+}
+
+.slots-dynamic-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.slot-chip {
+  display: flex;
+  align-items: center;
+  background: #121e2c;
+  border: 1px solid #24384e;
+  border-radius: 4px;
+  padding: 3px 8px;
+  gap: 6px;
+}
+
+.slot-chip-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #00F3FF;
+}
+
+.slot-spin-input {
+  width: 38px;
+  background: #090e14;
+  border: 1px solid #24384e;
+  color: #fff;
+  text-align: center;
+  font-size: 12px;
+  font-weight: bold;
+  border-radius: 3px;
+  padding: 2px 0;
+}
+
+.slot-spin-input:focus {
+  border-color: #00F3FF;
+  outline: none;
+}
+
+.slot-divider {
+  color: #536b84;
+  font-size: 11px;
+}
+
+.prep-counter-pill {
+  margin-left: auto;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid #a855f7;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  color: #f3e8ff;
+  font-weight: 600;
+}
+
+/* Meters Grid */
+.meters-grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.meter-card {
+  background: rgba(18, 28, 39, 0.85);
+  border: 1px solid #21354a;
+  border-left: 3px solid #ffd700;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.meter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 6px;
+}
+
+.meter-reset-tag {
+  font-size: 0.65rem;
+  background: #1c2b3a;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #38bdf8;
+  text-transform: capitalize;
+}
+
+.meter-stepper {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #0b1118;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.meter-btn-step {
+  background: #1b2a3a;
+  border: 1px solid #283e54;
+  color: #fff;
+  width: 26px;
+  height: 22px;
+  cursor: pointer;
+  border-radius: 3px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.meter-btn-step:hover {
+  background: #25394e;
+  border-color: #38bdf8;
+}
+
+.meter-val-display {
+  font-size: 0.82rem;
+  font-weight: bold;
+  color: #00F3FF;
+}
+
+/* Roleplay Anchors Grid */
+.roleplay-anchors-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.cyber-textarea-small {
+  width: 100%;
+  background: #101822;
+  border: 1px solid #203144;
+  color: #e0e8f0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.cyber-textarea-small:focus {
+  border-color: #38bdf8;
+  outline: none;
+}
+
+/* --- Party Card Spell Slots Tracker Bar --- */
+.card-spell-slots-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  background: #0d1520;
+  border: 1px solid #1c2b3c;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: 6px 0 8px 0;
+}
+
+.card-slot-rank-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.card-slot-rank-label {
+  font-weight: 700;
+  color: #8ea5be;
+  font-size: 10px;
+}
+
+.card-slot-pips {
+  display: flex;
+  gap: 3px;
+}
+
+.slot-pip {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid #00F3FF;
+  background: #00F3FF;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-block;
+}
+
+.slot-pip.expended {
+  background: transparent;
+  border-color: #3b5066;
+}
+
+.slot-pip:hover {
+  transform: scale(1.2);
+}
+
+/* --- Unprepared Toggle Drawer --- */
+.unprepared-drawer-btn {
+  background: transparent;
+  border: none;
+  color: #5c748c;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.15s;
+}
+
+.unprepared-drawer-btn:hover {
+  color: #00F3FF;
+}
+
+.unprepared-spells-container {
+  display: none;
+  opacity: 0.75;
+  border-top: 1px dashed #1c2b3c;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.unprepared-spells-container.open {
+  display: block;
+}
+
+/* Disabled Cast button when out of slots */
+.action-btn.cast-btn.out-of-slots {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+/* Card Spell Rows & Action Buttons */
+.spell-row-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.spell-row-item.unprepared-row {
+  opacity: 0.75;
+}
+
+.spell-main-info {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.spell-title {
+  color: #f1f5f9;
+}
+
+.spell-badge-type {
+  font-size: 9px;
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.spell-subtext {
+  font-size: 9.5px;
+  color: #94a3b8;
+}
+
+.spell-action-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.action-btn {
+  padding: 1px 6px;
+  font-size: 9.5px;
+  border-radius: 3px;
+  cursor: pointer;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  transition: all 0.15s ease;
+}
+
+.action-btn:hover {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: #00F3FF;
+  color: #fff;
+}
+
+.action-btn.cast-btn {
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.1);
+}
+
+.action-btn.atk-btn {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.action-btn.dmg-btn {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+
+
 
 
 

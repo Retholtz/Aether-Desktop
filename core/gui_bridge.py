@@ -7215,6 +7215,56 @@ class GuiBridge:
             self._on_engine_event("ttrpg_state_updated", res)
         return res
 
+    def adjust_character_spell_slot(self, character_id: str, level: int, delta: int) -> Dict[str, Any]:
+        """Directly adjust spell slots via card pips."""
+        res = self.ttrpg_service.adjust_spell_slot(character_id, int(level), int(delta))
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+        return res
+
+    def invoke_ttrpg_tool(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Invokes a registered TTRPG tool directly (e.g. cast_spell)."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        if eng and hasattr(eng, "dispatcher"):
+            import asyncio
+            coro = eng.dispatcher.dispatch(tool_name, params)
+            if asyncio.iscoroutine(coro):
+                future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+                try:
+                    res = future.result(timeout=10.0)
+                    self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+                    self._on_engine_event("ttrpg_state_updated", res)
+                    return res
+                except Exception as e:
+                    return {"status": "error", "message": str(e)}
+            return coro
+
+        # Direct fallback for cast_spell if dispatcher is not ready
+        if tool_name == "cast_spell":
+            char_id, char = self.ttrpg_service._find_character(params.get("character_name", ""))
+            if not char:
+                return {"status": "error", "message": f"Character '{params.get('character_name')}' not found."}
+            spell_name = params.get("spell_name", "")
+            spell_level = int(params.get("spell_level", 0))
+            native = char.get("native_system_data", {})
+            slots = native.get("spell_slots") or char.get("spell_slots", {})
+            spells = native.get("spells") or char.get("spells", [])
+            spell_entry = next((s for s in spells if isinstance(s, dict) and s.get("name", "").lower() == spell_name.lower()), None)
+            if spell_level > 0:
+                if spell_entry and not spell_entry.get("prepared", False) and not spell_entry.get("is_ritual", False):
+                    return {"status": "error", "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."}
+                slot_key = f"level_{spell_level}"
+                if slot_key not in slots or slots[slot_key].get("current", 0) <= 0:
+                    return {"status": "error", "message": f"No Level {spell_level} spell slots remaining for {params.get('character_name')}!"}
+                slots[slot_key]["current"] -= 1
+            self.ttrpg_service.save_active_campaign_state()
+            self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+            self._on_engine_event("ttrpg_state_updated", {"status": "success", "cast_spell": spell_name})
+            return {"status": "success", "character": params.get("character_name"), "spell": spell_name, "level": spell_level}
+
+        return {"status": "error", "message": f"Tool '{tool_name}' could not be dispatched."}
+
     # ------------------------------------------------------------------
     # Character Vault & Cross-Genre Branching Endpoints
     # ------------------------------------------------------------------

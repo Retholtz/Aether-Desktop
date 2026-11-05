@@ -31,6 +31,8 @@ class UniversalCharacterCore:
     tagged_inventory: List[Dict[str, Any]] = field(default_factory=list)
     tagged_traits: List[Dict[str, str]] = field(default_factory=list)
     backstory: str = ""
+    roleplay_anchors: Dict[str, Any] = field(default_factory=dict)
+    custom_meters: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -42,7 +44,9 @@ class UniversalCharacterCore:
             "semantic_skills": self.semantic_skills,
             "tagged_inventory": self.tagged_inventory,
             "tagged_traits": self.tagged_traits,
-            "backstory": self.backstory
+            "backstory": self.backstory,
+            "roleplay_anchors": self.roleplay_anchors,
+            "custom_meters": self.custom_meters
         }
 
     def __getitem__(self, item: str) -> Any:
@@ -70,8 +74,11 @@ class BaseSheetParser(ABC):
         pass
 
     @staticmethod
-    def extract_form_fields(pdf_stream: bytes) -> Tuple[Dict[str, Any], str]:
+    def extract_form_fields(pdf_stream: Any) -> Tuple[Dict[str, Any], str]:
         """Extracts fillable form fields (AcroForms) and raw page text via pypdf or fallback."""
+        if isinstance(pdf_stream, dict):
+            return dict(pdf_stream), ""
+
         fields: Dict[str, Any] = {}
         text_chunks: List[str] = []
 
@@ -82,9 +89,23 @@ class BaseSheetParser(ABC):
             raw_fields = reader.get_fields()
             if raw_fields:
                 for k, v in raw_fields.items():
-                    val = v.get('/V')
+                    val = v.get('/V') if isinstance(v, dict) else getattr(v, 'value', None)
                     if val is not None:
-                        fields[str(k)] = str(val).strip()
+                        fields[str(k).strip()] = str(val).strip()
+            if not fields:
+                for page in reader.pages:
+                    annots = page.get('/Annots')
+                    if annots:
+                        annots_list = annots.get_object() if hasattr(annots, 'get_object') else annots
+                        for a in annots_list:
+                            try:
+                                obj = a.get_object() if hasattr(a, 'get_object') else a
+                                t = obj.get('/T')
+                                v = obj.get('/V')
+                                if t is not None:
+                                    fields[str(t).strip()] = str(v) if v is not None else ''
+                            except Exception:
+                                pass
             for page in reader.pages:
                 t = page.extract_text()
                 if t:

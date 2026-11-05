@@ -57,6 +57,7 @@ from tools.project_tools import register_project_tools
 from core.ttrpg_service import TTRPGService
 from core.voice_actor_parser import VoiceActorParser
 from tools.ttrpg_tools import register_ttrpg_tools
+from tools.spell_tools import register_spell_tools
 from core.session_manager import SessionManager
 from core.character_vault_service import CharacterVaultService
 from tools.vault_tools import register_vault_tools
@@ -723,7 +724,8 @@ class AetherEngine:
 
         # Universal Tabletop Roleplaying Engine (TTRPG Service & Tools)
         self.ttrpg_service = TTRPGService(client_getter=lambda: self.client)
-        register_ttrpg_tools(self.dispatcher, self.ttrpg_service)
+        register_ttrpg_tools(self.dispatcher, self.ttrpg_service, lambda evt, data: self.notify(evt, data))
+        register_spell_tools(self.dispatcher, self.ttrpg_service)
         self._ttrpg_session_active = False
 
         # Multi-Workspace Session Persistence Manager

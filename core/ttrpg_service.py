@@ -70,9 +70,11 @@ class TTRPGService:
         self,
         data_dir: str = "data/campaigns",
         manifest_path: str = "data/campaigns.json",
-        client_getter: Optional[Any] = None
+        client_getter: Optional[Any] = None,
+        storage_dir: Optional[str] = None
     ):
-        self.data_dir = os.path.abspath(data_dir)
+        target_dir = storage_dir if storage_dir is not None else data_dir
+        self.data_dir = os.path.abspath(target_dir)
         self.manifest_path = os.path.abspath(manifest_path)
         self.manifest: Dict[str, Any] = {"active_campaign": None, "campaigns": {}}
         self.active_state: Optional[Dict[str, Any]] = None
@@ -695,7 +697,10 @@ class TTRPGService:
             if not val:
                 return ""
             v = str(val).replace(r"\(", "(").replace(r"\)", ")").rstrip("\\").strip()
-            v = re.sub(r'[\(\\\)]+$', '', v).strip()
+            if v.endswith("\\"):
+                v = v.rstrip("\\").strip()
+            if v.endswith(")") and v.count("(") < v.count(")"):
+                v = v[:-1].strip()
             return v
 
         def _int_val(val: Any, default: int = 10) -> int:
@@ -717,23 +722,35 @@ class TTRPGService:
             char_name = stem.replace("_", " ").strip().title() if stem else "Adventurer"
 
         player_name = _clean(fields.get("PLAYER NAME") or fields.get("PLAYER NAME2")) or "Player"
-        cls_lvl = _clean(fields.get("CLASS  LEVEL") or fields.get("CLASS  LEVEL2"))
+        cls_lvl = _clean(fields.get("CLASS  LEVEL") or fields.get("CLASS  LEVEL2") or fields.get("ClassLevel") or fields.get("Class & Level"))
         race = _clean(fields.get("RACE") or fields.get("RACE2"))
         bg = _clean(fields.get("BACKGROUND") or fields.get("BACKGROUND2"))
+
+        # If race or background were missing but inside cls_lvl parenthetical (e.g. "Blood Hunter 1 (Sea Elf, Outlander)")
+        if (not race or not bg) and "(" in cls_lvl and ")" in cls_lvl:
+            p_m = re.search(r'\((.*?)\)', cls_lvl)
+            if p_m:
+                p_parts = [p.strip() for p in p_m.group(1).split(",")]
+                if not race and len(p_parts) > 0:
+                    race = p_parts[0]
+                if not bg and len(p_parts) > 1:
+                    bg = p_parts[1]
+        clean_cls_lvl = re.sub(r'\(.*?\)', '', cls_lvl).strip()
         arch_details = ", ".join(filter(None, [race, bg]))
-        archetype = f"{cls_lvl} ({arch_details})" if (cls_lvl and arch_details) else (cls_lvl or arch_details or "Adventurer")
+        archetype = f"{clean_cls_lvl} ({arch_details})" if (clean_cls_lvl and arch_details) else (clean_cls_lvl or arch_details or "Adventurer")
+        cls_lvl = clean_cls_lvl
 
         max_hp = _int_val(fields.get("MaxHP"), 25)
         cur_hp = _int_val(fields.get("CurrentHP"), max_hp)
         guard_val = _int_val(fields.get("AC"), 14)
 
         from core.parsers.spell_registry import resolve_dnd_stat
-        might_val = resolve_dnd_stat(fields.get("STR"), fields.get("STRmod") or fields.get("STR Mod"), 10)
-        agility_val = resolve_dnd_stat(fields.get("DEX"), fields.get("DEXmod") or fields.get("DEX Mod"), 10)
-        vigor_val = resolve_dnd_stat(fields.get("CON"), fields.get("CONmod") or fields.get("CON Mod"), 10)
-        intellect_val = resolve_dnd_stat(fields.get("INT"), fields.get("INTmod") or fields.get("INT Mod"), 10)
-        wis_val = resolve_dnd_stat(fields.get("WIS"), fields.get("WISmod") or fields.get("WIS Mod"), 10)
-        cha_val = resolve_dnd_stat(fields.get("CHA"), fields.get("CHamod") or fields.get("CHAmod") or fields.get("CHA Mod"), 10)
+        might_val = resolve_dnd_stat(fields.get("STR"), fields.get("STRmod") or fields.get("STRmod ") or fields.get("STR Mod"), 10)
+        agility_val = resolve_dnd_stat(fields.get("DEX"), fields.get("DEXmod") or fields.get("DEXmod ") or fields.get("DEX Mod"), 10)
+        vigor_val = resolve_dnd_stat(fields.get("CON"), fields.get("CONmod") or fields.get("CONmod ") or fields.get("CON Mod"), 10)
+        intellect_val = resolve_dnd_stat(fields.get("INT"), fields.get("INTmod") or fields.get("INTmod ") or fields.get("INT Mod"), 10)
+        wis_val = resolve_dnd_stat(fields.get("WIS"), fields.get("WISmod") or fields.get("WISmod ") or fields.get("WIS Mod"), 10)
+        cha_val = resolve_dnd_stat(fields.get("CHA"), fields.get("CHamod") or fields.get("CHAmod") or fields.get("CHAmod ") or fields.get("CHA Mod"), 10)
         presence_val = max(wis_val, cha_val)
 
         hit_dice = _clean(fields.get("Total", "1d8")) or "1d8"
@@ -776,18 +793,70 @@ class TTRPGService:
                 "notes": notes_b
             })
 
-        # Parse Equipment / Inventory (Eq Name0..Eq Name60)
-        inventory: List[str] = []
+        # Parse Equipment / Inventory (Eq Name0..Eq Name60, Eq Qty, Eq Weight)
+        inventory: List[Dict[str, Any]] = []
         for eq_idx in range(60):
             eq_val = _clean(fields.get(f"Eq Name{eq_idx}") or fields.get(f"Eq Name {eq_idx}"))
-            if eq_val and eq_val not in inventory:
-                inventory.append(eq_val)
+            if eq_val:
+                if "(" in eq_val and ")" not in eq_val:
+                    eq_val += ")"
+                eq_qty = _clean(fields.get(f"Eq Qty{eq_idx}") or fields.get(f"Eq Qty {eq_idx}")) or "1"
+                eq_weight = _clean(fields.get(f"Eq Weight{eq_idx}") or fields.get(f"Eq Weight {eq_idx}"))
+                lower_i = eq_val.lower()
+                cat = "Gear"
+                if any(w in lower_i for w in ["potion", "ration", "elixir", "scroll", "water", "food", "flask"]):
+                    cat = "Consumable"
+                elif any(w in lower_i for w in ["armor", "shield", "leather", "chain", "plate", "mail"]):
+                    cat = "Armor"
+                elif any(w in lower_i for w in ["sword", "dagger", "bow", "crossbow", "axe", "mace", "spear", "bolt", "arrow"]):
+                    cat = "Weapon"
+                elif any(w in lower_i for w in ["tool", "supplies", "kit", "lockpick", "thieves"]):
+                    cat = "Tool"
+                inventory.append({
+                    "name": eq_val,
+                    "qty": eq_qty,
+                    "weight": eq_weight,
+                    "category": cat,
+                    "notes": ""
+                })
         raw_eq_area = _clean(fields.get("Equipment") or fields.get("Inventory"))
         if raw_eq_area:
+            existing_names = {x["name"] if isinstance(x, dict) else str(x) for x in inventory}
             for line in raw_eq_area.splitlines():
                 item_str = line.strip().lstrip("-•* ")
-                if item_str and item_str not in inventory:
-                    inventory.append(item_str)
+                if item_str:
+                    if "(" in item_str and ")" not in item_str:
+                        item_str += ")"
+                    if item_str not in existing_names:
+                        inventory.append({
+                            "name": item_str,
+                            "qty": "1",
+                            "weight": "",
+                            "category": "Gear",
+                            "notes": ""
+                        })
+                        existing_names.add(item_str)
+
+        # Encumbrance & Weights (Page 2 Equipment footer)
+        weight_carried = _clean(fields.get("Weight Carried") or fields.get("WeightCarried") or "")
+        encumbered = _clean(fields.get("Encumbered") or "")
+        push_drag_lift = _clean(fields.get("PushDragLift") or fields.get("Push/Drag/Lift") or "")
+        if not encumbered and might_val:
+            encumbered = f"{might_val * 15} lb."
+        if not push_drag_lift and might_val:
+            push_drag_lift = f"{might_val * 30} lb."
+
+        # Physical Appearance & Character Description (Page 3 Header)
+        char_gender = _clean(fields.get("GENDER") or fields.get("Gender") or "")
+        char_age = _clean(fields.get("AGE") or fields.get("Age") or "")
+        char_size = _clean(fields.get("SIZE") or fields.get("Size") or "")
+        char_height = _clean(fields.get("HEIGHT") or fields.get("Height") or "")
+        char_weight = _clean(fields.get("WEIGHT") or fields.get("Weight") or "")
+        char_alignment = _clean(fields.get("ALIGNMENT") or fields.get("Alignment") or "")
+        char_faith = _clean(fields.get("FAITH") or fields.get("Faith") or "")
+        char_skin = _clean(fields.get("SKIN") or fields.get("Skin") or "")
+        char_eyes = _clean(fields.get("EYES") or fields.get("Eyes") or "")
+        char_hair = _clean(fields.get("HAIR") or fields.get("Hair") or "")
 
         prof_lang = _clean(fields.get("ProficienciesLang"))
         prof_bonus = _clean(fields.get("ProfBonus")) or "+2"
@@ -833,9 +902,13 @@ class TTRPGService:
         init_str = f"+{init_val}" if init_val >= 0 else str(init_val)
 
         # Features & Traits (Supporting D&D Beyond columns, WotC fillable, and generic sheets)
+        # Stitch FeaturesTraits1 and FeaturesTraits2 together so wrapped column blocks (e.g. Creature Type -> You are a Humanoid.) connect seamlessly
+        ft1 = str(fields.get("FeaturesTraits1") or "").strip()
+        ft2 = str(fields.get("FeaturesTraits2") or "").strip()
+        combined_ft = f"{ft1}\n{ft2}".strip() if (ft1 or ft2) else ""
+
         raw_feat_sources = [
-            fields.get("FeaturesTraits1"),
-            fields.get("FeaturesTraits2"),
+            combined_ft,
             fields.get("Features and Traits"),
             fields.get("Features and Traits2"),
             fields.get("Features_and_Traits"),
@@ -845,6 +918,16 @@ class TTRPGService:
             fields.get("Traits"),
             fields.get("Special Abilities")
         ]
+
+        # Determine Creature Type (e.g. "Humanoid", "Fey", "Monstrosity")
+        creature_type = ""
+        combined_text_lower = f"{combined_ft}\n{race}\n{cls_lvl}".lower()
+        if "you are a humanoid" in combined_text_lower or "creature type: humanoid" in combined_text_lower:
+            creature_type = "Humanoid"
+        elif "humanoid" in combined_text_lower:
+            creature_type = "Humanoid"
+        elif any(r in race.lower() for r in ["aasimar", "human", "elf", "dwarf", "gnome", "halfling", "tiefling", "dragonborn", "orc"]):
+            creature_type = "Humanoid"
 
         features_list: List[str] = []
         seen_feat_names = set()
@@ -899,6 +982,35 @@ class TTRPGService:
             features_list.insert(0, clean_def)
 
         # Skills & Proficiencies
+        prof_bonus_int = _int_val(fields.get("ProfBonus"), 2)
+        str_mod = (might_val - 10) // 2
+        dex_mod = (agility_val - 10) // 2
+        con_mod = (vigor_val - 10) // 2
+        int_mod = (intellect_val - 10) // 2
+        wis_mod = (wis_val - 10) // 2
+        cha_mod = (cha_val - 10) // 2
+
+        dnd_skill_stats = {
+            "Athletics": might_val,
+            "Acrobatics": agility_val,
+            "Sleight of Hand": agility_val,
+            "Stealth": agility_val,
+            "Arcana": intellect_val,
+            "History": intellect_val,
+            "Investigation": intellect_val,
+            "Nature": intellect_val,
+            "Religion": intellect_val,
+            "Animal Handling": wis_val,
+            "Insight": wis_val,
+            "Medicine": wis_val,
+            "Perception": wis_val,
+            "Survival": wis_val,
+            "Deception": cha_val,
+            "Intimidation": cha_val,
+            "Performance": cha_val,
+            "Persuasion": cha_val
+        }
+
         skill_field_pairs = [
             ("Acrobatics", "Acrobatics"), ("Animal Handling", "Animal"), ("Arcana", "Arcana"),
             ("Athletics", "Athletics"), ("Deception", "Deception"), ("History", "History"),
@@ -909,42 +1021,164 @@ class TTRPGService:
         ]
         skills_dict: Dict[str, str] = {}
         for s_label, s_key in skill_field_pairs:
-            s_val = _clean(fields.get(s_key) or fields.get(s_label))
-            if s_val:
+            raw_v = fields.get(s_key) or fields.get(s_label)
+            s_val = _clean(raw_v)
+
+            # Check explicit proficiency markers in AcroForm fields (e.g. ArcanaProf: 'P', InsightProf: 'P')
+            prof_marker = (
+                fields.get(f"{s_key}Prof")
+                or fields.get(f"{s_label}Prof")
+                or fields.get(f"{s_key.replace(' ', '')}Prof")
+                or fields.get(f"{s_label.replace(' ', '')}Prof")
+            )
+            is_prof = False
+            if prof_marker:
+                p_str = str(prof_marker).strip().lower()
+                if p_str and p_str not in ("off", "no", "false", "0", "none"):
+                    is_prof = True
+
+            clean_num_str = re.sub(r'\(.*?\)', '', s_val).strip()
+            num_match = re.search(r'[-+]?\d+', clean_num_str)
+            if num_match:
+                s_num = int(num_match.group(0))
+                base_ability = dnd_skill_stats.get(s_label, 10)
+                base_mod = (base_ability - 10) // 2
+                if prof_bonus_int > 0 and s_num >= base_mod + prof_bonus_int:
+                    is_prof = True
+            elif not s_val:
+                base_ability = dnd_skill_stats.get(s_label, 10)
+                base_mod = (base_ability - 10) // 2
+                s_val = f"+{base_mod}" if base_mod >= 0 else str(base_mod)
+
+            if "(proficient)" in s_val.lower():
+                is_prof = True
+                s_val = re.sub(r'(?i)\s*\(proficient\)', '', s_val).strip()
+
+            if is_prof:
+                skills_dict[s_label] = f"{s_val} (Proficient)"
+            elif s_val:
                 skills_dict[s_label] = s_val
 
         # Spells & Cantrips (Structured parsing with level, DC, damage formulas, and header filtering)
         from core.parsers.spell_registry import parse_structured_spells, sanitize_character_weapons
         spells_list = parse_structured_spells(fields)
+        for s in spells_list:
+            if isinstance(s, dict):
+                s_name = s.get("name", "")
+                lvl = str(s.get("level", "")).lower()
+                is_cantrip = "cantrip" in lvl or lvl == "0" or any(c in s_name.lower() for c in ["light", "guidance", "mending", "prestidigitation", "shocking grasp", "sorcerous burst", "fire bolt"])
+                s["is_cantrip"] = is_cantrip
+                s["prepared"] = True if is_cantrip else False
         weapons = sanitize_character_weapons(weapons, spells_list)
 
         spell_ability = _clean(fields.get("spellCastingAbility0") or fields.get("SpellcastingAbility") or fields.get("SpellAbility") or "")
         spell_save_dc = _clean(fields.get("spellSaveDC0") or fields.get("SpellSaveDC") or "")
         spell_atk_bonus = _clean(fields.get("spellAtkBonus0") or fields.get("SpellAttackBonus") or fields.get("SpellAtkBonus") or "")
 
-        # Roleplay / Narrative Background
-        backstory = _clean(fields.get("Backstory") or fields.get("BackgroundHistory") or "")
-        personality = _clean(fields.get("PersonalityTraits ") or fields.get("PersonalityTraits") or fields.get("Personality") or "")
-        ideals = _clean(fields.get("Ideals") or "")
-        bonds = _clean(fields.get("Bonds") or "")
-        flaws = _clean(fields.get("Flaws") or "")
-        appearance = _clean(fields.get("Appearance") or "")
-        allies = _clean(fields.get("AlliesOrganizations") or fields.get("Allies") or "")
+        # Roleplay / Narrative Background & Backstory
+        from core.parsers.dnd5e_parser import clean_backstory_text
+
+        raw_bs = clean_backstory_text(fields.get("Backstory") or fields.get("BackgroundHistory") or "")
+        raw_an1 = clean_backstory_text(fields.get("AdditionalNotes1") or "")
+        raw_an2 = clean_backstory_text(fields.get("AdditionalNotes2") or fields.get("AdditionalNotes") or "")
+
+        # If Backstory was wrapped across D&D Beyond columns into AdditionalNotes1 and AdditionalNotes2:
+        if raw_an1 and ("nights, she" in raw_an1 or not fields.get("Notes")):
+            full_backstory = " ".join(filter(None, [raw_bs, raw_an1, raw_an2])).strip()
+            additional_notes = ""
+        else:
+            full_backstory = raw_bs
+            additional_notes = "\n\n".join(filter(None, [raw_an1, raw_an2])).strip()
+
+        personality = clean_backstory_text(fields.get("PersonalityTraits ") or fields.get("PersonalityTraits") or fields.get("Personality") or "")
+        ideals = clean_backstory_text(fields.get("Ideals") or "")
+        bonds = clean_backstory_text(fields.get("Bonds") or "")
+        flaws = clean_backstory_text(fields.get("Flaws") or "")
+        appearance = clean_backstory_text(fields.get("Appearance") or "")
+        allies = clean_backstory_text(fields.get("AlliesOrganizations") or fields.get("Allies") or "")
+
+        roleplay_anchors = {
+            "personality_traits": personality,
+            "ideals": ideals,
+            "bonds": bonds,
+            "flaws": flaws,
+            "allies_and_organizations": allies
+        }
+
+        # Spell Slots Extraction
+        spell_slots = {}
+        for rank in range(1, 10):
+            total_slots = _int_val(fields.get(f"SlotsTotal{rank}") or fields.get(f"SlotsTotal_{rank}") or fields.get(f"SpellSlots_{rank}_Total"), 0)
+            if total_slots == 0:
+                for h_idx in range(12):
+                    hdr = str(fields.get(f"spellHeader{h_idx}") or "")
+                    slot_hdr = str(fields.get(f"spellSlotHeader{h_idx}") or "")
+                    if re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
+                        m_s = re.search(r'(\d+)\s+Slots?', slot_hdr, re.IGNORECASE)
+                        if m_s:
+                            total_slots = int(m_s.group(1))
+                            break
+            cur_slots = _int_val(fields.get(f"SlotsRemaining{rank}") or fields.get(f"SlotsRemaining_{rank}"), total_slots)
+            spell_slots[f"level_{rank}"] = {"current": cur_slots, "max": total_slots}
 
         custom_meters = {
-            "hit_dice": {"current": char_level, "max": char_level, "label": f"Hit Dice ({hit_dice})"},
-            "speed": {"current": 30, "max": 30, "label": f"Speed ({clean_speed})"}
+            "hit_dice": {"current": char_level, "max": char_level, "label": f"Hit Dice ({hit_dice})", "reset_on": "long_rest"},
         }
+        all_features_str = " ".join(features_list)
+        if "Font of Magic" in all_features_str or "Sorcery Points" in all_features_str:
+            sp_match = re.search(r'(\d+)\s*SP', all_features_str)
+            sp_max = int(sp_match.group(1)) if sp_match else char_level
+            custom_meters["sorcery_points"] = {"current": sp_max, "max": sp_max, "label": "Sorcery Points", "reset_on": "long_rest"}
+        if "Innate Sorcery" in all_features_str:
+            custom_meters["innate_sorcery"] = {"current": 2, "max": 2, "label": "Innate Sorcery", "reset_on": "long_rest"}
+        if "Draconic Cry" in all_features_str:
+            custom_meters["draconic_cry"] = {"current": 2, "max": 2, "label": "Draconic Cry", "reset_on": "long_rest"}
+        if "Healing Hands" in all_features_str:
+            custom_meters["healing_hands"] = {"current": 1, "max": 1, "label": "Healing Hands (2d4)", "reset_on": "long_rest"}
+        if "Magical Tinkering" in all_features_str:
+            custom_meters["magical_tinkering"] = {"current": max(1, int_mod), "max": max(1, int_mod), "label": "Magical Tinkering Objects", "reset_on": "other"}
+        if "Celestial Revelation" in all_features_str:
+            custom_meters["celestial_revelation"] = {"current": 1, "max": 1, "label": "Celestial Revelation", "reset_on": "long_rest"}
+        if "Blood Maledict" in all_features_str:
+            custom_meters["blood_maledict"] = {"current": 1, "max": 1, "label": "Blood Maledict", "reset_on": "short_rest"}
+        custom_meters.pop("speed", None)
+
+        from core.parsers.dnd5e_parser import DnD5eParser
+        key_spell_mod = cha_mod if "sorcerer" in archetype.lower() or "bard" in archetype.lower() or "warlock" in archetype.lower() or "paladin" in archetype.lower() else (wis_mod if "cleric" in archetype.lower() or "druid" in archetype.lower() or "ranger" in archetype.lower() else int_mod)
+        max_prep_spells = DnD5eParser._calculate_max_prepared_spells(archetype, char_level, key_spell_mod)
 
         # Saving Throws
-        saving_throws = {
-            "Strength": _clean(fields.get("ST Strength") or f"{might_val - 10:+d}"),
-            "Dexterity": _clean(fields.get("ST Dexterity") or f"{agility_val - 10:+d}"),
-            "Constitution": _clean(fields.get("ST Constitution") or f"{vigor_val - 10:+d}"),
-            "Intelligence": _clean(fields.get("ST Intelligence") or f"{intellect_val - 10:+d}"),
-            "Wisdom": _clean(fields.get("ST Wisdom") or f"{wis_val - 10:+d}"),
-            "Charisma": _clean(fields.get("ST Charisma") or f"{cha_val - 10:+d}")
-        }
+        save_stat_map = [
+            ("Strength", "Str", "STR", str_mod),
+            ("Dexterity", "Dex", "DEX", dex_mod),
+            ("Constitution", "Con", "CON", con_mod),
+            ("Intelligence", "Int", "INT", int_mod),
+            ("Wisdom", "Wis", "WIS", wis_mod),
+            ("Charisma", "Cha", "CHA", cha_mod),
+        ]
+        saving_throws = {}
+        for s_name, s_abbr, s_upper, b_mod in save_stat_map:
+            raw_st = fields.get(f"ST {s_name}") or fields.get(f"ST {s_abbr}")
+            prof_save_marker = fields.get(f"{s_abbr}Prof") or fields.get(f"{s_name}Prof")
+            is_save_prof = False
+            if prof_save_marker:
+                p_str = str(prof_save_marker).strip().lower()
+                if p_str and p_str not in ("off", "no", "false", "0", "none"):
+                    is_save_prof = True
+            if raw_st:
+                val_clean = _clean(raw_st)
+                m_st = re.search(r'[-+]?\d+', val_clean)
+                st_num = int(m_st.group(0)) if m_st else b_mod
+                if prof_bonus_int > 0 and st_num >= b_mod + prof_bonus_int:
+                    is_save_prof = True
+                saving_throws[s_name] = val_clean
+                saving_throws[s_upper] = val_clean
+            else:
+                total_mod = b_mod + (prof_bonus_int if is_save_prof else 0)
+                saving_throws[s_name] = f"{total_mod:+d}"
+                saving_throws[s_upper] = f"{total_mod:+d}"
+
+        inspiration = str(fields.get("Inspiration", "")).strip().lower() in ("yes", "on", "1", "true")
 
         # Currency
         currency = {
@@ -997,6 +1231,20 @@ class TTRPGService:
             "conditions": [],
             "weapons": weapons,
             "inventory": inventory,
+            "weight_carried": weight_carried,
+            "encumbered": encumbered,
+            "push_drag_lift": push_drag_lift,
+            "gender": char_gender,
+            "age": char_age,
+            "size": char_size,
+            "height": char_height,
+            "weight": char_weight,
+            "alignment": char_alignment,
+            "faith": char_faith,
+            "skin": char_skin,
+            "eyes": char_eyes,
+            "hair": char_hair,
+            "creature_type": creature_type,
             "proficiencies": prof_lang,
             "proficiencies_armor": prof_armor,
             "proficiencies_weapons": prof_weapons,
@@ -1014,13 +1262,21 @@ class TTRPGService:
             "spellcasting_ability": spell_ability,
             "spell_save_dc": spell_save_dc,
             "spell_attack_bonus": spell_atk_bonus,
-            "backstory": backstory,
+            "ability_save_dc": _int_val(spell_save_dc, 8 + prof_bonus_int + int_mod),
+            "inspiration": inspiration,
+            "spell_slots": spell_slots,
+            "max_prepared_leveled_spells": max_prep_spells,
+            "attuned_magic_items": {"current": 0, "max": 3},
+            "roleplay_anchors": roleplay_anchors,
+            "backstory": full_backstory,
+            "additional_notes": additional_notes,
             "personality_traits": personality,
             "ideals": ideals,
             "bonds": bonds,
             "flaws": flaws,
             "appearance": appearance,
-            "allies": allies
+            "allies": allies,
+            "allies_and_organizations": allies
         }
 
     def _parse_character_with_gemini(self, filename: str, raw_bytes: bytes) -> Optional[Dict[str, Any]]:
@@ -1062,6 +1318,21 @@ Extract the character information into valid JSON with this exact schema:
   "name": "<character name or handle>",
   "player_name": "<player name or 'Player'>",
   "archetype": "<class/role, level/rank, race/ancestry/background, e.g. 'Barbarian 1 (Human, Hunter)' or 'Elf Rogue 1'>",
+  "species": "<race or species, e.g. 'Sea Elf', 'Human'>",
+  "background": "<background, e.g. 'Outlander', 'Noble'>",
+  "saving_throws": {"Strength": "<bonus>", "Dexterity": "<bonus>", "Constitution": "<bonus>", "Intelligence": "<bonus>", "Wisdom": "<bonus>", "Charisma": "<bonus>"},
+  "backstory": "<full character backstory or personal history narrative>",
+  "personality_traits": "<personality traits>",
+  "ideals": "<ideals>",
+  "bonds": "<bonds>",
+  "flaws": "<flaws>",
+  "roleplay_anchors": {
+     "personality_traits": "<traits>",
+     "ideals": "<ideals>",
+     "bonds": "<bonds>",
+     "flaws": "<flaws>",
+     "allies_and_organizations": "<allies>"
+  },
   "level": <integer level or role rank, e.g. 1>,
   "experience_points": <integer XP or 0>,
   "max_health": <integer maximum HP / Hits>,
@@ -1124,6 +1395,15 @@ Respond ONLY with valid JSON."""
                             # Sanitize spells if present
                             if "spells" in data and isinstance(data["spells"], list):
                                 data["spells"] = sanitize_parsed_spells(data["spells"])
+                            arch = data.get("archetype") or ""
+                            if (not data.get("species") or not data.get("background")) and "(" in arch and ")" in arch:
+                                p_m = re.search(r'\((.*?)\)', arch)
+                                if p_m:
+                                    p_parts = [p.strip() for p in p_m.group(1).split(",")]
+                                    if not data.get("species") and len(p_parts) > 0:
+                                        data["species"] = p_parts[0]
+                                    if not data.get("background") and len(p_parts) > 1:
+                                        data["background"] = p_parts[1]
                             # Normalize ruleset detection
                             sys_name_low = str(data.get("system_name") or "").lower()
                             r = (data.get("ruleset") or "").strip().lower()
@@ -1503,7 +1783,26 @@ Respond ONLY with valid JSON."""
             if ch_payload.get("weapons"):
                 existing["weapons"] = ch_payload["weapons"]
             if ch_payload.get("inventory"):
-                existing["inventory"] = ch_payload["inventory"]
+                inv_list = ch_payload["inventory"]
+                cleaned_inv = []
+                for itm in inv_list:
+                    if isinstance(itm, str):
+                        s = itm.strip()
+                        if "(" in s and ")" not in s:
+                            s += ")"
+                        cleaned_inv.append(s)
+                    elif isinstance(itm, dict):
+                        inm = str(itm.get("name") or "").strip()
+                        if "(" in inm and ")" not in inm:
+                            itm["name"] = inm + ")"
+                        cleaned_inv.append(itm)
+                    else:
+                        cleaned_inv.append(str(itm))
+                existing["inventory"] = cleaned_inv
+                existing["live_inventory"] = [
+                    (x if isinstance(x, dict) else {"name": x, "category": "utility", "genre": existing.get("ruleset", "fantasy_d20"), "status": "active"})
+                    for x in cleaned_inv
+                ]
             if ch_payload.get("proficiencies"):
                 existing["proficiencies"] = ch_payload["proficiencies"]
             if ch_payload.get("prof_bonus"):
@@ -1522,7 +1821,9 @@ Respond ONLY with valid JSON."""
             for rich_k in (
                 "senses", "defenses", "resistances", "initiative", "proficiencies_armor", "proficiencies_weapons", "proficiencies_tools",
                 "proficiencies_languages", "spellcasting_ability", "spell_save_dc", "spell_attack_bonus",
-                "backstory", "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies"
+                "weight_carried", "encumbered", "push_drag_lift", "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
+                "creature_type", "backstory", "additional_notes",
+                "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies"
             ):
                 if ch_payload.get(rich_k):
                     existing[rich_k] = ch_payload[rich_k]
@@ -3014,8 +3315,20 @@ Respond in JSON with schema:
             or (prev.get("inventory") if prev else None)
             or []
         )
-        if inv_resolved and isinstance(inv_resolved, list) and len(inv_resolved) > 0 and isinstance(inv_resolved[0], dict):
-            inv_resolved = [item.get("name", str(item)) if isinstance(item, dict) else str(item) for item in inv_resolved]
+        if inv_resolved and isinstance(inv_resolved, list):
+            cleaned_inv = []
+            for item in inv_resolved:
+                if isinstance(item, dict):
+                    inm = str(item.get("name") or "").strip()
+                    if "(" in inm and ")" not in inm:
+                        item["name"] = inm + ")"
+                    cleaned_inv.append(item)
+                else:
+                    s = str(item).strip()
+                    if "(" in s and ")" not in s:
+                        s += ")"
+                    cleaned_inv.append(s)
+            inv_resolved = cleaned_inv
 
         char_entry = {
             "id": char_id,
@@ -3055,7 +3368,10 @@ Respond in JSON with schema:
             "class_and_level", "senses", "defenses", "resistances", "proficiencies_armor", "proficiencies_weapons",
             "proficiencies_tools", "proficiencies_languages", "head_sp", "body_sp", "humanity",
             "spellcasting_ability", "spell_save_dc", "spell_attack_bonus",
-            "backstory", "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies"
+            "weight_carried", "encumbered", "push_drag_lift", "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
+            "creature_type", "backstory", "additional_notes",
+            "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies",
+            "inspiration", "ability_save_dc", "attuned_magic_items", "spell_slots", "roleplay_anchors", "native_system_data"
         ):
             if opt_key in char_payload and char_payload[opt_key] is not None:
                 char_entry[opt_key] = char_payload[opt_key]
@@ -3324,9 +3640,11 @@ Respond in JSON with schema:
                 for it in items:
                     target_name = str(it).strip().lower()
                     for idx, cur_it in enumerate(list(current_inv)):
-                        if cur_it.lower() == target_name or target_name in cur_it.lower():
+                        cur_name = (cur_it.get("name") if isinstance(cur_it, dict) else str(cur_it)).strip().lower()
+                        if cur_name == target_name or target_name in cur_name:
                             removed = current_inv.pop(idx)
-                            modified_items.append(removed)
+                            rem_name = removed.get("name", target_name) if isinstance(removed, dict) else str(removed)
+                            modified_items.append(rem_name)
                             break
             if weapons:
                 for w in weapons:
@@ -3706,3 +4024,221 @@ Return ONLY valid JSON.
             if clean in c_data.get("name", "").lower() or clean in c_id.lower():
                 return c_id, c_data
         return None, None
+
+    def level_up_character(self, character_name: str, target_level: int) -> Dict[str, Any]:
+        """Advances a character to target_level and persists campaign state."""
+        char_id, char = self._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+        res = level_up_dnd_character(char, target_level)
+        if res.get("status") == "success":
+            self.save_active_campaign_state()
+        return res
+
+    def adjust_spell_slot(self, character_id: str, spell_level: int, delta: int) -> Dict[str, Any]:
+        """
+        Directly increments or decrements active spell slots from card pip clicks.
+        """
+        if not self.active_state:
+            return {"status": "error", "message": "No active campaign session."}
+
+        char = self.active_state.get("characters", {}).get(character_id)
+        if not char:
+            _, char = self._find_character(character_id)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_id}' not found."}
+
+        slots = char.setdefault("native_system_data", {}).setdefault("spell_slots", {})
+        slot_key = f"level_{spell_level}"
+
+        if slot_key not in slots and "spell_slots" in char and slot_key in char["spell_slots"]:
+            slots[slot_key] = char["spell_slots"][slot_key]
+
+        if slot_key not in slots:
+            return {"status": "error", "message": f"Slot level {spell_level} not found."}
+
+        s_data = slots[slot_key]
+        new_cur = max(0, min(s_data["max"], s_data["current"] + delta))
+        s_data["current"] = new_cur
+
+        if "spell_slots" in char and slot_key in char["spell_slots"]:
+            char["spell_slots"][slot_key]["current"] = new_cur
+
+        self.save_active_campaign_state()
+        return {
+            "status": "success",
+            "character_id": character_id,
+            "level": spell_level,
+            "current": new_cur,
+            "max": s_data["max"]
+        }
+
+
+# Full Caster Slot Table (Levels 1-20 -> Ranks 1-9)
+FULL_CASTER_TABLE = {
+    1:  [2, 0, 0, 0, 0, 0, 0, 0, 0],
+    2:  [3, 0, 0, 0, 0, 0, 0, 0, 0],
+    3:  [4, 2, 0, 0, 0, 0, 0, 0, 0],
+    4:  [4, 3, 0, 0, 0, 0, 0, 0, 0],
+    5:  [4, 3, 2, 0, 0, 0, 0, 0, 0],
+    6:  [4, 3, 3, 0, 0, 0, 0, 0, 0],
+    7:  [4, 3, 3, 1, 0, 0, 0, 0, 0],
+    8:  [4, 3, 3, 2, 0, 0, 0, 0, 0],
+    9:  [4, 3, 3, 3, 1, 0, 0, 0, 0],
+    10: [4, 3, 3, 3, 2, 0, 0, 0, 0],
+    11: [4, 3, 3, 3, 2, 1, 0, 0, 0],
+    12: [4, 3, 3, 3, 2, 1, 0, 0, 0],
+    13: [4, 3, 3, 3, 2, 1, 1, 0, 0],
+    14: [4, 3, 3, 3, 2, 1, 1, 0, 0],
+    15: [4, 3, 3, 3, 2, 1, 1, 1, 0],
+    16: [4, 3, 3, 3, 2, 1, 1, 1, 0],
+    17: [4, 3, 3, 3, 2, 1, 1, 1, 1],
+    18: [4, 3, 3, 3, 3, 1, 1, 1, 1],
+    19: [4, 3, 3, 3, 3, 2, 1, 1, 1],
+    20: [4, 3, 3, 3, 3, 2, 2, 1, 1],
+}
+
+# Half Caster / Artificer Slot Table (Levels 1-20 -> Ranks 1-5)
+HALF_CASTER_TABLE = {
+    1:  [2, 0, 0, 0, 0],
+    2:  [2, 0, 0, 0, 0],
+    3:  [3, 0, 0, 0, 0],
+    4:  [3, 0, 0, 0, 0],
+    5:  [4, 2, 0, 0, 0],
+    6:  [4, 2, 0, 0, 0],
+    7:  [4, 3, 0, 0, 0],
+    8:  [4, 3, 0, 0, 0],
+    9:  [4, 3, 2, 0, 0],
+    10: [4, 3, 2, 0, 0],
+    11: [4, 3, 3, 0, 0],
+    12: [4, 3, 3, 0, 0],
+    13: [4, 3, 3, 1, 0],
+    14: [4, 3, 3, 1, 0],
+    15: [4, 3, 3, 2, 0],
+    16: [4, 3, 3, 2, 0],
+    17: [4, 3, 3, 3, 1],
+    18: [4, 3, 3, 3, 1],
+    19: [4, 3, 3, 3, 2],
+    20: [4, 3, 3, 3, 2],
+}
+
+
+def calculate_dnd_proficiency(level: int) -> int:
+    return 2 + ((level - 1) // 4)
+
+
+def level_up_dnd_character(char_data: Dict[str, Any], target_level: int) -> Dict[str, Any]:
+    """
+    Scales a D&D 5e character to target_level:
+    - Bumps Hit Dice and Max HP (using fixed rule average + CON mod)
+    - Recomputes Proficiency Bonus (+2 to +6)
+    - Updates 1st through 9th level spell slots
+    - Updates Ability Save DC and Spell Attack Bonus
+    - Updates max prepared leveled spells allowance
+    """
+    native = char_data.setdefault("native_system_data", {})
+    core = char_data.setdefault("universal_core", {})
+
+    old_level = char_data.get("level", 1)
+    if target_level <= old_level:
+        return {"status": "noop", "message": f"Character already level {old_level}."}
+
+    # Extract Constitution Modifier
+    scores = native.get("ability_scores", {})
+    con_val = scores.get("CON", 10)
+    con_mod = (con_val - 10) // 2
+
+    # Extract Spellcasting Ability Modifier
+    spell_ability = native.get("spellcasting_ability", "INT")
+    key_val = scores.get(spell_ability, 10)
+    key_mod = (key_val - 10) // 2
+
+    # 1. Hit Dice & Hit Points Scaling
+    class_str = native.get("class_level", core.get("archetype", "Adventurer 1"))
+    hit_die = 8
+    if any(k in class_str.lower() for k in ["sorcerer", "wizard"]):
+        hit_die = 6
+    elif any(k in class_str.lower() for k in ["fighter", "paladin", "ranger"]):
+        hit_die = 10
+    elif "barbarian" in class_str.lower():
+        hit_die = 12
+
+    avg_hp_gain = (hit_die // 2) + 1 + con_mod
+    levels_gained = target_level - old_level
+    hp_entry = char_data.setdefault("vitals", {}).setdefault("health", {"current": 10, "max": 10})
+    hp_entry["max"] += (avg_hp_gain * levels_gained)
+    hp_entry["current"] += (avg_hp_gain * levels_gained)
+
+    # 2. Update Level & Proficiency
+    char_data["level"] = target_level
+    core["level"] = target_level
+    clean_base_class = re.sub(r'\d+', '', class_str).strip()
+    updated_class_str = f"{clean_base_class} {target_level}"
+    native["class_level"] = updated_class_str
+    core["archetype"] = updated_class_str
+
+    new_prof = calculate_dnd_proficiency(target_level)
+    native["proficiency_bonus"] = new_prof
+    native["ability_save_dc"] = 8 + new_prof + key_mod
+    native["spell_attack_bonus"] = new_prof + key_mod
+
+    # 3. Update Hit Dice Meter
+    meters = char_data.setdefault("custom_meters", {})
+    meters["hit_dice"] = {
+        "label": f"Hit Dice ({target_level}d{hit_die})",
+        "current": target_level,
+        "max": target_level,
+        "reset_on": "long_rest"
+    }
+
+    # 4. Spell Slots Matrix Scaling
+    is_full = any(c in class_str.lower() for c in ["sorcerer", "wizard", "cleric", "druid", "bard"])
+    is_half = any(c in class_str.lower() for c in ["artificer", "paladin", "ranger"])
+
+    spell_slots = native.setdefault("spell_slots", {})
+
+    if is_full:
+        slot_array = FULL_CASTER_TABLE.get(min(20, target_level), [0]*9)
+        for rank in range(1, 10):
+            max_s = slot_array[rank - 1]
+            spell_slots[f"level_{rank}"] = {"current": max_s, "max": max_s}
+
+        # Prepared cap for Full Casters
+        if "sorcerer" in class_str.lower():
+            sorc_caps = {1: 2, 2: 4, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 11,
+                         11: 12, 12: 12, 13: 13, 14: 13, 15: 14, 16: 14, 17: 15, 18: 15, 19: 15, 20: 15}
+            native["max_prepared_leveled_spells"] = sorc_caps.get(target_level, target_level + 1)
+            # Sorcery Points scale 1:1 with level starting at level 2
+            meters["sorcery_points"] = {
+                "label": "Sorcery Points",
+                "current": target_level,
+                "max": target_level,
+                "reset_on": "long_rest"
+            }
+        else:
+            native["max_prepared_leveled_spells"] = max(1, key_mod + target_level)
+
+    elif is_half:
+        slot_array = HALF_CASTER_TABLE.get(min(20, target_level), [0]*5)
+        for rank in range(1, 6):
+            max_s = slot_array[rank - 1]
+            spell_slots[f"level_{rank}"] = {"current": max_s, "max": max_s}
+        for rank in range(6, 10):
+            spell_slots[f"level_{rank}"] = {"current": 0, "max": 0}
+
+        native["max_prepared_leveled_spells"] = max(1, key_mod + (target_level // 2))
+
+    # Synchronize top-level fields if char_data tracks them
+    char_data["spell_slots"] = spell_slots
+    char_data["max_prepared_leveled_spells"] = native.get("max_prepared_leveled_spells", 0)
+
+    return {
+        "status": "success",
+        "character": char_data.get("name"),
+        "new_level": target_level,
+        "max_hp": hp_entry["max"],
+        "proficiency_bonus": new_prof,
+        "save_dc": native["ability_save_dc"],
+        "max_prepared_spells": native.get("max_prepared_leveled_spells", 0),
+        "spell_slots": spell_slots
+    }

@@ -485,6 +485,14 @@ class CharacterVaultService:
             if "humanity" in ch:
                 char_record["humanity"] = ch["humanity"]
 
+            for rich_k in (
+                "weight_carried", "encumbered", "push_drag_lift",
+                "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
+                "creature_type", "backstory", "additional_notes"
+            ):
+                if rich_k in ch and ch[rich_k] is not None:
+                    char_record[rich_k] = ch[rich_k]
+
             self._save_character(char_record)
             saved_characters.append(char_record)
             logger.info(f"[VAULT] Imported '{c_name}' into vault from document '{filename}' (Ruleset: {char_record['ruleset_label']}).")
@@ -513,11 +521,16 @@ class CharacterVaultService:
         tagged_inv = []
         for item in (ch.get("inventory") or []):
             if isinstance(item, dict):
+                inm = str(item.get("name") or "").strip()
+                if "(" in inm and ")" not in inm:
+                    item["name"] = inm + ")"
                 tagged_inv.append(item)
             else:
                 s_item = str(item).strip()
                 if not s_item:
                     continue
+                if "(" in s_item and ")" not in s_item:
+                    s_item += ")"
                 lower_i = s_item.lower()
                 cat = "utility"
                 if any(w in lower_i for w in ["sword", "dagger", "axe", "mace", "rapier", "blade"]):
@@ -584,7 +597,23 @@ class CharacterVaultService:
             "semantic_skills": ch.get("semantic_skills") or [],
             "tagged_inventory": tagged_inv,
             "tagged_traits": tagged_traits,
-            "backstory": ch.get("backstory") or ""
+            "backstory": ch.get("backstory") or "",
+            "additional_notes": ch.get("additional_notes") or "",
+            "roleplay_anchors": ch.get("roleplay_anchors") or (ch.get("universal_core", {}).get("roleplay_anchors") if isinstance(ch.get("universal_core"), dict) else {}),
+            "custom_meters": ch.get("custom_meters") or (ch.get("universal_core", {}).get("custom_meters") if isinstance(ch.get("universal_core"), dict) else {}),
+            "description": {
+                "gender": ch.get("gender") or "",
+                "age": ch.get("age") or "",
+                "size": ch.get("size") or "",
+                "height": ch.get("height") or "",
+                "weight": ch.get("weight") or "",
+                "alignment": ch.get("alignment") or "",
+                "faith": ch.get("faith") or "",
+                "skin": ch.get("skin") or "",
+                "eyes": ch.get("eyes") or "",
+                "hair": ch.get("hair") or "",
+                "creature_type": ch.get("creature_type") or "",
+            }
         }
 
     def _build_native_system_data(self, ch: Dict[str, Any]) -> Dict[str, Any]:
@@ -659,7 +688,14 @@ class CharacterVaultService:
             "spell_save_dc": ch.get("spell_save_dc") or "",
             "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
             "passives": ch.get("passives") or {},
-            "senses": ch.get("senses") or ""
+            "senses": ch.get("senses") or "",
+            "inspiration": bool(ch.get("inspiration", False)),
+            "ability_save_dc": ch.get("ability_save_dc") or ch.get("spell_save_dc") or "",
+            "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
+            "attuned_magic_items": ch.get("attuned_magic_items") or {"current": 0, "max": 3},
+            "spell_slots": ch.get("spell_slots") or {},
+            "custom_meters": ch.get("custom_meters") or (ch.get("universal_core", {}).get("custom_meters") if isinstance(ch.get("universal_core"), dict) else {}),
+            "roleplay_anchors": ch.get("roleplay_anchors") or (ch.get("universal_core", {}).get("roleplay_anchors") if isinstance(ch.get("universal_core"), dict) else {})
         }
 
     def import_from_campaign(
@@ -887,11 +923,35 @@ class CharacterVaultService:
 
         # Merge new incoming data
         merged.update(char_data)
+        for rich_k in (
+            "weight_carried", "encumbered", "push_drag_lift",
+            "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
+            "creature_type", "backstory", "additional_notes",
+            "inspiration", "ability_save_dc", "attuned_magic_items", "spell_slots", "custom_meters", "roleplay_anchors"
+        ):
+            if rich_k in char_data and char_data[rich_k] is not None:
+                merged[rich_k] = char_data[rich_k]
         if "spells" in merged and isinstance(merged["spells"], list):
             from core.parsers.spell_registry import sanitize_parsed_spells
             merged["spells"] = sanitize_parsed_spells(merged["spells"])
         if "weapons" in merged and isinstance(merged["weapons"], list):
             merged["weapons"] = sanitize_character_weapons(merged["weapons"], merged.get("spells"))
+        if "inventory" in merged and isinstance(merged["inventory"], list):
+            clean_inv = []
+            for item in merged["inventory"]:
+                if isinstance(item, str):
+                    s = item.strip()
+                    if "(" in s and ")" not in s:
+                        s += ")"
+                    clean_inv.append(s)
+                elif isinstance(item, dict):
+                    inm = str(item.get("name") or "").strip()
+                    if "(" in inm and ")" not in inm:
+                        item["name"] = inm + ")"
+                    clean_inv.append(item)
+                else:
+                    clean_inv.append(item)
+            merged["inventory"] = clean_inv
         if not merged.get("id"):
             base_name = re.sub(r'[^a-zA-Z0-9_]', '', merged.get("name", "hero").lower())
             now_str = _utc_now_iso().replace('-', '').replace(':', '').replace('.', '')[:14]
