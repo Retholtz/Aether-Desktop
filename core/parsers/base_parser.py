@@ -13,47 +13,54 @@ from core.project_service import ProjectService
 logger = get_logger("BaseParser")
 
 
-@dataclass
-class UniversalCharacterCore:
-    name: str
-    player_name: str
-    archetype: str
-    level: int
-    # 0-100 Normalized Base Attributes
-    normalized_attributes: Dict[str, int] = field(default_factory=lambda: {
-        "might": 50,      # Physical strength, brute force, load capacity
-        "agility": 50,    # Speed, reflexes, dexterity, fine motor
-        "vigor": 50,      # Toughness, endurance, health reservoir
-        "intellect": 50,  # Logic, memory, technology, academic knowledge
-        "presence": 50    # Willpower, empathy, social sway, sanity/resolve
-    })
-    semantic_skills: List[Dict[str, str]] = field(default_factory=list)
-    tagged_inventory: List[Dict[str, Any]] = field(default_factory=list)
-    tagged_traits: List[Dict[str, str]] = field(default_factory=list)
-    backstory: str = ""
-    roleplay_anchors: Dict[str, Any] = field(default_factory=dict)
-    custom_meters: Dict[str, Any] = field(default_factory=dict)
+class UniversalCharacterCore(dict):
+    """
+    Normalized core roleplay data model across genres and systems.
+    Subclasses dict to support direct JSON serialization, dict indexing, and dot attribute access.
+    """
+    def __init__(
+        self,
+        name: str,
+        player_name: str,
+        archetype: str,
+        level: int,
+        normalized_attributes: Optional[Dict[str, int]] = None,
+        semantic_skills: Optional[List[Dict[str, str]]] = None,
+        tagged_inventory: Optional[List[Dict[str, Any]]] = None,
+        tagged_traits: Optional[List[Dict[str, str]]] = None,
+        backstory: str = "",
+        roleplay_anchors: Optional[Dict[str, Any]] = None,
+        custom_meters: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ):
+        super().__init__(
+            name=name,
+            player_name=player_name,
+            archetype=archetype,
+            level=level,
+            normalized_attributes=normalized_attributes or {
+                "might": 50, "agility": 50, "vigor": 50, "intellect": 50, "presence": 50
+            },
+            semantic_skills=semantic_skills or [],
+            tagged_inventory=tagged_inventory or [],
+            tagged_traits=tagged_traits or [],
+            backstory=backstory,
+            roleplay_anchors=roleplay_anchors or {},
+            custom_meters=custom_meters or {},
+            **kwargs
+        )
+
+    def __getattr__(self, item: str) -> Any:
+        try:
+            return self[item]
+        except KeyError:
+            raise AttributeError(f"'UniversalCharacterCore' object has no attribute '{item}'")
+
+    def __setattr__(self, key: str, value: Any):
+        self[key] = value
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "name": self.name,
-            "player_name": self.player_name,
-            "archetype": self.archetype,
-            "level": self.level,
-            "normalized_attributes": self.normalized_attributes,
-            "semantic_skills": self.semantic_skills,
-            "tagged_inventory": self.tagged_inventory,
-            "tagged_traits": self.tagged_traits,
-            "backstory": self.backstory,
-            "roleplay_anchors": self.roleplay_anchors,
-            "custom_meters": self.custom_meters
-        }
-
-    def __getitem__(self, item: str) -> Any:
-        return getattr(self, item)
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return getattr(self, key, default)
+        return dict(self)
 
 
 class BaseSheetParser(ABC):

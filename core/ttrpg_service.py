@@ -735,7 +735,7 @@ class TTRPGService:
                     race = p_parts[0]
                 if not bg and len(p_parts) > 1:
                     bg = p_parts[1]
-        clean_cls_lvl = re.sub(r'\(.*?\)', '', cls_lvl).strip()
+        clean_cls_lvl = re.sub(r'[\(\[].*?[\)\]]', '', cls_lvl).strip()
         archetype = clean_cls_lvl or "Adventurer"
         cls_lvl = clean_cls_lvl
 
@@ -1539,8 +1539,20 @@ Respond ONLY with valid JSON."""
                     c["native_genre"] = "heroic_fantasy"
             return c
 
-        # 1. Try PDF Form Fields (AcroForm widgets)
+        # 1. Try high-fidelity DnD5eParser for D&D 5e PDFs, then fallback to AcroForm widgets
         if safe_name.lower().endswith(".pdf") and raw_bytes:
+            try:
+                from core.parsers.dnd5e_parser import DnD5eParser
+                dnd_parser = DnD5eParser()
+                form_fields = ProjectService.extract_pdf_form_fields(raw_bytes)
+                if dnd_parser.identify_system(form_fields, ""):
+                    char_data = dnd_parser.parse_sheet(raw_bytes)
+                    if char_data:
+                        results.append(_apply_override(char_data))
+                        return results
+            except Exception as e:
+                logger.warning(f"[TTRPG] DnD5eParser failed, falling back to legacy form parser: {e}")
+
             form_fields = ProjectService.extract_pdf_form_fields(raw_bytes)
             char_data = self._parse_character_from_form_fields(form_fields, safe_name)
             if char_data:

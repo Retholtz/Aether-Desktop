@@ -3241,8 +3241,9 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
             if (!parsedSpecies && inner[0]) parsedSpecies = inner[0].trim();
             if (!parsedBg && inner[1]) parsedBg = inner[1].trim();
         }
-        rawClsLvl = rawClsLvl.replace(/\s*\([^)]*\)/g, "").trim();
+        rawClsLvl = rawClsLvl.replace(/\s*\([^)]*\)/g, "").replace(/\s*\[[^\]]*\]/g, "").trim();
     }
+    rawClsLvl = rawClsLvl.replace(/\s*\[[^\]]*\]/g, "").trim();
     if (dndClassEl) dndClassEl.value = rawClsLvl;
     if (dndSpeciesEl) dndSpeciesEl.value = parsedSpecies;
     if (dndBgEl) dndBgEl.value = parsedBg;

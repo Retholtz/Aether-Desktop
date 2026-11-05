@@ -1,0 +1,1384 @@
+{
+  "schema_version": "2.1",
+  "id": "char_selanar_fenthana_root",
+  "name": "Selanar Fenthana",
+  "variant_label": "Canonical Root",
+  "player_name": "Player",
+  "level": 1,
+  "experience_points": 0,
+  "archetype": "Blood Hunter 1",
+  "species": "Sea Elf",
+  "background": "Outlander",
+  "ruleset": "dnd_5e",
+  "ruleset_label": "D&D 5E",
+  "native_genre": "heroic_fantasy",
+  "native_system": "dnd_5e",
+  "vitals": {
+    "health": {
+      "current": 12,
+      "max": 12,
+      "label": "Health"
+    },
+    "guard": {
+      "current": 17,
+      "max": 17,
+      "label": "Armor Defense"
+    }
+  },
+  "attributes": {
+    "Strength": 10,
+    "Dexterity": 16,
+    "Constitution": 14,
+    "Intelligence": 14,
+    "Wisdom": 12,
+    "Charisma": 10,
+    "STR": 10,
+    "DEX": 16,
+    "CON": 14,
+    "INT": 14,
+    "WIS": 12,
+    "CHA": 10
+  },
+  "armor_class": 17,
+  "speed": "30 ft. (Walking), 30 ft. (Swimming)",
+  "hit_dice": "1d10",
+  "weapons": [
+    {
+      "name": "Crossbow, Light",
+      "atk_bonus": "+5",
+      "damage": "1d8+3 Piercing",
+      "notes": "Simple, Ammunition, Loading, Range, Two-Handed, Range (80/320)"
+    },
+    {
+      "name": "Shortsword",
+      "atk_bonus": "+5",
+      "damage": "1d6+3 Piercing",
+      "notes": "Martial, Finesse, Light"
+    },
+    {
+      "name": "Unarmed Strike",
+      "atk_bonus": "+2",
+      "damage": "1 Bludgeoning",
+      "notes": ""
+    }
+  ],
+  "currency": {
+    "cp": 0,
+    "sp": 0,
+    "ep": 0,
+    "gp": 5,
+    "pp": 0
+  },
+  "inventory": [
+    {
+      "name": "Studded Leather",
+      "qty": "1",
+      "weight": "13 lb.",
+      "category": "Armor",
+      "notes": ""
+    },
+    {
+      "name": "Shield",
+      "qty": "1",
+      "weight": "6 lb.",
+      "category": "Armor",
+      "notes": ""
+    },
+    {
+      "name": "Crossbow, Light",
+      "qty": "1",
+      "weight": "5 lb.",
+      "category": "Weapon",
+      "notes": ""
+    },
+    {
+      "name": "Shortsword",
+      "qty": "1",
+      "weight": "2 lb.",
+      "category": "Weapon",
+      "notes": ""
+    },
+    {
+      "name": "Crossbow Bolts",
+      "qty": "20",
+      "weight": "1.5 lb.",
+      "category": "Weapon",
+      "notes": ""
+    },
+    {
+      "name": "Backpack",
+      "qty": "1",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Bedroll",
+      "qty": "1",
+      "weight": "7 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Case, Crossbow Bolt",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Weapon",
+      "notes": ""
+    },
+    {
+      "name": "Clothes, Traveler's",
+      "qty": "1",
+      "weight": "4 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Flask or Tankard",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Mess Kit",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Tool",
+      "notes": ""
+    },
+    {
+      "name": "Pouch",
+      "qty": "2",
+      "weight": "2 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Rations (1 day)",
+      "qty": "10",
+      "weight": "20 lb.",
+      "category": "Consumable",
+      "notes": ""
+    },
+    {
+      "name": "Rope, Hempen (50 feet)",
+      "qty": "1",
+      "weight": "10 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Sack",
+      "qty": "2",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Tinderbox",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Torch",
+      "qty": "5",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Waterskin",
+      "qty": "1",
+      "weight": "5 lb.",
+      "category": "Consumable",
+      "notes": ""
+    },
+    {
+      "name": "Whetstone",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Alchemist's Supplies",
+      "qty": "1",
+      "weight": "8 lb.",
+      "category": "Tool",
+      "notes": ""
+    }
+  ],
+  "features_and_traits": [
+    "* Hunter's Bane \u2022 CR",
+    "You have advantage on Wisdom (Survival) checks to track fey, fiends, or undead, as well as on Intelligence ability checks to recall information about them.",
+    "* Blood Maledict \u2022 CR",
+    "You can invoke a blood curse a number of times per short rest based on your level. You can choose to amplify the curse, losing 1d4 hit points yourself.",
+    "Creatures that do not have blood in their bodies are immune to blood curses, unless you have amplified the curse.",
+    "| 1 / Short Rest \u2022 No Action",
+    "* Blood Curses \u2022 CR",
+    "Your chosen Blood Curses for use with the <em>Blood Maledict</em> feature.",
+    "| Blood Curse of the Eyeless \u2022 CR",
+    "When a creature you can see within 30 feet of you makes an attack roll, you can use your reaction to roll one hemocraft die and subtract the number rolled from the creature\u2019s attack roll. You can choose to use this feature after the creature\u2019s roll, but before the DM determines whether the attack roll succeeds. The creature is immune if it is immune to blindness.",
+    "<em>Amplify.</em> You apply this curse to all of the creature\u2019s attack rolls until the end of the turn. You roll a new hemocraft die for each affected attack.",
+    "| Blood Curse of the Eyeless : 1 Reaction",
+    "* Darkvision \u2022 BR 23",
+    "You can see in darkness (shades of gray) up to 60 ft.",
+    "* Keen Senses \u2022 BR 23",
+    "You have proficiency in the Perception skill.",
+    "* Fey Ancestry \u2022 BR 23",
+    "You have advantage on saves against being charmed, and magic can\u2019t put you to sleep.",
+    "* Trance \u2022 BR 23",
+    "You don't need to sleep, but meditate semiconsciously for 4 hours a day. While meditating, you can dream after a fashion; such dreams are actually mental exercises that have become reflexive through years of practice. After resting in this way, you gain the same benefit that a human does from 8 hours of sleep.",
+    "* Sea Elf Training \u2022 MToF 62",
+    "You have proficiency with the spear, trident, light crossbow, and net.",
+    "* Child of the Sea \u2022 MToF 62",
+    "You have a swimming speed of 30 feet, and you can breathe air and water.",
+    "* Friend of the Sea \u2022 MToF 62",
+    "Using gestures and sounds, you can communicate simple ideas with any beast that has an innate swimming speed."
+  ],
+  "spells": [],
+  "spellcasting_ability": "",
+  "spell_save_dc": "",
+  "spell_attack_bonus": "",
+  "passives": {
+    "perception": 13,
+    "insight": 11,
+    "investigation": 12
+  },
+  "senses": "",
+  "initiative": "3",
+  "proficiencies": {
+    "skills": [
+      "Arcana",
+      "Athletics",
+      "History",
+      "Perception",
+      "Religion",
+      "Survival"
+    ],
+    "armor": "Light Armor, Medium Armor, Shields",
+    "weapons": "Simple Weapons",
+    "tools": "Thieves' Tools",
+    "languages": "Common"
+  },
+  "prof_bonus": "+2",
+  "skills": {
+    "Acrobatics": "+3",
+    "Animal Handling": "+1",
+    "Arcana": "+4 (Proficient)",
+    "Athletics": "+2 (Proficient)",
+    "Deception": "+0",
+    "History": "+4 (Proficient)",
+    "Insight": "+1",
+    "Intimidation": "+0",
+    "Investigation": "+2",
+    "Medicine": "+1",
+    "Nature": "+2",
+    "Perception": "+3 (Proficient)",
+    "Performance": "+0",
+    "Persuasion": "+0",
+    "Religion": "+4 (Proficient)",
+    "Sleight of Hand": "+3",
+    "Stealth": "+3",
+    "Survival": "+3 (Proficient)"
+  },
+  "saving_throws": {
+    "Strength": "+0",
+    "STR": 0,
+    "Dexterity": "+5",
+    "DEX": 5,
+    "Constitution": "+2",
+    "CON": 2,
+    "Intelligence": "+4",
+    "INT": 4,
+    "Wisdom": "+1",
+    "WIS": 1,
+    "Charisma": "+0",
+    "CHA": 0
+  },
+  "spell_slots": {
+    "level_1": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_2": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_3": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_4": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_5": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_6": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_7": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_8": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_9": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    }
+  },
+  "max_prepared_leveled_spells": 0,
+  "universal_core": {
+    "name": "Selanar Fenthana",
+    "player_name": "Player",
+    "archetype": "Blood Hunter 1",
+    "level": 1,
+    "normalized_attributes": {
+      "might": 50,
+      "agility": 80,
+      "vigor": 70,
+      "intellect": 70,
+      "presence": 55
+    },
+    "semantic_skills": [
+      {
+        "category": "OCCULT_ARCANA",
+        "tier": "proficient",
+        "source_skill": "Arcana"
+      },
+      {
+        "category": "INVESTIGATION_TECH",
+        "tier": "expert",
+        "source_skill": "Investigation"
+      }
+    ],
+    "tagged_inventory": [
+      {
+        "name": "Studded Leather",
+        "qty": "1",
+        "weight": "13 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Shield",
+        "qty": "1",
+        "weight": "6 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow, Light",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Shortsword",
+        "qty": "1",
+        "weight": "2 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow Bolts",
+        "qty": "20",
+        "weight": "1.5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Bedroll",
+        "qty": "1",
+        "weight": "7 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Case, Crossbow Bolt",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Clothes, Traveler's",
+        "qty": "1",
+        "weight": "4 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Flask or Tankard",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Mess Kit",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Pouch",
+        "qty": "2",
+        "weight": "2 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Rations (1 day)",
+        "qty": "10",
+        "weight": "20 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Rope, Hempen (50 feet)",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Sack",
+        "qty": "2",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Torch",
+        "qty": "5",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Waterskin",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Whetstone",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Alchemist's Supplies",
+        "qty": "1",
+        "weight": "8 lb.",
+        "category": "Tool",
+        "notes": ""
+      }
+    ],
+    "tagged_traits": [
+      {
+        "name": "* Hunter's Bane",
+        "description": "* Hunter's Bane \u2022 CR",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have advantage on Wisdom (Survival) checks to track fey, fiends, or undead, as well as on Intelligence ability checks to recall information about them.",
+        "description": "You have advantage on Wisdom (Survival) checks to track fey, fiends, or undead, as well as on Intelligence ability checks to recall information about them.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Blood Maledict",
+        "description": "* Blood Maledict \u2022 CR",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can invoke a blood curse a number of times per short rest based on your level. You can choose to amplify the curse, losing 1d4 hit points yourself.",
+        "description": "You can invoke a blood curse a number of times per short rest based on your level. You can choose to amplify the curse, losing 1d4 hit points yourself.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Creatures that do not have blood in their bodies are immune to blood curses, unless you have amplified the curse.",
+        "description": "Creatures that do not have blood in their bodies are immune to blood curses, unless you have amplified the curse.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "| 1 / Short Rest",
+        "description": "| 1 / Short Rest \u2022 No Action",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Blood Curses",
+        "description": "* Blood Curses \u2022 CR",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your chosen Blood Curses for use with the <em>Blood Maledict</em> feature.",
+        "description": "Your chosen Blood Curses for use with the <em>Blood Maledict</em> feature.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "| Blood Curse of the Eyeless",
+        "description": "| Blood Curse of the Eyeless \u2022 CR",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "When a creature you can see within 30 feet of you makes an attack roll, you can use your reaction to roll one hemocraft die and subtract the number rolled from the creature\u2019s attack roll. You can choose to use this feature after the creature\u2019s roll, but before the DM determines whether the attack roll succeeds. The creature is immune if it is immune to blindness.",
+        "description": "When a creature you can see within 30 feet of you makes an attack roll, you can use your reaction to roll one hemocraft die and subtract the number rolled from the creature\u2019s attack roll. You can choose to use this feature after the creature\u2019s roll, but before the DM determines whether the attack roll succeeds. The creature is immune if it is immune to blindness.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "<em>Amplify.</em> You apply this curse to all of the creature\u2019s attack rolls until the end of the turn. You roll a new hemocraft die for each affected attack.",
+        "description": "<em>Amplify.</em> You apply this curse to all of the creature\u2019s attack rolls until the end of the turn. You roll a new hemocraft die for each affected attack.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "| Blood Curse of the Eyeless",
+        "description": "| Blood Curse of the Eyeless : 1 Reaction",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Darkvision",
+        "description": "* Darkvision \u2022 BR 23",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can see in darkness (shades of gray) up to 60 ft.",
+        "description": "You can see in darkness (shades of gray) up to 60 ft.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Keen Senses",
+        "description": "* Keen Senses \u2022 BR 23",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have proficiency in the Perception skill.",
+        "description": "You have proficiency in the Perception skill.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Fey Ancestry",
+        "description": "* Fey Ancestry \u2022 BR 23",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have advantage on saves against being charmed, and magic can\u2019t put you to sleep.",
+        "description": "You have advantage on saves against being charmed, and magic can\u2019t put you to sleep.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Trance",
+        "description": "* Trance \u2022 BR 23",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You don't need to sleep, but meditate semiconsciously for 4 hours a day. While meditating, you can dream after a fashion; such dreams are actually mental exercises that have become reflexive through years of practice. After resting in this way, you gain the same benefit that a human does from 8 hours of sleep.",
+        "description": "You don't need to sleep, but meditate semiconsciously for 4 hours a day. While meditating, you can dream after a fashion; such dreams are actually mental exercises that have become reflexive through years of practice. After resting in this way, you gain the same benefit that a human does from 8 hours of sleep.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Sea Elf Training",
+        "description": "* Sea Elf Training \u2022 MToF 62",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have proficiency with the spear, trident, light crossbow, and net.",
+        "description": "You have proficiency with the spear, trident, light crossbow, and net.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Child of the Sea",
+        "description": "* Child of the Sea \u2022 MToF 62",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have a swimming speed of 30 feet, and you can breathe air and water.",
+        "description": "You have a swimming speed of 30 feet, and you can breathe air and water.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "* Friend of the Sea",
+        "description": "* Friend of the Sea \u2022 MToF 62",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Using gestures and sounds, you can communicate simple ideas with any beast that has an innate swimming speed.",
+        "description": "Using gestures and sounds, you can communicate simple ideas with any beast that has an innate swimming speed.",
+        "genre": "fantasy_d20"
+      }
+    ],
+    "backstory": "Born amidst the tranquil depths of the Sea of Fallen Stars, Selanar Fenthana was cradled by the undulating embrace of the ocean. The sea elf community of Elun'ethil, hidden beneath the shimmering surface, was his home. Here, life was a harmonious symphony of coral architecture and bioluminescent gardens, with the ancient rhythms of the tides dictating the ebb and flow of existence.\n\nFrom a tender age, Selanar was drawn to the mysteries of the deep. He spent his days exploring the sunken ruins and learning the secrets of the sea from the elders. His heart, however, yearned for the world beyond the aquatic haven. The surface, with its vast forests and open skies, beckoned him with the promise of untold adventures.\n\nAs he came of age, Selanar trained as a hunter, mastering the art of tracking and survival. His skills were not just confined to the water; he adapted them to the land, becoming a guardian of nature both above and below the sea. His reverence for Melora, the Wildmother, deepened, guiding his path as a protector of the natural world.\n\nTragedy struck when a band of sahuagin raiders, driven by insatiable hunger and malice, launched a brutal assault on Elun'ethil. The sea elves fought valiantly, but the surprise attack left them reeling. Selanar, leading a group of defenders, displayed unparalleled bravery. However, amidst the chaos, his younger sister, Liriel, was captured. The raiders vanished into the murky depths, leaving a trail of sorrow and rage in their wake.\n\nDevastated by the loss, Selanar vowed to rescue his sister and bring justice to the sahuagin. He embarked on a relentless quest, tracking the raiders across the sea and onto distant shores. His journey led him to the rugged coastline of the mainland, where the trail went cold. Determined not to return home without Liriel, Selanar ventured inland, adapting to the alien landscape of towering trees and sprawling plains.\n\nDuring his search, Selanar encountered the Order of the Ghostslayer, a group of blood hunters dedicated to combating supernatural threats. Intrigued by their cause and the potential to enhance his abilities, he joined their ranks. Under their tutelage, Selanar learned to harness the power of his own blood to vanquish his foes. He became a formidable warrior, feared by the dark creatures that lurked in the shadows.\n\nAs he delved deeper into the mysteries of the blood hunter, Selanar discovered a chilling truth. The sahuagin raiders were minions of a greater evil, a sea witch named Vashara. She sought to control the oceans by unleashing ancient leviathans, using captured sea elves as sacrifices to fuel her dark rituals. Liriel was to be one of these offerings.\n\nFueled by a burning desire for vengeance, Selanar's quest became a crusade against Vashara and her minions. He battled sea monsters, navigated treacherous waters, and forged alliances with other races to thwart the witch's plans. Along the way, he faced trials that tested his resolve, from the icy grasp of loneliness to the searing pain of loss. Yet, his spirit remained unbroken, driven by the love for his sister and the duty to protect his home.\n\nSelanar's journey led him to the heart of Vashara's lair, a sunken citadel shrouded in darkness. Here, he confronted the sea witch in a fierce battle, the fate of his sister and the sea hanging in the balance. With every ounce of his strength and cunning, Selanar emerged victorious, shattering Vashara's hold over the ocean depths.\n\nIn the aftermath, he found Liriel, weakened but alive, among the ruins of the citadel. Their reunion was a moment of pure joy, a glimmer of light in the darkness. Together, they returned to Elun'ethil, where Selanar was hailed as a hero. But the sea elf knew that his battle was far from over. The defeat of Vashara had created a power vacuum in the ocean's depths, with new threats rising to claim dominion. Selanar understood that his true calling was to be a guardian of the natural world, both on land and sea. With Liriel by his side, he set out once more, this time as an adventurer, determined to uphold the balance of nature and protect the innocent from the shadows that lurked in the heart of the wild.\n\nThus began the legend of Selanar Fenthana, the Sea Elf Blood Hunter, a beacon of hope in a world teeming with danger and mystery. His journey was a testament to the resilience of the spirit and the unbreakable bond of family, a tale that would echo through the ages as a reminder of the price of freedom and the valor of those who dare to defend it.",
+    "roleplay_anchors": {
+      "personality_traits": "I watch over my friends as if they were a litter of newborn pups. \nI have a lesson for every situation, drawn from observing nature.",
+      "ideals": "Nature. The natural world is more important than all the constructs of civilization. (Neutral)",
+      "bonds": "An injury to the unspoiled wilderness of my home is an injury to me.",
+      "flaws": "I am slow to trust members of other races, tribes, and societies.",
+      "allies_and_organizations": ""
+    },
+    "custom_meters": {
+      "hit_dice": {
+        "label": "Hit Dice (1d10)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "blood_maledict": {
+        "label": "Blood Maledict (Blood Curse)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "short_rest"
+      }
+    }
+  },
+  "native_system_data": {
+    "system_name": "dnd_5e",
+    "class_level": "Blood Hunter 1",
+    "is_pact_magic": false,
+    "species": "Sea Elf",
+    "background": "Outlander",
+    "inspiration": false,
+    "ability_save_dc": 10,
+    "spell_attack_bonus": "",
+    "spellcasting_ability": "",
+    "armor_class": 17,
+    "initiative_bonus": 3,
+    "speed": "30 ft. (Walking), 30 ft. (Swimming)",
+    "defenses": "",
+    "resistances": "",
+    "hit_points": {
+      "current": 12,
+      "max": 12,
+      "temp": 0,
+      "hit_die": "1d10"
+    },
+    "hit_dice": {
+      "current": 1,
+      "max": 1,
+      "die": "1d10"
+    },
+    "ability_scores": {
+      "Strength": 10,
+      "Dexterity": 16,
+      "Constitution": 14,
+      "Intelligence": 14,
+      "Wisdom": 12,
+      "Charisma": 10,
+      "STR": 10,
+      "DEX": 16,
+      "CON": 14,
+      "INT": 14,
+      "WIS": 12,
+      "CHA": 10
+    },
+    "saving_throws": {
+      "Strength": "+0",
+      "STR": 0,
+      "Dexterity": "+5",
+      "DEX": 5,
+      "Constitution": "+2",
+      "CON": 2,
+      "Intelligence": "+4",
+      "INT": 4,
+      "Wisdom": "+1",
+      "WIS": 1,
+      "Charisma": "+0",
+      "CHA": 0
+    },
+    "skills": {
+      "Acrobatics": "+3",
+      "Animal Handling": "+1",
+      "Arcana": "+4 (Proficient)",
+      "Athletics": "+2 (Proficient)",
+      "Deception": "+0",
+      "History": "+4 (Proficient)",
+      "Insight": "+1",
+      "Intimidation": "+0",
+      "Investigation": "+2",
+      "Medicine": "+1",
+      "Nature": "+2",
+      "Perception": "+3 (Proficient)",
+      "Performance": "+0",
+      "Persuasion": "+0",
+      "Religion": "+4 (Proficient)",
+      "Sleight of Hand": "+3",
+      "Stealth": "+3",
+      "Survival": "+3 (Proficient)"
+    },
+    "passives": {
+      "perception": 13,
+      "insight": 11,
+      "investigation": 12
+    },
+    "weapons": [
+      {
+        "name": "Crossbow, Light",
+        "atk_bonus": "+5",
+        "damage": "1d8+3 Piercing",
+        "notes": "Simple, Ammunition, Loading, Range, Two-Handed, Range (80/320)"
+      },
+      {
+        "name": "Shortsword",
+        "atk_bonus": "+5",
+        "damage": "1d6+3 Piercing",
+        "notes": "Martial, Finesse, Light"
+      },
+      {
+        "name": "Unarmed Strike",
+        "atk_bonus": "+2",
+        "damage": "1 Bludgeoning",
+        "notes": ""
+      }
+    ],
+    "currency": {
+      "cp": 0,
+      "sp": 0,
+      "ep": 0,
+      "gp": 5,
+      "pp": 0
+    },
+    "proficiencies": {
+      "skills": [
+        "Arcana",
+        "Athletics",
+        "History",
+        "Perception",
+        "Religion",
+        "Survival"
+      ],
+      "armor": "Light Armor, Medium Armor, Shields",
+      "weapons": "Simple Weapons",
+      "tools": "Thieves' Tools",
+      "languages": "Common"
+    },
+    "attuned_magic_items": {
+      "current": 0,
+      "max": 3
+    },
+    "spell_slots": {
+      "level_1": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_2": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_3": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_4": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_5": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_6": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_7": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_8": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_9": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      }
+    },
+    "max_prepared_leveled_spells": 0,
+    "spells": [],
+    "custom_meters": {
+      "hit_dice": {
+        "label": "Hit Dice (1d10)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "blood_maledict": {
+        "label": "Blood Maledict (Blood Curse)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "short_rest"
+      }
+    },
+    "features_and_traits": [
+      "* Hunter's Bane \u2022 CR",
+      "You have advantage on Wisdom (Survival) checks to track fey, fiends, or undead, as well as on Intelligence ability checks to recall information about them.",
+      "* Blood Maledict \u2022 CR",
+      "You can invoke a blood curse a number of times per short rest based on your level. You can choose to amplify the curse, losing 1d4 hit points yourself.",
+      "Creatures that do not have blood in their bodies are immune to blood curses, unless you have amplified the curse.",
+      "| 1 / Short Rest \u2022 No Action",
+      "* Blood Curses \u2022 CR",
+      "Your chosen Blood Curses for use with the <em>Blood Maledict</em> feature.",
+      "| Blood Curse of the Eyeless \u2022 CR",
+      "When a creature you can see within 30 feet of you makes an attack roll, you can use your reaction to roll one hemocraft die and subtract the number rolled from the creature\u2019s attack roll. You can choose to use this feature after the creature\u2019s roll, but before the DM determines whether the attack roll succeeds. The creature is immune if it is immune to blindness.",
+      "<em>Amplify.</em> You apply this curse to all of the creature\u2019s attack rolls until the end of the turn. You roll a new hemocraft die for each affected attack.",
+      "| Blood Curse of the Eyeless : 1 Reaction",
+      "* Darkvision \u2022 BR 23",
+      "You can see in darkness (shades of gray) up to 60 ft.",
+      "* Keen Senses \u2022 BR 23",
+      "You have proficiency in the Perception skill.",
+      "* Fey Ancestry \u2022 BR 23",
+      "You have advantage on saves against being charmed, and magic can\u2019t put you to sleep.",
+      "* Trance \u2022 BR 23",
+      "You don't need to sleep, but meditate semiconsciously for 4 hours a day. While meditating, you can dream after a fashion; such dreams are actually mental exercises that have become reflexive through years of practice. After resting in this way, you gain the same benefit that a human does from 8 hours of sleep.",
+      "* Sea Elf Training \u2022 MToF 62",
+      "You have proficiency with the spear, trident, light crossbow, and net.",
+      "* Child of the Sea \u2022 MToF 62",
+      "You have a swimming speed of 30 feet, and you can breathe air and water.",
+      "* Friend of the Sea \u2022 MToF 62",
+      "Using gestures and sounds, you can communicate simple ideas with any beast that has an innate swimming speed."
+    ],
+    "roleplay_anchors": {
+      "personality_traits": "I watch over my friends as if they were a litter of newborn pups. \nI have a lesson for every situation, drawn from observing nature.",
+      "ideals": "Nature. The natural world is more important than all the constructs of civilization. (Neutral)",
+      "bonds": "An injury to the unspoiled wilderness of my home is an injury to me.",
+      "flaws": "I am slow to trust members of other races, tribes, and societies.",
+      "allies_and_organizations": ""
+    },
+    "inventory": [
+      "Studded Leather",
+      "Shield",
+      "Crossbow, Light",
+      "Shortsword",
+      "Crossbow Bolts",
+      "Backpack",
+      "Bedroll",
+      "Case, Crossbow Bolt",
+      "Clothes, Traveler's",
+      "Flask or Tankard",
+      "Mess Kit",
+      "Pouch",
+      "Rations (1 day)",
+      "Rope, Hempen (50 feet)",
+      "Sack",
+      "Tinderbox",
+      "Torch",
+      "Waterskin",
+      "Whetstone",
+      "Alchemist's Supplies"
+    ],
+    "tagged_inventory": [
+      {
+        "name": "Studded Leather",
+        "qty": "1",
+        "weight": "13 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Shield",
+        "qty": "1",
+        "weight": "6 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow, Light",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Shortsword",
+        "qty": "1",
+        "weight": "2 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Crossbow Bolts",
+        "qty": "20",
+        "weight": "1.5 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Bedroll",
+        "qty": "1",
+        "weight": "7 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Case, Crossbow Bolt",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Clothes, Traveler's",
+        "qty": "1",
+        "weight": "4 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Flask or Tankard",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Mess Kit",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Pouch",
+        "qty": "2",
+        "weight": "2 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Rations (1 day)",
+        "qty": "10",
+        "weight": "20 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Rope, Hempen (50 feet)",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Sack",
+        "qty": "2",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Torch",
+        "qty": "5",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Waterskin",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Consumable",
+        "notes": ""
+      },
+      {
+        "name": "Whetstone",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Alchemist's Supplies",
+        "qty": "1",
+        "weight": "8 lb.",
+        "category": "Tool",
+        "notes": ""
+      }
+    ],
+    "weight_carried": "99.6 lb.",
+    "encumbered": "150 lb.",
+    "push_drag_lift": "300 lb.",
+    "gender": "Male",
+    "age": "214",
+    "size": "Medium",
+    "height": "5' 0\"",
+    "weight": "102",
+    "alignment": "Neutral",
+    "faith": "Melora",
+    "skin": "Tan",
+    "eyes": "Ice Blue",
+    "hair": "Blonde",
+    "creature_type": "Humanoid",
+    "backstory": "Born amidst the tranquil depths of the Sea of Fallen Stars, Selanar Fenthana was cradled by the undulating embrace of the ocean. The sea elf community of Elun'ethil, hidden beneath the shimmering surface, was his home. Here, life was a harmonious symphony of coral architecture and bioluminescent gardens, with the ancient rhythms of the tides dictating the ebb and flow of existence.\n\nFrom a tender age, Selanar was drawn to the mysteries of the deep. He spent his days exploring the sunken ruins and learning the secrets of the sea from the elders. His heart, however, yearned for the world beyond the aquatic haven. The surface, with its vast forests and open skies, beckoned him with the promise of untold adventures.\n\nAs he came of age, Selanar trained as a hunter, mastering the art of tracking and survival. His skills were not just confined to the water; he adapted them to the land, becoming a guardian of nature both above and below the sea. His reverence for Melora, the Wildmother, deepened, guiding his path as a protector of the natural world.\n\nTragedy struck when a band of sahuagin raiders, driven by insatiable hunger and malice, launched a brutal assault on Elun'ethil. The sea elves fought valiantly, but the surprise attack left them reeling. Selanar, leading a group of defenders, displayed unparalleled bravery. However, amidst the chaos, his younger sister, Liriel, was captured. The raiders vanished into the murky depths, leaving a trail of sorrow and rage in their wake.\n\nDevastated by the loss, Selanar vowed to rescue his sister and bring justice to the sahuagin. He embarked on a relentless quest, tracking the raiders across the sea and onto distant shores. His journey led him to the rugged coastline of the mainland, where the trail went cold. Determined not to return home without Liriel, Selanar ventured inland, adapting to the alien landscape of towering trees and sprawling plains.\n\nDuring his search, Selanar encountered the Order of the Ghostslayer, a group of blood hunters dedicated to combating supernatural threats. Intrigued by their cause and the potential to enhance his abilities, he joined their ranks. Under their tutelage, Selanar learned to harness the power of his own blood to vanquish his foes. He became a formidable warrior, feared by the dark creatures that lurked in the shadows.\n\nAs he delved deeper into the mysteries of the blood hunter, Selanar discovered a chilling truth. The sahuagin raiders were minions of a greater evil, a sea witch named Vashara. She sought to control the oceans by unleashing ancient leviathans, using captured sea elves as sacrifices to fuel her dark rituals. Liriel was to be one of these offerings.\n\nFueled by a burning desire for vengeance, Selanar's quest became a crusade against Vashara and her minions. He battled sea monsters, navigated treacherous waters, and forged alliances with other races to thwart the witch's plans. Along the way, he faced trials that tested his resolve, from the icy grasp of loneliness to the searing pain of loss. Yet, his spirit remained unbroken, driven by the love for his sister and the duty to protect his home.\n\nSelanar's journey led him to the heart of Vashara's lair, a sunken citadel shrouded in darkness. Here, he confronted the sea witch in a fierce battle, the fate of his sister and the sea hanging in the balance. With every ounce of his strength and cunning, Selanar emerged victorious, shattering Vashara's hold over the ocean depths.\n\nIn the aftermath, he found Liriel, weakened but alive, among the ruins of the citadel. Their reunion was a moment of pure joy, a glimmer of light in the darkness. Together, they returned to Elun'ethil, where Selanar was hailed as a hero. But the sea elf knew that his battle was far from over. The defeat of Vashara had created a power vacuum in the ocean's depths, with new threats rising to claim dominion. Selanar understood that his true calling was to be a guardian of the natural world, both on land and sea. With Liriel by his side, he set out once more, this time as an adventurer, determined to uphold the balance of nature and protect the innocent from the shadows that lurked in the heart of the wild.\n\nThus began the legend of Selanar Fenthana, the Sea Elf Blood Hunter, a beacon of hope in a world teeming with danger and mystery. His journey was a testament to the resilience of the spirit and the unbreakable bond of family, a tale that would echo through the ages as a reminder of the price of freedom and the valor of those who dare to defend it.",
+    "additional_notes": "",
+    "raw_acro_form_fields": {
+      "CharacterName": "Selanar Fenthana",
+      "CLASS  LEVEL": "Blood Hunter 1",
+      "PLAYER NAME": "",
+      "RACE": "Sea Elf",
+      "BACKGROUND": "Outlander",
+      "EXPERIENCE POINTS": "",
+      "STR": "+0",
+      "STRmod": "10",
+      "DEX": "+3",
+      "DEXmod": "16",
+      "CON": "+2",
+      "CONmod": "14",
+      "INT": "+2",
+      "INTmod": "14",
+      "WIS": "+1",
+      "WISmod": "12",
+      "CHA": "+0",
+      "CHamod": "10",
+      "StrProf": "",
+      "ST Strength": "+0",
+      "DexProf": "\u2022",
+      "ST Dexterity": "+5",
+      "ConProf": "",
+      "ST Constitution": "+2",
+      "IntProf": "\u2022",
+      "ST Intelligence": "+4",
+      "WisProf": "",
+      "ST Wisdom": "+1",
+      "ChaProf": "",
+      "ST Charisma": "+0",
+      "Defenses": "",
+      "SaveModifiers": "Advantage against being charmed, and magic can\u2019t put you to sleep",
+      "AcrobaticsProf": "",
+      "Acrobatics": "+3",
+      "AcrobaticsMod": "DEX",
+      "AnimalHandlingProf": "",
+      "Animal": "+1",
+      "AnimalMod": "WIS",
+      "ArcanaProf": "P",
+      "Arcana": "+4",
+      "ArcanaMod": "INT",
+      "AthleticsProf": "P",
+      "Athletics": "+2",
+      "AthleticsMod": "STR",
+      "DeceptionProf": "",
+      "Deception": "+0",
+      "DeceptionMod": "CHA",
+      "HistoryProf": "P",
+      "History": "+4",
+      "HistoryMod": "INT",
+      "InsightProf": "",
+      "Insight": "+1",
+      "InsightMod": "WIS",
+      "IntimidationProf": "",
+      "Intimidation": "+0",
+      "IntimidationMod": "CHA",
+      "InvestigationProf": "",
+      "Investigation": "+2",
+      "InvestigationMod": "INT",
+      "MedicineProf": "",
+      "Medicine": "+1",
+      "MedicineMod": "WIS",
+      "NatureProf": "",
+      "Nature": "+2",
+      "NatureMod": "INT",
+      "PerceptionProf": "P",
+      "Perception": "+3",
+      "PerceptionMod": "WIS",
+      "PerformanceProf": "",
+      "Performance": "+0",
+      "PerformanceMod": "CHA",
+      "PersuasionProf": "",
+      "Persuasion": "+0",
+      "PersuasionMod": "CHA",
+      "ReligionProf": "P",
+      "Religion": "+4",
+      "SleightOfHandProf": "",
+      "SleightofHand": "+3",
+      "StealthProf": "",
+      "Stealth": "+3",
+      "SurvivalProf": "P",
+      "Survival": "+3",
+      "CustomProf1": "",
+      "Custom Skill Bonus 1": "",
+      "CustomSkill1": "",
+      "CustomProf2": "",
+      "Custom Skill Bonus 2": "",
+      "CustomSkill2": "",
+      "CustomProf3": "",
+      "Custom Skill Bonus 3": "",
+      "CustomSkill3": "",
+      "Passive1": "13",
+      "Passive2": "11",
+      "Passive3": "12",
+      "AdditionalSenses": "Darkvision 60 ft.",
+      "Init": "+3",
+      "AC": "17",
+      "ProfBonus": "+2",
+      "AbilitySaveDC": "",
+      "AbilitySaveScore1": "",
+      "AbilitySaveScore2": "",
+      "AbilitySaveDC2": "",
+      "Speed": "30 ft. (Walking), 30 ft. (Swimming)",
+      "MaxHP": "12",
+      "CurrentHP": "",
+      "TempHP": "--",
+      "Total": "1d10",
+      "HD": "",
+      "Check Box 12": "",
+      "Check Box 13": "",
+      "Check Box 14": "",
+      "Check Box 15": "",
+      "Check Box 16": "",
+      "Check Box 17": "",
+      "ProficienciesLang": "=== ARMOR === \nLight Armor, Medium Armor, Shields \n\n=== WEAPONS === \nMartial Weapons, Simple Weapons \n\n=== TOOLS === \nAlchemist's Supplies, Horn \n\n=== LANGUAGES === \nAquan, Common, Elvish, Sylvan",
+      "ReligionMod": "INT",
+      "SleightofHandMod": "DEX",
+      "StealthMod": "DEX",
+      "SurvivalMod": "WIS",
+      "Actions1": "=== ACTIONS === \nStandard Actions \n     Attack, Cast a Spell, Dash, Disengage, Dodge, Help, Hide, Ready, Search, Use an Object, Opportunity Attack, Grapple, Shove, Improvise, Two-Weapon Fighting, Interact with an Object \n\n=== REACTIONS === \nBlood Curse of the Eyeless  \n     When a creature you can see within 30 feet of you makes an attack roll, you can use your reaction to roll one hemocraft die and subtract the number rolled from the creature\u2019s attack roll. You can choose to use this feature after the creature\u2019s roll, but before the DM determines whether the attack roll succeeds. The creature is immune if it is immune to blindness.",
+      "Actions2": "<em>Amplify.</em> You apply this curse to all of the creature\u2019s attack rolls until the end of the turn. You roll a new hemocraft die for each affected attack.",
+      "Wpn Name": "Crossbow, Light",
+      "Wpn1 AtkBonus": "+5",
+      "Wpn1 Damage": "1d8+3 Piercing",
+      "Wpn Notes 1": "Simple, Ammunition, Loading, Range, Two-Handed, Range (80/320)",
+      "Wpn Name 2": "Shortsword",
+      "Wpn2 AtkBonus": "+5",
+      "Wpn2 Damage": "1d6+3 Piercing",
+      "Wpn Notes 2": "Martial, Finesse, Light",
+      "Wpn Name 3": "Unarmed Strike",
+      "Wpn3 AtkBonus": "+2",
+      "Wpn3 Damage": "1 Bludgeoning",
+      "Wpn Notes 3": "",
+      "Wpn Name 4": "",
+      "Wpn4 AtkBonus": "",
+      "Wpn4 Damage": "",
+      "Wpn Notes 4": "",
+      "Wpn Name 5": "",
+      "Wpn5 AtkBonus": "",
+      "Wpn5 Damage": "",
+      "Wpn Notes 5": "",
+      "Wpn Name 6": "",
+      "Wpn6 AtkBonus": "",
+      "Wpn6 Damage": "",
+      "Wpn Notes 6": "",
+      "CharacterName2": "Selanar Fenthana",
+      "CLASS  LEVEL2": "Blood Hunter 1",
+      "PLAYER NAME2": "",
+      "RACE2": "Sea Elf",
+      "BACKGROUND2": "Outlander",
+      "EXPERIENCE POINTS2": "",
+      "FeaturesTraits1": "=== BLOOD HUNTER FEATURES === \n\n* Hit Points \u2022 CR \n\n* Proficiencies \u2022 CR \n\n* Hunter's Bane \u2022 CR \nYou have advantage on Wisdom (Survival) checks to track fey, fiends, or undead, as well as on Intelligence ability checks to recall information about them. \n\n* Blood Maledict \u2022 CR \nYou can invoke a blood curse a number of times per short rest based on your level. You can choose to amplify the curse, losing 1d4 hit points yourself. \nCreatures that do not have blood in their bodies are immune to blood curses, unless you have amplified the curse. \n\n   | 1 / Short Rest \u2022 No Action \n\n* Blood Curses \u2022 CR \nYour chosen Blood Curses for use with the <em>Blood Maledict</em> feature. \n\n   | Blood Curse of the Eyeless \u2022 CR \nWhen a creature you can see within 30 feet of you makes an attack roll, you can use your reaction to roll one hemocraft die and subtract the number rolled from the creature\u2019s attack roll. You can choose to use this feature after the creature\u2019s roll, but before the DM determines whether the attack roll succeeds. The creature is immune if it is immune to blindness. \n<em>Amplify.</em> You apply this curse to all of the creature\u2019s attack rolls until the end of the turn. You roll a new hemocraft die for each affected attack. \n\n      | Blood Curse of the Eyeless : 1 Reaction \n\n\n=== SEA ELF RACIAL TRAITS ===",
+      "FeaturesTraits2": "* Darkvision \u2022 BR 23 \nYou can see in darkness (shades of gray) up to 60 ft. \n\n* Keen Senses \u2022 BR 23 \nYou have proficiency in the Perception skill. \n\n* Fey Ancestry \u2022 BR 23 \nYou have advantage on saves against being charmed, and magic can\u2019t put you to sleep. \n\n* Trance \u2022 BR 23 \nYou don't need to sleep, but meditate semiconsciously for 4 hours a day. While meditating, you can dream after a fashion; such dreams are actually mental exercises that have become reflexive through years of practice. After resting in this way, you gain the same benefit that a human does from 8 hours of sleep. \n\n* Sea Elf Training \u2022 MToF 62 \nYou have proficiency with the spear, trident, light crossbow, and net. \n\n* Child of the Sea \u2022 MToF 62 \nYou have a swimming speed of 30 feet, and you can breathe air and water. \n\n* Friend of the Sea \u2022 MToF 62 \nUsing gestures and sounds, you can communicate simple ideas with any beast that has an innate swimming speed.",
+      "FeaturesTraits3": "",
+      "CP": "0",
+      "SP": "0",
+      "EP": "0",
+      "GP": "5",
+      "PP": "0",
+      "Weight Carried": "99.6 lb.",
+      "Encumbered": "150 lb.",
+      "PushDragLift": "300 lb.",
+      "Eq Name0": "Studded Leather",
+      "Eq Qty0": "1",
+      "Eq Weight0": "13 lb.",
+      "Eq Name1": "Shield",
+      "Eq Qty1": "1",
+      "Eq Weight1": "6 lb.",
+      "Eq Name2": "Crossbow, Light",
+      "Eq Qty2": "1",
+      "Eq Weight2": "5 lb.",
+      "Eq Name3": "Shortsword",
+      "Eq Qty3": "1",
+      "Eq Weight3": "2 lb.",
+      "Eq Name4": "Crossbow Bolts",
+      "Eq Qty4": "20",
+      "Eq Weight4": "1.5 lb.",
+      "Eq Name5": "Backpack",
+      "Eq Qty5": "1",
+      "Eq Weight5": "5 lb.",
+      "Eq Name6": "Bedroll",
+      "Eq Qty6": "1",
+      "Eq Weight6": "7 lb.",
+      "Eq Name7": "Case, Crossbow Bolt",
+      "Eq Qty7": "1",
+      "Eq Weight7": "1 lb.",
+      "Eq Name8": "Clothes, Traveler's",
+      "Eq Qty8": "1",
+      "Eq Weight8": "4 lb.",
+      "Eq Name9": "Flask or Tankard",
+      "Eq Qty9": "1",
+      "Eq Weight9": "1 lb.",
+      "Eq Name10": "Mess Kit",
+      "Eq Qty10": "1",
+      "Eq Weight10": "1 lb.",
+      "Eq Name11": "Pouch",
+      "Eq Qty11": "2",
+      "Eq Weight11": "2 lb.",
+      "Eq Name12": "Rations (1 day)",
+      "Eq Qty12": "10",
+      "Eq Weight12": "20 lb.",
+      "Eq Name13": "Rope, Hempen (50 feet)",
+      "Eq Qty13": "1",
+      "Eq Weight13": "10 lb.",
+      "Eq Name14": "Sack",
+      "Eq Qty14": "2",
+      "Eq Weight14": "1 lb.",
+      "Eq Name15": "Tinderbox",
+      "Eq Qty15": "1",
+      "Eq Weight15": "1 lb.",
+      "Eq Name16": "Torch",
+      "Eq Qty16": "5",
+      "Eq Weight16": "5 lb.",
+      "Eq Name17": "Waterskin",
+      "Eq Qty17": "1",
+      "Eq Weight17": "5 lb.",
+      "Eq Name18": "Whetstone",
+      "Eq Qty18": "1",
+      "Eq Weight18": "1 lb.",
+      "Eq Name19": "Alchemist's Supplies",
+      "Eq Qty19": "1",
+      "Eq Weight19": "8 lb.",
+      "Eq Name20": "",
+      "Eq Qty20": "",
+      "Eq Weight20": "",
+      "Eq Name21": "",
+      "Eq Qty21": "",
+      "Eq Weight21": "",
+      "Eq Name22": "",
+      "Eq Qty22": "",
+      "Eq Weight22": "",
+      "Eq Name23": "",
+      "Eq Qty23": "",
+      "Eq Weight23": "",
+      "Eq Name24": "",
+      "Eq Qty24": "",
+      "Eq Weight24": "",
+      "Eq Name25": "",
+      "Eq Qty25": "",
+      "Eq Weight25": "",
+      "Attuned Name1": "",
+      "Attuned Qty1": "",
+      "Attuned Weight1": "",
+      "Attuned Name2": "",
+      "Attuned Qty2": "",
+      "Attuned Weight2": "",
+      "Attuned Name3": "",
+      "Attuned Qty3": "",
+      "AttunedWeight3": "",
+      "CharacterName4": "Selanar Fenthana",
+      "GENDER": "Male",
+      "AGE": "214",
+      "SIZE": "Medium",
+      "HEIGHT": "5' 0\"",
+      "WEIGHT": "102",
+      "ALIGNMENT": "Neutral",
+      "FAITH": "Melora",
+      "SKIN": "Tan",
+      "EYES": "Ice Blue",
+      "HAIR": "Blonde",
+      "CHARACTER IMAGE": "",
+      "AlliesOrganizations": "",
+      "PersonalityTraits": "I watch over my friends as if they were a litter of newborn pups. \nI have a lesson for every situation, drawn from observing nature.",
+      "Ideals": "Nature. The natural world is more important than all the constructs of civilization. (Neutral)",
+      "Bonds": "An injury to the unspoiled wilderness of my home is an injury to me.",
+      "Appearance": "",
+      "Flaws": "I am slow to trust members of other races, tribes, and societies.",
+      "Backstory": "Born amidst the tranquil depths of the Sea of Fallen Stars, Selanar Fenthana was cradled by the undulating embrace of the ocean. The sea elf community of Elun'ethil, hidden beneath the shimmering surface, was his home. Here, life was a harmonious symphony of coral architecture and bioluminescent gardens, with the ancient rhythms of the tides dictating the ebb and flow of existence.\r\rFrom a tender age, Selanar was drawn to the mysteries of the deep. He spent his days exploring the sunken ruins and learning the secrets of the sea from the elders. His heart, however, yearned for the world beyond the aquatic haven. The surface, with its vast forests and open skies, beckoned him with the promise of untold adventures.\r\rAs he came of age, Selanar trained as a hunter, mastering the art of tracking and survival. His skills were not just confined to the water; he adapted them to the land, becoming a guardian of nature both above and below the sea. His reverence for Melora, the Wildmother, deepened, guiding his path as a protector of the natural world.\r\rTragedy struck when a band of sahuagin raiders, driven by insatiable hunger and malice, launched a brutal assault on Elun'ethil. The sea elves fought valiantly, but the surprise attack left them reeling. Selanar, leading a group of defenders, displayed unparalleled bravery. However, amidst the chaos, his younger sister, Liriel, was captured. The raiders vanished into the murky depths, leaving a trail of sorrow and rage in their wake.\r\rDevastated by the loss, Selanar vowed to rescue his sister and bring justice to the sahuagin. He embarked on a relentless quest, tracking the raiders across the sea and onto distant shores. His journey led him to the rugged coastline of the mainland, where the trail went cold. Determined not to return home without Liriel, Selanar ventured inland, adapting to the alien landscape of towering ",
+      "AdditionalNotes1": "trees and sprawling plains.\r\rDuring his search, Selanar encountered the Order of the Ghostslayer, a group of blood hunters dedicated to combating supernatural threats. Intrigued by their cause and the potential to enhance his abilities, he joined their ranks. Under their tutelage, Selanar learned to harness the power of his own blood to vanquish his foes. He became a formidable warrior, feared by the dark creatures that lurked in the shadows.\r\rAs he delved deeper into the mysteries of the blood hunter, Selanar discovered a chilling truth. The sahuagin raiders were minions of a greater evil, a sea witch named Vashara. She sought to control the oceans by unleashing ancient leviathans, using captured sea elves as sacrifices to fuel her dark rituals. Liriel was to be one of these offerings.\r\rFueled by a burning desire for vengeance, Selanar's quest became a crusade against Vashara and her minions. He battled sea monsters, navigated treacherous waters, and forged alliances with other races to thwart the witch's plans. Along the way, he faced trials that tested his resolve, from the icy grasp of loneliness to the searing pain of loss. Yet, his spirit remained unbroken, driven by the love for his sister and the duty to protect his home.\r\rSelanar's journey led him to the heart of Vashara's lair, a sunken citadel shrouded in darkness. Here, he confronted the sea witch in a fierce battle, the fate of his sister and the sea hanging in the balance. With every ounce of his strength and cunning, Selanar emerged victorious, shattering Vashara's hold over the ocean depths.\r\rIn the aftermath, he found Liriel, weakened but alive, among the ruins of the citadel. Their reunion was a moment of pure joy, a glimmer of light in the darkness. Together, they returned to Elun'ethil, where Selanar was hailed as a hero. But the sea elf knew that his battle was far from over.",
+      "AdditionalNotes2": "The defeat of Vashara had created a power vacuum in the ocean's depths, with new threats rising to claim dominion. Selanar understood that his true calling was to be a guardian of the natural world, both on land and sea. With Liriel by his side, he set out once more, this time as an adventurer, determined to uphold the balance of nature and protect the innocent from the shadows that lurked in the heart of the wild.\r\rThus began the legend of Selanar Fenthana, the Sea Elf Blood Hunter, a beacon of hope in a world teeming with danger and mystery. His journey was a testament to the resilience of the spirit and the unbreakable bond of family, a tale that would echo through the ages as a reminder of the price of freedom and the valor of those who dare to defend it."
+    }
+  },
+  "is_pact_magic": false,
+  "custom_meters": {
+    "hit_dice": {
+      "label": "Hit Dice (1d10)",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    },
+    "blood_maledict": {
+      "label": "Blood Maledict (Blood Curse)",
+      "current": 1,
+      "max": 1,
+      "reset_on": "short_rest"
+    }
+  },
+  "roleplay_anchors": {
+    "personality_traits": "I watch over my friends as if they were a litter of newborn pups. \nI have a lesson for every situation, drawn from observing nature.",
+    "ideals": "Nature. The natural world is more important than all the constructs of civilization. (Neutral)",
+    "bonds": "An injury to the unspoiled wilderness of my home is an injury to me.",
+    "flaws": "I am slow to trust members of other races, tribes, and societies.",
+    "allies_and_organizations": ""
+  },
+  "backstory": "Born amidst the tranquil depths of the Sea of Fallen Stars, Selanar Fenthana was cradled by the undulating embrace of the ocean. The sea elf community of Elun'ethil, hidden beneath the shimmering surface, was his home. Here, life was a harmonious symphony of coral architecture and bioluminescent gardens, with the ancient rhythms of the tides dictating the ebb and flow of existence.\n\nFrom a tender age, Selanar was drawn to the mysteries of the deep. He spent his days exploring the sunken ruins and learning the secrets of the sea from the elders. His heart, however, yearned for the world beyond the aquatic haven. The surface, with its vast forests and open skies, beckoned him with the promise of untold adventures.\n\nAs he came of age, Selanar trained as a hunter, mastering the art of tracking and survival. His skills were not just confined to the water; he adapted them to the land, becoming a guardian of nature both above and below the sea. His reverence for Melora, the Wildmother, deepened, guiding his path as a protector of the natural world.\n\nTragedy struck when a band of sahuagin raiders, driven by insatiable hunger and malice, launched a brutal assault on Elun'ethil. The sea elves fought valiantly, but the surprise attack left them reeling. Selanar, leading a group of defenders, displayed unparalleled bravery. However, amidst the chaos, his younger sister, Liriel, was captured. The raiders vanished into the murky depths, leaving a trail of sorrow and rage in their wake.\n\nDevastated by the loss, Selanar vowed to rescue his sister and bring justice to the sahuagin. He embarked on a relentless quest, tracking the raiders across the sea and onto distant shores. His journey led him to the rugged coastline of the mainland, where the trail went cold. Determined not to return home without Liriel, Selanar ventured inland, adapting to the alien landscape of towering trees and sprawling plains.\n\nDuring his search, Selanar encountered the Order of the Ghostslayer, a group of blood hunters dedicated to combating supernatural threats. Intrigued by their cause and the potential to enhance his abilities, he joined their ranks. Under their tutelage, Selanar learned to harness the power of his own blood to vanquish his foes. He became a formidable warrior, feared by the dark creatures that lurked in the shadows.\n\nAs he delved deeper into the mysteries of the blood hunter, Selanar discovered a chilling truth. The sahuagin raiders were minions of a greater evil, a sea witch named Vashara. She sought to control the oceans by unleashing ancient leviathans, using captured sea elves as sacrifices to fuel her dark rituals. Liriel was to be one of these offerings.\n\nFueled by a burning desire for vengeance, Selanar's quest became a crusade against Vashara and her minions. He battled sea monsters, navigated treacherous waters, and forged alliances with other races to thwart the witch's plans. Along the way, he faced trials that tested his resolve, from the icy grasp of loneliness to the searing pain of loss. Yet, his spirit remained unbroken, driven by the love for his sister and the duty to protect his home.\n\nSelanar's journey led him to the heart of Vashara's lair, a sunken citadel shrouded in darkness. Here, he confronted the sea witch in a fierce battle, the fate of his sister and the sea hanging in the balance. With every ounce of his strength and cunning, Selanar emerged victorious, shattering Vashara's hold over the ocean depths.\n\nIn the aftermath, he found Liriel, weakened but alive, among the ruins of the citadel. Their reunion was a moment of pure joy, a glimmer of light in the darkness. Together, they returned to Elun'ethil, where Selanar was hailed as a hero. But the sea elf knew that his battle was far from over. The defeat of Vashara had created a power vacuum in the ocean's depths, with new threats rising to claim dominion. Selanar understood that his true calling was to be a guardian of the natural world, both on land and sea. With Liriel by his side, he set out once more, this time as an adventurer, determined to uphold the balance of nature and protect the innocent from the shadows that lurked in the heart of the wild.\n\nThus began the legend of Selanar Fenthana, the Sea Elf Blood Hunter, a beacon of hope in a world teeming with danger and mystery. His journey was a testament to the resilience of the spirit and the unbreakable bond of family, a tale that would echo through the ages as a reminder of the price of freedom and the valor of those who dare to defend it.",
+  "additional_notes": "",
+  "weight_carried": "99.6 lb.",
+  "encumbered": "150 lb.",
+  "push_drag_lift": "300 lb.",
+  "gender": "Male",
+  "age": "214",
+  "size": "Medium",
+  "height": "5' 0\"",
+  "weight": "102",
+  "alignment": "Neutral",
+  "faith": "Melora",
+  "skin": "Tan",
+  "eyes": "Ice Blue",
+  "hair": "Blonde",
+  "creature_type": "Humanoid"
+}

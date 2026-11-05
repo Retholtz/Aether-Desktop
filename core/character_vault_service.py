@@ -420,7 +420,7 @@ class CharacterVaultService:
             # Build Universal Character Core & Native System Data (Schema 2.0)
             from core.parsers.dnd5e_parser import clean_traits_and_headers, sanitize_inventory, normalize_spell_level
             feats = clean_traits_and_headers(feats)
-            clean_arch = re.sub(r'\(.*?\)', '', str(ch.get("archetype") or ch.get("class") or "Adventurer")).strip()
+            clean_arch = re.sub(r'[\(\[].*?[\)\]]', '', str(ch.get("archetype") or ch.get("class") or "Adventurer")).strip()
             ch["archetype"] = clean_arch
             ch["features_and_traits"] = feats
             ch["traits_and_abilities"] = feats
@@ -443,7 +443,7 @@ class CharacterVaultService:
                     n_data["max_prepared_leveled_spells"] = 0
 
             char_record = {
-                "schema_version": "2.0",
+                "schema_version": ch.get("schema_version") or "2.1",
                 "id": char_id,
                 "parent_id": None,
                 "is_root": True,
@@ -514,11 +514,23 @@ class CharacterVaultService:
                 if rich_k in ch and ch[rich_k] is not None:
                     char_record[rich_k] = ch[rich_k]
 
-            # Eliminate root-level mirrors to prevent desynchronization
-            char_record.pop("spells", None)
-            char_record.pop("spell_slots", None)
-            char_record.pop("custom_meters", None)
-            char_record.pop("max_prepared_leveled_spells", None)
+            # Preserve root-level custom_meters, spells, and spell_slots for UI and Schema 2.1 consumers
+            if ch.get("custom_meters"):
+                char_record["custom_meters"] = ch["custom_meters"]
+            elif isinstance(n_data, dict) and n_data.get("custom_meters"):
+                char_record["custom_meters"] = n_data["custom_meters"]
+            if ch.get("spells"):
+                char_record["spells"] = ch["spells"]
+            elif isinstance(n_data, dict) and n_data.get("spells"):
+                char_record["spells"] = n_data["spells"]
+            if ch.get("spell_slots"):
+                char_record["spell_slots"] = ch["spell_slots"]
+            elif isinstance(n_data, dict) and n_data.get("spell_slots"):
+                char_record["spell_slots"] = n_data["spell_slots"]
+            if ch.get("max_prepared_leveled_spells") is not None:
+                char_record["max_prepared_leveled_spells"] = ch["max_prepared_leveled_spells"]
+            elif isinstance(n_data, dict) and n_data.get("max_prepared_leveled_spells") is not None:
+                char_record["max_prepared_leveled_spells"] = n_data["max_prepared_leveled_spells"]
 
             self._save_character(char_record)
             saved_characters.append(char_record)
@@ -620,7 +632,7 @@ class CharacterVaultService:
         return {
             "name": c_name,
             "player_name": ch.get("player_name") or "Player",
-            "archetype": re.sub(r'\(.*?\)', '', str(ch.get("archetype") or ch.get("class") or "Adventurer")).strip(),
+            "archetype": re.sub(r'[\(\[].*?[\)\]]', '', str(ch.get("archetype") or ch.get("class") or "Adventurer")).strip(),
             "level": int(ch.get("level") or 1),
             "normalized_attributes": norm_attrs,
             "semantic_skills": ch.get("semantic_skills") or [],
@@ -701,7 +713,7 @@ class CharacterVaultService:
             }
 
         from core.parsers.dnd5e_parser import clean_traits_and_headers, normalize_spell_level
-        class_level_clean = re.sub(r'\(.*?\)', '', str(ch.get("class_level") or ch.get("archetype") or ch.get("class") or "Adventurer")).strip()
+        class_level_clean = re.sub(r'[\(\[].*?[\)\]]', '', str(ch.get("class_level") or ch.get("archetype") or ch.get("class") or "Adventurer")).strip()
         feats = clean_traits_and_headers(feats)
         spells_clean = []
         for s in (ch.get("spells") or []):
@@ -1039,7 +1051,7 @@ class CharacterVaultService:
         ruleset = merged.get("ruleset") or merged.get("native_system") or "dnd_5e"
         merged["ruleset"] = ruleset
         merged["ruleset_label"] = get_ruleset_display_label(ruleset)
-        merged["archetype"] = re.sub(r'\(.*?\)', '', str(merged.get("archetype") or merged.get("class") or "Adventurer")).strip()
+        merged["archetype"] = re.sub(r'[\(\[].*?[\)\]]', '', str(merged.get("archetype") or merged.get("class") or "Adventurer")).strip()
         if not merged.get("native_genre"):
             merged["native_genre"] = "cybernetic_action" if "cyber" in ruleset.lower() else ("modern_horror" if "cthulhu" in ruleset.lower() else "heroic_fantasy")
 
