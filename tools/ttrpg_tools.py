@@ -1158,3 +1158,62 @@ def register_progression_tools(dispatcher, service: TTRPGService, notify_ui_call
         },
         handler=level_up_character
     )
+
+
+# ============================================================================
+# LLM Tool Dispatcher for Combat & GM Adjudication (Phase 1 Engine Bindings)
+# ============================================================================
+from core.combat.combat_manager import CombatManager
+from core.scene.scene_manager import SceneManager
+from core.rulesets import get_ruleset
+
+# Module-level singletons for session duration
+_SCENE = SceneManager(campaign_id="default_campaign")
+_COMBAT = CombatManager(system_id="dnd_5e")
+
+
+def tool_start_combat(reported_initiatives: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    """Begins combat with all participants in the active scene."""
+    participants = _SCENE.get_all_participants()
+    if not participants:
+        return {"error": "Cannot start combat: Scene has no active participants."}
+    return _COMBAT.start_encounter(participants, reported_initiatives=reported_initiatives)
+
+
+def tool_next_combat_turn() -> Dict[str, Any]:
+    """Advances combat to the next combatant's turn."""
+    return _COMBAT.next_turn()
+
+
+def tool_execute_attack(
+    attacker_name: str,
+    target_name: str,
+    weapon_name: str,
+    attack_roll: Optional[int] = None,
+    damage_roll: Optional[int] = None
+) -> Dict[str, Any]:
+    """Executes a weapon or spell attack between two combatants."""
+    return _COMBAT.execute_attack(
+        attacker_name,
+        target_name,
+        weapon_name,
+        reported_atk_roll=attack_roll,
+        reported_dmg_roll=damage_roll
+    )
+
+
+def tool_execute_party_rest(rest_type: str, dice_mode: str = "digital") -> Dict[str, Any]:
+    """Triggers Short or Long Rest recovery across the active party."""
+    adapter = get_ruleset(_COMBAT.system_id)
+    reports = []
+    for char in _SCENE.state["party_roster"]:
+        rep = adapter.execute_rest(char, rest_type=rest_type, dice_mode=dice_mode)
+        reports.append(rep.narrative)
+    _SCENE.save_state()
+    return {"rest_type": rest_type, "results": reports}
+
+
+def tool_spawn_enemy(name: str, hp: int, ac: int, weapon_damage: str = "1d6+2") -> Dict[str, Any]:
+    """Spawns an enemy into the current scene."""
+    return _SCENE.spawn_adversary(name, hp=hp, ac=ac, damage=weapon_damage)
+
