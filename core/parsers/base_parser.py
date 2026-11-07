@@ -101,20 +101,28 @@ class BaseSheetParser(ABC):
                     val = v.get('/V') if isinstance(v, dict) else getattr(v, 'value', None)
                     if val is not None:
                         fields[str(k).strip()] = str(val).strip()
-            if not fields:
-                for page in reader.pages:
-                    annots = page.get('/Annots')
-                    if annots:
-                        annots_list = annots.get_object() if hasattr(annots, 'get_object') else annots
-                        for a in annots_list:
-                            try:
-                                obj = a.get_object() if hasattr(a, 'get_object') else a
-                                t = obj.get('/T')
-                                v = obj.get('/V')
-                                if t is not None:
-                                    fields[str(t).strip()] = str(v) if v is not None else ''
-                            except Exception:
-                                pass
+
+            # Always inspect per-page annotations to capture multi-page overflow and prevent clobbering
+            for page in reader.pages:
+                annots = page.get('/Annots')
+                if annots:
+                    annots_list = annots.get_object() if hasattr(annots, 'get_object') else annots
+                    for a in annots_list:
+                        try:
+                            obj = a.get_object() if hasattr(a, 'get_object') else a
+                            t = obj.get('/T')
+                            v = obj.get('/V')
+                            if t is not None and v is not None:
+                                key_str = str(t).strip()
+                                val_str = str(v).strip()
+                                if val_str:
+                                    if key_str in fields and fields[key_str] and fields[key_str] != val_str:
+                                        if any(p in key_str for p in ["FeaturesTraits", "EquipmentRow", "Eq Name", "spellName"]):
+                                            fields[key_str] = f"{fields[key_str]}\n{val_str}"
+                                    elif not fields.get(key_str):
+                                        fields[key_str] = val_str
+                        except Exception:
+                            pass
             for page in reader.pages:
                 t = page.extract_text()
                 if t:

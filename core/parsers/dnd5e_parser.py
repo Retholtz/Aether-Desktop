@@ -6,9 +6,9 @@ import io
 import re
 import html
 from dataclasses import asdict, is_dataclass
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from core.parsers.base_parser import BaseSheetParser, UniversalCharacterCore
-from core.parsers.spell_registry import resolve_dnd_stat, parse_structured_spells, sanitize_character_weapons
+from core.parsers.spell_registry import resolve_dnd_stat, parse_structured_spells, sanitize_character_weapons, DND_SPELL_REGISTRY
 from core.logger import get_logger
 
 logger = get_logger("DnD5eParser")
@@ -29,11 +29,11 @@ ALWAYS_PREPARED_SUBCLASS_SPELLS = {
 }
 
 WARLOCK_PACT_SLOTS = {
-    1: {"count": 1, "level": 1}, 2: {"count": 2, "level": 1},
-    3: {"count": 2, "level": 2}, 4: {"count": 2, "level": 2},
-    5: {"count": 2, "level": 3}, 6: {"count": 2, "level": 3},
-    7: {"count": 2, "level": 4}, 8: {"count": 2, "level": 4},
-    9: {"count": 2, "level": 5}, 10: {"count": 2, "level": 5},
+    1:  {"count": 1, "level": 1}, 2:  {"count": 2, "level": 1},
+    3:  {"count": 2, "level": 2}, 4:  {"count": 2, "level": 2},
+    5:  {"count": 2, "level": 3}, 6:  {"count": 2, "level": 3},
+    7:  {"count": 2, "level": 4}, 8:  {"count": 2, "level": 4},
+    9:  {"count": 2, "level": 5}, 10: {"count": 2, "level": 5},
     11: {"count": 3, "level": 5}, 12: {"count": 3, "level": 5},
     13: {"count": 3, "level": 5}, 14: {"count": 3, "level": 5},
     15: {"count": 3, "level": 5}, 16: {"count": 3, "level": 5},
@@ -41,10 +41,236 @@ WARLOCK_PACT_SLOTS = {
     19: {"count": 4, "level": 5}, 20: {"count": 4, "level": 5}
 }
 
+MULTICLASS_SLOT_TABLE = {
+    1:  {1: 2},
+    2:  {1: 3},
+    3:  {1: 4, 2: 2},
+    4:  {1: 4, 2: 3},
+    5:  {1: 4, 2: 3, 3: 2},
+    6:  {1: 4, 2: 3, 3: 3},
+    7:  {1: 4, 2: 3, 3: 3, 4: 1},
+    8:  {1: 4, 2: 3, 3: 3, 4: 2},
+    9:  {1: 4, 2: 3, 3: 3, 4: 3, 5: 1},
+    10: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2},
+    11: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1},
+    12: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1},
+    13: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1},
+    14: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1},
+    15: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1},
+    16: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1},
+    17: {1: 4, 2: 3, 3: 3, 4: 3, 5: 2, 6: 1, 7: 1, 8: 1, 9: 1},
+    18: {1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 1, 7: 1, 8: 1, 9: 1},
+    19: {1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 1, 8: 1, 9: 1},
+    20: {1: 4, 2: 3, 3: 3, 4: 3, 5: 3, 6: 2, 7: 2, 8: 1, 9: 1}
+}
+
+
+def parse_multiclass_string(class_str: str) -> List[Dict[str, Any]]:
+    """
+    Parses complex class strings into discrete class entries.
+    Example: 'Paladin 6 / Sorcerer 4' -> [{'class': 'Paladin', 'level': 6}, {'class': 'Sorcerer', 'level': 4}]
+    """
+    clean = re.sub(r'[\(\[].*?[\)\]]', '', class_str).strip()
+    segments = [s.strip() for s in clean.split('/') if s.strip()]
+    parsed = []
+    for seg in segments:
+        m = re.search(r'([A-Za-z\s]+?)\s*(\d+)', seg)
+        if m:
+            c_name = m.group(1).strip()
+            c_lvl = int(m.group(2))
+            parsed.append({"class": c_name, "level": c_lvl})
+        elif seg.strip():
+            parsed.append({"class": seg.strip(), "level": 1})
+    return parsed if parsed else [{"class": "Fighter", "level": 1}]
+
+
+def calculate_multiclass_spell_slots(classes: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Calculates unified spell slots according to the official multiclass spell matrix."""
+    ecl = 0
+    has_spellcaster = False
+
+    for c in classes:
+        name = c["class"].lower()
+        lvl = c["level"]
+
+        if any(fc in name for fc in ["wizard", "cleric", "druid", "sorcerer", "bard"]):
+            ecl += lvl
+            has_spellcaster = True
+        elif any(hc in name for hc in ["paladin", "ranger"]):
+            ecl += lvl // 2
+            has_spellcaster = True
+        elif "artificer" in name:
+            ecl += (lvl + 1) // 2
+            has_spellcaster = True
+        elif any(tc in name for tc in ["eldritch knight", "arcane trickster"]):
+            ecl += lvl // 3
+            has_spellcaster = True
+
+    slots = {f"level_{r}": {"current": 0, "max": 0, "reset_on": "long_rest"} for r in range(1, 10)}
+    if not has_spellcaster or ecl == 0:
+        return slots
+
+    clamped_ecl = min(20, max(1, ecl))
+    row = MULTICLASS_SLOT_TABLE.get(clamped_ecl, {})
+    for rank, total in row.items():
+        slots[f"level_{rank}"] = {
+            "current": total,
+            "max": total,
+            "reset_on": "long_rest"
+        }
+    return slots
+
+
+def extract_multiclass_hit_dice(classes: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], str]:
+    """Generates discrete hit dice meters for multiclass entities."""
+    meters = {}
+    die_labels = []
+
+    for c in classes:
+        name = c["class"]
+        lvl = c["level"]
+        c_lower = name.lower()
+
+        if "barbarian" in c_lower:
+            die = 12
+        elif any(k in c_lower for k in ["fighter", "paladin", "ranger", "blood hunter"]):
+            die = 10
+        elif any(k in c_lower for k in ["sorcerer", "wizard"]):
+            die = 6
+        else:
+            die = 8
+
+        pool_key = f"hit_dice_{c_lower.replace(' ', '_')}"
+        label = f"Hit Dice ({lvl}d{die})"
+        die_labels.append(f"{lvl}d{die}")
+
+        meters[pool_key] = {
+            "label": label,
+            "current": lvl,
+            "max": lvl,
+            "reset_on": "long_rest"
+        }
+
+    return meters, ", ".join(die_labels)
+
+
+def extract_mystic_arcanum_meters(warlock_level: int) -> Dict[str, Any]:
+    """Generates discrete 1/Long Rest meters for Warlock Mystic Arcanum spells."""
+    meters = {}
+    if warlock_level >= 11:
+        meters["mystic_arcanum_6th"] = {
+            "label": "Mystic Arcanum (6th Level)",
+            "current": 1,
+            "max": 1,
+            "reset_on": "long_rest"
+        }
+    if warlock_level >= 13:
+        meters["mystic_arcanum_7th"] = {
+            "label": "Mystic Arcanum (7th Level)",
+            "current": 1,
+            "max": 1,
+            "reset_on": "long_rest"
+        }
+    if warlock_level >= 15:
+        meters["mystic_arcanum_8th"] = {
+            "label": "Mystic Arcanum (8th Level)",
+            "current": 1,
+            "max": 1,
+            "reset_on": "long_rest"
+        }
+    if warlock_level >= 17:
+        meters["mystic_arcanum_9th"] = {
+            "label": "Mystic Arcanum (9th Level)",
+            "current": 1,
+            "max": 1,
+            "reset_on": "long_rest"
+        }
+    return meters
+
+
+def heal_truncated_field(acro_value: str, full_pdf_text: str, next_section_headers: List[str]) -> str:
+    """
+    Detects truncated AcroForm strings and stitches trailing sentences 
+    from the raw PDF text content stream.
+    """
+    if not acro_value or len(acro_value.strip()) < 15:
+        return acro_value
+
+    clean = acro_value.strip()
+    terminal_tokens = ('.', '!', '?', '"', "'", ')', '}')
+    
+    # Check if field was cut off mid-sentence
+    if clean.endswith(terminal_tokens):
+        return clean
+
+    if not full_pdf_text:
+        return clean
+
+    # Take trailing anchor segment (last 25 characters) to locate in raw PDF stream
+    anchor = clean[-25:].replace(r"\(", "(").replace(r"\)", ")")
+    escaped_anchor = re.escape(anchor)
+
+    # Build termination regex from candidate headers
+    if next_section_headers:
+        stop_pattern = "|".join([rf'\n\s*{re.escape(h)}' for h in next_section_headers])
+        search_regex = rf'{escaped_anchor}([\s\S]*?)(?={stop_pattern}|$)'
+    else:
+        search_regex = rf'{escaped_anchor}([\s\S]*?)$'
+
+    match = re.search(search_regex, full_pdf_text, re.IGNORECASE)
+    if match:
+        extension = match.group(1).strip()
+        # Weld words broken across PDF line wraps
+        extension = re.sub(r'([a-zA-Z])-\s+([a-zA-Z])', r'\1\2', extension)
+        extension = re.sub(r'\s+', ' ', extension)
+        return f"{clean} {extension}".strip()
+
+    return clean
+
+
+class InventoryList(list):
+    """List subclass that matches item names when checked with `item_name in inventory` and compares equal to both list of dicts and list of names."""
+    def __contains__(self, item: Any) -> bool:
+        if super().__contains__(item):
+            return True
+        if isinstance(item, str):
+            return any(isinstance(x, dict) and x.get("name") == item for x in self)
+        return False
+
+    def __eq__(self, other: Any) -> bool:
+        if super().__eq__(other):
+            return True
+        if isinstance(other, list) and all(isinstance(x, str) for x in other):
+            return [x.get("name") if isinstance(x, dict) else x for x in self] == other
+        return False
+
 BANNED_TRAIT_HEADERS = {
     "hit points", "proficiencies", "core sorcerer traits", "core wizard traits",
-    "spellcasting", "additional cleric spells", "special", "actions", "bonus actions"
+    "spellcasting", "additional cleric spells", "special", "actions", "bonus actions",
+    "action", "reactions", "reaction"
 }
+
+
+def extract_clean_trait_name(trait_str: str) -> str:
+    """
+    Strips leading bullets, symbols, and formatting before isolating the trait name.
+    Avoids generating empty strings from bulleted sub-lists.
+    """
+    if not trait_str:
+        return ""
+    # Strip leading bullets, asterisks, dashes, pipes, and whitespace
+    clean = re.sub(r'^[\*\s\u2022\|\-]+', '', trait_str).strip()
+    if not clean or clean.startswith("==="):
+        return ""
+    
+    # Isolate the name prior to source citations (•), tables (|), or action timers (:)
+    name_candidate = re.split(r'[•|:]', clean)[0].strip()
+    
+    # If the delimiter was at the front or name is empty, fallback to the first sentence/line
+    if not name_candidate:
+        name_candidate = clean.split('\n')[0][:40].strip()
+        
+    return name_candidate
 
 
 def normalize_spell_level(lvl_val: Any) -> int:
@@ -129,26 +355,29 @@ def sanitize_inventory(raw_inventory: List[Any]) -> List[Any]:
     for entry in stacked.values():
         entry["qty"] = str(entry["qty"])
         results.append(entry)
-    return results
+    return InventoryList(results)
 
 
 def clean_traits_and_headers(raw_traits: List[Any]) -> List[Any]:
-    """Strips non-trait section titles and source citations exported by D&D Beyond."""
+    """Strips non-trait section titles, empty names, and source citations exported by D&D Beyond."""
     cleaned = []
     for t in raw_traits:
         if isinstance(t, dict):
             t_name = str(t.get("name", "")).strip()
-            base_name = re.sub(r'^[\*\s\u2022\-]+', '', t_name)
-            base_name = re.sub(r'\s*[•|].*$', '', base_name).strip().lower()
-            if base_name in BANNED_TRAIT_HEADERS or base_name.startswith("=== ") or base_name.startswith("==="):
+            base_name = re.sub(r'^[\*\s\u2022\|\-]+', '', t_name)
+            base_name = re.sub(r'\s*[•|:].*$', '', base_name).strip().lower()
+            
+            # Skip empty names or banned section titles
+            if not base_name or base_name in BANNED_TRAIT_HEADERS or base_name.startswith("==="):
                 continue
             cleaned.append(t)
         elif isinstance(t, str):
             t_clean = t.strip()
-            base_name = re.sub(r'^[\*\s\u2022\-]+', '', t_clean)
-            base_name = re.sub(r'\s*[•|].*$', '', base_name).strip().lower()
-            if base_name not in BANNED_TRAIT_HEADERS and not base_name.startswith("=== ") and not base_name.startswith("==="):
-                cleaned.append(t_clean)
+            base_name = re.sub(r'^[\*\s\u2022\|\-]+', '', t_clean)
+            base_name = re.sub(r'\s*[•|:].*$', '', base_name).strip().lower()
+            if not base_name or base_name in BANNED_TRAIT_HEADERS or base_name.startswith("==="):
+                continue
+            cleaned.append(t_clean)
     return cleaned
 
 
@@ -232,9 +461,16 @@ class DnD5eParser(BaseSheetParser):
                 if not extracted_bg and len(parts) > 1:
                     extracted_bg = parts[1]
 
-        clean_class = re.sub(r'[\(\[].*?[\)\]]', '', raw_class_clean).strip()
-        level_match = re.search(r'\d+', clean_class)
-        level = int(level_match.group(0)) if level_match else 1
+        class_entries = parse_multiclass_string(raw_class_clean)
+        total_level = sum(c["level"] for c in class_entries)
+        clean_archetype = " / ".join(f"{c['class']} {c['level']}" for c in class_entries)
+        clean_class = clean_archetype
+        level = total_level
+
+        # Segmented Hit Dice
+        hd_meters, hit_dice_str = extract_multiclass_hit_dice(class_entries)
+        hit_die = self._infer_hit_die(clean_class)
+        hit_dice_display = hit_dice_str if len(class_entries) > 1 else f"{level}d{hit_die}"
 
         player_name = _clean(fields.get("PlayerName") or fields.get("PLAYER NAME") or fields.get("PLAYER NAME2")) or "Player"
 
@@ -273,14 +509,14 @@ class DnD5eParser(BaseSheetParser):
 
         # Primary Spellcasting Ability & DC
         cls_lower = clean_class.lower()
-        is_warlock = "warlock" in cls_lower
-        is_druid = "druid" in cls_lower
-        is_paladin = "paladin" in cls_lower
-        is_cleric = "cleric" in cls_lower
-        is_sorcerer = "sorcerer" in cls_lower
-        is_bard = "bard" in cls_lower
-        is_ranger = "ranger" in cls_lower
-        is_blood_hunter = "blood hunter" in cls_lower
+        is_warlock = any("warlock" in c["class"].lower() for c in class_entries) or "warlock" in cls_lower
+        is_druid = any("druid" in c["class"].lower() for c in class_entries) or "druid" in cls_lower
+        is_paladin = any("paladin" in c["class"].lower() for c in class_entries) or "paladin" in cls_lower
+        is_cleric = any("cleric" in c["class"].lower() for c in class_entries) or "cleric" in cls_lower
+        is_sorcerer = any("sorcerer" in c["class"].lower() for c in class_entries) or "sorcerer" in cls_lower
+        is_bard = any("bard" in c["class"].lower() for c in class_entries) or "bard" in cls_lower
+        is_ranger = any("ranger" in c["class"].lower() for c in class_entries) or "ranger" in cls_lower
+        is_blood_hunter = any("blood hunter" in c["class"].lower() for c in class_entries) or "blood hunter" in cls_lower
         subclass_context = f"{clean_class} {raw_class_clean} {text}".lower()
 
         spell_ability = _clean(fields.get("spellCastingAbility0") or fields.get("SpellcastingAbility") or fields.get("SpellAbility") or "")
@@ -325,88 +561,94 @@ class DnD5eParser(BaseSheetParser):
 
         inspiration = str(fields.get("Inspiration", "")).strip().lower() in ("yes", "on", "1", "true")
 
-        # 3. Spell Slots Extraction (Standard vs. Warlock Pact Magic)
-        spell_slots = {}
-        is_pact_magic = is_warlock or "pact magic" in text.lower() or any("pact" in k.lower() for k in fields.keys())
-
-        if is_pact_magic:
-            pact_info = WARLOCK_PACT_SLOTS.get(min(20, max(1, level)), {"count": 1, "level": 1})
-            pact_lvl = pact_info["level"]
-            pact_total = self._get_num(fields, ["PactMagic_SlotsTotal", "SlotsPactTotal", "SlotsTotalPact"], default=0)
-            if pact_total == 0:
-                for h_idx in range(12):
-                    hdr = str(fields.get(f"spellHeader{h_idx}") or "")
-                    slot_hdr = str(fields.get(f"spellSlotHeader{h_idx}") or "")
-                    if re.search(rf'{pact_lvl}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
-                        m_s = re.search(r'(\d+)\s+(?:Slots?|Pact)', slot_hdr, re.IGNORECASE)
-                        if m_s:
-                            pact_total = int(m_s.group(1))
-                            break
-            if pact_total == 0:
-                slot_regex = re.search(rf'{pact_lvl}(?:st|nd|rd|th)\s+LEVEL===\s*\n\s*(\d+)\s+(?:Slots|Pact)', text, re.IGNORECASE)
-                if slot_regex:
-                    pact_total = int(slot_regex.group(1))
-            if pact_total == 0:
-                pact_total = pact_info["count"]
-
-            for rank in range(1, 10):
-                if rank == pact_lvl:
-                    spell_slots[f"level_{rank}"] = {
-                        "max": pact_total,
-                        "current": self._get_num(fields, ["PactMagic_SlotsRemaining", "SlotsRemainingPact"], default=pact_total),
-                        "is_pact_magic": True,
-                        "reset_on": "short_rest"
-                    }
-                else:
-                    spell_slots[f"level_{rank}"] = {"max": 0, "current": 0, "reset_on": "long_rest"}
+        # 3. Spell Slots: Multi-Caster Matrix + Warlock Pact Isolation
+        warlock_entry = next((c for c in class_entries if "warlock" in c["class"].lower()), None)
+        other_casters = [c for c in class_entries if "warlock" not in c["class"].lower()]
+        
+        if len(class_entries) > 1 and other_casters:
+            spell_slots = calculate_multiclass_spell_slots(other_casters)
         else:
-            for rank in range(1, 10):
-                total_slots = self._get_num(fields, [f"SlotsTotal{rank}", f"SlotsTotal_{rank}", f"SpellSlots_{rank}_Total"], default=0)
-                if total_slots == 0:
-                    for h_idx in range(12):
-                        hdr = str(fields.get(f"spellHeader{h_idx}") or "")
-                        slot_hdr = str(fields.get(f"spellSlotHeader{h_idx}") or "")
-                        if re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
-                            m_s = re.search(r'(\d+)\s+(?:Slots?|Pact)', slot_hdr, re.IGNORECASE)
-                            if m_s:
-                                total_slots = int(m_s.group(1))
-                                break
-                if total_slots == 0:
-                    slot_regex = re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL===\s*\n\s*(\d+)\s+(?:Slots|Pact)', text, re.IGNORECASE)
-                    if slot_regex:
-                        total_slots = int(slot_regex.group(1))
+            # Single-class caster handling
+            spell_slots = self._extract_standard_slots(fields, text, class_entries[0]["class"], class_entries[0]["level"])
 
-                spell_slots[f"level_{rank}"] = {
-                    "max": total_slots,
-                    "current": self._get_num(fields, [f"SlotsRemaining{rank}", f"SlotsRemaining_{rank}"], default=total_slots),
-                    "reset_on": "long_rest"
-                }
+        # Layer Warlock Pact Magic if present
+        is_pact_magic = (warlock_entry is not None) or "pact magic" in text.lower() or any("pact" in k.lower() for k in fields.keys())
+        if warlock_entry:
+            w_lvl = warlock_entry["level"]
+            pact_data = WARLOCK_PACT_SLOTS.get(min(20, max(1, w_lvl)), {"count": 1, "level": 1})
+            p_rank = pact_data["level"]
+            p_count = pact_data["count"]
+            pact_total = self._get_num(fields, ["PactMagic_SlotsTotal", "SlotsPactTotal", "SlotsTotalPact"], default=0)
+            if pact_total == 0 and not other_casters and spell_slots[f"level_{p_rank}"]["max"] > 0:
+                pact_total = spell_slots[f"level_{p_rank}"]["max"]
+            if pact_total > 0:
+                p_count = pact_total
+            pact_rem = self._get_num(fields, ["PactMagic_SlotsRemaining", "SlotsRemainingPact"], default=p_count)
 
-        # 4. Spells List & Preparation Limits
+            pact_slot_dict = {
+                "max": p_count,
+                "current": pact_rem,
+                "is_pact_magic": True,
+                "reset_on": "short_rest"
+            }
+            # If standard slots exist from another spellcaster class at this rank, append warlock pact metadata
+            if other_casters and spell_slots[f"level_{p_rank}"]["max"] > 0:
+                spell_slots[f"level_{p_rank}"]["pact_max"] = p_count
+                spell_slots[f"level_{p_rank}"]["pact_current"] = pact_rem
+            else:
+                spell_slots[f"level_{p_rank}"] = pact_slot_dict
+
+        # 4. Mystic Arcanum Allocation (Warlock 11+)
+        arcanum_meters = {}
+        if warlock_entry:
+            arcanum_meters = extract_mystic_arcanum_meters(warlock_entry["level"])
+
+        # 5. Spells List & Preparation Limits
         has_slots = any(s.get("max", 0) > 0 for s in spell_slots.values())
         max_prepared = self._calculate_max_prepared_spells(clean_class, level, key_mod, has_slots=has_slots)
         spells_list = self.parse_spells_list(fields, text, clean_class, int_mod=key_mod, level=level)
 
-        # 5. Discrete Limited-Use Resource Meters (Purging Speed)
+        # 6. Discrete Limited-Use Resource Meters (Purging Speed)
         raw_traits_list = self._extract_traits_list(fields, text)
         cleaned_traits = self._clean_trait_headers(raw_traits_list)
 
         features_text = "\n".join(cleaned_traits)
         all_text = f"{text}\n{features_text}"
-        custom_meters = self.extract_discrete_meters(all_text, clean_class, level, int_mod, wis_mod, cha_mod)
+        custom_meters = self.extract_discrete_meters(all_text, clean_archetype, total_level, int_mod, wis_mod, cha_mod)
+        if len(class_entries) > 1:
+            custom_meters.pop("hit_dice", None)
+            custom_meters.update(hd_meters)
+        custom_meters.update(arcanum_meters)
+        custom_meters.pop("speed", None)
 
-        # 6. Inventory Standardization
+        # 7. Inventory Standardization
         raw_inventory = self._extract_inventory(fields, text)
-        structured_inventory = self.sanitize_inventory(raw_inventory)
+        structured_inventory = InventoryList(self.sanitize_inventory(raw_inventory))
 
-        # 7. Roleplay Anchors
+        # 8. Boundary-Healed Roleplay Anchors
+        headers = ["PERSONALITY TRAITS", "IDEALS", "BONDS", "FLAWS", "CHARACTER BACKSTORY", "FEATURES ==="]
+        bonds_raw = self._extract_field_or_regex(fields, text, ["Bonds"], r'BONDS\s*\n\s*([^\n]+(?:\n[^\n]+)*?)(?=\n\s*FLAWS)')
+        flaws_raw = self._extract_field_or_regex(fields, text, ["Flaws"], r'FLAWS\s*\n\s*([^\n]+(?:\n[^\n]+)*?)(?=\n\s*CHARACTER BACKSTORY|\n\s*ALLIES)')
+        backstory_raw = fields.get("Backstory") or fields.get("BackgroundHistory") or self._extract_section(text, "CHARACTER BACKSTORY", "ADDITIONAL NOTES")
+
         roleplay_anchors = {
             "personality_traits": self._extract_field_or_regex(fields, text, ["PersonalityTraits ", "PersonalityTraits", "Personality"], r'PERSONALITY TRAITS\s*\n\s*([^\n]+(?:\n[^\n]+)*?)(?=\n\s*IDEALS)'),
             "ideals": self._extract_field_or_regex(fields, text, ["Ideals"], r'IDEALS\s*\n\s*([^\n]+(?:\n[^\n]+)*?)(?=\n\s*BONDS)'),
-            "bonds": self._extract_field_or_regex(fields, text, ["Bonds"], r'BONDS\s*\n\s*([^\n]+(?:\n[^\n]+)*?)(?=\n\s*FLAWS)'),
-            "flaws": self._extract_field_or_regex(fields, text, ["Flaws"], r'FLAWS\s*\n\s*([^\n]+(?:\n[^\n]+)*?)(?=\n\s*CHARACTER BACKSTORY|\n\s*ALLIES)'),
-            "allies_and_organizations": _clean(fields.get("Allies") or fields.get("AlliesOrganizations") or "") or self._extract_section(text, "ALLIES & ORGANIZATIONS", "PERSONALITY TRAITS")
+            "bonds": heal_truncated_field(bonds_raw, text, headers),
+            "flaws": heal_truncated_field(flaws_raw, text, headers),
+            "allies_and_organizations": fields.get("Allies", "").strip() if isinstance(fields.get("Allies"), str) and fields.get("Allies").strip() else (_clean(fields.get("Allies") or fields.get("AlliesOrganizations") or "") or self._extract_section(text, "ALLIES & ORGANIZATIONS", "PERSONALITY TRAITS"))
         }
+
+        raw_bs = clean_backstory_text(backstory_raw)
+        raw_bs_healed = heal_truncated_field(raw_bs, text, ["ADDITIONAL NOTES", "EQUIPMENT", "FEATURES", "FEATURES ==="])
+        raw_an1 = clean_backstory_text(fields.get("AdditionalNotes1") or "")
+        raw_an2 = clean_backstory_text(fields.get("AdditionalNotes2") or fields.get("AdditionalNotes") or "")
+        if raw_an1 and ("nights, she" in raw_an1 or not fields.get("Notes")):
+            full_backstory = " ".join(filter(None, [raw_bs_healed, raw_an1, raw_an2])).strip()
+            additional_notes = ""
+        else:
+            full_backstory = raw_bs_healed
+            additional_notes = "\n\n".join(filter(None, [raw_an1, raw_an2])).strip()
 
         # Extract Weight Carried with Automated Fallback Calculation
         weight_carried = _clean(fields.get("Weight Carried") or fields.get("WeightCarried") or "")
@@ -556,17 +798,6 @@ class DnD5eParser(BaseSheetParser):
                 saving_throws[s_name] = f"{total_mod:+d}"
                 saving_throws[s_upper] = total_mod
 
-        # Backstory & Additional Notes
-        raw_bs = clean_backstory_text(fields.get("Backstory") or fields.get("BackgroundHistory") or self._extract_section(text, "CHARACTER BACKSTORY", "ADDITIONAL NOTES"))
-        raw_an1 = clean_backstory_text(fields.get("AdditionalNotes1") or "")
-        raw_an2 = clean_backstory_text(fields.get("AdditionalNotes2") or fields.get("AdditionalNotes") or "")
-        if raw_an1 and ("nights, she" in raw_an1 or not fields.get("Notes")):
-            full_backstory = " ".join(filter(None, [raw_bs, raw_an1, raw_an2])).strip()
-            additional_notes = ""
-        else:
-            full_backstory = raw_bs
-            additional_notes = "\n\n".join(filter(None, [raw_an1, raw_an2])).strip()
-
         # Vitals
         ac_val = self._get_num(fields, ["AC"], default=12)
         max_hp = self._get_num(fields, ["HPMax", "MaxHP"], default=10)
@@ -574,9 +805,20 @@ class DnD5eParser(BaseSheetParser):
         temp_hp = self._get_num(fields, ["HPTemp", "TempHP"], default=0)
         raw_init = _clean(fields.get("Init") or fields.get("Initiative") or fields.get("Initiative "))
         init_val = int(raw_init) if raw_init and raw_init.lstrip("+-").isdigit() else dex_mod
+        init_str = f"{init_val:+d}" if isinstance(init_val, int) else (f"{int(init_val):+d}" if str(init_val).lstrip("+-").isdigit() else str(init_val))
 
         defenses_val = _clean(fields.get("Defenses") or fields.get("Resistances") or "")
-        hit_die = self._infer_hit_die(clean_class)
+
+        # Build structured tagged_traits with validated names
+        structured_traits = []
+        for t in cleaned_traits:
+            t_name = extract_clean_trait_name(t)
+            if t_name and t_name.lower() not in BANNED_TRAIT_HEADERS:
+                structured_traits.append({
+                    "name": t_name,
+                    "description": t,
+                    "genre": "fantasy_d20"
+                })
 
         # Build Universal Core
         core = UniversalCharacterCore(
@@ -598,7 +840,7 @@ class DnD5eParser(BaseSheetParser):
                 {"category": "INVESTIGATION_TECH", "tier": "expert", "source_skill": "Investigation"}
             ],
             tagged_inventory=structured_inventory,
-            tagged_traits=clean_traits_and_headers([{"name": t.split("•")[0].split(":")[0].strip(), "description": t, "genre": "fantasy_d20"} for t in cleaned_traits]),
+            tagged_traits=clean_traits_and_headers(structured_traits),
             backstory=full_backstory or "Adventurer exploring the realms with skill and dedication.",
             roleplay_anchors=roleplay_anchors,
             custom_meters=custom_meters,
@@ -632,12 +874,12 @@ class DnD5eParser(BaseSheetParser):
                 "current": cur_hp,
                 "max": max_hp,
                 "temp": temp_hp,
-                "hit_die": f"1d{hit_die}"
+                "hit_die": hit_dice_display
             },
             "hit_dice": {
                 "current": level,
                 "max": level,
-                "die": f"1d{hit_die}"
+                "die": hit_dice_display
             },
             "ability_scores": {
                 "Strength": str_val, "Dexterity": dex_val, "Constitution": con_val,
@@ -708,7 +950,9 @@ class DnD5eParser(BaseSheetParser):
             "attributes": native_payload["ability_scores"],
             "armor_class": ac_val,
             "speed": native_payload["speed"],
-            "hit_dice": f"1d{hit_die}",
+            "defenses": defenses_val,
+            "resistances": defenses_val,
+            "hit_dice": hit_dice_display,
             "weapons": extracted_weapons,
             "currency": extracted_currency,
             "inventory": structured_inventory,
@@ -719,8 +963,8 @@ class DnD5eParser(BaseSheetParser):
             "spell_save_dc": str(save_dc) if save_dc else "",
             "spell_attack_bonus": spell_atk,
             "passives": extracted_passives,
-            "senses": fields.get("Senses", "").strip(),
-            "initiative": str(init_val) if isinstance(init_val, int) else str(init_val),
+            "senses": _clean(fields.get("Senses") or fields.get("AdditionalSenses") or ""),
+            "initiative": init_str,
             "proficiencies": native_payload["proficiencies"],
             "prof_bonus": f"+{prof_bonus}" if prof_bonus >= 0 else str(prof_bonus),
             "skills": parsed_skills,
@@ -752,6 +996,60 @@ class DnD5eParser(BaseSheetParser):
         }
 
     # --- Processing Subroutines ---
+    def _extract_standard_slots(self, fields: Dict[str, Any], text: str, class_name: str = "", level: int = 1) -> Dict[str, Dict[str, Any]]:
+        spell_slots = {}
+        found_any = False
+        for rank in range(1, 10):
+            total_slots = self._get_num(fields, [f"SlotsTotal{rank}", f"SlotsTotal_{rank}", f"SpellSlots_{rank}_Total"], default=0)
+            if total_slots == 0:
+                for h_idx in range(12):
+                    hdr = str(fields.get(f"spellHeader{h_idx}") or "")
+                    slot_hdr = str(fields.get(f"spellSlotHeader{h_idx}") or "")
+                    if re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL', hdr, re.IGNORECASE):
+                        m_s = re.search(r'(\d+)\s+(?:Slots?|Pact)', slot_hdr, re.IGNORECASE)
+                        if m_s:
+                            total_slots = int(m_s.group(1))
+                            break
+            if total_slots == 0:
+                slot_regex = re.search(rf'{rank}(?:st|nd|rd|th)\s+LEVEL===\s*\n\s*(\d+)\s+(?:Slots|Pact)', text, re.IGNORECASE)
+                if slot_regex:
+                    total_slots = int(slot_regex.group(1))
+
+            if total_slots > 0:
+                found_any = True
+
+            spell_slots[f"level_{rank}"] = {
+                "max": total_slots,
+                "current": self._get_num(fields, [f"SlotsRemaining{rank}", f"SlotsRemaining_{rank}"], default=total_slots),
+                "reset_on": "long_rest"
+            }
+
+        if not found_any and class_name and "warlock" not in class_name.lower():
+            fallback_slots = calculate_multiclass_spell_slots([{"class": class_name, "level": level}])
+            if any(s["max"] > 0 for s in fallback_slots.values()):
+                return fallback_slots
+
+        return spell_slots
+
+    def _get_spell_level_from_headers(self, spell_idx: int, fields: Dict[str, Any]) -> Optional[int]:
+        """Inspects D&D Beyond spellHeader boundaries to determine exact spell tier."""
+        curr_lvl = None
+        for k, v in fields.items():
+            v_str = str(v).strip()
+            m_hdr = re.search(r"===\s*(\d+(?:st|nd|rd|th)?\s*level|cantrips?)\s*===", v_str, re.IGNORECASE)
+            if m_hdr:
+                hl = m_hdr.group(1).lower()
+                if "cantrip" in hl:
+                    curr_lvl = 0
+                else:
+                    m_num = re.search(r"\d+", hl)
+                    if m_num:
+                        curr_lvl = int(m_num.group(0))
+            m_name = re.match(r"^spellname(\d+)$", k, re.IGNORECASE)
+            if m_name and int(m_name.group(1)) == spell_idx:
+                return curr_lvl
+        return None
+
     def parse_spells_list(self, fields: Dict[str, Any], text: str, class_str: str = "", int_mod: int = 0, level: int = 1) -> List[Dict[str, Any]]:
         """Parses spells, deduplicates, and validates always-prepared subclass spells."""
         spells = []
@@ -807,16 +1105,23 @@ class DnD5eParser(BaseSheetParser):
                     continue
                 seen_spells.add(low_n)
 
-                lvl_val = s.get("level", "Cantrip")
-                lvl_str = str(lvl_val).lower()
-                is_cantrip = "cantrip" in lvl_str or lvl_str == "0" or any(
-                    c in low_n for c in cantrip_keywords
-                )
+                lvl_val = s.get("level")
+                lvl_str = str(lvl_val).lower() if lvl_val is not None else ""
+                lvl_num = normalize_spell_level(lvl_val) if lvl_val is not None else None
+
+                is_cantrip = False
+                if lvl_val is not None and (lvl_num == 0 or "cantrip" in lvl_str):
+                    is_cantrip = True
+                elif lvl_val is None or lvl_str in ("", "cantrip/spell"):
+                    is_cantrip = any(re.search(rf'\b{re.escape(c)}\b', low_n) for c in cantrip_keywords)
+
                 is_subclass_oath = low_n in always_prep_set
                 is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
+                final_lvl = 0 if is_cantrip else (lvl_num if (lvl_num is not None and lvl_num > 0) else normalize_spell_level(self._infer_spell_level(clean_name, text, fields=fields)))
+
                 spells.append({
                     "name": clean_name,
-                    "level": 0 if is_cantrip else normalize_spell_level(self._infer_spell_level(clean_name, text)),
+                    "level": final_lvl,
                     "is_cantrip": is_cantrip,
                     "is_ritual": "[R]" in s_name or s.get("is_ritual", False),
                     "is_always_prepared": is_subclass_oath,
@@ -845,9 +1150,9 @@ class DnD5eParser(BaseSheetParser):
                 continue
             seen_spells.add(low_n)
 
-            inferred_lvl = self._infer_spell_level(clean_name, text)
-            is_cantrip = (inferred_lvl == 0) or "cantrip" in low_n or any(
-                c in low_n for c in cantrip_keywords
+            inferred_lvl = self._infer_spell_level(clean_name, text, fields=fields)
+            is_cantrip = (inferred_lvl == 0) or ("cantrip" in low_n) or any(
+                re.search(rf'\b{re.escape(c)}\b', low_n) for c in cantrip_keywords
             )
             is_subclass_oath = low_n in always_prep_set
             is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
@@ -890,12 +1195,12 @@ class DnD5eParser(BaseSheetParser):
                     if low_n in seen_spells:
                         continue
                     seen_spells.add(low_n)
-                    is_cantrip = any(k in low_n for k in ["cantrip"] + cantrip_keywords)
+                    is_cantrip = ("cantrip" in low_n) or any(re.search(rf'\b{re.escape(k)}\b', low_n) for k in cantrip_keywords)
                     is_subclass_oath = low_n in always_prep_set
                     is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
                     spells.append({
                         "name": clean_name,
-                        "level": 0 if is_cantrip else normalize_spell_level(self._infer_spell_level(clean_name, text)),
+                        "level": 0 if is_cantrip else normalize_spell_level(self._infer_spell_level(clean_name, text, fields=fields)),
                         "is_cantrip": is_cantrip,
                         "is_ritual": "[R]" in s_name,
                         "is_always_prepared": is_subclass_oath,
@@ -950,7 +1255,9 @@ class DnD5eParser(BaseSheetParser):
         # 3. Paladin: Lay on Hands & Divine Sense
         if "paladin" in c_lower or "lay on hands" in t_lower:
             loh_match = re.search(r'lay on hands pool:\s*(\d+)', t_lower)
-            loh_val = int(loh_match.group(1)) if loh_match else (level * 5)
+            pal_m = re.search(r'paladin\s*(\d+)', c_lower)
+            pal_lvl = int(pal_m.group(1)) if pal_m else level
+            loh_val = int(loh_match.group(1)) if loh_match else (pal_lvl * 5)
             meters["lay_on_hands"] = {
                 "label": f"Lay on Hands Pool ({loh_val} HP)",
                 "current": loh_val,
@@ -958,8 +1265,11 @@ class DnD5eParser(BaseSheetParser):
                 "reset_on": "long_rest"
             }
 
-        if "divine sense" in t_lower or "paladin" in c_lower:
-            ds_match = re.search(r'(\d+)\s*(?:times\s*per\s*long\s*rest|/\s*long\s*rest)', t_lower)
+        if "channel divinity: divine sense" in t_lower:
+            # 2024 rules: Powered by Channel Divinity, not a standalone pool
+            pass
+        elif "divine sense" in t_lower:
+            ds_match = re.search(r'divine\s+sense[\s\S]{1,60}?(\d+)\s*(?:times\s*per\s*long\s*rest|/\s*long\s*rest)', t_lower)
             ds_val = int(ds_match.group(1)) if ds_match else max(1, 1 + cha_mod)
             meters["divine_sense"] = {
                 "label": "Divine Sense",
@@ -968,8 +1278,13 @@ class DnD5eParser(BaseSheetParser):
                 "reset_on": "long_rest"
             }
 
-        if ("channel divinity" in t_lower) or ("cleric" in c_lower and level >= 2) or ("paladin" in c_lower and level >= 3):
-            cd_uses = 2 if level >= 6 else 1
+        pal_m = re.search(r'paladin\s*(\d+)', c_lower)
+        pal_lvl = int(pal_m.group(1)) if pal_m else level
+        cleric_m = re.search(r'cleric\s*(\d+)', c_lower)
+        cleric_lvl = int(cleric_m.group(1)) if cleric_m else level
+        if ("channel divinity" in t_lower) or ("cleric" in c_lower and cleric_lvl >= 2) or ("paladin" in c_lower and pal_lvl >= 3):
+            cd_lvl = max(cleric_lvl if "cleric" in c_lower else 0, pal_lvl if "paladin" in c_lower else 0, level if ("cleric" not in c_lower and "paladin" not in c_lower) else 0)
+            cd_uses = 2 if cd_lvl >= 6 else 1
             meters["channel_divinity"] = {
                 "label": "Channel Divinity",
                 "current": cd_uses,
@@ -987,8 +1302,10 @@ class DnD5eParser(BaseSheetParser):
             }
 
         # 5. Druid: Wild Shape (2 uses per Short Rest starting at Level 2)
-        if ("druid" in c_lower or "wild shape" in t_lower) and level >= 2:
-            ws_uses = 3 if level >= 17 else 2
+        druid_m = re.search(r'druid\s*(\d+)', c_lower)
+        druid_lvl = int(druid_m.group(1)) if druid_m else level
+        if ("druid" in c_lower or "wild shape" in t_lower) and druid_lvl >= 2:
+            ws_uses = 3 if druid_lvl >= 17 else 2
             meters["wild_shape"] = {
                 "label": "Wild Shape Uses",
                 "current": ws_uses,
@@ -998,17 +1315,21 @@ class DnD5eParser(BaseSheetParser):
 
         # 6. Monk: Ki / Focus Points (Level / Short Rest)
         if "monk" in c_lower or "ki points" in t_lower or "focus points" in t_lower:
+            monk_m = re.search(r'monk\s*(\d+)', c_lower)
+            monk_lvl = int(monk_m.group(1)) if monk_m else level
             meters["ki_points"] = {
                 "label": "Ki / Focus Points",
-                "current": level,
-                "max": level,
+                "current": monk_lvl,
+                "max": monk_lvl,
                 "reset_on": "short_rest"
             }
 
         # 7. Sorcerer: Sorcery Points & Innate Sorcery
         if "sorcerer" in c_lower or "font of magic" in t_lower or "sorcery points" in t_lower:
             sp_match = re.search(r'(\d+)\s*SP', text)
-            sp_max = int(sp_match.group(1)) if sp_match else (level if level >= 2 else 0)
+            sorc_m = re.search(r'sorcerer\s*(\d+)', c_lower)
+            sorc_lvl = int(sorc_m.group(1)) if sorc_m else level
+            sp_max = int(sp_match.group(1)) if sp_match else (sorc_lvl if sorc_lvl >= 2 else 0)
             if sp_max > 0:
                 meters["sorcery_points"] = {
                     "label": "Sorcery Points",
@@ -1026,13 +1347,15 @@ class DnD5eParser(BaseSheetParser):
 
         # 8. Fighter: Second Wind & Action Surge
         if "fighter" in c_lower:
+            fighter_m = re.search(r'fighter\s*(\d+)', c_lower)
+            fighter_lvl = int(fighter_m.group(1)) if fighter_m else level
             meters["second_wind"] = {
                 "label": "Second Wind",
                 "current": 1,
                 "max": 1,
                 "reset_on": "short_rest"
             }
-            if level >= 2:
+            if fighter_lvl >= 2:
                 meters["action_surge"] = {
                     "label": "Action Surge",
                     "current": 1,
@@ -1078,6 +1401,60 @@ class DnD5eParser(BaseSheetParser):
                 "reset_on": "short_rest"
             }
 
+        # 10. High-Level Consumable Traits & Rest Meters
+        if "breath weapon" in t_lower:
+            bw_match = re.search(r'breath weapon.*?(\d+)\s*(?:times\s*per\s*long\s*rest|/\s*long\s*rest)', t_lower)
+            pb_val = (level - 1) // 4 + 2
+            bw_uses = int(bw_match.group(1)) if bw_match else pb_val
+            meters["breath_weapon"] = {
+                "label": "Breath Weapon",
+                "current": bw_uses,
+                "max": bw_uses,
+                "reset_on": "long_rest"
+            }
+
+        if "draconic flight" in t_lower:
+            meters["draconic_flight"] = {
+                "label": "Draconic Flight",
+                "current": 1,
+                "max": 1,
+                "reset_on": "long_rest"
+            }
+
+        if "dark one's own luck" in t_lower or "dark one’s own luck" in t_lower:
+            dool_match = re.search(r'dark one[’\']s own luck[\s\S]*?(\d+)\s*(?:times\s*per\s*long\s*rest|/\s*long\s*rest)', t_lower)
+            dool_uses = int(dool_match.group(1)) if dool_match else 3
+            meters["dark_ones_own_luck"] = {
+                "label": "Dark One's Own Luck",
+                "current": dool_uses,
+                "max": dool_uses,
+                "reset_on": "long_rest"
+            }
+
+        if re.search(r'hurl\s+through\s+hell', t_lower):
+            meters["hurl_through_hell"] = {
+                "label": "Hurl Through Hell",
+                "current": 1,
+                "max": 1,
+                "reset_on": "long_rest"
+            }
+
+        if re.search(r'boon\s+of\s+fate', t_lower):
+            meters["boon_of_fate"] = {
+                "label": "Boon of Fate",
+                "current": 1,
+                "max": 1,
+                "reset_on": "short_rest"
+            }
+
+        if re.search(r'magical\s+cunning', t_lower):
+            meters["magical_cunning"] = {
+                "label": "Magical Cunning",
+                "current": 1,
+                "max": 1,
+                "reset_on": "long_rest"
+            }
+
         # CRITICAL: Rigorous Purge of Speed
         meters.pop("speed", None)
         return meters
@@ -1087,9 +1464,35 @@ class DnD5eParser(BaseSheetParser):
 
     @staticmethod
     def _calculate_max_prepared_spells(class_str: str, level: int, key_mod: int, has_slots: bool = True) -> int:
-        cls_lower = class_str.lower()
         if not has_slots:
             return 0
+
+        class_entries = parse_multiclass_string(class_str)
+        
+        # If multiclassed, calculate each class independently and sum
+        if len(class_entries) > 1:
+            total_prep = 0
+            for c in class_entries:
+                c_name = c["class"].lower()
+                c_lvl = c["level"]
+                if any(k in c_name for k in ["druid", "cleric", "wizard"]):
+                    total_prep += max(1, key_mod + c_lvl)
+                elif "paladin" in c_name or "artificer" in c_name:
+                    total_prep += max(1, key_mod + (c_lvl // 2))
+                elif "ranger" in c_name:
+                    total_prep += max(0, key_mod + (c_lvl // 2)) if c_lvl >= 2 else 0
+                elif "sorcerer" in c_name:
+                    sorc_table = {1: 2, 2: 4, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 11,
+                                  11: 12, 12: 12, 13: 13, 14: 13, 15: 14, 16: 14, 17: 15, 18: 15, 19: 15, 20: 15}
+                    total_prep += sorc_table.get(c_lvl, min(15, c_lvl + 1))
+                elif "warlock" in c_name:
+                    warlock_known = {1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 10,
+                                     11: 11, 12: 11, 13: 12, 14: 12, 15: 13, 16: 13, 17: 14, 18: 14, 19: 15, 20: 15}
+                    total_prep += warlock_known.get(c_lvl, min(15, c_lvl + 1))
+            return total_prep
+
+        # Single-class fallback
+        cls_lower = class_str.lower()
         if "artificer" in cls_lower or "paladin" in cls_lower:
             return max(1, key_mod + (level // 2))
         elif any(k in cls_lower for k in ["druid", "cleric", "wizard"]):
@@ -1098,15 +1501,14 @@ class DnD5eParser(BaseSheetParser):
             if level < 2:
                 return 0
             return max(1, key_mod + (level // 2))
-        elif "warlock" in cls_lower:
-            warlock_known = {
-                1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 10,
-                11: 11, 12: 11, 13: 12, 14: 12, 15: 13, 16: 13, 17: 14, 18: 14, 19: 15, 20: 15
-            }
-            return warlock_known.get(level, level + 1)
         elif "sorcerer" in cls_lower:
-            sorc_table = {1: 2, 2: 4, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10}
-            return sorc_table.get(level, level + 1)
+            sorc_table = {1: 2, 2: 4, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 11,
+                          11: 12, 12: 12, 13: 13, 14: 13, 15: 14, 16: 14, 17: 15, 18: 15, 19: 15, 20: 15}
+            return sorc_table.get(level, min(15, level + 1))
+        elif "warlock" in cls_lower:
+            warlock_known = {1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 10,
+                             11: 11, 12: 11, 13: 12, 14: 12, 15: 13, 16: 13, 17: 14, 18: 14, 19: 15, 20: 15}
+            return warlock_known.get(level, min(15, level + 1))
         return max(1, key_mod + level)
 
     @staticmethod
@@ -1126,11 +1528,11 @@ class DnD5eParser(BaseSheetParser):
         cleaned = []
         for t in raw_traits:
             t_clean = t.strip()
-            # Strip leading bullet points, asterisks, dashes
-            base_name = re.sub(r'^[\*\s\u2022\-]+', '', t_clean)
+            # Strip leading bullet points, asterisks, dashes, pipes
+            base_name = re.sub(r'^[\*\s\u2022\|\-]+', '', t_clean)
             # Strip trailing citation sources
-            base_name = re.sub(r'\s*[•|].*$', '', base_name).strip().lower()
-            if base_name not in BANNED_TRAIT_HEADERS and not base_name.startswith("=== "):
+            base_name = re.sub(r'\s*[•|:].*$', '', base_name).strip().lower()
+            if base_name and base_name not in BANNED_TRAIT_HEADERS and not base_name.startswith("==="):
                 cleaned.append(t_clean)
         return cleaned
 
@@ -1139,8 +1541,33 @@ class DnD5eParser(BaseSheetParser):
         return sanitize_inventory(raw_inventory)
 
     @staticmethod
-    def _infer_spell_level(spell_name: str, full_text: str) -> int:
+    def _infer_spell_level(spell_name: str, full_text: str, fields: Optional[Dict[str, Any]] = None) -> int:
         clean = spell_name.lower().strip()
+        clean_no_tags = re.sub(r'\s*\[.*?\]|\s*<.*?>', '', clean).strip()
+        reg_info = DND_SPELL_REGISTRY.get(clean) or DND_SPELL_REGISTRY.get(clean_no_tags)
+        if reg_info and "level" in reg_info:
+            return normalize_spell_level(reg_info["level"])
+
+        if fields:
+            curr_lvl = None
+            for k, v in fields.items():
+                v_str = str(v).strip()
+                m_hdr = re.search(r"===\s*(\d+(?:st|nd|rd|th)?\s*level|cantrips?)\s*===", v_str, re.IGNORECASE)
+                if m_hdr:
+                    hl = m_hdr.group(1).lower()
+                    if "cantrip" in hl:
+                        curr_lvl = 0
+                    else:
+                        m_num = re.search(r"\d+", hl)
+                        if m_num:
+                            curr_lvl = int(m_num.group(0))
+                m_name = re.match(r"^spellname(\d+)$", k, re.IGNORECASE)
+                if m_name:
+                    name_in_field = v_str.lower().strip()
+                    if clean == name_in_field or clean_no_tags == name_in_field or clean in name_in_field:
+                        if curr_lvl is not None:
+                            return curr_lvl
+
         cantrip_match = re.search(rf'CANTRIPS[\s\S]*?{re.escape(clean)}', full_text, re.IGNORECASE)
         if cantrip_match:
             rest = re.sub(r'^CANTRIPS[=:\s]*', '', cantrip_match.group(0), flags=re.IGNORECASE)
@@ -1154,14 +1581,49 @@ class DnD5eParser(BaseSheetParser):
                 rest = re.sub(rf'^{lvl_hdr}[=:\s]*', '', matched_snippet, flags=re.IGNORECASE)
                 if not re.search(r'\d+(?:st|nd|rd|th)\s+LEVEL', rest, re.IGNORECASE):
                     return lvl
+
         second_lvl = [
             "dragon's breath", "spider climb", "misty step", "scorching ray",
-            "shatter", "invisibility", "hold person", "lesser restoration", "mirror image"
+            "shatter", "invisibility", "hold person", "lesser restoration", "mirror image",
+            "darkness", "mind spike", "suggestion", "levitate"
         ]
         third_lvl = [
             "fireball", "lightning bolt", "counterspell", "dispel magic",
-            "haste", "revivify", "fly", "hunger of hadar", "animate dead", "vampiric touch"
+            "haste", "revivify", "fly", "hunger of hadar", "animate dead", "vampiric touch",
+            "stinking cloud"
         ]
+        fourth_lvl = [
+            "banishment", "dimension door", "blight", "fire shield", "wall of fire",
+            "polymorph", "greater invisibility", "ice storm"
+        ]
+        fifth_lvl = [
+            "planar binding", "contact other plane", "teleportation circle", "geas",
+            "insect plague", "cloudkill", "cone of cold", "hold monster", "wall of force", "synaptic static"
+        ]
+        sixth_lvl = [
+            "create undead", "chain lightning", "disintegrate", "heal", "eyebite", "true seeing"
+        ]
+        seventh_lvl = [
+            "finger of death", "delayed blast fireball", "teleport", "forcecage", "plane shift"
+        ]
+        eighth_lvl = [
+            "dominate monster", "sunburst", "feeblemind", "maze", "mind blank", "demiplane"
+        ]
+        ninth_lvl = [
+            "astral projection", "meteor swarm", "power word kill", "time stop", "wish", "true polymorph", "foresight"
+        ]
+        if any(s in clean for s in ninth_lvl):
+            return 9
+        if any(s in clean for s in eighth_lvl):
+            return 8
+        if any(s in clean for s in seventh_lvl):
+            return 7
+        if any(s in clean for s in sixth_lvl):
+            return 6
+        if any(s in clean for s in fifth_lvl):
+            return 5
+        if any(s in clean for s in fourth_lvl):
+            return 4
         if any(s in clean for s in third_lvl):
             return 3
         if any(s in clean for s in second_lvl):
@@ -1199,10 +1661,13 @@ class DnD5eParser(BaseSheetParser):
     def _extract_traits_list(self, fields: Dict[str, Any], text: str) -> List[str]:
         raw = fields.get("FeaturesAndTraits", "") or fields.get("Features and Traits", "")
         if not raw:
-            ft1 = str(fields.get("FeaturesTraits1") or "").strip()
-            ft2 = str(fields.get("FeaturesTraits2") or "").strip()
-            if ft1 or ft2:
-                raw = f"{ft1}\n{ft2}".strip()
+            trait_parts = []
+            for i in range(1, 10):
+                val = str(fields.get(f"FeaturesTraits{i}") or "").strip()
+                if val:
+                    trait_parts.append(val)
+            if trait_parts:
+                raw = "\n".join(trait_parts)
         if not raw:
             raw = self._extract_section(text, "FEATURES ===", "EQUIPMENT")
         if not raw:

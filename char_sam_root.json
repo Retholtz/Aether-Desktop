@@ -1,0 +1,3405 @@
+{
+  "schema_version": "2.1",
+  "id": "char_sam_root",
+  "name": "Sam",
+  "variant_label": "Canonical Root",
+  "player_name": "retholtz",
+  "level": 20,
+  "experience_points": 0,
+  "archetype": "Warlock 20",
+  "species": "Dragonborn",
+  "background": "Criminal",
+  "ruleset": "dnd_5e",
+  "ruleset_label": "D&D 5E",
+  "native_genre": "heroic_fantasy",
+  "native_system": "dnd_5e",
+  "vitals": {
+    "health": {
+      "current": 183,
+      "max": 183,
+      "label": "Health"
+    },
+    "guard": {
+      "current": 12,
+      "max": 12,
+      "label": "Armor Defense"
+    }
+  },
+  "attributes": {
+    "Strength": 15,
+    "Dexterity": 15,
+    "Constitution": 18,
+    "Intelligence": 18,
+    "Wisdom": 14,
+    "Charisma": 17,
+    "STR": 15,
+    "DEX": 15,
+    "CON": 18,
+    "INT": 18,
+    "WIS": 14,
+    "CHA": 17
+  },
+  "armor_class": 12,
+  "speed": "30 ft. (Walking)",
+  "defenses": "Resistances - Fire",
+  "resistances": "Resistances - Fire",
+  "hit_dice": "20d8",
+  "weapons": [
+    {
+      "name": "Chill Touch",
+      "atk_bonus": "+9",
+      "damage": "4d10 Necrotic",
+      "notes": "V/S"
+    },
+    {
+      "name": "Eldritch Blast",
+      "atk_bonus": "+9",
+      "damage": "1d10+3 Force",
+      "notes": "Count: 4, V/S"
+    },
+    {
+      "name": "Unarmed Strike",
+      "atk_bonus": "+8",
+      "damage": "3 Bludgeoning",
+      "notes": ""
+    }
+  ],
+  "currency": {
+    "cp": 0,
+    "sp": 0,
+    "ep": 0,
+    "gp": 31,
+    "pp": 0
+  },
+  "inventory": [
+    {
+      "name": "Leather",
+      "qty": "1",
+      "weight": "10 lb.",
+      "category": "Armor",
+      "notes": ""
+    },
+    {
+      "name": "Sickle",
+      "qty": "1",
+      "weight": "2 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Dagger",
+      "qty": "4",
+      "weight": "1 lb.",
+      "category": "Weapon",
+      "notes": ""
+    },
+    {
+      "name": "Orb",
+      "qty": "1",
+      "weight": "3 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Book",
+      "qty": "2",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Backpack",
+      "qty": "1",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Parchment",
+      "qty": "10",
+      "weight": "--",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Ink & Pen",
+      "qty": "2",
+      "weight": "--",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Lamp / Lantern",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Oil",
+      "qty": "10",
+      "weight": "10 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Tinderbox",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Thieves' Tools",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Tool",
+      "notes": ""
+    },
+    {
+      "name": "Crowbar",
+      "qty": "1",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Pouch",
+      "qty": "2",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Traveler's Clothes",
+      "qty": "1",
+      "weight": "4 lb.",
+      "category": "Gear",
+      "notes": ""
+    }
+  ],
+  "tagged_inventory": [
+    {
+      "name": "Leather",
+      "qty": "1",
+      "weight": "10 lb.",
+      "category": "Armor",
+      "notes": ""
+    },
+    {
+      "name": "Sickle",
+      "qty": "1",
+      "weight": "2 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Dagger",
+      "qty": "4",
+      "weight": "1 lb.",
+      "category": "Weapon",
+      "notes": ""
+    },
+    {
+      "name": "Orb",
+      "qty": "1",
+      "weight": "3 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Book",
+      "qty": "2",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Backpack",
+      "qty": "1",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Parchment",
+      "qty": "10",
+      "weight": "--",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Ink & Pen",
+      "qty": "2",
+      "weight": "--",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Lamp / Lantern",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Oil",
+      "qty": "10",
+      "weight": "10 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Tinderbox",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Thieves' Tools",
+      "qty": "1",
+      "weight": "1 lb.",
+      "category": "Tool",
+      "notes": ""
+    },
+    {
+      "name": "Crowbar",
+      "qty": "1",
+      "weight": "5 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Pouch",
+      "qty": "2",
+      "weight": "1 lb.",
+      "category": "Gear",
+      "notes": ""
+    },
+    {
+      "name": "Traveler's Clothes",
+      "qty": "1",
+      "weight": "4 lb.",
+      "category": "Gear",
+      "notes": ""
+    }
+  ],
+  "features_and_traits": [
+    "* Core Warlock Traits \u2022 PHB-2024 153",
+    "* Eldritch Invocations \u2022 PHB-2024 153",
+    "You have unearthed Eldritch Invocations, pieces of forbidden knowledge that imbue you with an abiding magical ability or other lessons. If an invocation has a prerequisite, you must meet it to learn that invocation.",
+    "| Agonizing Blast (Eldritch Blast) \u2022 br-2024",
+    "You can add your Cha. modifier bonus to the damage rolls of Eldritch Blast.",
+    "| Armor of Shadows \u2022 br-2024",
+    "You can cast Mage Armor on yourself without expending a spell slot.",
+    "| Ascendant Step \u2022 br-2024",
+    "You can cast Levitate on yourself without expending a spell slot.",
+    "| Devil\u2019s Sight \u2022 br-2024",
+    "You can see normally in Dim Light and Darkness\u2014both magical and nonmagical\u2014within 120 ft. of yourself.",
+    "| Eldritch Mind \u2022 br-2024",
+    "You have Advantage on Con. saving throws that you make to maintain Concentration.",
+    "| Eldritch Spear \u2022 br-2024",
+    "Choose one of your known Warlock cantrips that deals damage and has a range of 10+ feet. When you cast that spell, its range increases by 600 ft.",
+    "| One with Shadows \u2022 br-2024",
+    "While you\u2019re in an area of Dim Light or Darkness, you can cast Invisibility on yourself without expending a spell slot.",
+    "| Otherworldly Leap \u2022 br-2024",
+    "You can cast Jump without expending a spell slot.",
+    "| Pact of the Blade \u2022 br-2024",
+    "As a Bonus Action, you can conjure a pact weapon in your hand, or create a bond with a magic weapon you touch. You can\u2019t bond with a magic weapon if someone else attuned to it or another Warlock is bonded with it. Until the bond ends, you\u2019re proficient with it and can use it as a Spellcasting Focus.",
+    "Whenever you attack with the bonded weapon, you can use your Cha. instead of Str. or Dex.; and you can cause it to deal Necrotic, Psychic, or Radiant damage or its normal damage type.",
+    "Your bond with the weapons ends if you use this feature\u2019s Bonus Action again, if the weapon is more than 5 ft. away from you for more than 1 minute, or if you die. A conjured weapon disappears when the bond ends.",
+    "| Pact of the Blade: Conjure: 1 Bonus Action",
+    "| Pact of the Blade: Bond: 1 Bonus Action",
+    "| Repelling Blast \u2022 br-2024",
+    "Choose one of your known Warlock cantrips that requires an attack roll. When you hit a Large or smaller creature with that cantrip, you can push the creature up to 10 ft. straight away from you.",
+    "* Pact Magic \u2022 PHB-2024 153",
+    "* Magical Cunning \u2022 PHB-2024 154",
+    "Once per Long Rest, you can perform an esoteric rite for 1 minute, regaining up to 2 expended Pact Magic spell slots.",
+    "| 1 / Long Rest \u2022 1 Minute",
+    "* Warlock Subclass \u2022 PHB-2024 154",
+    "| Fiend Patron",
+    "* Dark One\u2019s Blessing \u2022 PHB-2024 161",
+    "When you reduce an enemy to 0 HP, you gain 23 Temp HP. You also gain this benefit if someone else reduces an enemy within 10 ft. of you to 0 HP.",
+    "* Fiend Spells \u2022 PHB-2024 161",
+    "When you reach a Warlock level specified in the Fiend Spells table, you thereafter always have the listed spells prepared.",
+    "* Ability Score Improvement \u2022 PHB-2024 155",
+    "* Dark One\u2019s Own Luck \u2022 PHB-2024 162",
+    "When you make an ability check or saving throw, you can add 1d10 to your roll. You can do this after seeing the roll but before any of the roll\u2019s effects occur.",
+    "You can use this feature 3 times per Long Rest, but no more than once per roll.",
+    "| 3 / Long Rest \u2022 Special",
+    "* 8: Ability Score Improvement \u2022 PHB-2024 155",
+    "* Contact Patron \u2022 PHB-2024 155",
+    "You always have Contact Other Plane prepared. Once per Long Rest, you can cast the spell without expending a spell slot to contact your patron, and you automatically succeed on the spell\u2019s saving throw.",
+    "* Fiendish Resilience \u2022 PHB-2024 162",
+    "You can choose one damage type, other than Force, to have Resistance to. You can change this choice whenever you finish a Short or Long Rest.",
+    "* Mystic Arcanum (Level 6 Spell) \u2022 PHB-2024 155",
+    "Your patron grants you a magical secret called an arcanum, choose one level 6 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+    "* 12: Ability Score Improvement \u2022 PHB-2024 155",
+    "* Mystic Arcanum (Level 7 Spell) \u2022 PHB-2024 155",
+    "Your patron grants you a magical secret called an arcanum, choose one level 7 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+    "* Hurl Through Hell \u2022 PHB-2024 162",
+    "Once per turn when you hit a creature with an attack roll, the target must succeed on a DC 17 Cha. saving throw, or the target disappears, takes 8d10 Psychic damage if it isn\u2019t a Fiend, and it has the Incapacitated condition until the end of your next turn, where it reappears in the space it previously occupied or the nearest unoccupied space.",
+    "Once used, you can\u2019t use this feature again until you finish a Long rest unless you expend a Pact Magic spell slot to restore your use of it.",
+    "| 1 Action",
+    "* Mystic Arcanum (Level 8 Spell) \u2022 PHB-2024 155",
+    "Your patron grants you a magical secret called an arcanum, choose one level 8 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+    "* 16: Ability Score Improvement \u2022 PHB-2024 155",
+    "* Mystic Arcanum (Level 9 Spell) \u2022 PHB-2024 155",
+    "Your patron grants you a magical secret called an arcanum, choose one level 9 Warlock spell as this arcanum. You can cast this spell once per Long Rest",
+    "ally in the same combat. You can\u2019t make this swap if you or the ally has the Incapacitated condition.",
+    "* Boon of Fate \u2022 PHB-2024 210",
+    "Ability Score Increase. Increase one ability score of your choice by 1.",
+    "Improve Fate. When you or another creature within 60 ft. of you succeeds or fails a D20 Test, you can roll 2d4 and apply the total rolled as a bonus or penalty to the d20 roll. Once you use this benefit, you can't use it again until you roll Initiative or finish a Short or Long Rest.",
+    "* Svirfneblin Magic \u2022 EE",
+    "You can cast nondetection on yourself at will, without needing a material component. You can also cast blindness/deafness, blur, and disguise self once each per long rest. INT is your spellcasting ability and you cast these spells at their lowest possible level.",
+    "* Criminal Ability Score Improvements \u2022 PHB-2024 179",
+    "| Increase two scores (+2 / +1) \u2022",
+    "before you cast it in this way again.",
+    "* Epic Boon \u2022 PHB-2024 155",
+    "* Eldritch Master \u2022 PHB-2024 155",
+    "When you use your Magical Cunning feature, you regain all your expended Pact Magic spell slots.",
+    "* Creature Type \u2022 PHB-2024 187",
+    "You are a Humanoid.",
+    "* Size \u2022 PHB-2024 187",
+    "Your size is Medium.",
+    "* Speed \u2022 PHB-2024 187",
+    "Your speed is 30 ft.",
+    "* Draconic Ancestry \u2022 PHB-2024 187",
+    "You gain a breath weapon and damage resistance with your chosen dragon type.",
+    "* Breath Weapon \u2022 PHB-2024 187",
+    "When you take the Attack action on your turn, you can replace one of your attacks with an exhalation of magical energy. You can use your Breath Weapon 6 times per Long Rest.",
+    "* Damage Resistance \u2022 PHB-2024 187",
+    "You have Resistance to the damage type determined by your Draconic Ancestry trait.",
+    "* Darkvision \u2022 PHB-2024 187",
+    "You have Darkvision with a range of 60 ft.",
+    "* Draconic Flight \u2022 PHB-2024 187",
+    "Once per Long Rest as a Bonus Action, you gain temporary flight for 10 minutes or until you retract the wings (no action required) or have the Incapacitated",
+    "condition. During that time, you have a Fly Speed equal to your Speed.",
+    "| 1 / Long Rest \u2022 1 Bonus Action",
+    "* Languages \u2022 PHB-2024 37",
+    "Your character knows at least three languages: Common plus two languages you roll or choose from the Standard Languages table. Knowledge of a language means your character can communicate in it, read it, and write it.",
+    "* Boon of Truesight \u2022 PHB-2024 211",
+    "Ability Score Increase.One ability score of your choice increased by 1.",
+    "Truesight. You have Truesight with a range of 60 feet.",
+    "* Boon of the Night Spirit \u2022 PHB-2024 211",
+    "Ability Score Increase. One ability score increased by 1.",
+    "Merge with Shadows. While within Dim Light or Darkness, you can give yourself the Invisible condition as a Bonus Action. The condition ends on you immediately after you take an action, a Bonus Action, or a Reaction.",
+    "Shadowy Form. While within Dim Light or Darkness, you have Resistance to all damage except Psychic and Radiant.",
+    "* Alert \u2022 PHB-2024 200",
+    "Initiative Proficiency. When you roll Initiative, add +6 to the roll.",
+    "Initiative Swap. Immediately after you roll Initiative, you can swap your Initiative with the Initiative of one willing"
+  ],
+  "spells": [
+    {
+      "name": "Chill Touch",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Eldritch Blast",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "120 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | Count: 4, V/S"
+    },
+    {
+      "name": "Prestidigitation",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "10 ft.",
+      "components": "V, S",
+      "duration": "V,S | 1 hour"
+    },
+    {
+      "name": "True Strike",
+      "level": 0,
+      "is_cantrip": true,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "S,M | Instantaneous | S/M"
+    },
+    {
+      "name": "Hellish Rebuke",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "1R | V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Burning Hands",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Self/15 ft. Cone",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | 15 ft. Cone, V/S"
+    },
+    {
+      "name": "Command",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V | Instantaneous"
+    },
+    {
+      "name": "Mage Armor",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S,M | 8 hours"
+    },
+    {
+      "name": "Jump",
+      "level": 1,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "Bonus Action | V,S,M | 1 minute"
+    },
+    {
+      "name": "Darkness",
+      "level": 2,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft./15 ft. Sphere",
+      "components": "V, S",
+      "duration": "V,M | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Invisibility",
+      "level": 2,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 1 hour"
+    },
+    {
+      "name": "Mind Spike",
+      "level": 2,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "120 ft.",
+      "components": "V, S",
+      "duration": "S | Concentration, up to 1 hour"
+    },
+    {
+      "name": "Misty Step",
+      "level": 2,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "Bonus Action | V | Instantaneous"
+    },
+    {
+      "name": "Scorching Ray",
+      "level": 2,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "120 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Suggestion",
+      "level": 2,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "V,M | Concentration, up to 8 hours"
+    },
+    {
+      "name": "Levitate",
+      "level": 2,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Counterspell",
+      "level": 3,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "1R | S | Instantaneous"
+    },
+    {
+      "name": "Dispel Magic",
+      "level": 3,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "120 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | Special: (See Description)*, V/S"
+    },
+    {
+      "name": "Fly",
+      "level": 3,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Touch",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Vampiric Touch",
+      "level": 3,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "V,S | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Fireball",
+      "level": 3,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "150 ft./20 ft. Sphere",
+      "components": "V, S",
+      "duration": "V,S,M | Instantaneous | 20 ft. Sphere, V/S/M"
+    },
+    {
+      "name": "Stinking Cloud",
+      "level": 3,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "90 ft./20 ft. Sphere",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Banishment",
+      "level": 4,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Dimension Door",
+      "level": 4,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "500 ft.",
+      "components": "V, S",
+      "duration": "V | Instantaneous"
+    },
+    {
+      "name": "Blight",
+      "level": 4,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "30 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | V/S"
+    },
+    {
+      "name": "Fire Shield",
+      "level": 4,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "V,S,M | 10 minutes"
+    },
+    {
+      "name": "Wall of Fire",
+      "level": 4,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "120 ft.",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 1 minute"
+    },
+    {
+      "name": "Planar Binding",
+      "level": 5,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "1h | V,S,M | 24 hours"
+    },
+    {
+      "name": "Contact Other Plane",
+      "level": 5,
+      "is_cantrip": false,
+      "is_ritual": true,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "Self",
+      "components": "V, S",
+      "duration": "1m | V | 1 minute"
+    },
+    {
+      "name": "Teleportation Circle",
+      "level": 5,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "10 ft.",
+      "components": "V, S",
+      "duration": "1m | V,M | 1 round"
+    },
+    {
+      "name": "Geas",
+      "level": 5,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "1m | V | 30 days"
+    },
+    {
+      "name": "Insect Plague",
+      "level": 5,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "300 ft./20 ft. Sphere",
+      "components": "V, S",
+      "duration": "V,S,M | Concentration, up to 10 minutes"
+    },
+    {
+      "name": "Create Undead",
+      "level": 6,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "10 ft.",
+      "components": "V, S",
+      "duration": "1m | V,S,M | Instantaneous | 1/LR, Creatures: (See Description)*, V/S/M"
+    },
+    {
+      "name": "Finger of Death",
+      "level": 7,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V,S | Instantaneous | 1/LR, V/S"
+    },
+    {
+      "name": "Dominate Monster",
+      "level": 8,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "60 ft.",
+      "components": "V, S",
+      "duration": "V,S | Concentration, up to 1 hour | 1/LR, Ext. D: Your Concentration can last up to 8 hours.*, D: 1h, V/S"
+    },
+    {
+      "name": "Astral Projection",
+      "level": 9,
+      "is_cantrip": false,
+      "is_ritual": false,
+      "is_always_prepared": false,
+      "prepared": true,
+      "cast_time": "1A",
+      "range": "10 ft.",
+      "components": "V, S",
+      "duration": "1h | V,S,M | Until dispelled | 1/LR, D: Until Dispelled, V/S/M"
+    }
+  ],
+  "spellcasting_ability": "CHA",
+  "spell_save_dc": "17",
+  "spell_attack_bonus": "+9",
+  "passives": {
+    "perception": 12,
+    "insight": 12,
+    "investigation": 20
+  },
+  "senses": "Darkvision 60 ft.",
+  "initiative": "+2",
+  "proficiencies": {
+    "skills": [
+      "Intimidation",
+      "Investigation",
+      "Sleight of Hand",
+      "Stealth"
+    ],
+    "armor": "Light Armor, Medium Armor, Shields",
+    "weapons": "Simple Weapons",
+    "tools": "Thieves' Tools",
+    "languages": "Common"
+  },
+  "prof_bonus": "+6",
+  "skills": {
+    "Acrobatics": "+2",
+    "Animal Handling": "+2",
+    "Arcana": "+4",
+    "Athletics": "+2",
+    "Deception": "+3",
+    "History": "+4",
+    "Insight": "+2",
+    "Intimidation": "+9 (Proficient)",
+    "Investigation": "+10 (Proficient)",
+    "Medicine": "+2",
+    "Nature": "+4",
+    "Perception": "+2",
+    "Performance": "+3",
+    "Persuasion": "+3",
+    "Religion": "+4",
+    "Sleight of Hand": "+8 (Proficient)",
+    "Stealth": "+8 (Proficient)",
+    "Survival": "+2"
+  },
+  "saving_throws": {
+    "Strength": "+2",
+    "STR": 2,
+    "Dexterity": "+2",
+    "DEX": 2,
+    "Constitution": "+4",
+    "CON": 4,
+    "Intelligence": "+4",
+    "INT": 4,
+    "Wisdom": "+8",
+    "WIS": 8,
+    "Charisma": "+9",
+    "CHA": 9
+  },
+  "spell_slots": {
+    "level_1": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_2": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_3": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_4": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_5": {
+      "max": 4,
+      "current": 4,
+      "is_pact_magic": true,
+      "reset_on": "short_rest"
+    },
+    "level_6": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_7": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_8": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    },
+    "level_9": {
+      "max": 0,
+      "current": 0,
+      "reset_on": "long_rest"
+    }
+  },
+  "max_prepared_leveled_spells": 15,
+  "universal_core": {
+    "name": "Sam",
+    "player_name": "retholtz",
+    "archetype": "Warlock 20",
+    "level": 20,
+    "normalized_attributes": {
+      "might": 75,
+      "agility": 75,
+      "vigor": 90,
+      "intellect": 90,
+      "presence": 77
+    },
+    "semantic_skills": [
+      {
+        "category": "OCCULT_ARCANA",
+        "tier": "proficient",
+        "source_skill": "Arcana"
+      },
+      {
+        "category": "INVESTIGATION_TECH",
+        "tier": "expert",
+        "source_skill": "Investigation"
+      }
+    ],
+    "tagged_inventory": [
+      {
+        "name": "Leather",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Sickle",
+        "qty": "1",
+        "weight": "2 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Dagger",
+        "qty": "4",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Orb",
+        "qty": "1",
+        "weight": "3 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Book",
+        "qty": "2",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Parchment",
+        "qty": "10",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Ink & Pen",
+        "qty": "2",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Lamp / Lantern",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Oil",
+        "qty": "10",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Thieves' Tools",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Crowbar",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Pouch",
+        "qty": "2",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Traveler's Clothes",
+        "qty": "1",
+        "weight": "4 lb.",
+        "category": "Gear",
+        "notes": ""
+      }
+    ],
+    "tagged_traits": [
+      {
+        "name": "Core Warlock Traits",
+        "description": "* Core Warlock Traits \u2022 PHB-2024 153",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Eldritch Invocations",
+        "description": "* Eldritch Invocations \u2022 PHB-2024 153",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have unearthed Eldritch Invocations, pieces of forbidden knowledge that imbue you with an abiding magical ability or other lessons. If an invocation has a prerequisite, you must meet it to learn that invocation.",
+        "description": "You have unearthed Eldritch Invocations, pieces of forbidden knowledge that imbue you with an abiding magical ability or other lessons. If an invocation has a prerequisite, you must meet it to learn that invocation.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Agonizing Blast (Eldritch Blast)",
+        "description": "| Agonizing Blast (Eldritch Blast) \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can add your Cha. modifier bonus to the damage rolls of Eldritch Blast.",
+        "description": "You can add your Cha. modifier bonus to the damage rolls of Eldritch Blast.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Armor of Shadows",
+        "description": "| Armor of Shadows \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can cast Mage Armor on yourself without expending a spell slot.",
+        "description": "You can cast Mage Armor on yourself without expending a spell slot.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Ascendant Step",
+        "description": "| Ascendant Step \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can cast Levitate on yourself without expending a spell slot.",
+        "description": "You can cast Levitate on yourself without expending a spell slot.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Devil\u2019s Sight",
+        "description": "| Devil\u2019s Sight \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can see normally in Dim Light and Darkness\u2014both magical and nonmagical\u2014within 120 ft. of yourself.",
+        "description": "You can see normally in Dim Light and Darkness\u2014both magical and nonmagical\u2014within 120 ft. of yourself.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Eldritch Mind",
+        "description": "| Eldritch Mind \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have Advantage on Con. saving throws that you make to maintain Concentration.",
+        "description": "You have Advantage on Con. saving throws that you make to maintain Concentration.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Eldritch Spear",
+        "description": "| Eldritch Spear \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Choose one of your known Warlock cantrips that deals damage and has a range of 10+ feet. When you cast that spell, its range increases by 600 ft.",
+        "description": "Choose one of your known Warlock cantrips that deals damage and has a range of 10+ feet. When you cast that spell, its range increases by 600 ft.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "One with Shadows",
+        "description": "| One with Shadows \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "While you\u2019re in an area of Dim Light or Darkness, you can cast Invisibility on yourself without expending a spell slot.",
+        "description": "While you\u2019re in an area of Dim Light or Darkness, you can cast Invisibility on yourself without expending a spell slot.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Otherworldly Leap",
+        "description": "| Otherworldly Leap \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can cast Jump without expending a spell slot.",
+        "description": "You can cast Jump without expending a spell slot.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Pact of the Blade",
+        "description": "| Pact of the Blade \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "As a Bonus Action, you can conjure a pact weapon in your hand, or create a bond with a magic weapon you touch. You can\u2019t bond with a magic weapon if someone else attuned to it or another Warlock is bonded with it. Until the bond ends, you\u2019re proficient with it and can use it as a Spellcasting Focus.",
+        "description": "As a Bonus Action, you can conjure a pact weapon in your hand, or create a bond with a magic weapon you touch. You can\u2019t bond with a magic weapon if someone else attuned to it or another Warlock is bonded with it. Until the bond ends, you\u2019re proficient with it and can use it as a Spellcasting Focus.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Whenever you attack with the bonded weapon, you can use your Cha. instead of Str. or Dex.; and you can cause it to deal Necrotic, Psychic, or Radiant damage or its normal damage type.",
+        "description": "Whenever you attack with the bonded weapon, you can use your Cha. instead of Str. or Dex.; and you can cause it to deal Necrotic, Psychic, or Radiant damage or its normal damage type.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your bond with the weapons ends if you use this feature\u2019s Bonus Action again, if the weapon is more than 5 ft. away from you for more than 1 minute, or if you die. A conjured weapon disappears when the bond ends.",
+        "description": "Your bond with the weapons ends if you use this feature\u2019s Bonus Action again, if the weapon is more than 5 ft. away from you for more than 1 minute, or if you die. A conjured weapon disappears when the bond ends.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Pact of the Blade",
+        "description": "| Pact of the Blade: Conjure: 1 Bonus Action",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Pact of the Blade",
+        "description": "| Pact of the Blade: Bond: 1 Bonus Action",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Repelling Blast",
+        "description": "| Repelling Blast \u2022 br-2024",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Choose one of your known Warlock cantrips that requires an attack roll. When you hit a Large or smaller creature with that cantrip, you can push the creature up to 10 ft. straight away from you.",
+        "description": "Choose one of your known Warlock cantrips that requires an attack roll. When you hit a Large or smaller creature with that cantrip, you can push the creature up to 10 ft. straight away from you.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Pact Magic",
+        "description": "* Pact Magic \u2022 PHB-2024 153",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Magical Cunning",
+        "description": "* Magical Cunning \u2022 PHB-2024 154",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Once per Long Rest, you can perform an esoteric rite for 1 minute, regaining up to 2 expended Pact Magic spell slots.",
+        "description": "Once per Long Rest, you can perform an esoteric rite for 1 minute, regaining up to 2 expended Pact Magic spell slots.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "1 / Long Rest",
+        "description": "| 1 / Long Rest \u2022 1 Minute",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Warlock Subclass",
+        "description": "* Warlock Subclass \u2022 PHB-2024 154",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Fiend Patron",
+        "description": "| Fiend Patron",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Dark One\u2019s Blessing",
+        "description": "* Dark One\u2019s Blessing \u2022 PHB-2024 161",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "When you reduce an enemy to 0 HP, you gain 23 Temp HP. You also gain this benefit if someone else reduces an enemy within 10 ft. of you to 0 HP.",
+        "description": "When you reduce an enemy to 0 HP, you gain 23 Temp HP. You also gain this benefit if someone else reduces an enemy within 10 ft. of you to 0 HP.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Fiend Spells",
+        "description": "* Fiend Spells \u2022 PHB-2024 161",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "When you reach a Warlock level specified in the Fiend Spells table, you thereafter always have the listed spells prepared.",
+        "description": "When you reach a Warlock level specified in the Fiend Spells table, you thereafter always have the listed spells prepared.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Ability Score Improvement",
+        "description": "* Ability Score Improvement \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Dark One\u2019s Own Luck",
+        "description": "* Dark One\u2019s Own Luck \u2022 PHB-2024 162",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "When you make an ability check or saving throw, you can add 1d10 to your roll. You can do this after seeing the roll but before any of the roll\u2019s effects occur.",
+        "description": "When you make an ability check or saving throw, you can add 1d10 to your roll. You can do this after seeing the roll but before any of the roll\u2019s effects occur.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can use this feature 3 times per Long Rest, but no more than once per roll.",
+        "description": "You can use this feature 3 times per Long Rest, but no more than once per roll.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "3 / Long Rest",
+        "description": "| 3 / Long Rest \u2022 Special",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "8",
+        "description": "* 8: Ability Score Improvement \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Contact Patron",
+        "description": "* Contact Patron \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You always have Contact Other Plane prepared. Once per Long Rest, you can cast the spell without expending a spell slot to contact your patron, and you automatically succeed on the spell\u2019s saving throw.",
+        "description": "You always have Contact Other Plane prepared. Once per Long Rest, you can cast the spell without expending a spell slot to contact your patron, and you automatically succeed on the spell\u2019s saving throw.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Fiendish Resilience",
+        "description": "* Fiendish Resilience \u2022 PHB-2024 162",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can choose one damage type, other than Force, to have Resistance to. You can change this choice whenever you finish a Short or Long Rest.",
+        "description": "You can choose one damage type, other than Force, to have Resistance to. You can change this choice whenever you finish a Short or Long Rest.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Mystic Arcanum (Level 6 Spell)",
+        "description": "* Mystic Arcanum (Level 6 Spell) \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your patron grants you a magical secret called an arcanum, choose one level 6 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+        "description": "Your patron grants you a magical secret called an arcanum, choose one level 6 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "12",
+        "description": "* 12: Ability Score Improvement \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Mystic Arcanum (Level 7 Spell)",
+        "description": "* Mystic Arcanum (Level 7 Spell) \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your patron grants you a magical secret called an arcanum, choose one level 7 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+        "description": "Your patron grants you a magical secret called an arcanum, choose one level 7 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Hurl Through Hell",
+        "description": "* Hurl Through Hell \u2022 PHB-2024 162",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Once per turn when you hit a creature with an attack roll, the target must succeed on a DC 17 Cha. saving throw, or the target disappears, takes 8d10 Psychic damage if it isn\u2019t a Fiend, and it has the Incapacitated condition until the end of your next turn, where it reappears in the space it previously occupied or the nearest unoccupied space.",
+        "description": "Once per turn when you hit a creature with an attack roll, the target must succeed on a DC 17 Cha. saving throw, or the target disappears, takes 8d10 Psychic damage if it isn\u2019t a Fiend, and it has the Incapacitated condition until the end of your next turn, where it reappears in the space it previously occupied or the nearest unoccupied space.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Once used, you can\u2019t use this feature again until you finish a Long rest unless you expend a Pact Magic spell slot to restore your use of it.",
+        "description": "Once used, you can\u2019t use this feature again until you finish a Long rest unless you expend a Pact Magic spell slot to restore your use of it.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "1 Action",
+        "description": "| 1 Action",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Mystic Arcanum (Level 8 Spell)",
+        "description": "* Mystic Arcanum (Level 8 Spell) \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your patron grants you a magical secret called an arcanum, choose one level 8 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+        "description": "Your patron grants you a magical secret called an arcanum, choose one level 8 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "16",
+        "description": "* 16: Ability Score Improvement \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Mystic Arcanum (Level 9 Spell)",
+        "description": "* Mystic Arcanum (Level 9 Spell) \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your patron grants you a magical secret called an arcanum, choose one level 9 Warlock spell as this arcanum. You can cast this spell once per Long Rest",
+        "description": "Your patron grants you a magical secret called an arcanum, choose one level 9 Warlock spell as this arcanum. You can cast this spell once per Long Rest",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "ally in the same combat. You can\u2019t make this swap if you or the ally has the Incapacitated condition.",
+        "description": "ally in the same combat. You can\u2019t make this swap if you or the ally has the Incapacitated condition.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Boon of Fate",
+        "description": "* Boon of Fate \u2022 PHB-2024 210",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Ability Score Increase. Increase one ability score of your choice by 1.",
+        "description": "Ability Score Increase. Increase one ability score of your choice by 1.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Improve Fate. When you or another creature within 60 ft. of you succeeds or fails a D20 Test, you can roll 2d4 and apply the total rolled as a bonus or penalty to the d20 roll. Once you use this benefit, you can't use it again until you roll Initiative or finish a Short or Long Rest.",
+        "description": "Improve Fate. When you or another creature within 60 ft. of you succeeds or fails a D20 Test, you can roll 2d4 and apply the total rolled as a bonus or penalty to the d20 roll. Once you use this benefit, you can't use it again until you roll Initiative or finish a Short or Long Rest.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Svirfneblin Magic",
+        "description": "* Svirfneblin Magic \u2022 EE",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You can cast nondetection on yourself at will, without needing a material component. You can also cast blindness/deafness, blur, and disguise self once each per long rest. INT is your spellcasting ability and you cast these spells at their lowest possible level.",
+        "description": "You can cast nondetection on yourself at will, without needing a material component. You can also cast blindness/deafness, blur, and disguise self once each per long rest. INT is your spellcasting ability and you cast these spells at their lowest possible level.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Criminal Ability Score Improvements",
+        "description": "* Criminal Ability Score Improvements \u2022 PHB-2024 179",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Increase two scores (+2 / +1)",
+        "description": "| Increase two scores (+2 / +1) \u2022",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "before you cast it in this way again.",
+        "description": "before you cast it in this way again.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Epic Boon",
+        "description": "* Epic Boon \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Eldritch Master",
+        "description": "* Eldritch Master \u2022 PHB-2024 155",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "When you use your Magical Cunning feature, you regain all your expended Pact Magic spell slots.",
+        "description": "When you use your Magical Cunning feature, you regain all your expended Pact Magic spell slots.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Creature Type",
+        "description": "* Creature Type \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You are a Humanoid.",
+        "description": "You are a Humanoid.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Size",
+        "description": "* Size \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your size is Medium.",
+        "description": "Your size is Medium.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Speed",
+        "description": "* Speed \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your speed is 30 ft.",
+        "description": "Your speed is 30 ft.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Draconic Ancestry",
+        "description": "* Draconic Ancestry \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You gain a breath weapon and damage resistance with your chosen dragon type.",
+        "description": "You gain a breath weapon and damage resistance with your chosen dragon type.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Breath Weapon",
+        "description": "* Breath Weapon \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "When you take the Attack action on your turn, you can replace one of your attacks with an exhalation of magical energy. You can use your Breath Weapon 6 times per Long Rest.",
+        "description": "When you take the Attack action on your turn, you can replace one of your attacks with an exhalation of magical energy. You can use your Breath Weapon 6 times per Long Rest.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Damage Resistance",
+        "description": "* Damage Resistance \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have Resistance to the damage type determined by your Draconic Ancestry trait.",
+        "description": "You have Resistance to the damage type determined by your Draconic Ancestry trait.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Darkvision",
+        "description": "* Darkvision \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "You have Darkvision with a range of 60 ft.",
+        "description": "You have Darkvision with a range of 60 ft.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Draconic Flight",
+        "description": "* Draconic Flight \u2022 PHB-2024 187",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Once per Long Rest as a Bonus Action, you gain temporary flight for 10 minutes or until you retract the wings (no action required) or have the Incapacitated",
+        "description": "Once per Long Rest as a Bonus Action, you gain temporary flight for 10 minutes or until you retract the wings (no action required) or have the Incapacitated",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "condition. During that time, you have a Fly Speed equal to your Speed.",
+        "description": "condition. During that time, you have a Fly Speed equal to your Speed.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "1 / Long Rest",
+        "description": "| 1 / Long Rest \u2022 1 Bonus Action",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Languages",
+        "description": "* Languages \u2022 PHB-2024 37",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Your character knows at least three languages",
+        "description": "Your character knows at least three languages: Common plus two languages you roll or choose from the Standard Languages table. Knowledge of a language means your character can communicate in it, read it, and write it.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Boon of Truesight",
+        "description": "* Boon of Truesight \u2022 PHB-2024 211",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Ability Score Increase.One ability score of your choice increased by 1.",
+        "description": "Ability Score Increase.One ability score of your choice increased by 1.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Truesight. You have Truesight with a range of 60 feet.",
+        "description": "Truesight. You have Truesight with a range of 60 feet.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Boon of the Night Spirit",
+        "description": "* Boon of the Night Spirit \u2022 PHB-2024 211",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Ability Score Increase. One ability score increased by 1.",
+        "description": "Ability Score Increase. One ability score increased by 1.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Merge with Shadows. While within Dim Light or Darkness, you can give yourself the Invisible condition as a Bonus Action. The condition ends on you immediately after you take an action, a Bonus Action, or a Reaction.",
+        "description": "Merge with Shadows. While within Dim Light or Darkness, you can give yourself the Invisible condition as a Bonus Action. The condition ends on you immediately after you take an action, a Bonus Action, or a Reaction.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Shadowy Form. While within Dim Light or Darkness, you have Resistance to all damage except Psychic and Radiant.",
+        "description": "Shadowy Form. While within Dim Light or Darkness, you have Resistance to all damage except Psychic and Radiant.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Alert",
+        "description": "* Alert \u2022 PHB-2024 200",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Initiative Proficiency. When you roll Initiative, add +6 to the roll.",
+        "description": "Initiative Proficiency. When you roll Initiative, add +6 to the roll.",
+        "genre": "fantasy_d20"
+      },
+      {
+        "name": "Initiative Swap. Immediately after you roll Initiative, you can swap your Initiative with the Initiative of one willing",
+        "description": "Initiative Swap. Immediately after you roll Initiative, you can swap your Initiative with the Initiative of one willing",
+        "genre": "fantasy_d20"
+      }
+    ],
+    "backstory": "Adventurer exploring the realms with skill and dedication.",
+    "roleplay_anchors": {
+      "personality_traits": "",
+      "ideals": "",
+      "bonds": "",
+      "flaws": "",
+      "allies_and_organizations": ""
+    },
+    "custom_meters": {
+      "hit_dice": {
+        "label": "Hit Dice (20d8)",
+        "current": 20,
+        "max": 20,
+        "reset_on": "long_rest"
+      },
+      "breath_weapon": {
+        "label": "Breath Weapon",
+        "current": 6,
+        "max": 6,
+        "reset_on": "long_rest"
+      },
+      "draconic_flight": {
+        "label": "Draconic Flight",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "dark_ones_own_luck": {
+        "label": "Dark One's Own Luck",
+        "current": 3,
+        "max": 3,
+        "reset_on": "long_rest"
+      },
+      "hurl_through_hell": {
+        "label": "Hurl Through Hell",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "boon_of_fate": {
+        "label": "Boon of Fate",
+        "current": 1,
+        "max": 1,
+        "reset_on": "short_rest"
+      },
+      "magical_cunning": {
+        "label": "Magical Cunning",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_6th": {
+        "label": "Mystic Arcanum (6th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_7th": {
+        "label": "Mystic Arcanum (7th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_8th": {
+        "label": "Mystic Arcanum (8th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_9th": {
+        "label": "Mystic Arcanum (9th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      }
+    },
+    "description": {
+      "gender": "Male",
+      "age": "39",
+      "size": "Medium",
+      "height": "5'8\"",
+      "weight": "150",
+      "alignment": "Chaotic Good",
+      "faith": "",
+      "skin": "Pale",
+      "eyes": "Blue",
+      "hair": "Brown",
+      "creature_type": "Humanoid"
+    }
+  },
+  "native_system_data": {
+    "system_name": "dnd_5e",
+    "class_level": "Warlock 20",
+    "is_pact_magic": true,
+    "species": "Dragonborn",
+    "background": "Criminal",
+    "inspiration": false,
+    "ability_save_dc": 17,
+    "spell_attack_bonus": "+9",
+    "spellcasting_ability": "CHA",
+    "armor_class": 12,
+    "initiative_bonus": 2,
+    "speed": "30 ft. (Walking)",
+    "defenses": "Resistances - Fire",
+    "resistances": "Resistances - Fire",
+    "hit_points": {
+      "current": 183,
+      "max": 183,
+      "temp": 0,
+      "hit_die": "20d8"
+    },
+    "hit_dice": {
+      "current": 20,
+      "max": 20,
+      "die": "20d8"
+    },
+    "ability_scores": {
+      "Strength": 15,
+      "Dexterity": 15,
+      "Constitution": 18,
+      "Intelligence": 18,
+      "Wisdom": 14,
+      "Charisma": 17,
+      "STR": 15,
+      "DEX": 15,
+      "CON": 18,
+      "INT": 18,
+      "WIS": 14,
+      "CHA": 17
+    },
+    "saving_throws": {
+      "Strength": "+2",
+      "STR": 2,
+      "Dexterity": "+2",
+      "DEX": 2,
+      "Constitution": "+4",
+      "CON": 4,
+      "Intelligence": "+4",
+      "INT": 4,
+      "Wisdom": "+8",
+      "WIS": 8,
+      "Charisma": "+9",
+      "CHA": 9
+    },
+    "skills": {
+      "Acrobatics": "+2",
+      "Animal Handling": "+2",
+      "Arcana": "+4",
+      "Athletics": "+2",
+      "Deception": "+3",
+      "History": "+4",
+      "Insight": "+2",
+      "Intimidation": "+9 (Proficient)",
+      "Investigation": "+10 (Proficient)",
+      "Medicine": "+2",
+      "Nature": "+4",
+      "Perception": "+2",
+      "Performance": "+3",
+      "Persuasion": "+3",
+      "Religion": "+4",
+      "Sleight of Hand": "+8 (Proficient)",
+      "Stealth": "+8 (Proficient)",
+      "Survival": "+2"
+    },
+    "passives": {
+      "perception": 12,
+      "insight": 12,
+      "investigation": 20
+    },
+    "weapons": [
+      {
+        "name": "Chill Touch",
+        "atk_bonus": "+9",
+        "damage": "4d10 Necrotic",
+        "notes": "V/S"
+      },
+      {
+        "name": "Eldritch Blast",
+        "atk_bonus": "+9",
+        "damage": "1d10+3 Force",
+        "notes": "Count: 4, V/S"
+      },
+      {
+        "name": "Unarmed Strike",
+        "atk_bonus": "+8",
+        "damage": "3 Bludgeoning",
+        "notes": ""
+      }
+    ],
+    "currency": {
+      "cp": 0,
+      "sp": 0,
+      "ep": 0,
+      "gp": 31,
+      "pp": 0
+    },
+    "proficiencies": {
+      "skills": [
+        "Intimidation",
+        "Investigation",
+        "Sleight of Hand",
+        "Stealth"
+      ],
+      "armor": "Light Armor, Medium Armor, Shields",
+      "weapons": "Simple Weapons",
+      "tools": "Thieves' Tools",
+      "languages": "Common"
+    },
+    "attuned_magic_items": {
+      "current": 0,
+      "max": 3
+    },
+    "spell_slots": {
+      "level_1": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_2": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_3": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_4": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_5": {
+        "max": 4,
+        "current": 4,
+        "is_pact_magic": true,
+        "reset_on": "short_rest"
+      },
+      "level_6": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_7": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_8": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      },
+      "level_9": {
+        "max": 0,
+        "current": 0,
+        "reset_on": "long_rest"
+      }
+    },
+    "max_prepared_leveled_spells": 15,
+    "spells": [
+      {
+        "name": "Chill Touch",
+        "level": 0,
+        "is_cantrip": true,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Touch",
+        "components": "V, S",
+        "duration": "V,S | Instantaneous | V/S"
+      },
+      {
+        "name": "Eldritch Blast",
+        "level": 0,
+        "is_cantrip": true,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "120 ft.",
+        "components": "V, S",
+        "duration": "V,S | Instantaneous | Count: 4, V/S"
+      },
+      {
+        "name": "Prestidigitation",
+        "level": 0,
+        "is_cantrip": true,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "10 ft.",
+        "components": "V, S",
+        "duration": "V,S | 1 hour"
+      },
+      {
+        "name": "True Strike",
+        "level": 0,
+        "is_cantrip": true,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Self",
+        "components": "V, S",
+        "duration": "S,M | Instantaneous | S/M"
+      },
+      {
+        "name": "Hellish Rebuke",
+        "level": 1,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "1R | V,S | Instantaneous | V/S"
+      },
+      {
+        "name": "Burning Hands",
+        "level": 1,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Self/15 ft. Cone",
+        "components": "V, S",
+        "duration": "V,S | Instantaneous | 15 ft. Cone, V/S"
+      },
+      {
+        "name": "Command",
+        "level": 1,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "V | Instantaneous"
+      },
+      {
+        "name": "Mage Armor",
+        "level": 1,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Touch",
+        "components": "V, S",
+        "duration": "V,S,M | 8 hours"
+      },
+      {
+        "name": "Jump",
+        "level": 1,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Touch",
+        "components": "V, S",
+        "duration": "Bonus Action | V,S,M | 1 minute"
+      },
+      {
+        "name": "Darkness",
+        "level": 2,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft./15 ft. Sphere",
+        "components": "V, S",
+        "duration": "V,M | Concentration, up to 10 minutes"
+      },
+      {
+        "name": "Invisibility",
+        "level": 2,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Touch",
+        "components": "V, S",
+        "duration": "V,S,M | Concentration, up to 1 hour"
+      },
+      {
+        "name": "Mind Spike",
+        "level": 2,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "120 ft.",
+        "components": "V, S",
+        "duration": "S | Concentration, up to 1 hour"
+      },
+      {
+        "name": "Misty Step",
+        "level": 2,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Self",
+        "components": "V, S",
+        "duration": "Bonus Action | V | Instantaneous"
+      },
+      {
+        "name": "Scorching Ray",
+        "level": 2,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "120 ft.",
+        "components": "V, S",
+        "duration": "V,S | Instantaneous | V/S"
+      },
+      {
+        "name": "Suggestion",
+        "level": 2,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "30 ft.",
+        "components": "V, S",
+        "duration": "V,M | Concentration, up to 8 hours"
+      },
+      {
+        "name": "Levitate",
+        "level": 2,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "V,S,M | Concentration, up to 10 minutes"
+      },
+      {
+        "name": "Counterspell",
+        "level": 3,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "1R | S | Instantaneous"
+      },
+      {
+        "name": "Dispel Magic",
+        "level": 3,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "120 ft.",
+        "components": "V, S",
+        "duration": "V,S | Instantaneous | Special: (See Description)*, V/S"
+      },
+      {
+        "name": "Fly",
+        "level": 3,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Touch",
+        "components": "V, S",
+        "duration": "V,S,M | Concentration, up to 10 minutes"
+      },
+      {
+        "name": "Vampiric Touch",
+        "level": 3,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Self",
+        "components": "V, S",
+        "duration": "V,S | Concentration, up to 1 minute"
+      },
+      {
+        "name": "Fireball",
+        "level": 3,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "150 ft./20 ft. Sphere",
+        "components": "V, S",
+        "duration": "V,S,M | Instantaneous | 20 ft. Sphere, V/S/M"
+      },
+      {
+        "name": "Stinking Cloud",
+        "level": 3,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "90 ft./20 ft. Sphere",
+        "components": "V, S",
+        "duration": "V,S,M | Concentration, up to 1 minute"
+      },
+      {
+        "name": "Banishment",
+        "level": 4,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "30 ft.",
+        "components": "V, S",
+        "duration": "V,S,M | Concentration, up to 1 minute"
+      },
+      {
+        "name": "Dimension Door",
+        "level": 4,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "500 ft.",
+        "components": "V, S",
+        "duration": "V | Instantaneous"
+      },
+      {
+        "name": "Blight",
+        "level": 4,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "30 ft.",
+        "components": "V, S",
+        "duration": "V,S | Instantaneous | V/S"
+      },
+      {
+        "name": "Fire Shield",
+        "level": 4,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Self",
+        "components": "V, S",
+        "duration": "V,S,M | 10 minutes"
+      },
+      {
+        "name": "Wall of Fire",
+        "level": 4,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "120 ft.",
+        "components": "V, S",
+        "duration": "V,S,M | Concentration, up to 1 minute"
+      },
+      {
+        "name": "Planar Binding",
+        "level": 5,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "1h | V,S,M | 24 hours"
+      },
+      {
+        "name": "Contact Other Plane",
+        "level": 5,
+        "is_cantrip": false,
+        "is_ritual": true,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "Self",
+        "components": "V, S",
+        "duration": "1m | V | 1 minute"
+      },
+      {
+        "name": "Teleportation Circle",
+        "level": 5,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "10 ft.",
+        "components": "V, S",
+        "duration": "1m | V,M | 1 round"
+      },
+      {
+        "name": "Geas",
+        "level": 5,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "1m | V | 30 days"
+      },
+      {
+        "name": "Insect Plague",
+        "level": 5,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "300 ft./20 ft. Sphere",
+        "components": "V, S",
+        "duration": "V,S,M | Concentration, up to 10 minutes"
+      },
+      {
+        "name": "Create Undead",
+        "level": 6,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "10 ft.",
+        "components": "V, S",
+        "duration": "1m | V,S,M | Instantaneous | 1/LR, Creatures: (See Description)*, V/S/M"
+      },
+      {
+        "name": "Finger of Death",
+        "level": 7,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "V,S | Instantaneous | 1/LR, V/S"
+      },
+      {
+        "name": "Dominate Monster",
+        "level": 8,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "60 ft.",
+        "components": "V, S",
+        "duration": "V,S | Concentration, up to 1 hour | 1/LR, Ext. D: Your Concentration can last up to 8 hours.*, D: 1h, V/S"
+      },
+      {
+        "name": "Astral Projection",
+        "level": 9,
+        "is_cantrip": false,
+        "is_ritual": false,
+        "is_always_prepared": false,
+        "prepared": true,
+        "cast_time": "1A",
+        "range": "10 ft.",
+        "components": "V, S",
+        "duration": "1h | V,S,M | Until dispelled | 1/LR, D: Until Dispelled, V/S/M"
+      }
+    ],
+    "custom_meters": {
+      "hit_dice": {
+        "label": "Hit Dice (20d8)",
+        "current": 20,
+        "max": 20,
+        "reset_on": "long_rest"
+      },
+      "breath_weapon": {
+        "label": "Breath Weapon",
+        "current": 6,
+        "max": 6,
+        "reset_on": "long_rest"
+      },
+      "draconic_flight": {
+        "label": "Draconic Flight",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "dark_ones_own_luck": {
+        "label": "Dark One's Own Luck",
+        "current": 3,
+        "max": 3,
+        "reset_on": "long_rest"
+      },
+      "hurl_through_hell": {
+        "label": "Hurl Through Hell",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "boon_of_fate": {
+        "label": "Boon of Fate",
+        "current": 1,
+        "max": 1,
+        "reset_on": "short_rest"
+      },
+      "magical_cunning": {
+        "label": "Magical Cunning",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_6th": {
+        "label": "Mystic Arcanum (6th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_7th": {
+        "label": "Mystic Arcanum (7th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_8th": {
+        "label": "Mystic Arcanum (8th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      },
+      "mystic_arcanum_9th": {
+        "label": "Mystic Arcanum (9th Level)",
+        "current": 1,
+        "max": 1,
+        "reset_on": "long_rest"
+      }
+    },
+    "features_and_traits": [
+      "* Core Warlock Traits \u2022 PHB-2024 153",
+      "* Eldritch Invocations \u2022 PHB-2024 153",
+      "You have unearthed Eldritch Invocations, pieces of forbidden knowledge that imbue you with an abiding magical ability or other lessons. If an invocation has a prerequisite, you must meet it to learn that invocation.",
+      "| Agonizing Blast (Eldritch Blast) \u2022 br-2024",
+      "You can add your Cha. modifier bonus to the damage rolls of Eldritch Blast.",
+      "| Armor of Shadows \u2022 br-2024",
+      "You can cast Mage Armor on yourself without expending a spell slot.",
+      "| Ascendant Step \u2022 br-2024",
+      "You can cast Levitate on yourself without expending a spell slot.",
+      "| Devil\u2019s Sight \u2022 br-2024",
+      "You can see normally in Dim Light and Darkness\u2014both magical and nonmagical\u2014within 120 ft. of yourself.",
+      "| Eldritch Mind \u2022 br-2024",
+      "You have Advantage on Con. saving throws that you make to maintain Concentration.",
+      "| Eldritch Spear \u2022 br-2024",
+      "Choose one of your known Warlock cantrips that deals damage and has a range of 10+ feet. When you cast that spell, its range increases by 600 ft.",
+      "| One with Shadows \u2022 br-2024",
+      "While you\u2019re in an area of Dim Light or Darkness, you can cast Invisibility on yourself without expending a spell slot.",
+      "| Otherworldly Leap \u2022 br-2024",
+      "You can cast Jump without expending a spell slot.",
+      "| Pact of the Blade \u2022 br-2024",
+      "As a Bonus Action, you can conjure a pact weapon in your hand, or create a bond with a magic weapon you touch. You can\u2019t bond with a magic weapon if someone else attuned to it or another Warlock is bonded with it. Until the bond ends, you\u2019re proficient with it and can use it as a Spellcasting Focus.",
+      "Whenever you attack with the bonded weapon, you can use your Cha. instead of Str. or Dex.; and you can cause it to deal Necrotic, Psychic, or Radiant damage or its normal damage type.",
+      "Your bond with the weapons ends if you use this feature\u2019s Bonus Action again, if the weapon is more than 5 ft. away from you for more than 1 minute, or if you die. A conjured weapon disappears when the bond ends.",
+      "| Pact of the Blade: Conjure: 1 Bonus Action",
+      "| Pact of the Blade: Bond: 1 Bonus Action",
+      "| Repelling Blast \u2022 br-2024",
+      "Choose one of your known Warlock cantrips that requires an attack roll. When you hit a Large or smaller creature with that cantrip, you can push the creature up to 10 ft. straight away from you.",
+      "* Pact Magic \u2022 PHB-2024 153",
+      "* Magical Cunning \u2022 PHB-2024 154",
+      "Once per Long Rest, you can perform an esoteric rite for 1 minute, regaining up to 2 expended Pact Magic spell slots.",
+      "| 1 / Long Rest \u2022 1 Minute",
+      "* Warlock Subclass \u2022 PHB-2024 154",
+      "| Fiend Patron",
+      "* Dark One\u2019s Blessing \u2022 PHB-2024 161",
+      "When you reduce an enemy to 0 HP, you gain 23 Temp HP. You also gain this benefit if someone else reduces an enemy within 10 ft. of you to 0 HP.",
+      "* Fiend Spells \u2022 PHB-2024 161",
+      "When you reach a Warlock level specified in the Fiend Spells table, you thereafter always have the listed spells prepared.",
+      "* Ability Score Improvement \u2022 PHB-2024 155",
+      "* Dark One\u2019s Own Luck \u2022 PHB-2024 162",
+      "When you make an ability check or saving throw, you can add 1d10 to your roll. You can do this after seeing the roll but before any of the roll\u2019s effects occur.",
+      "You can use this feature 3 times per Long Rest, but no more than once per roll.",
+      "| 3 / Long Rest \u2022 Special",
+      "* 8: Ability Score Improvement \u2022 PHB-2024 155",
+      "* Contact Patron \u2022 PHB-2024 155",
+      "You always have Contact Other Plane prepared. Once per Long Rest, you can cast the spell without expending a spell slot to contact your patron, and you automatically succeed on the spell\u2019s saving throw.",
+      "* Fiendish Resilience \u2022 PHB-2024 162",
+      "You can choose one damage type, other than Force, to have Resistance to. You can change this choice whenever you finish a Short or Long Rest.",
+      "* Mystic Arcanum (Level 6 Spell) \u2022 PHB-2024 155",
+      "Your patron grants you a magical secret called an arcanum, choose one level 6 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+      "* 12: Ability Score Improvement \u2022 PHB-2024 155",
+      "* Mystic Arcanum (Level 7 Spell) \u2022 PHB-2024 155",
+      "Your patron grants you a magical secret called an arcanum, choose one level 7 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+      "* Hurl Through Hell \u2022 PHB-2024 162",
+      "Once per turn when you hit a creature with an attack roll, the target must succeed on a DC 17 Cha. saving throw, or the target disappears, takes 8d10 Psychic damage if it isn\u2019t a Fiend, and it has the Incapacitated condition until the end of your next turn, where it reappears in the space it previously occupied or the nearest unoccupied space.",
+      "Once used, you can\u2019t use this feature again until you finish a Long rest unless you expend a Pact Magic spell slot to restore your use of it.",
+      "| 1 Action",
+      "* Mystic Arcanum (Level 8 Spell) \u2022 PHB-2024 155",
+      "Your patron grants you a magical secret called an arcanum, choose one level 8 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again.",
+      "* 16: Ability Score Improvement \u2022 PHB-2024 155",
+      "* Mystic Arcanum (Level 9 Spell) \u2022 PHB-2024 155",
+      "Your patron grants you a magical secret called an arcanum, choose one level 9 Warlock spell as this arcanum. You can cast this spell once per Long Rest",
+      "ally in the same combat. You can\u2019t make this swap if you or the ally has the Incapacitated condition.",
+      "* Boon of Fate \u2022 PHB-2024 210",
+      "Ability Score Increase. Increase one ability score of your choice by 1.",
+      "Improve Fate. When you or another creature within 60 ft. of you succeeds or fails a D20 Test, you can roll 2d4 and apply the total rolled as a bonus or penalty to the d20 roll. Once you use this benefit, you can't use it again until you roll Initiative or finish a Short or Long Rest.",
+      "* Svirfneblin Magic \u2022 EE",
+      "You can cast nondetection on yourself at will, without needing a material component. You can also cast blindness/deafness, blur, and disguise self once each per long rest. INT is your spellcasting ability and you cast these spells at their lowest possible level.",
+      "* Criminal Ability Score Improvements \u2022 PHB-2024 179",
+      "| Increase two scores (+2 / +1) \u2022",
+      "before you cast it in this way again.",
+      "* Epic Boon \u2022 PHB-2024 155",
+      "* Eldritch Master \u2022 PHB-2024 155",
+      "When you use your Magical Cunning feature, you regain all your expended Pact Magic spell slots.",
+      "* Creature Type \u2022 PHB-2024 187",
+      "You are a Humanoid.",
+      "* Size \u2022 PHB-2024 187",
+      "Your size is Medium.",
+      "* Speed \u2022 PHB-2024 187",
+      "Your speed is 30 ft.",
+      "* Draconic Ancestry \u2022 PHB-2024 187",
+      "You gain a breath weapon and damage resistance with your chosen dragon type.",
+      "* Breath Weapon \u2022 PHB-2024 187",
+      "When you take the Attack action on your turn, you can replace one of your attacks with an exhalation of magical energy. You can use your Breath Weapon 6 times per Long Rest.",
+      "* Damage Resistance \u2022 PHB-2024 187",
+      "You have Resistance to the damage type determined by your Draconic Ancestry trait.",
+      "* Darkvision \u2022 PHB-2024 187",
+      "You have Darkvision with a range of 60 ft.",
+      "* Draconic Flight \u2022 PHB-2024 187",
+      "Once per Long Rest as a Bonus Action, you gain temporary flight for 10 minutes or until you retract the wings (no action required) or have the Incapacitated",
+      "condition. During that time, you have a Fly Speed equal to your Speed.",
+      "| 1 / Long Rest \u2022 1 Bonus Action",
+      "* Languages \u2022 PHB-2024 37",
+      "Your character knows at least three languages: Common plus two languages you roll or choose from the Standard Languages table. Knowledge of a language means your character can communicate in it, read it, and write it.",
+      "* Boon of Truesight \u2022 PHB-2024 211",
+      "Ability Score Increase.One ability score of your choice increased by 1.",
+      "Truesight. You have Truesight with a range of 60 feet.",
+      "* Boon of the Night Spirit \u2022 PHB-2024 211",
+      "Ability Score Increase. One ability score increased by 1.",
+      "Merge with Shadows. While within Dim Light or Darkness, you can give yourself the Invisible condition as a Bonus Action. The condition ends on you immediately after you take an action, a Bonus Action, or a Reaction.",
+      "Shadowy Form. While within Dim Light or Darkness, you have Resistance to all damage except Psychic and Radiant.",
+      "* Alert \u2022 PHB-2024 200",
+      "Initiative Proficiency. When you roll Initiative, add +6 to the roll.",
+      "Initiative Swap. Immediately after you roll Initiative, you can swap your Initiative with the Initiative of one willing"
+    ],
+    "roleplay_anchors": {
+      "personality_traits": "",
+      "ideals": "",
+      "bonds": "",
+      "flaws": "",
+      "allies_and_organizations": ""
+    },
+    "inventory": [
+      {
+        "name": "Leather",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Sickle",
+        "qty": "1",
+        "weight": "2 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Dagger",
+        "qty": "4",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Orb",
+        "qty": "1",
+        "weight": "3 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Book",
+        "qty": "2",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Parchment",
+        "qty": "10",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Ink & Pen",
+        "qty": "2",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Lamp / Lantern",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Oil",
+        "qty": "10",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Thieves' Tools",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Crowbar",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Pouch",
+        "qty": "2",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Traveler's Clothes",
+        "qty": "1",
+        "weight": "4 lb.",
+        "category": "Gear",
+        "notes": ""
+      }
+    ],
+    "tagged_inventory": [
+      {
+        "name": "Leather",
+        "qty": "1",
+        "weight": "10 lb.",
+        "category": "Armor",
+        "notes": ""
+      },
+      {
+        "name": "Sickle",
+        "qty": "1",
+        "weight": "2 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Dagger",
+        "qty": "4",
+        "weight": "1 lb.",
+        "category": "Weapon",
+        "notes": ""
+      },
+      {
+        "name": "Orb",
+        "qty": "1",
+        "weight": "3 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Book",
+        "qty": "2",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Backpack",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Parchment",
+        "qty": "10",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Ink & Pen",
+        "qty": "2",
+        "weight": "--",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Lamp / Lantern",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Oil",
+        "qty": "10",
+        "weight": "10 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Tinderbox",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Thieves' Tools",
+        "qty": "1",
+        "weight": "1 lb.",
+        "category": "Tool",
+        "notes": ""
+      },
+      {
+        "name": "Crowbar",
+        "qty": "1",
+        "weight": "5 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Pouch",
+        "qty": "2",
+        "weight": "1 lb.",
+        "category": "Gear",
+        "notes": ""
+      },
+      {
+        "name": "Traveler's Clothes",
+        "qty": "1",
+        "weight": "4 lb.",
+        "category": "Gear",
+        "notes": ""
+      }
+    ],
+    "weight_carried": "58 lb.",
+    "encumbered": "225 lb.",
+    "push_drag_lift": "450 lb.",
+    "description": {
+      "gender": "Male",
+      "age": "39",
+      "size": "Medium",
+      "height": "5'8\"",
+      "weight": "150",
+      "alignment": "Chaotic Good",
+      "faith": "",
+      "skin": "Pale",
+      "eyes": "Blue",
+      "hair": "Brown",
+      "creature_type": "Humanoid"
+    },
+    "gender": "Male",
+    "age": "39",
+    "size": "Medium",
+    "height": "5'8\"",
+    "weight": "150",
+    "alignment": "Chaotic Good",
+    "faith": "",
+    "skin": "Pale",
+    "eyes": "Blue",
+    "hair": "Brown",
+    "creature_type": "Humanoid",
+    "backstory": "",
+    "additional_notes": "",
+    "raw_acro_form_fields": {
+      "CharacterName": "Sam",
+      "CLASS  LEVEL": "Warlock 20",
+      "PLAYER NAME": "retholtz",
+      "RACE": "Dragonborn",
+      "BACKGROUND": "Criminal",
+      "EXPERIENCE POINTS": "(Milestone)",
+      "STR": "15",
+      "STRmod": "+2",
+      "DEX": "15",
+      "DEXmod": "+2",
+      "CON": "18",
+      "CONmod": "+4",
+      "INT": "18",
+      "INTmod": "+4",
+      "WIS": "14",
+      "WISmod": "+2",
+      "CHA": "17",
+      "CHamod": "+3",
+      "ST Strength": "+2",
+      "ST Dexterity": "+2",
+      "ST Constitution": "+4",
+      "ST Intelligence": "+4",
+      "WisProf": "\u2022",
+      "ST Wisdom": "+8",
+      "ChaProf": "\u2022",
+      "ST Charisma": "+9",
+      "Defenses": "Resistances - Fire",
+      "SaveModifiers": "Advantage on CON to maintain Concentration.",
+      "Acrobatics": "+2",
+      "AcrobaticsMod": "DEX",
+      "Animal": "+2",
+      "AnimalMod": "WIS",
+      "Arcana": "+4",
+      "ArcanaMod": "INT",
+      "Athletics": "+2",
+      "AthleticsMod": "STR",
+      "Deception": "+3",
+      "DeceptionMod": "CHA",
+      "History": "+4",
+      "HistoryMod": "INT",
+      "Insight": "+2",
+      "InsightMod": "WIS",
+      "IntimidationProf": "P",
+      "Intimidation": "+9",
+      "IntimidationMod": "CHA",
+      "InvestigationProf": "P",
+      "Investigation": "+10",
+      "InvestigationMod": "INT",
+      "Medicine": "+2",
+      "MedicineMod": "WIS",
+      "Nature": "+4",
+      "NatureMod": "INT",
+      "Perception": "+2",
+      "PerceptionMod": "WIS",
+      "Performance": "+3",
+      "PerformanceMod": "CHA",
+      "Persuasion": "+3",
+      "PersuasionMod": "CHA",
+      "Religion": "+4",
+      "SleightOfHandProf": "P",
+      "SleightofHand": "+8",
+      "StealthProf": "P",
+      "Stealth": "+8",
+      "Survival": "+2",
+      "Passive1": "12",
+      "Passive2": "12",
+      "Passive3": "20",
+      "AdditionalSenses": "Darkvision 60 ft.",
+      "Init": "+2",
+      "AC": "12",
+      "ProfBonus": "+6",
+      "Speed": "30 ft. (Walking)",
+      "MaxHP": "183",
+      "TempHP": "--",
+      "Total": "20d8",
+      "ProficienciesLang": "=== ARMOR === \nLight Armor \n\n=== WEAPONS === \nSimple Weapons \n\n=== TOOLS === \nThieves' Tools \n\n=== LANGUAGES === \nCommon",
+      "ReligionMod": "INT",
+      "SleightofHandMod": "DEX",
+      "StealthMod": "DEX",
+      "SurvivalMod": "WIS",
+      "Actions1": "=== ACTIONS === \nStandard Actions \n     Attack, Magic, Dash, Disengage, Dodge, Help, Hide, Ready, Search, Utilize, Opportunity Attack, Grapple, Shove, Improvise, Two-Weapon Fighting, Interact with an Object, Study, Influence \n\n=== BONUS ACTIONS === \nDraconic Flight \u2022 1 / Long Rest \n     Once per Long Rest, you gain temporary flight for 10 minutes or until you retract the wings (no action required) or have the Incapacitated condition. During that time, you have a Fly Speed equal to your Speed. \n\nPact of the Blade: Bond \n     You can create a bond with a magic weapon you",
+      "Actions2": "touch. You can\u2019t bond with a magic weapon if someone else attuned to it or another Warlock is bonded with it. Until the bond ends, you\u2019re proficient with it and can use it as a Spellcasting Focus. \n\nYour bond with the weapons ends if you use this feature\u2019s Bonus Action again, if the weapon is more than 5 ft. away from you for more than 1 minute, or if you die. A conjured weapon disappears when the bond ends. \n\nPact of the Blade: Conjure \n     As a Bonus Action, you can conjure a pact weapon in your hand. \n\n=== SPECIAL ===",
+      "Wpn Name": "Chill Touch",
+      "Wpn1 AtkBonus": "+9",
+      "Wpn1 Damage": "4d10 Necrotic",
+      "Wpn Notes 1": "V/S",
+      "Wpn Name 2": "Eldritch Blast",
+      "Wpn2 AtkBonus": "+9",
+      "Wpn2 Damage": "1d10+3 Force",
+      "Wpn Notes 2": "Count: 4, V/S",
+      "Wpn Name 3": "Unarmed Strike",
+      "Wpn3 AtkBonus": "+8",
+      "Wpn3 Damage": "3 Bludgeoning",
+      "CharacterName2": "Sam",
+      "CLASS  LEVEL2": "Warlock 20",
+      "PLAYER NAME2": "retholtz",
+      "RACE2": "Dragonborn",
+      "BACKGROUND2": "Criminal",
+      "EXPERIENCE POINTS2": "(Milestone)",
+      "FeaturesTraits1": "=== WARLOCK FEATURES === \n\n* Core Warlock Traits \u2022 PHB-2024 153 \n\n* Eldritch Invocations \u2022 PHB-2024 153 \nYou have unearthed Eldritch Invocations, pieces of forbidden knowledge that imbue you with an abiding magical ability or other lessons. If an invocation has a prerequisite, you must meet it to learn that invocation. \n\n   | Agonizing Blast (Eldritch Blast) \u2022 br-2024 \nYou can add your Cha. modifier bonus to the damage rolls of Eldritch Blast. \n\n   | Armor of Shadows \u2022 br-2024 \nYou can cast Mage Armor on yourself without expending a spell slot. \n\n   | Ascendant Step \u2022 br-2024 \nYou can cast Levitate on yourself without expending a spell slot. \n\n   | Devil\u2019s Sight \u2022 br-2024 \nYou can see normally in Dim Light and Darkness\u2014both magical and nonmagical\u2014within 120 ft. of yourself. \n\n   | Eldritch Mind \u2022 br-2024 \nYou have Advantage on Con. saving throws that you make to maintain Concentration. \n\n   | Eldritch Spear \u2022 br-2024 \nChoose one of your known Warlock cantrips that deals damage and has a range of 10+ feet. When you cast that spell, its range increases by 600 ft. \n\n   | One with Shadows \u2022 br-2024 \nWhile you\u2019re in an area of Dim Light or Darkness, you can cast Invisibility on yourself without expending a spell slot.",
+      "FeaturesTraits2": "| Otherworldly Leap \u2022 br-2024 \nYou can cast Jump without expending a spell slot. \n\n   | Pact of the Blade \u2022 br-2024 \nAs a Bonus Action, you can conjure a pact weapon in your hand, or create a bond with a magic weapon you touch. You can\u2019t bond with a magic weapon if someone else attuned to it or another Warlock is bonded with it. Until the bond ends, you\u2019re proficient with it and can use it as a Spellcasting Focus. \n\nWhenever you attack with the bonded weapon, you can use your Cha. instead of Str. or Dex.; and you can cause it to deal Necrotic, Psychic, or Radiant damage or its normal damage type. \n\nYour bond with the weapons ends if you use this feature\u2019s Bonus Action again, if the weapon is more than 5 ft. away from you for more than 1 minute, or if you die. A conjured weapon disappears when the bond ends. \n\n      | Pact of the Blade: Conjure: 1 Bonus Action \n\n      | Pact of the Blade: Bond: 1 Bonus Action \n\n   | Repelling Blast \u2022 br-2024 \nChoose one of your known Warlock cantrips that requires an attack roll. When you hit a Large or smaller creature with that cantrip, you can push the creature up to 10 ft. straight away from you. \n\n* Pact Magic \u2022 PHB-2024 153 \n\n* Magical Cunning \u2022 PHB-2024 154 \nOnce per Long Rest, you can perform an esoteric rite for 1 minute, regaining up to 2 expended Pact Magic spell slots. \n\n   | 1 / Long Rest \u2022 1 Minute",
+      "FeaturesTraits3": "* Warlock Subclass \u2022 PHB-2024 154 \n\n   | Fiend Patron \n\n* Dark One\u2019s Blessing \u2022 PHB-2024 161 \nWhen you reduce an enemy to 0 HP, you gain 23 Temp HP. You also gain this benefit if someone else reduces an enemy within 10 ft. of you to 0 HP. \n\n   | Special \n\n* Fiend Spells \u2022 PHB-2024 161 \nWhen you reach a Warlock level specified in the Fiend Spells table, you thereafter always have the listed spells prepared. \n\n* Ability Score Improvement \u2022 PHB-2024 155 \n\n* Dark One\u2019s Own Luck \u2022 PHB-2024 162 \nWhen you make an ability check or saving throw, you can add 1d10 to your roll. You can do this after seeing the roll but before any of the roll\u2019s effects occur. \n\nYou can use this feature 3 times per Long Rest, but no more than once per roll.  \n\n   | 3 / Long Rest \u2022 Special \n\n* 8: Ability Score Improvement \u2022 PHB-2024 155 \n\n* Contact Patron \u2022 PHB-2024 155 \nYou always have Contact Other Plane prepared. Once per Long Rest, you can cast the spell without expending a spell slot to contact your patron, and you automatically succeed on the spell\u2019s saving throw. \n\n* Fiendish Resilience \u2022 PHB-2024 162 \nYou can choose one damage type, other than Force, to have Resistance to. You can change this choice whenever you finish a Short or Long Rest.",
+      "CP": "0",
+      "SP": "0",
+      "EP": "0",
+      "GP": "31",
+      "PP": "0",
+      "Weight Carried": "58 lb.",
+      "Encumbered": "225 lb.",
+      "PushDragLift": "450 lb.",
+      "Eq Name0": "Leather",
+      "Eq Qty0": "1",
+      "Eq Weight0": "10 lb.",
+      "Eq Name1": "Sickle",
+      "Eq Qty1": "1",
+      "Eq Weight1": "2 lb.",
+      "Eq Name2": "Dagger",
+      "Eq Qty2": "1",
+      "Eq Weight2": "1 lb.",
+      "Eq Name3": "Dagger",
+      "Eq Qty3": "1",
+      "Eq Weight3": "1 lb.",
+      "Eq Name4": "Orb",
+      "Eq Qty4": "1",
+      "Eq Weight4": "3 lb.",
+      "Eq Name5": "Book",
+      "Eq Qty5": "1",
+      "Eq Weight5": "5 lb.",
+      "Eq Name6": "Backpack",
+      "Eq Qty6": "1",
+      "Eq Weight6": "5 lb.",
+      "Eq Name7": "Book",
+      "Eq Qty7": "1",
+      "Eq Weight7": "5 lb.",
+      "Eq Name8": "Parchment",
+      "Eq Qty8": "10",
+      "Eq Weight8": "--",
+      "Eq Name9": "Ink Pen",
+      "Eq Qty9": "1",
+      "Eq Weight9": "--",
+      "Eq Name10": "Ink",
+      "Eq Qty10": "1",
+      "Eq Weight10": "--",
+      "Eq Name11": "Lamp",
+      "Eq Qty11": "1",
+      "Eq Weight11": "1 lb.",
+      "Eq Name12": "Oil",
+      "Eq Qty12": "10",
+      "Eq Weight12": "10 lb.",
+      "Eq Name13": "Tinderbox",
+      "Eq Qty13": "1",
+      "Eq Weight13": "1 lb.",
+      "Eq Name14": "Dagger",
+      "Eq Qty14": "1",
+      "Eq Weight14": "1 lb.",
+      "Eq Name15": "Dagger",
+      "Eq Qty15": "1",
+      "Eq Weight15": "1 lb.",
+      "Eq Name16": "Thieves' Tools",
+      "Eq Qty16": "1",
+      "Eq Weight16": "1 lb.",
+      "Eq Name17": "Crowbar",
+      "Eq Qty17": "1",
+      "Eq Weight17": "5 lb.",
+      "Eq Name18": "Pouch",
+      "Eq Qty18": "1",
+      "Eq Weight18": "1 lb.",
+      "Eq Name19": "Pouch",
+      "Eq Qty19": "1",
+      "Eq Weight19": "1 lb.",
+      "Eq Name20": "Traveler's Clothes",
+      "Eq Qty20": "1",
+      "Eq Weight20": "4 lb.",
+      "CharacterName3": "Sam",
+      "CLASS  LEVEL3": "Warlock 20",
+      "PLAYER NAME3": "retholtz",
+      "RACE3": "Dragonborn",
+      "BACKGROUND3": "Criminal",
+      "EXPERIENCE POINTS3": "(Milestone)",
+      "FeaturesTraits4": "* Mystic Arcanum (Level 6 Spell) \u2022 PHB-2024 155 \nYour patron grants you a magical secret called an arcanum, choose one level 6 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again. \n\n* 12: Ability Score Improvement \u2022 PHB-2024 155 \n\n* Mystic Arcanum (Level 7 Spell) \u2022 PHB-2024 155 \nYour patron grants you a magical secret called an arcanum, choose one level 7 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again. \n\n* Hurl Through Hell \u2022 PHB-2024 162 \nOnce per turn when you hit a creature with an attack roll, the target must succeed on a DC 17 Cha. saving throw, or the target disappears, takes 8d10 Psychic damage if it isn\u2019t a Fiend, and it has the Incapacitated condition until the end of your next turn, where it reappears in the space it previously occupied or the nearest unoccupied space. \n\nOnce used, you can\u2019t use this feature again until you finish a Long rest unless you expend a Pact Magic spell slot to restore your use of it. \n\n   | 1 Action \n\n* Mystic Arcanum (Level 8 Spell) \u2022 PHB-2024 155 \nYour patron grants you a magical secret called an arcanum, choose one level 8 Warlock spell as this arcanum. You can cast this spell once per Long Rest before you cast it in this way again. \n\n* 16: Ability Score Improvement \u2022 PHB-2024 155 \n\n* Mystic Arcanum (Level 9 Spell) \u2022 PHB-2024 155 \nYour patron grants you a magical secret called an arcanum, choose one level 9 Warlock spell as this arcanum. You can cast this spell once per Long Rest\nally in the same combat. You can\u2019t make this swap if you or the ally has the Incapacitated condition. \n\n* Boon of Fate \u2022 PHB-2024 210 \nAbility Score Increase. Increase one ability score of your choice by 1. \n\n Improve Fate. When you or another creature within 60 ft. of you succeeds or fails a D20 Test, you can roll 2d4 and apply the total rolled as a bonus or penalty to the d20 roll. Once you use this benefit, you can't use it again until you roll Initiative or finish a Short or Long Rest. \n\n* Svirfneblin Magic \u2022 EE \nYou can cast nondetection on yourself at will, without needing a material component. You can also cast blindness/deafness, blur, and disguise self once each per long rest. INT is your spellcasting ability and you cast these spells at their lowest possible level. \n\n* Criminal Ability Score Improvements \u2022 PHB-2024 179 \n\n   | Increase two scores (+2 / +1) \u2022",
+      "FeaturesTraits5": "before you cast it in this way again. \n\n* Epic Boon \u2022 PHB-2024 155 \n\n* Eldritch Master \u2022 PHB-2024 155 \nWhen you use your Magical Cunning feature, you regain all your expended Pact Magic spell slots. \n\n\n=== DRAGONBORN SPECIES TRAITS === \n\n* Creature Type \u2022 PHB-2024 187 \nYou are a Humanoid. \n\n* Size \u2022 PHB-2024 187 \nYour size is Medium. \n\n* Speed \u2022 PHB-2024 187 \nYour speed is 30 ft. \n\n* Draconic Ancestry \u2022 PHB-2024 187 \nYou gain a breath weapon and damage resistance with your chosen dragon type. \n\n* Breath Weapon \u2022 PHB-2024 187 \nWhen you take the Attack action on your turn, you can replace one of your attacks with an exhalation of magical energy. You can use your Breath Weapon 6 times per Long Rest. \n\n* Damage Resistance \u2022 PHB-2024 187 \nYou have Resistance to the damage type determined by your Draconic Ancestry trait. \n\n* Darkvision \u2022 PHB-2024 187 \nYou have Darkvision with a range of 60 ft. \n\n* Draconic Flight \u2022 PHB-2024 187 \nOnce per Long Rest as a Bonus Action, you gain temporary flight for 10 minutes or until you retract the wings (no action required) or have the Incapacitated",
+      "FeaturesTraits6": "condition. During that time, you have a Fly Speed equal to your Speed. \n\n   | 1 / Long Rest \u2022 1 Bonus Action \n\n* Languages \u2022 PHB-2024 37 \nYour character knows at least three languages: Common plus two languages you roll or choose from the Standard Languages table. Knowledge of a language means your character can communicate in it, read it, and write it. \n\n\n=== FEATS === \n\n* Boon of Truesight \u2022 PHB-2024 211 \nAbility Score Increase.One ability score of your choice increased by 1. \n\n Truesight. You have Truesight with a range of 60 feet. \n\n* Boon of the Night Spirit \u2022 PHB-2024 211 \nAbility Score Increase. One ability score increased by 1. \n\n Merge with Shadows. While within Dim Light or Darkness, you can give yourself the Invisible condition as a Bonus Action. The condition ends on you immediately after you take an action, a Bonus Action, or a Reaction. \n\n Shadowy Form. While within Dim Light or Darkness, you have Resistance to all damage except Psychic and Radiant. \n\n* Alert \u2022 PHB-2024 200 \nInitiative Proficiency. When you roll Initiative, add +6 to the roll. \n\nInitiative Swap. Immediately after you roll Initiative, you can swap your Initiative with the Initiative of one willing",
+      "CharacterName4": "Sam",
+      "GENDER": "Male",
+      "AGE": "39",
+      "SIZE": "Medium",
+      "HEIGHT": "5'8\"",
+      "WEIGHT": "150",
+      "ALIGNMENT": "Chaotic Good",
+      "SKIN": "Pale",
+      "EYES": "Blue",
+      "HAIR": "Brown",
+      "spellCastingAbility0": "CHA",
+      "spellSaveDC0": "17",
+      "spellAtkBonus0": "+9",
+      "spellCastingClass0": "Warlock",
+      "spellHeader0": "=== CANTRIPS ===",
+      "spellSlotHeader0": "(At Will)",
+      "spellPrepared0": "O",
+      "spellName0": "Chill Touch",
+      "spellSource0": "Warlock",
+      "spellSaveHit0": "+9",
+      "spellCastingTime0": "1A",
+      "spellRange0": "Touch",
+      "spellComponents0": "V,S",
+      "spellDuration0": "Instantaneous",
+      "spellPage0": "PHB-2024 249",
+      "spellNotes0": "V/S",
+      "spellPrepared1": "O",
+      "spellName1": "Eldritch Blast",
+      "spellSource1": "Warlock",
+      "spellSaveHit1": "+9",
+      "spellCastingTime1": "1A",
+      "spellRange1": "120 ft.",
+      "spellComponents1": "V,S",
+      "spellDuration1": "Instantaneous",
+      "spellPage1": "PHB-2024 267",
+      "spellNotes1": "Count: 4, V/S",
+      "spellPrepared2": "O",
+      "spellName2": "Prestidigitation",
+      "spellSource2": "Warlock",
+      "spellSaveHit2": "--",
+      "spellCastingTime2": "1A",
+      "spellRange2": "10 ft.",
+      "spellComponents2": "V,S",
+      "spellDuration2": "1 hour",
+      "spellPage2": "PHB-2024 307",
+      "spellNotes2": "D: 1h, V/S",
+      "spellPrepared3": "O",
+      "spellName3": "True Strike",
+      "spellSource3": "Warlock",
+      "spellSaveHit3": "+9",
+      "spellCastingTime3": "1A",
+      "spellRange3": "Self",
+      "spellComponents3": "S,M",
+      "spellDuration3": "Instantaneous",
+      "spellPage3": "PHB-2024 336",
+      "spellNotes3": "S/M",
+      "spellHeader1": "=== 1st LEVEL ===",
+      "spellPrepared4": "O",
+      "spellName4": "Hellish Rebuke",
+      "spellSource4": "Warlock",
+      "spellSaveHit4": "DEX 17",
+      "spellCastingTime4": "1R",
+      "spellRange4": "60 ft.",
+      "spellComponents4": "V,S",
+      "spellDuration4": "Instantaneous",
+      "spellPage4": "PHB-2024 284",
+      "spellNotes4": "V/S",
+      "spellPrepared5": "P",
+      "spellName5": "Burning Hands",
+      "spellSource5": "Fiend Spells (Always Prepared)",
+      "spellSaveHit5": "DEX 17",
+      "spellCastingTime5": "1A",
+      "spellRange5": "Self/15 ft. Cone",
+      "spellComponents5": "V,S",
+      "spellDuration5": "Instantaneous",
+      "spellPage5": "PHB-2024 248",
+      "spellNotes5": "15 ft. Cone, V/S",
+      "spellPrepared6": "P",
+      "spellName6": "Command",
+      "spellSource6": "Fiend Spells (Always Prepared)",
+      "spellSaveHit6": "WIS 17",
+      "spellCastingTime6": "1A",
+      "spellRange6": "60 ft.",
+      "spellComponents6": "V",
+      "spellDuration6": "Instantaneous",
+      "spellPage6": "PHB-2024 251",
+      "spellNotes6": "V",
+      "spellPrepared7": "O",
+      "spellName7": "Mage Armor",
+      "spellSource7": "Eldritch Invocations",
+      "spellSaveHit7": "--",
+      "spellCastingTime7": "1A",
+      "spellRange7": "Touch",
+      "spellComponents7": "V,S,M",
+      "spellDuration7": "8 hours",
+      "spellPage7": "PHB-2024 293",
+      "spellNotes7": "D: 8h, V/S/M",
+      "spellPrepared8": "O",
+      "spellName8": "Jump",
+      "spellSource8": "Eldritch Invocations",
+      "spellSaveHit8": "--",
+      "spellCastingTime8": "1BA",
+      "spellRange8": "Touch",
+      "spellComponents8": "V,S,M",
+      "spellDuration8": "1 minute",
+      "spellPage8": "PHB-2024 290",
+      "spellNotes8": "D: 1m, V/S/M",
+      "spellHeader2": "=== 2nd LEVEL ===",
+      "spellPrepared9": "O",
+      "spellName9": "Darkness",
+      "spellSource9": "Warlock",
+      "spellSaveHit9": "--",
+      "spellCastingTime9": "1A",
+      "spellRange9": "60 ft./15 ft. Sphere",
+      "spellComponents9": "V,M",
+      "spellDuration9": "Concentration, up to 10 minutes",
+      "spellPage9": "PHB-2024 260",
+      "spellNotes9": "D: 10m, 15 ft. Sphere, V/M",
+      "spellPrepared10": "O",
+      "spellName10": "Invisibility",
+      "spellSource10": "Warlock",
+      "spellSaveHit10": "--",
+      "spellCastingTime10": "1A",
+      "spellRange10": "Touch",
+      "spellComponents10": "V,S,M",
+      "spellDuration10": "Concentration, up to 1 hour",
+      "spellPage10": "PHB-2024 289",
+      "spellNotes10": "D: 1h, V/S/M",
+      "spellPrepared11": "O",
+      "spellName11": "Mind Spike",
+      "spellSource11": "Warlock",
+      "spellSaveHit11": "WIS 17",
+      "spellCastingTime11": "1A",
+      "spellRange11": "120 ft.",
+      "spellComponents11": "S",
+      "spellDuration11": "Concentration, up to 1 hour",
+      "spellPage11": "PHB-2024 298",
+      "spellNotes11": "D: 1h, S",
+      "spellPrepared12": "O",
+      "spellName12": "Misty Step",
+      "spellSource12": "Warlock",
+      "spellSaveHit12": "--",
+      "spellCastingTime12": "1BA",
+      "spellRange12": "Self",
+      "spellComponents12": "V",
+      "spellDuration12": "Instantaneous",
+      "spellPage12": "PHB-2024 299",
+      "spellNotes12": "V",
+      "spellPrepared13": "P",
+      "spellName13": "Scorching Ray",
+      "spellSource13": "Fiend Spells (Always Prepared)",
+      "spellSaveHit13": "+9",
+      "spellCastingTime13": "1A",
+      "spellRange13": "120 ft.",
+      "spellComponents13": "V,S",
+      "spellDuration13": "Instantaneous",
+      "spellPage13": "PHB-2024 314",
+      "spellNotes13": "V/S",
+      "spellPrepared14": "P",
+      "spellName14": "Suggestion",
+      "spellSource14": "Fiend Spells (Always Prepared)",
+      "spellSaveHit14": "WIS 17",
+      "spellCastingTime14": "1A",
+      "spellRange14": "30 ft.",
+      "spellComponents14": "V,M",
+      "spellDuration14": "Concentration, up to 8 hours",
+      "spellPage14": "PHB-2024 320",
+      "spellNotes14": "D: 8h, V/M",
+      "spellPrepared15": "O",
+      "spellName15": "Levitate",
+      "spellSource15": "Eldritch Invocations",
+      "spellSaveHit15": "CON 17",
+      "spellCastingTime15": "1A",
+      "spellRange15": "60 ft.",
+      "spellComponents15": "V,S,M",
+      "spellDuration15": "Concentration, up to 10 minutes",
+      "spellPage15": "PHB-2024 291",
+      "spellNotes15": "D: 10m, V/S/M",
+      "spellPrepared16": "O",
+      "spellName16": "Invisibility",
+      "spellSource16": "Eldritch Invocations",
+      "spellSaveHit16": "--",
+      "spellCastingTime16": "1A",
+      "spellRange16": "Touch",
+      "spellComponents16": "V,S,M",
+      "spellDuration16": "Concentration, up to 1 hour",
+      "spellPage16": "PHB-2024 289",
+      "spellNotes16": "D: 1h, V/S/M",
+      "spellHeader3": "=== 3rd LEVEL ===",
+      "spellPrepared17": "O",
+      "spellName17": "Counterspell",
+      "spellSource17": "Warlock",
+      "spellSaveHit17": "CON 17",
+      "spellCastingTime17": "1R",
+      "spellRange17": "60 ft.",
+      "spellComponents17": "S",
+      "spellDuration17": "Instantaneous",
+      "spellPage17": "PHB-2024 258",
+      "spellNotes17": "S",
+      "spellPrepared18": "O",
+      "spellName18": "Dispel Magic",
+      "spellSource18": "Warlock",
+      "spellSaveHit18": "--",
+      "spellCastingTime18": "1A",
+      "spellRange18": "120 ft.",
+      "spellComponents18": "V,S",
+      "spellDuration18": "Instantaneous",
+      "spellPage18": "PHB-2024 265",
+      "spellNotes18": "Special: (See Description)*, V/S",
+      "spellPrepared19": "O",
+      "spellName19": "Fly",
+      "spellSource19": "Warlock",
+      "spellSaveHit19": "--",
+      "spellCastingTime19": "1A",
+      "spellRange19": "Touch",
+      "spellComponents19": "V,S,M",
+      "spellDuration19": "Concentration, up to 10 minutes",
+      "spellPage19": "PHB-2024 276",
+      "spellNotes19": "D: 10m, V/S/M",
+      "spellPrepared20": "O",
+      "spellName20": "Vampiric Touch",
+      "spellSource20": "Warlock",
+      "spellSaveHit20": "+9",
+      "spellCastingTime20": "1A",
+      "spellRange20": "Self",
+      "spellComponents20": "V,S",
+      "spellDuration20": "Concentration, up to 1 minute",
+      "spellPage20": "PHB-2024 337",
+      "spellNotes20": "D: 1m, V/S",
+      "spellPrepared21": "P",
+      "spellName21": "Fireball",
+      "spellSource21": "Fiend Spells (Always Prepared)",
+      "spellSaveHit21": "DEX 17",
+      "spellCastingTime21": "1A",
+      "spellRange21": "150 ft./20 ft. Sphere",
+      "spellComponents21": "V,S,M",
+      "spellDuration21": "Instantaneous",
+      "spellPage21": "PHB-2024 274",
+      "spellNotes21": "20 ft. Sphere, V/S/M",
+      "spellPrepared22": "P",
+      "spellName22": "Stinking Cloud",
+      "spellSource22": "Fiend Spells (Always Prepared)",
+      "spellSaveHit22": "CON 17",
+      "spellCastingTime22": "1A",
+      "spellRange22": "90 ft./20 ft. Sphere",
+      "spellComponents22": "V,S,M",
+      "spellDuration22": "Concentration, up to 1 minute",
+      "spellPage22": "PHB-2024 320",
+      "spellNotes22": "D: 1m, 20 ft. Sphere, V/S/M",
+      "spellHeader4": "=== 4th LEVEL ===",
+      "spellPrepared23": "O",
+      "spellName23": "Banishment",
+      "spellSource23": "Warlock",
+      "spellSaveHit23": "CHA 17",
+      "spellCastingTime23": "1A",
+      "spellRange23": "30 ft.",
+      "spellComponents23": "V,S,M",
+      "spellDuration23": "Concentration, up to 1 minute",
+      "spellPage23": "PHB-2024 245",
+      "spellNotes23": "D: 1m, V/S/M",
+      "spellPrepared24": "O",
+      "spellName24": "Dimension Door",
+      "spellSource24": "Warlock",
+      "spellSaveHit24": "--",
+      "spellCastingTime24": "1A",
+      "spellRange24": "500 ft.",
+      "spellComponents24": "V",
+      "spellDuration24": "Instantaneous",
+      "spellPage24": "PHB-2024 262",
+      "spellNotes24": "V",
+      "spellPrepared25": "O",
+      "spellName25": "Blight",
+      "spellSource25": "Warlock",
+      "spellSaveHit25": "CON 17",
+      "spellCastingTime25": "1A",
+      "spellRange25": "30 ft.",
+      "spellComponents25": "V,S",
+      "spellDuration25": "Instantaneous",
+      "spellPage25": "PHB-2024 247",
+      "spellNotes25": "V/S",
+      "spellPrepared26": "P",
+      "spellName26": "Fire Shield",
+      "spellSource26": "Fiend Spells (Always Prepared)",
+      "spellSaveHit26": "--",
+      "spellCastingTime26": "1A",
+      "spellRange26": "Self",
+      "spellComponents26": "V,S,M",
+      "spellDuration26": "10 minutes",
+      "spellPage26": "PHB-2024 274",
+      "spellNotes26": "D: 10m, V/S/M",
+      "spellPrepared27": "P",
+      "spellName27": "Wall of Fire",
+      "spellSource27": "Fiend Spells (Always Prepared)",
+      "spellSaveHit27": "DEX 17",
+      "spellCastingTime27": "1A",
+      "spellRange27": "120 ft.",
+      "spellComponents27": "V,S,M",
+      "spellDuration27": "Concentration, up to 1 minute",
+      "spellPage27": "PHB-2024 338",
+      "spellNotes27": "D: 1m, V/S/M",
+      "spellHeader5": "=== 5th LEVEL ===",
+      "spellSlotHeader5": "4 Pact OOOO",
+      "spellPrepared28": "O",
+      "spellName28": "Planar Binding",
+      "spellSource28": "Warlock",
+      "spellSaveHit28": "CHA 17",
+      "spellCastingTime28": "1h",
+      "spellRange28": "60 ft.",
+      "spellComponents28": "V,S,M",
+      "spellDuration28": "24 hours",
+      "spellPage28": "PHB-2024 305",
+      "spellNotes28": "D: 24h, V/S/M",
+      "spellPrepared29": "O",
+      "spellName29": "Contact Other Plane [R]",
+      "spellSource29": "Warlock",
+      "spellSaveHit29": "--",
+      "spellCastingTime29": "1m",
+      "spellRange29": "Self",
+      "spellComponents29": "V",
+      "spellDuration29": "1 minute",
+      "spellPage29": "PHB-2024 255",
+      "spellNotes29": "D: 1m, V",
+      "spellPrepared30": "O",
+      "spellName30": "Teleportation Circle",
+      "spellSource30": "Warlock",
+      "spellSaveHit30": "--",
+      "spellCastingTime30": "1m",
+      "spellRange30": "10 ft.",
+      "spellComponents30": "V,M",
+      "spellDuration30": "1 round",
+      "spellPage30": "PHB-2024 332",
+      "spellNotes30": "D: 1Rnd, V/M",
+      "spellPrepared31": "P",
+      "spellName31": "Geas",
+      "spellSource31": "Fiend Spells (Always Prepared)",
+      "spellSaveHit31": "WIS 17",
+      "spellCastingTime31": "1m",
+      "spellRange31": "60 ft.",
+      "spellComponents31": "V",
+      "spellDuration31": "30 days",
+      "spellPage31": "PHB-2024 278",
+      "spellNotes31": "D: 30d, V",
+      "spellPrepared32": "P",
+      "spellName32": "Insect Plague",
+      "spellSource32": "Fiend Spells (Always Prepared)",
+      "spellSaveHit32": "CON 17",
+      "spellCastingTime32": "1A",
+      "spellRange32": "300 ft./20 ft. Sphere",
+      "spellComponents32": "V,S,M",
+      "spellDuration32": "Concentration, up to 10 minutes",
+      "spellPage32": "PHB-2024 289",
+      "spellNotes32": "D: 10m, 20 ft. Sphere, V/S/M",
+      "spellPrepared33": "O",
+      "spellName33": "Contact Other Plane [R]",
+      "spellSource33": "Contact Patron",
+      "spellSaveHit33": "--",
+      "spellCastingTime33": "1m",
+      "spellRange33": "Self",
+      "spellComponents33": "V",
+      "spellDuration33": "1 minute",
+      "spellPage33": "PHB-2024 255",
+      "spellNotes33": "1/LR, D: 1m, V",
+      "spellPrepared34": "O",
+      "spellName34": "Contact Other Plane [R]",
+      "spellSource34": "Contact Patron",
+      "spellSaveHit34": "--",
+      "spellCastingTime34": "1m",
+      "spellRange34": "Self",
+      "spellComponents34": "V",
+      "spellDuration34": "1 minute",
+      "spellPage34": "PHB-2024 255",
+      "spellNotes34": "D: 1m, V",
+      "spellHeader6": "=== 6th LEVEL ===",
+      "spellPrepared35": "O",
+      "spellName35": "Create Undead",
+      "spellSource35": "Mystic Arcanum (Level 6 Spell)",
+      "spellSaveHit35": "--",
+      "spellCastingTime35": "1m",
+      "spellRange35": "10 ft.",
+      "spellComponents35": "V,S,M",
+      "spellDuration35": "Instantaneous",
+      "spellPage35": "PHB-2024 258",
+      "spellNotes35": "1/LR, Creatures: (See Description)*, V/S/M",
+      "spellHeader7": "=== 7th LEVEL ===",
+      "spellPrepared36": "O",
+      "spellName36": "Finger of Death",
+      "spellSource36": "Mystic Arcanum (Level 7 Spell)",
+      "spellSaveHit36": "CON 17",
+      "spellCastingTime36": "1A",
+      "spellRange36": "60 ft.",
+      "spellComponents36": "V,S",
+      "spellDuration36": "Instantaneous",
+      "spellPage36": "PHB-2024 273",
+      "spellNotes36": "1/LR, V/S",
+      "spellHeader8": "=== 8th LEVEL ===",
+      "spellPrepared37": "O",
+      "spellName37": "Dominate Monster",
+      "spellSource37": "Mystic Arcanum (Level 8 Spell)",
+      "spellSaveHit37": "WIS 17",
+      "spellCastingTime37": "1A",
+      "spellRange37": "60 ft.",
+      "spellComponents37": "V,S",
+      "spellDuration37": "Concentration, up to 1 hour",
+      "spellPage37": "PHB-2024 265",
+      "spellNotes37": "1/LR, Ext. D: Your Concentration can last up to 8 hours.*, D: 1h, V/S",
+      "spellHeader9": "=== 9th LEVEL ===",
+      "spellPrepared38": "O",
+      "spellName38": "Astral Projection",
+      "spellSource38": "Mystic Arcanum (Level 9 Spell)",
+      "spellSaveHit38": "--",
+      "spellCastingTime38": "1h",
+      "spellRange38": "10 ft.",
+      "spellComponents38": "V,S,M",
+      "spellDuration38": "Until dispelled",
+      "spellPage38": "PHB-2024 243",
+      "spellNotes38": "1/LR, D: Until Dispelled, V/S/M"
+    }
+  },
+  "is_pact_magic": true,
+  "custom_meters": {
+    "hit_dice": {
+      "label": "Hit Dice (20d8)",
+      "current": 20,
+      "max": 20,
+      "reset_on": "long_rest"
+    },
+    "breath_weapon": {
+      "label": "Breath Weapon",
+      "current": 6,
+      "max": 6,
+      "reset_on": "long_rest"
+    },
+    "draconic_flight": {
+      "label": "Draconic Flight",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    },
+    "dark_ones_own_luck": {
+      "label": "Dark One's Own Luck",
+      "current": 3,
+      "max": 3,
+      "reset_on": "long_rest"
+    },
+    "hurl_through_hell": {
+      "label": "Hurl Through Hell",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    },
+    "boon_of_fate": {
+      "label": "Boon of Fate",
+      "current": 1,
+      "max": 1,
+      "reset_on": "short_rest"
+    },
+    "magical_cunning": {
+      "label": "Magical Cunning",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    },
+    "mystic_arcanum_6th": {
+      "label": "Mystic Arcanum (6th Level)",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    },
+    "mystic_arcanum_7th": {
+      "label": "Mystic Arcanum (7th Level)",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    },
+    "mystic_arcanum_8th": {
+      "label": "Mystic Arcanum (8th Level)",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    },
+    "mystic_arcanum_9th": {
+      "label": "Mystic Arcanum (9th Level)",
+      "current": 1,
+      "max": 1,
+      "reset_on": "long_rest"
+    }
+  },
+  "roleplay_anchors": {
+    "personality_traits": "",
+    "ideals": "",
+    "bonds": "",
+    "flaws": "",
+    "allies_and_organizations": ""
+  },
+  "backstory": "",
+  "additional_notes": "",
+  "weight_carried": "58 lb.",
+  "encumbered": "225 lb.",
+  "push_drag_lift": "450 lb.",
+  "description": {
+    "gender": "Male",
+    "age": "39",
+    "size": "Medium",
+    "height": "5'8\"",
+    "weight": "150",
+    "alignment": "Chaotic Good",
+    "faith": "",
+    "skin": "Pale",
+    "eyes": "Blue",
+    "hair": "Brown",
+    "creature_type": "Humanoid"
+  },
+  "gender": "Male",
+  "age": "39",
+  "size": "Medium",
+  "height": "5'8\"",
+  "weight": "150",
+  "alignment": "Chaotic Good",
+  "faith": "",
+  "skin": "Pale",
+  "eyes": "Blue",
+  "hair": "Brown",
+  "creature_type": "Humanoid"
+}
