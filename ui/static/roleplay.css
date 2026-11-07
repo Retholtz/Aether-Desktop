@@ -1864,6 +1864,370 @@
   border-color: rgba(248, 113, 113, 0.35);
 }
 
+/* =========================================================================
+   BYOC (Build Your Own Campaign) & World State Ledger (Phase 2 UI)
+   ========================================================================= */
+
+.byoc-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.byoc-header-banner {
+  background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), rgba(15, 23, 42, 0.9) 70%);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.byoc-banner-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.byoc-tone-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.byoc-pill {
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 16px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+}
+
+.byoc-pill strong {
+  color: #38bdf8;
+}
+
+.byoc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.byoc-card {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 280px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.byoc-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  padding-bottom: 8px;
+}
+
+.byoc-card-header h4 {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  color: #f1f5f9;
+  font-weight: 700;
+}
+
+.byoc-card-subheader {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #64748b;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+
+.byoc-active-loc-box {
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.byoc-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.byoc-item-card {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid #232c3d;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.15s ease;
+}
+
+.byoc-item-card:hover {
+  border-color: #3b82f6;
+}
+
+.byoc-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.byoc-disp-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.byoc-disp-allied {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.byoc-disp-friendly {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.byoc-disp-neutral {
+  background: rgba(14, 165, 233, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+}
+
+.byoc-disp-suspicious {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.byoc-disp-hostile {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.byoc-influence-bar-bg {
+  width: 100%;
+  height: 5px;
+  background: #1e293b;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.byoc-influence-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #818cf8);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.byoc-obj-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+}
+
+.byoc-obj-item.completed {
+  text-decoration: line-through;
+  color: #64748b;
+}
+
+.byoc-context-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.byoc-context-header {
+  padding: 10px 14px;
+  background: rgba(30, 41, 59, 0.5);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.byoc-context-body {
+  padding: 12px 14px;
+  background: #090d16;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* =========================================================================
+   World Builder Studio Modal & Universal Campaign Sliders (Phase 2 UI)
+   ========================================================================= */
+
+#modal-new-campaign .modal-card {
+  max-width: 720px;
+  width: 95%;
+}
+
+#modal-world-builder {
+  z-index: 100100 !important;
+}
+
+#modal-world-builder .modal-card {
+  max-width: 780px;
+  width: 95%;
+}
+
+.byoc-slider {
+  width: 100%;
+  accent-color: #0ea5e9;
+  cursor: pointer;
+  height: 6px;
+  border-radius: 3px;
+}
+
+.world-builder-tabs-bar {
+  display: flex;
+  background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid #1e293b;
+  overflow-x: auto;
+}
+
+.wb-tab-btn {
+  padding: 10px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.wb-tab-btn:hover {
+  color: #e2e8f0;
+}
+
+.wb-tab-btn.active {
+  color: #38bdf8;
+  border-bottom-color: #0ea5e9;
+  background: rgba(56, 189, 248, 0.05);
+}
+
+.campaign-source-segmented {
+  display: flex;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 3px;
+  gap: 4px;
+}
+
+.source-segment-btn {
+  flex: 1;
+  padding: 7px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  color: #94a3b8;
+  transition: all 0.2s ease;
+}
+
+.source-segment-btn:hover {
+  color: #f1f5f9;
+}
+
+.source-segment-btn.active {
+  background: #0ea5e9;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.tone-sliders-container {
+  background: rgba(13, 21, 30, 0.7);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.wb-hazard-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.wb-hazard-tag .wb-tag-remove {
+  cursor: pointer;
+  color: #f87171;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
+.wb-hazard-tag .wb-tag-remove:hover {
+  color: #ef4444;
+}
+
+.wb-obj-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid #1e293b;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+}
+
+.wb-obj-item-row .wb-obj-remove {
+  cursor: pointer;
+  color: #94a3b8;
+  padding: 0 4px;
+}
+
+.wb-obj-item-row .wb-obj-remove:hover {
+  color: #ef4444;
+}
+
+
+
 
 
 

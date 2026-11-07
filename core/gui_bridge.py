@@ -6773,6 +6773,19 @@ class GuiBridge:
         campaigns = self.ttrpg_service.manifest.get("campaigns", {})
         eng = getattr(self, "_engine", getattr(self, "engine", None))
         is_adv = bool(getattr(eng, "is_ttrpg_session_active", lambda: False)())
+
+        world_state = None
+        world_context = ""
+        if active_id:
+            try:
+                from core.campaign.campaign_manager import CampaignManager
+                from dataclasses import asdict
+                c_mgr = CampaignManager(campaign_id=active_id)
+                world_state = asdict(c_mgr.manifest)
+                world_context = c_mgr.generate_prompt_context()
+            except Exception as e:
+                logger.debug(f"[GUIBridge] World state load error for '{active_id}': {e}")
+
         return {
             "active_campaign": active_id,
             "campaigns": campaigns,
@@ -6780,12 +6793,21 @@ class GuiBridge:
             "dice_mode": campaigns.get(active_id, {}).get("dice_mode", "digital") if active_id else "digital",
             "state": self.ttrpg_service.active_state,
             "is_adventure_active": is_adv,
-            "projects": self.project_service.data.get("projects", {}) if hasattr(self, "project_service") and self.project_service else {}
+            "projects": self.project_service.data.get("projects", {}) if hasattr(self, "project_service") and self.project_service else {},
+            "world_state": world_state,
+            "world_context": world_context
         }
 
     def set_active_campaign(self, campaign_id: str) -> Dict[str, Any]:
         res = self.ttrpg_service.set_active_campaign(campaign_id)
         if res.get("status") == "success":
+            try:
+                from core.campaign.campaign_manager import CampaignManager
+                import tools.campaign_tools as ct
+                ct._CAMPAIGN = CampaignManager(campaign_id=campaign_id)
+            except Exception as e:
+                logger.debug(f"[GUIBridge] Failed to update campaign_tools singleton: {e}")
+
             camp_title = (res.get("campaign") or {}).get("title", campaign_id) if isinstance(res.get("campaign"), dict) else campaign_id
             history = []
             if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_active_workspace"):
@@ -6806,7 +6828,8 @@ class GuiBridge:
         tone: str = "Gritty, tense, grounded, cinematic",
         difficulty: str = "helpful",
         linked_project_id: str = "",
-        initial_files: Optional[List[Dict[str, Any]]] = None
+        initial_files: Optional[List[Dict[str, Any]]] = None,
+        byoc_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         res = self.ttrpg_service.create_campaign(
             title=title,
@@ -6819,6 +6842,132 @@ class GuiBridge:
             initial_files=initial_files
         )
         if res.get("status") == "success":
+            cid = (res.get("campaign") or {}).get("id")
+            if cid:
+                try:
+                    from core.campaign.campaign_manager import CampaignManager
+                    from core.campaign.schema import (
+                        LocationNode, LocationType, FactionRecord,
+                        FactionDisposition, QuestRecord, QuestObjective, QuestStatus
+                    )
+                    import re
+                    c_mgr = CampaignManager(campaign_id=cid)
+                    c_mgr.manifest.title = title
+                    c_mgr.manifest.ruleset = system_preset or "dnd_5e"
+                    c_mgr.manifest.premise = setting_overview or f"The adventure begins in {title}."
+
+                    if byoc_data and isinstance(byoc_data, dict):
+                        if byoc_data.get("genre"):
+                            c_mgr.manifest.genre = byoc_data["genre"]
+                        sliders = byoc_data.get("tone_sliders") or {}
+                        if sliders:
+                            c_mgr.manifest.tone_sliders.update(sliders)
+
+                        # Starting / Configured Locations
+                        loc_list = byoc_data.get("locations") if isinstance(byoc_data.get("locations"), list) else []
+                        if byoc_data.get("starting_location"):
+                            loc_list.append(byoc_data["starting_location"])
+                        for loc_data in loc_list:
+                            if not loc_data or not loc_data.get("name"):
+                                continue
+                            loc_type_str = str(loc_data.get("type", "region")).lower().strip()
+                            try:
+                                loc_type = LocationType(loc_type_str)
+                            except Exception:
+                                loc_type = LocationType.REGION
+                            raw_hazards = loc_data.get("hazards", "")
+                            hazards = [h.strip() for h in raw_hazards.split(",") if h.strip()] if isinstance(raw_hazards, str) else (raw_hazards or [])
+                            loc_id = loc_data.get("id") or f"loc_{re.sub(r'[^a-z0-9_]+', '_', loc_data['name'].lower()).strip('_')}"
+                            loc_node = LocationNode(
+                                id=loc_id,
+                                name=loc_data["name"],
+                                type=loc_type,
+                                description=loc_data.get("description", ""),
+                                is_discovered=True,
+                                hazards=hazards
+                            )
+                            c_mgr.add_location(loc_node)
+
+                        # Starting / Configured Factions
+                        fac_list = byoc_data.get("factions") if isinstance(byoc_data.get("factions"), list) else []
+                        if byoc_data.get("starting_faction"):
+                            fac_list.append(byoc_data["starting_faction"])
+                        for fac_data in fac_list:
+                            if not fac_data or not fac_data.get("name"):
+                                continue
+                            disp_str = str(fac_data.get("disposition", "neutral")).lower().strip()
+                            try:
+                                f_disp = FactionDisposition(disp_str)
+                            except Exception:
+                                f_disp = FactionDisposition.NEUTRAL
+                            fac_id = fac_data.get("id") or f"fac_{re.sub(r'[^a-z0-9_]+', '_', fac_data['name'].lower()).strip('_')}"
+                            fac_node = FactionRecord(
+                                id=fac_id,
+                                name=fac_data["name"],
+                                disposition=f_disp,
+                                influence_score=int(fac_data.get("influence_score", 50)),
+                                agenda=fac_data.get("agenda", ""),
+                                public_reputation=fac_data.get("public_reputation", fac_data.get("agenda", ""))
+                            )
+                            c_mgr.manifest.factions[fac_node.id] = fac_node
+
+                        # Starting / Configured Quests
+                        quest_list = byoc_data.get("quests") if isinstance(byoc_data.get("quests"), list) else []
+                        if byoc_data.get("starting_quest"):
+                            quest_list.append(byoc_data["starting_quest"])
+                        for quest_data in quest_list:
+                            if not quest_data or not quest_data.get("title"):
+                                continue
+                            q_objs = []
+                            for idx, od in enumerate(quest_data.get("objectives", [])):
+                                if isinstance(od, str):
+                                    q_objs.append(QuestObjective(id=f"obj_{idx+1}", description=od))
+                                elif isinstance(od, dict):
+                                    q_objs.append(QuestObjective(
+                                        id=od.get("id", f"obj_{idx+1}"),
+                                        description=od.get("description", ""),
+                                        is_completed=bool(od.get("is_completed", False)),
+                                        is_mandatory=bool(od.get("is_mandatory", True))
+                                    ))
+                            if not q_objs and quest_data.get("objective"):
+                                q_objs.append(QuestObjective(id="obj_1", description=quest_data["objective"]))
+                            q_id = quest_data.get("id") or f"quest_{re.sub(r'[^a-z0-9_]+', '_', quest_data['title'].lower()).strip('_')}"
+                            q_node = QuestRecord(
+                                id=q_id,
+                                title=quest_data["title"],
+                                status=QuestStatus.ACTIVE,
+                                giver_npc=quest_data.get("giver_npc", "The Patron"),
+                                summary=quest_data.get("summary", ""),
+                                objectives=q_objs
+                            )
+                            c_mgr.add_quest(q_node)
+
+                        # Starting / Configured Clues
+                        clue_list = byoc_data.get("clues") if isinstance(byoc_data.get("clues"), list) else []
+                        if byoc_data.get("starting_clue"):
+                            clue_list.append(byoc_data["starting_clue"])
+                        for clue_data in clue_list:
+                            if not clue_data or not clue_data.get("title"):
+                                continue
+                            clue_id = clue_data.get("id") or f"clue_{re.sub(r'[^a-z0-9_]+', '_', clue_data['title'].lower()).strip('_')}"
+                            from core.campaign.schema import ClueRecord
+                            clue_node = ClueRecord(
+                                id=clue_id,
+                                title=clue_data["title"],
+                                content=clue_data.get("content", ""),
+                                is_revealed=bool(clue_data.get("is_revealed", False))
+                            )
+                            c_mgr.register_clue(clue_node)
+
+                    c_mgr.save()
+                    try:
+                        import tools.campaign_tools as ct
+                        ct._CAMPAIGN = c_mgr
+                    except Exception:
+                        pass
+                except Exception as ex:
+                    logger.warning(f"[GUIBridge] BYOC setup failed for '{cid}': {ex}")
+
             self._on_engine_event("ttrpg_state_updated", res)
         return res
 
@@ -6852,6 +7001,215 @@ class GuiBridge:
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
         return res
+
+    # ------------------------------------------------------------------
+    # BYOC & World State Ledger (Phase 2 Integration)
+    # ------------------------------------------------------------------
+    def get_ttrpg_world_state(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            from core.campaign.campaign_manager import CampaignManager
+            from dataclasses import asdict
+            c_mgr = CampaignManager(campaign_id=cid)
+            return {
+                "status": "success",
+                "campaign_id": cid,
+                "manifest": asdict(c_mgr.manifest),
+                "context": c_mgr.generate_prompt_context()
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_set_active_location(self, location_id: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            from core.campaign.campaign_manager import CampaignManager
+            c_mgr = CampaignManager(campaign_id=cid)
+            res = c_mgr.set_active_location(location_id)
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "result": res}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_add_location(self, location_data: Dict[str, Any], campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            import re
+            from core.campaign.campaign_manager import CampaignManager
+            from core.campaign.schema import LocationNode, LocationType
+            c_mgr = CampaignManager(campaign_id=cid)
+            loc_id = location_data.get("id") or f"loc_{re.sub(r'[^a-z0-9_]+', '_', location_data.get('name', 'node').lower()).strip('_')}"
+            try:
+                ltype = LocationType(location_data.get("type", "point_of_interest").lower())
+            except Exception:
+                ltype = LocationType.POINT_OF_INTEREST
+            raw_h = location_data.get("hazards", "")
+            hazards = [h.strip() for h in raw_h.split(",") if h.strip()] if isinstance(raw_h, str) else (raw_h or [])
+            node = LocationNode(
+                id=loc_id,
+                name=location_data.get("name", "Unknown Location"),
+                type=ltype,
+                parent_id=location_data.get("parent_id"),
+                description=location_data.get("description", ""),
+                hazards=hazards,
+                hidden_secrets=location_data.get("hidden_secrets", []),
+                connected_location_ids=location_data.get("connected_location_ids", [])
+            )
+            c_mgr.add_location(node)
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "location": loc_id}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_add_faction(self, faction_data: Dict[str, Any], campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            import re
+            from core.campaign.campaign_manager import CampaignManager
+            from core.campaign.schema import FactionRecord, FactionDisposition
+            c_mgr = CampaignManager(campaign_id=cid)
+            fac_id = faction_data.get("id") or f"fac_{re.sub(r'[^a-z0-9_]+', '_', faction_data.get('name', 'faction').lower()).strip('_')}"
+            try:
+                fdisp = FactionDisposition(faction_data.get("disposition", "neutral").lower())
+            except Exception:
+                fdisp = FactionDisposition.NEUTRAL
+            fac = FactionRecord(
+                id=fac_id,
+                name=faction_data.get("name", "Unknown Faction"),
+                disposition=fdisp,
+                influence_score=int(faction_data.get("influence_score", 50)),
+                agenda=faction_data.get("agenda", ""),
+                public_reputation=faction_data.get("public_reputation", ""),
+                hidden_motives=faction_data.get("hidden_motives", "")
+            )
+            c_mgr.manifest.factions[fac_id] = fac
+            c_mgr.save()
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "faction": fac_id}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_adjust_faction(self, faction_id: str, delta: int, disposition: Optional[str] = None, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            from core.campaign.campaign_manager import CampaignManager
+            from core.campaign.schema import FactionDisposition
+            c_mgr = CampaignManager(campaign_id=cid)
+            disp_enum = FactionDisposition(disposition.lower().strip()) if disposition else None
+            res = c_mgr.adjust_faction_reputation(faction_id, delta, disp_enum)
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "result": res}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_add_quest(self, quest_data: Dict[str, Any], campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            import re
+            from core.campaign.campaign_manager import CampaignManager
+            from core.campaign.schema import QuestRecord, QuestObjective, QuestStatus
+            c_mgr = CampaignManager(campaign_id=cid)
+            q_id = quest_data.get("id") or f"quest_{re.sub(r'[^a-z0-9_]+', '_', quest_data.get('title', 'quest').lower()).strip('_')}"
+            objs = []
+            for idx, od in enumerate(quest_data.get("objectives", [])):
+                if isinstance(od, str):
+                    objs.append(QuestObjective(id=f"obj_{idx+1}", description=od))
+                elif isinstance(od, dict):
+                    objs.append(QuestObjective(
+                        id=od.get("id", f"obj_{idx+1}"),
+                        description=od.get("description", ""),
+                        is_completed=bool(od.get("is_completed", False)),
+                        is_mandatory=bool(od.get("is_mandatory", True))
+                    ))
+            q = QuestRecord(
+                id=q_id,
+                title=quest_data.get("title", "Untitled Quest"),
+                status=QuestStatus.ACTIVE,
+                giver_npc=quest_data.get("giver_npc", "The Patron"),
+                summary=quest_data.get("summary", ""),
+                objectives=objs
+            )
+            c_mgr.add_quest(q)
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "quest": q_id}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_complete_objective(self, quest_id: str, objective_id: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            from core.campaign.campaign_manager import CampaignManager
+            c_mgr = CampaignManager(campaign_id=cid)
+            res = c_mgr.complete_objective(quest_id, objective_id)
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "result": res}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_add_clue(self, clue_data: Dict[str, Any], campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            import re
+            from core.campaign.campaign_manager import CampaignManager
+            from core.campaign.schema import ClueRecord
+            c_mgr = CampaignManager(campaign_id=cid)
+            c_id = clue_data.get("id") or f"clue_{re.sub(r'[^a-z0-9_]+', '_', clue_data.get('title', 'clue').lower()).strip('_')}"
+            clue = ClueRecord(
+                id=c_id,
+                title=clue_data.get("title", "Mysterious Clue"),
+                content=clue_data.get("content", ""),
+                is_revealed=bool(clue_data.get("is_revealed", False)),
+                source_location_id=clue_data.get("source_location_id"),
+                tags=clue_data.get("tags", [])
+            )
+            c_mgr.register_clue(clue)
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "clue": c_id}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_reveal_clue(self, clue_id: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            from core.campaign.campaign_manager import CampaignManager
+            c_mgr = CampaignManager(campaign_id=cid)
+            res = c_mgr.reveal_clue(clue_id)
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "result": res}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def byoc_update_tone_sliders(self, sliders: Dict[str, int], campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        if not cid:
+            return {"status": "error", "message": "No active campaign"}
+        try:
+            from core.campaign.campaign_manager import CampaignManager
+            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr.manifest.tone_sliders.update(sliders)
+            c_mgr.save()
+            self._on_engine_event("world_state_updated", {"campaign_id": cid})
+            return {"status": "success", "sliders": c_mgr.manifest.tone_sliders}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     def upload_ttrpg_document(
         self,

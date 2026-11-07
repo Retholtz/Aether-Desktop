@@ -2837,7 +2837,7 @@
 
   <!-- Modal: Create / Edit TTRPG Campaign -->
   <div id="modal-new-campaign" class="modal-overlay hidden">
-    <div class="modal-card" style="max-width: 520px;">
+    <div class="modal-card" style="max-width: 720px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;">
       <div class="modal-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1.2rem;">🎲</span>
@@ -2845,7 +2845,7 @@
         </div>
         <button type="button" class="modal-close-btn" id="btn-close-campaign-modal" title="Close">✕</button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 16px;">
         <div class="modal-field">
           <label for="input-rp-camp-title" class="modal-label">Campaign Title <span style="color: #ef4444;">*</span></label>
           <input type="text" id="input-rp-camp-title" class="modal-input" placeholder="e.g. The Iron Reach, Neon Eclipse, Starfall" autocomplete="off" />
@@ -2870,39 +2870,128 @@
             <option value="co_op_oracle">Solo / Co-Op Mythic Oracle</option>
           </select>
         </div>
-        <div class="modal-field">
-          <label for="input-rp-camp-overview" class="modal-label">Setting Overview <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">(Auto-filled if module PDF uploaded)</span></label>
-          <textarea id="input-rp-camp-overview" class="modal-input" rows="3" placeholder="Describe the world, conflict, and atmosphere (or leave blank to auto-generate from uploaded adventure)..."></textarea>
-        </div>
-        <div class="modal-field">
-          <label for="input-rp-camp-tone" class="modal-label">Narrative Tone</label>
-          <input type="text" id="input-rp-camp-tone" class="modal-input" value="Gritty, tense, grounded, cinematic" />
-        </div>
-        <div class="modal-field">
-          <label for="select-rp-camp-difficulty" class="modal-label">DM Guidance &amp; Challenge Mode</label>
-          <select id="select-rp-camp-difficulty" class="modal-input">
-            <option value="helpful" selected>🎓 Helpful / Beginner-Friendly (Action suggestions, roll guidance, ability reminders)</option>
-            <option value="easy">🕊️ Easy / Narrative (Cinematic, lenient checks, story-first)</option>
-            <option value="medium">⚖️ Medium / Standard (Balanced rules, standard tactics)</option>
-            <option value="hard">💀 Hard / Gritty Tactical (Ruthless enemies, strict resource tracking, lethal)</option>
-          </select>
+
+        <!-- Universal Tone Configuration (Compact 3-Slider Grid) -->
+        <div class="tone-sliders-container" style="background: rgba(13, 21, 30, 0.7); border: 1px solid #1e293b; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px;">
+          <div style="font-size: 0.76rem; font-weight: 600; color: #cbd5e1; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+            <span style="display: flex; align-items: center; gap: 6px;">
+              <span>🎛️</span>
+              <span>Universal Tone Settings</span>
+            </span>
+            <span style="font-size: 0.68rem; color: #64748b; font-weight: normal;">(Anchors GM narration &amp; challenge)</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+            <!-- Grittiness -->
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #94a3b8; margin-bottom: 3px;">
+                <span>🩸 Grittiness</span>
+                <span id="val-tone-grittiness" style="color: #38bdf8; font-weight: 600;">5/10</span>
+              </div>
+              <input type="range" id="campaign-tone-grittiness" min="1" max="10" value="5" class="byoc-slider" style="width: 100%; accent-color: #0ea5e9;">
+              <div style="display: flex; justify-content: space-between; font-size: 0.62rem; color: #475569; margin-top: 2px;">
+                <span>Heroic</span>
+                <span>Lethal</span>
+              </div>
+            </div>
+            <!-- Magic / Tech Level -->
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #94a3b8; margin-bottom: 3px;">
+                <span>⚡ Magic / Tech</span>
+                <span id="val-tone-magic" style="color: #38bdf8; font-weight: 600;">7/10</span>
+              </div>
+              <input type="range" id="campaign-tone-magic" min="1" max="10" value="7" class="byoc-slider" style="width: 100%; accent-color: #0ea5e9;">
+              <div style="display: flex; justify-content: space-between; font-size: 0.62rem; color: #475569; margin-top: 2px;">
+                <span>Low</span>
+                <span>High</span>
+              </div>
+            </div>
+            <!-- Political Intrigue -->
+            <div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #94a3b8; margin-bottom: 3px;">
+                <span>🎭 Intrigue</span>
+                <span id="val-tone-intrigue" style="color: #38bdf8; font-weight: 600;">5/10</span>
+              </div>
+              <input type="range" id="campaign-tone-intrigue" min="1" max="10" value="5" class="byoc-slider" style="width: 100%; accent-color: #0ea5e9;">
+              <div style="display: flex; justify-content: space-between; font-size: 0.62rem; color: #475569; margin-top: 2px;">
+                <span>Direct</span>
+                <span>Schemes</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <!-- Initial Campaign Documents Upload (PDF, Ruleset, Character Sheets) -->
-        <div class="modal-field" id="modal-camp-files-section">
-          <label class="modal-label" style="display: flex; justify-content: space-between; align-items: center;">
-            <span>Campaign Documents &amp; Character Sheets (Optional)</span>
-            <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">PDF, DOCX, TXT, MD, JSON</span>
-          </label>
-          <div id="modal-camp-dropzone" class="rp-doc-dropzone" style="padding: 12px; margin-bottom: 6px;">
-            <div style="font-size: 1.2rem; margin-bottom: 3px;">📜</div>
-            <span style="font-weight: 500;">Drop Adventure PDF, Character Sheets, or House Rules here</span>
-            <div style="font-size: 0.72rem; color: #64748b; margin-top: 3px;">or click to browse files</div>
+        <div class="modal-field">
+          <label for="input-rp-camp-overview" class="modal-label">Setting Overview <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">(Auto-filled if module PDF uploaded)</span></label>
+          <textarea id="input-rp-camp-overview" class="modal-input" rows="2" placeholder="Describe the world, conflict, and atmosphere (or leave blank to auto-generate from uploaded adventure)..."></textarea>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+          <div class="modal-field" style="margin-bottom: 0;">
+            <label for="input-rp-camp-tone" class="modal-label">Narrative Tone</label>
+            <input type="text" id="input-rp-camp-tone" class="modal-input" value="Gritty, tense, grounded, cinematic" />
           </div>
-          <input type="file" id="input-modal-camp-files" multiple accept=".pdf,.docx,.doc,.txt,.md,.json,.rtf" style="display: none;">
-          <div id="modal-camp-staged-list" class="rp-documents-list" style="max-height: 110px; gap: 4px; display: none;"></div>
-          <div style="font-size: 0.72rem; color: #94a3b8; line-height: 1.35; margin-top: 4px; background: rgba(13, 21, 30, 0.6); padding: 6px 8px; border-radius: 4px; border: 1px solid #1e293b;">
-            💡 <em>Aether already knows standard rules (D&amp;D 5e, Cyberpunk, etc.). Only upload <strong>custom supplements or house rules</strong> if you have rule changes. Focus your uploads on the <strong>adventure module</strong> and <strong>character sheets</strong>!</em>
+          <div class="modal-field" style="margin-bottom: 0;">
+            <label for="select-rp-camp-difficulty" class="modal-label">DM Guidance &amp; Challenge</label>
+            <select id="select-rp-camp-difficulty" class="modal-input">
+              <option value="helpful" selected>🎓 Helpful / Beginner</option>
+              <option value="easy">🕊️ Easy / Narrative</option>
+              <option value="medium">⚖️ Medium / Standard</option>
+              <option value="hard">💀 Hard / Tactical</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Segmented Source Selector: Adventure Module Upload vs Build Your Own World -->
+        <div class="modal-field" style="margin-bottom: 8px;">
+          <label class="modal-label">Campaign Lore &amp; World Source</label>
+          <div class="campaign-source-segmented">
+            <button type="button" id="btn-src-module" class="source-segment-btn active">
+              📦 Adventure Module Upload
+            </button>
+            <button type="button" id="btn-src-byoc" class="source-segment-btn">
+              🗺️ Build Your Own World
+            </button>
+          </div>
+        </div>
+
+        <!-- Source View A: Adventure Module Upload -->
+        <div id="section-src-module" class="campaign-source-section">
+          <div class="modal-field" id="modal-camp-files-section" style="margin-bottom: 0;">
+            <label class="modal-label" style="display: flex; justify-content: space-between; align-items: center;">
+              <span>Campaign Documents &amp; Character Sheets (Optional)</span>
+              <span style="font-size: 0.72rem; color: #64748b; font-weight: normal;">PDF, DOCX, TXT, MD, JSON</span>
+            </label>
+            <div id="modal-camp-dropzone" class="rp-doc-dropzone" style="padding: 12px; margin-bottom: 6px;">
+              <div style="font-size: 1.2rem; margin-bottom: 3px;">📜</div>
+              <span style="font-weight: 500;">Drop Adventure PDF, Character Sheets, or House Rules here</span>
+              <div style="font-size: 0.72rem; color: #64748b; margin-top: 3px;">or click to browse files</div>
+            </div>
+            <input type="file" id="input-modal-camp-files" multiple accept=".pdf,.docx,.doc,.txt,.md,.json,.rtf" style="display: none;">
+            <div id="modal-camp-staged-list" class="rp-documents-list" style="max-height: 110px; gap: 4px; display: none;"></div>
+            <div style="font-size: 0.72rem; color: #94a3b8; line-height: 1.35; margin-top: 4px; background: rgba(13, 21, 30, 0.6); padding: 6px 8px; border-radius: 4px; border: 1px solid #1e293b;">
+              💡 <em>Aether already knows standard rules (D&amp;D 5e, Cyberpunk, etc.). Only upload <strong>custom supplements or house rules</strong> if you have rule changes. Focus your uploads on the <strong>adventure module</strong> and <strong>character sheets</strong>!</em>
+            </div>
+          </div>
+        </div>
+
+        <!-- Source View B: Build Your Own World -->
+        <div id="section-src-byoc" class="campaign-source-section hidden">
+          <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div style="font-size: 0.82rem; font-weight: 600; color: #f1f5f9;">Custom World Ledger Seed</div>
+                <div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;">Establish starting locations, factions, opening quests, and investigation secrets.</div>
+              </div>
+              <span id="byoc-config-summary" class="system-tag" style="font-size: 0.68rem; padding: 4px 8px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 4px;">
+                Custom World: Default Template
+              </span>
+            </div>
+            <div style="display: flex; justify-content: flex-start; align-items: center; gap: 10px; margin-top: 2px;">
+              <button type="button" id="btn-open-world-builder" class="btn-primary-sm" style="display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font-size: 0.8rem; background: linear-gradient(135deg, #0284c7, #0ea5e9); border: none; border-radius: 6px; color: #ffffff; cursor: pointer;">
+                <span>🛠️</span>
+                <span>Configure World State &amp; Lore</span>
+              </button>
+              <span style="font-size: 0.72rem; color: #64748b;">(Opens dedicated world building studio)</span>
+            </div>
           </div>
         </div>
       </div>
@@ -2913,6 +3002,210 @@
         <div style="display: flex; gap: 8px;">
           <button type="button" id="btn-cancel-campaign" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
           <button type="button" id="btn-confirm-campaign" class="btn-primary-sm" style="padding: 7px 18px;">Create Campaign</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Dedicated World Builder Studio (Phase 2 Sub-Modal) -->
+  <div id="modal-world-builder" class="modal-overlay hidden" style="z-index: 100100;">
+    <div class="modal-card" style="max-width: 780px; width: 95%; max-height: 88vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.25rem;">🛠️</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.05rem; color: #f1f5f9;">World Builder Studio</h3>
+            <div style="font-size: 0.72rem; color: #94a3b8;">Anchor campaign geography, factions, opening quests &amp; secrets</div>
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-world-builder" title="Close">✕</button>
+      </div>
+
+      <!-- Tab Navigation Bar -->
+      <div class="world-builder-tabs-bar" style="display: flex; background: rgba(15, 23, 42, 0.9); border-bottom: 1px solid #1e293b; padding: 0 16px; gap: 6px;">
+        <button type="button" class="wb-tab-btn active" data-wb-tab="location">
+          📍 Location &amp; Hazards
+        </button>
+        <button type="button" class="wb-tab-btn" data-wb-tab="factions">
+          ⚔️ Factions
+        </button>
+        <button type="button" class="wb-tab-btn" data-wb-tab="quests">
+          📜 Opening Quests
+        </button>
+        <button type="button" class="wb-tab-btn" data-wb-tab="clues">
+          🔍 Clues &amp; Secrets
+        </button>
+      </div>
+
+      <!-- Tab Contents Container -->
+      <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+        
+        <!-- Tab 1: Locations & Hazards -->
+        <div id="wb-pane-location" class="wb-tab-pane">
+          <div style="background: rgba(13, 21, 30, 0.7); border: 1px solid #1e293b; border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+            <div style="font-size: 0.76rem; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;">Create / Configure Starting Location Node</div>
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 8px;">
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Location Name</label>
+                <input type="text" id="wb-loc-name" class="modal-input" placeholder="e.g. Durahn's Gate, Neon Core, Innsmouth" />
+              </div>
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Location Type</label>
+                <select id="wb-loc-type" class="modal-input">
+                  <option value="dungeon" selected>Dungeon</option>
+                  <option value="settlement">Settlement</option>
+                  <option value="region">Region</option>
+                  <option value="district">District</option>
+                  <option value="point_of_interest">Point of Interest</option>
+                  <option value="room">Room</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-field" style="margin-bottom: 8px;">
+              <label class="modal-label">Sensory &amp; Atmosphere Description</label>
+              <textarea id="wb-loc-desc" class="modal-input" rows="2" placeholder="Atmosphere, sensory details, architecture, ambient mood..."></textarea>
+            </div>
+            <div class="modal-field" style="margin-bottom: 8px;">
+              <label class="modal-label">Environmental Hazards</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="wb-loc-hazard-input" class="modal-input" placeholder="e.g. Freezing Cold (DC 10 CON), Toxic Spores" style="flex: 1;" />
+                <button type="button" id="btn-wb-add-hazard" class="btn-secondary-sm" style="white-space: nowrap; padding: 6px 12px;">+ Add Hazard</button>
+              </div>
+              <div id="wb-loc-hazards-tags" style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px;"></div>
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
+              <button type="button" id="btn-wb-stage-loc" class="btn-secondary-sm" style="border-color: #0ea5e9; color: #38bdf8;">+ Add Location Node</button>
+            </div>
+          </div>
+          <!-- Staged Locations List -->
+          <div>
+            <div style="font-size: 0.74rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Configured Location Nodes</div>
+            <div id="wb-staged-locs-list" class="byoc-list-container" style="max-height: 160px; overflow-y: auto;"></div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Factions -->
+        <div id="wb-pane-factions" class="wb-tab-pane hidden">
+          <div style="background: rgba(13, 21, 30, 0.7); border: 1px solid #1e293b; border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+            <div style="font-size: 0.76rem; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;">Create Regional Faction</div>
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 8px;">
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Faction Name</label>
+                <input type="text" id="wb-fac-name" class="modal-input" placeholder="e.g. The Iron Consortium, Midnight Syndicate" />
+              </div>
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Disposition</label>
+                <select id="wb-fac-disp" class="modal-input">
+                  <option value="allied">Allied</option>
+                  <option value="friendly">Friendly</option>
+                  <option value="neutral" selected>Neutral</option>
+                  <option value="suspicious">Suspicious</option>
+                  <option value="hostile">Hostile</option>
+                </select>
+              </div>
+            </div>
+            <div class="modal-field" style="margin-bottom: 8px;">
+              <div style="display: flex; justify-content: space-between; font-size: 0.72rem; color: #94a3b8; margin-bottom: 3px;">
+                <span>Influence Score</span>
+                <span id="val-wb-fac-influence" style="color: #38bdf8; font-weight: 600;">50%</span>
+              </div>
+              <input type="range" id="wb-fac-influence" min="0" max="100" value="50" class="byoc-slider" style="width: 100%; accent-color: #0ea5e9;">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px;">
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Agenda &amp; Motives</label>
+                <input type="text" id="wb-fac-agenda" class="modal-input" placeholder="e.g. Control trade routes, Eradicate cults" />
+              </div>
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Public Reputation</label>
+                <input type="text" id="wb-fac-rep" class="modal-input" placeholder="e.g. Disciplined mercenaries with strict contracts" />
+              </div>
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
+              <button type="button" id="btn-wb-stage-fac" class="btn-secondary-sm" style="border-color: #0ea5e9; color: #38bdf8;">+ Add Faction</button>
+            </div>
+          </div>
+          <!-- Staged Factions List -->
+          <div>
+            <div style="font-size: 0.74rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Configured Factions</div>
+            <div id="wb-staged-factions-list" class="byoc-list-container" style="max-height: 160px; overflow-y: auto;"></div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Opening Quests -->
+        <div id="wb-pane-quests" class="wb-tab-pane hidden">
+          <div style="background: rgba(13, 21, 30, 0.7); border: 1px solid #1e293b; border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+            <div style="font-size: 0.76rem; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;">Create Opening Quest Hook</div>
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 8px;">
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Quest Title</label>
+                <input type="text" id="wb-quest-title" class="modal-input" placeholder="e.g. The Silent Outpost, Sunken Vault" />
+              </div>
+              <div class="modal-field" style="margin-bottom: 0;">
+                <label class="modal-label">Giver NPC</label>
+                <input type="text" id="wb-quest-giver" class="modal-input" placeholder="e.g. Elder Morvin, Guildmaster" />
+              </div>
+            </div>
+            <div class="modal-field" style="margin-bottom: 8px;">
+              <label class="modal-label">Summary / Premise</label>
+              <textarea id="wb-quest-summary" class="modal-input" rows="2" placeholder="Brief outline of the mission stakes and premise..."></textarea>
+            </div>
+            <div class="modal-field" style="margin-bottom: 8px;">
+              <label class="modal-label">Objective Checklist</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="wb-quest-obj-input" class="modal-input" placeholder="e.g. Locate the subterranean entry portcullis" style="flex: 1;" />
+                <button type="button" id="btn-wb-add-obj" class="btn-secondary-sm" style="white-space: nowrap; padding: 6px 12px;">+ Add Objective</button>
+              </div>
+              <div id="wb-quest-objs-list" style="display: flex; flex-direction: column; gap: 4px; margin-top: 6px;"></div>
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
+              <button type="button" id="btn-wb-stage-quest" class="btn-secondary-sm" style="border-color: #0ea5e9; color: #38bdf8;">+ Add Quest</button>
+            </div>
+          </div>
+          <!-- Staged Quests List -->
+          <div>
+            <div style="font-size: 0.74rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Configured Quests</div>
+            <div id="wb-staged-quests-list" class="byoc-list-container" style="max-height: 160px; overflow-y: auto;"></div>
+          </div>
+        </div>
+
+        <!-- Tab 4: Clues & Secrets -->
+        <div id="wb-pane-clues" class="wb-tab-pane hidden">
+          <div style="background: rgba(13, 21, 30, 0.7); border: 1px solid #1e293b; border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+            <div style="font-size: 0.76rem; font-weight: 600; color: #cbd5e1; margin-bottom: 8px;">Create Investigation Clue / Secret</div>
+            <div class="modal-field" style="margin-bottom: 8px;">
+              <label class="modal-label">Clue Title</label>
+              <input type="text" id="wb-clue-title" class="modal-input" placeholder="e.g. Stained Parchment, Sealed Iron Orders" />
+            </div>
+            <div class="modal-field" style="margin-bottom: 8px;">
+              <label class="modal-label">Content / Secret Text</label>
+              <textarea id="wb-clue-content" class="modal-input" rows="2" placeholder="What does this clue reveal?"></textarea>
+            </div>
+            <div class="modal-field" style="flex-direction: row; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <input type="checkbox" id="wb-clue-revealed" style="accent-color: #0ea5e9;" />
+              <label for="wb-clue-revealed" class="modal-label" style="cursor: pointer; user-select: none;">Reveal immediately to party (Unchecked = Hidden GM Secret)</label>
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
+              <button type="button" id="btn-wb-stage-clue" class="btn-secondary-sm" style="border-color: #0ea5e9; color: #38bdf8;">+ Add Clue</button>
+            </div>
+          </div>
+          <!-- Staged Clues List -->
+          <div>
+            <div style="font-size: 0.74rem; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Configured Clues &amp; Secrets</div>
+            <div id="wb-staged-clues-list" class="byoc-list-container" style="max-height: 160px; overflow-y: auto;"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Studio Footer -->
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-top: 1px solid #1e293b;">
+        <button type="button" id="btn-wb-revert" class="btn-secondary-sm" style="color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); padding: 7px 14px;">
+          🔄 Revert to Defaults
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" id="btn-wb-cancel" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+          <button type="button" id="btn-wb-apply" class="btn-primary-sm" style="background: #0ea5e9; padding: 7px 18px;">Apply World Seed</button>
         </div>
       </div>
     </div>

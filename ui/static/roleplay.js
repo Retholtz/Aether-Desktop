@@ -223,6 +223,7 @@ function renderRolePlayWorkspace() {
     renderPartyRoster();
     renderSessionJournal();
     renderDiceModeToggle();
+    renderWorldStateLedger();
 }
 
 function renderDiceModeToggle() {
@@ -4140,6 +4141,7 @@ function initRolePlayStoryChatUI() {
     const panes = {
         story: document.getElementById('rp-story-pane'),
         roster: document.getElementById('rp-roster-pane'),
+        world: document.getElementById('rp-world-pane'),
         journal: document.getElementById('rp-journal-pane')
     };
 
@@ -4162,6 +4164,9 @@ function initRolePlayStoryChatUI() {
                         }
                     });
                 }
+            }
+            if (target === 'world') {
+                renderWorldStateLedger();
             }
         };
     });
@@ -4309,6 +4314,7 @@ window.addEventListener("pywebviewready", () => {
 document.addEventListener("DOMContentLoaded", () => {
     initRolePlayStoryChatUI();
     initDiceModeToggle();
+    initByocWorldModals();
     loadRolePlayUI();
     // Quick Dice Buttons (d4, d6, d8, d10, d12, d20, d100)
     document.querySelectorAll(".dice-btn").forEach(btn => {
@@ -4609,6 +4615,36 @@ document.addEventListener("DOMContentLoaded", () => {
             if (toneInput) toneInput.value = "Gritty, tense, grounded, cinematic";
             if (diffSelect) diffSelect.value = "helpful";
 
+            // Reset Universal Tone Sliders
+            const sliderGrittiness = document.getElementById("campaign-tone-grittiness");
+            const labelGrittiness = document.getElementById("val-tone-grittiness");
+            const sliderMagic = document.getElementById("campaign-tone-magic");
+            const labelMagic = document.getElementById("val-tone-magic");
+            const sliderIntrigue = document.getElementById("campaign-tone-intrigue");
+            const labelIntrigue = document.getElementById("val-tone-intrigue");
+
+            if (sliderGrittiness) sliderGrittiness.value = "5";
+            if (labelGrittiness) labelGrittiness.textContent = "5/10";
+            if (sliderMagic) sliderMagic.value = "7";
+            if (labelMagic) labelMagic.textContent = "7/10";
+            if (sliderIntrigue) sliderIntrigue.value = "5";
+            if (labelIntrigue) labelIntrigue.textContent = "5/10";
+
+            // Reset segmented source selector
+            const btnSrcModule = document.getElementById("btn-src-module");
+            const btnSrcByoc = document.getElementById("btn-src-byoc");
+            const secSrcModule = document.getElementById("section-src-module");
+            const secSrcByoc = document.getElementById("section-src-byoc");
+            if (btnSrcModule && btnSrcByoc && secSrcModule && secSrcByoc) {
+                btnSrcModule.classList.add("active");
+                btnSrcByoc.classList.remove("active");
+                secSrcModule.classList.remove("hidden");
+                secSrcByoc.classList.add("hidden");
+            }
+
+            tempByocState = getDefaultByocSeed();
+            updateByocSummaryBadge();
+
             campModal.classList.remove("hidden");
         });
     }
@@ -4705,6 +4741,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         data: f.base64,
                         category: f.category
                     }));
+                    const byocPayload = getByocModalData();
                     if (window.pywebview && window.pywebview.api && window.pywebview.api.create_ttrpg_campaign) {
                         await window.pywebview.api.create_ttrpg_campaign(
                             title,
@@ -4714,7 +4751,8 @@ document.addEventListener("DOMContentLoaded", () => {
                             tone,
                             difficulty,
                             "",
-                            initialFilesPayload
+                            initialFilesPayload,
+                            byocPayload
                         );
                         stagedCampaignModalFiles = [];
                         campModal.classList.add("hidden");
@@ -6847,3 +6885,1039 @@ function showClarificationToast(text) {
   toast.style.display = 'block';
   setTimeout(() => { toast.style.display = 'none'; }, 6000);
 }
+
+// =========================================================================
+// Phase 2: BYOC (Build Your Own Campaign) & World State Ledger UI
+// =========================================================================
+
+function getDefaultByocSeed() {
+    return {
+        genre: "heroic_fantasy",
+        tone_sliders: { grittiness: 5, magic_tech_level: 7, political_intrigue: 5 },
+        locations: [
+            {
+                id: "loc_durahns_gate",
+                name: "Durahn's Gate",
+                type: "dungeon",
+                description: "Ancient stone fortress gate guarding the underground reaches.",
+                hazards: ["Freezing Cold (DC 10 CON)"]
+            }
+        ],
+        factions: [
+            {
+                id: "fac_iron_consortium",
+                name: "The Iron Consortium",
+                disposition: "neutral",
+                influence_score: 60,
+                agenda: "Control deep mining operations and ancient relics.",
+                public_reputation: "Disciplined dwarven trade guild."
+            }
+        ],
+        quests: [
+            {
+                id: "quest_silent_outpost",
+                title: "The Silent Outpost",
+                giver_npc: "Elder Morvin",
+                summary: "Investigate why the northern outpost went dark last week.",
+                objectives: [
+                    { id: "obj_1", description: "Reach the perimeter watchtower", is_completed: false, is_mandatory: true }
+                ]
+            }
+        ],
+        clues: [
+            {
+                id: "clue_sealed_orders",
+                title: "Sealed Iron Orders",
+                content: "Orders bearing the seal of the Grand Marshal hinting at a deeper subterranean breach.",
+                is_revealed: false
+            }
+        ]
+    };
+}
+
+let tempByocState = getDefaultByocSeed();
+let wbPendingHazards = [];
+let wbPendingObjectives = [];
+
+function updateByocSummaryBadge() {
+    const el = document.getElementById("byoc-config-summary");
+    if (!el) return;
+    const locs = (tempByocState.locations || []).length;
+    const facs = (tempByocState.factions || []).length;
+    const quests = (tempByocState.quests || []).length;
+    const clues = (tempByocState.clues || []).length;
+    if (locs === 1 && facs === 1 && quests === 1 && clues === 1) {
+        el.textContent = "Custom World: Default Template";
+    } else {
+        el.textContent = `Custom World: ${locs} Loc, ${facs} Faction, ${quests} Quest, ${clues} Clue`;
+    }
+}
+
+function renderWbPendingHazards() {
+    const container = document.getElementById("wb-loc-hazards-tags");
+    if (!container) return;
+    container.innerHTML = wbPendingHazards.map((h, idx) => `
+        <span class="wb-hazard-tag">
+            <span>⚠️ ${escapeRpHtml(h)}</span>
+            <span class="wb-tag-remove" onclick="window.removeWbPendingHazard(${idx})">✕</span>
+        </span>
+    `).join("");
+}
+
+window.removeWbPendingHazard = (idx) => {
+    wbPendingHazards.splice(idx, 1);
+    renderWbPendingHazards();
+};
+
+function renderWbPendingObjectives() {
+    const container = document.getElementById("wb-quest-objs-list");
+    if (!container) return;
+    container.innerHTML = wbPendingObjectives.map((obj, idx) => `
+        <div class="wb-obj-item-row">
+            <span>🔹 ${escapeRpHtml(obj)}</span>
+            <span class="wb-obj-remove" onclick="window.removeWbPendingObjective(${idx})">✕</span>
+        </div>
+    `).join("");
+}
+
+window.removeWbPendingObjective = (idx) => {
+    wbPendingObjectives.splice(idx, 1);
+    renderWbPendingObjectives();
+};
+
+function renderWbStagedLocations() {
+    const container = document.getElementById("wb-staged-locs-list");
+    if (!container) return;
+    const locs = tempByocState.locations || [];
+    if (locs.length === 0) {
+        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No locations configured yet.</span>`;
+        return;
+    }
+    container.innerHTML = locs.map((loc, idx) => `
+        <div class="byoc-item-card" style="padding: 8px 10px;">
+            <div class="byoc-item-header">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(loc.name)}</span>
+                    <span class="system-tag" style="font-size: 0.6rem; padding: 1px 4px;">${escapeRpHtml((loc.type || "node").toUpperCase())}</span>
+                </div>
+                <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedLocation(${idx})">✕</button>
+            </div>
+            ${loc.description ? `<div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25; margin-top: 3px;">${escapeRpHtml(loc.description)}</div>` : ""}
+            ${loc.hazards && loc.hazards.length ? `<div style="font-size: 0.68rem; color: #f87171; margin-top: 2px;">⚠️ ${escapeRpHtml(Array.isArray(loc.hazards) ? loc.hazards.join(", ") : loc.hazards)}</div>` : ""}
+        </div>
+    `).join("");
+}
+
+window.removeWbStagedLocation = (idx) => {
+    tempByocState.locations.splice(idx, 1);
+    renderWbStagedLocations();
+    updateByocSummaryBadge();
+};
+
+function renderWbStagedFactions() {
+    const container = document.getElementById("wb-staged-factions-list");
+    if (!container) return;
+    const facs = tempByocState.factions || [];
+    if (facs.length === 0) {
+        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No factions configured yet.</span>`;
+        return;
+    }
+    container.innerHTML = facs.map((fac, idx) => {
+        const disp = (fac.disposition || "neutral").toLowerCase();
+        return `
+            <div class="byoc-item-card" style="padding: 8px 10px;">
+                <div class="byoc-item-header">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(fac.name)}</span>
+                        <span class="byoc-disp-badge byoc-disp-${disp}">${escapeRpHtml(disp)}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 0.68rem; color: #38bdf8; font-weight: 600;">${fac.influence_score}% Inf</span>
+                        <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedFaction(${idx})">✕</button>
+                    </div>
+                </div>
+                ${fac.agenda ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 3px;"><strong>Agenda:</strong> ${escapeRpHtml(fac.agenda)}</div>` : ""}
+            </div>
+        `;
+    }).join("");
+}
+
+window.removeWbStagedFaction = (idx) => {
+    tempByocState.factions.splice(idx, 1);
+    renderWbStagedFactions();
+    updateByocSummaryBadge();
+};
+
+function renderWbStagedQuests() {
+    const container = document.getElementById("wb-staged-quests-list");
+    if (!container) return;
+    const quests = tempByocState.quests || [];
+    if (quests.length === 0) {
+        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No quests configured yet.</span>`;
+        return;
+    }
+    container.innerHTML = quests.map((q, idx) => {
+        const objs = (q.objectives || []).map(o => typeof o === 'string' ? o : o.description).join("; ");
+        return `
+            <div class="byoc-item-card" style="padding: 8px 10px;">
+                <div class="byoc-item-header">
+                    <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(q.title)}</span>
+                    <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedQuest(${idx})">✕</button>
+                </div>
+                ${q.giver_npc ? `<div style="font-size: 0.68rem; color: #64748b;">Giver: ${escapeRpHtml(q.giver_npc)}</div>` : ""}
+                ${q.summary ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;">${escapeRpHtml(q.summary)}</div>` : ""}
+                ${objs ? `<div style="font-size: 0.68rem; color: #38bdf8; margin-top: 2px;">Objectives: ${escapeRpHtml(objs)}</div>` : ""}
+            </div>
+        `;
+    }).join("");
+}
+
+window.removeWbStagedQuest = (idx) => {
+    tempByocState.quests.splice(idx, 1);
+    renderWbStagedQuests();
+    updateByocSummaryBadge();
+};
+
+function renderWbStagedClues() {
+    const container = document.getElementById("wb-staged-clues-list");
+    if (!container) return;
+    const clues = tempByocState.clues || [];
+    if (clues.length === 0) {
+        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No clues configured yet.</span>`;
+        return;
+    }
+    container.innerHTML = clues.map((c, idx) => `
+        <div class="byoc-item-card" style="padding: 8px 10px; border-left: 3px solid ${c.is_revealed ? '#38bdf8' : '#f59e0b'};">
+            <div class="byoc-item-header">
+                <span style="font-weight: 600; font-size: 0.78rem; color: ${c.is_revealed ? '#38bdf8' : '#f59e0b'};">
+                    ${c.is_revealed ? '📜' : '🔒'} ${escapeRpHtml(c.title)}
+                </span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="system-tag" style="font-size: 0.6rem;">${c.is_revealed ? 'REVEALED' : 'GM SECRET'}</span>
+                    <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedClue(${idx})">✕</button>
+                </div>
+            </div>
+            ${c.content ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;">${escapeRpHtml(c.content)}</div>` : ""}
+        </div>
+    `).join("");
+}
+
+window.removeWbStagedClue = (idx) => {
+    tempByocState.clues.splice(idx, 1);
+    renderWbStagedClues();
+    updateByocSummaryBadge();
+};
+
+function hydrateWorldBuilderModal() {
+    renderWbPendingHazards();
+    renderWbPendingObjectives();
+    renderWbStagedLocations();
+    renderWbStagedFactions();
+    renderWbStagedQuests();
+    renderWbStagedClues();
+}
+
+function initByocCreationModal() {
+    // 1. Universal Tone Sliders in modal-new-campaign
+    const sliderGrittiness = document.getElementById("campaign-tone-grittiness");
+    const labelGrittiness = document.getElementById("val-tone-grittiness");
+    if (sliderGrittiness && labelGrittiness) {
+        sliderGrittiness.addEventListener("input", (e) => {
+            labelGrittiness.textContent = `${e.target.value}/10`;
+        });
+    }
+
+    const sliderMagic = document.getElementById("campaign-tone-magic");
+    const labelMagic = document.getElementById("val-tone-magic");
+    if (sliderMagic && labelMagic) {
+        sliderMagic.addEventListener("input", (e) => {
+            labelMagic.textContent = `${e.target.value}/10`;
+        });
+    }
+
+    const sliderIntrigue = document.getElementById("campaign-tone-intrigue");
+    const labelIntrigue = document.getElementById("val-tone-intrigue");
+    if (sliderIntrigue && labelIntrigue) {
+        sliderIntrigue.addEventListener("input", (e) => {
+            labelIntrigue.textContent = `${e.target.value}/10`;
+        });
+    }
+
+    // 2. Segmented source selector: Module Upload vs Build Your Own World
+    const btnSrcModule = document.getElementById("btn-src-module");
+    const btnSrcByoc = document.getElementById("btn-src-byoc");
+    const secSrcModule = document.getElementById("section-src-module");
+    const secSrcByoc = document.getElementById("section-src-byoc");
+
+    if (btnSrcModule && btnSrcByoc && secSrcModule && secSrcByoc) {
+        btnSrcModule.addEventListener("click", () => {
+            btnSrcModule.classList.add("active");
+            btnSrcByoc.classList.remove("active");
+            secSrcModule.classList.remove("hidden");
+            secSrcByoc.classList.add("hidden");
+        });
+        btnSrcByoc.addEventListener("click", () => {
+            btnSrcByoc.classList.add("active");
+            btnSrcModule.classList.remove("active");
+            secSrcByoc.classList.remove("hidden");
+            secSrcModule.classList.add("hidden");
+        });
+    }
+
+    // 3. Open dedicated World Builder Sub-Modal
+    const openWbBtn = document.getElementById("btn-open-world-builder");
+    const wbModal = document.getElementById("modal-world-builder");
+    const closeWbBtn = document.getElementById("btn-close-world-builder");
+    const cancelWbBtn = document.getElementById("btn-wb-cancel");
+    const applyWbBtn = document.getElementById("btn-wb-apply");
+    const revertWbBtn = document.getElementById("btn-wb-revert");
+
+    if (openWbBtn && wbModal) {
+        openWbBtn.addEventListener("click", () => {
+            hydrateWorldBuilderModal();
+            wbModal.classList.remove("hidden");
+        });
+    }
+    if (closeWbBtn && wbModal) closeWbBtn.addEventListener("click", () => wbModal.classList.add("hidden"));
+    if (cancelWbBtn && wbModal) cancelWbBtn.addEventListener("click", () => wbModal.classList.add("hidden"));
+
+    // 4. Tab switching within World Builder Studio
+    const tabBtns = document.querySelectorAll(".wb-tab-btn");
+    const tabPanes = {
+        location: document.getElementById("wb-pane-location"),
+        factions: document.getElementById("wb-pane-factions"),
+        quests: document.getElementById("wb-pane-quests"),
+        clues: document.getElementById("wb-pane-clues")
+    };
+    tabBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            tabBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            const targetTab = btn.getAttribute("data-wb-tab");
+            Object.keys(tabPanes).forEach(k => {
+                if (tabPanes[k]) {
+                    if (k === targetTab) tabPanes[k].classList.remove("hidden");
+                    else tabPanes[k].classList.add("hidden");
+                }
+            });
+        });
+    });
+
+    // 5. Tab 1: Hazards tag addition & Location staging
+    const addHazBtn = document.getElementById("btn-wb-add-hazard");
+    const hazInput = document.getElementById("wb-loc-hazard-input");
+    if (addHazBtn && hazInput) {
+        const handleAddHazard = () => {
+            const val = hazInput.value.trim();
+            if (val) {
+                wbPendingHazards.push(val);
+                hazInput.value = "";
+                renderWbPendingHazards();
+            }
+        };
+        addHazBtn.addEventListener("click", handleAddHazard);
+        hazInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); handleAddHazard(); }
+        });
+    }
+
+    const stageLocBtn = document.getElementById("btn-wb-stage-loc");
+    if (stageLocBtn) {
+        stageLocBtn.addEventListener("click", () => {
+            const name = (document.getElementById("wb-loc-name")?.value || "").trim();
+            if (!name) return;
+            const type = document.getElementById("wb-loc-type")?.value || "dungeon";
+            const desc = (document.getElementById("wb-loc-desc")?.value || "").trim();
+            tempByocState.locations.push({
+                name,
+                type,
+                description: desc,
+                hazards: [...wbPendingHazards]
+            });
+            document.getElementById("wb-loc-name").value = "";
+            document.getElementById("wb-loc-desc").value = "";
+            wbPendingHazards = [];
+            renderWbPendingHazards();
+            renderWbStagedLocations();
+            updateByocSummaryBadge();
+        });
+    }
+
+    // 6. Tab 2: Faction influence slider & Faction staging
+    const facSlider = document.getElementById("wb-fac-influence");
+    const valFacInf = document.getElementById("val-wb-fac-influence");
+    if (facSlider && valFacInf) {
+        facSlider.addEventListener("input", (e) => {
+            valFacInf.textContent = `${e.target.value}%`;
+        });
+    }
+
+    const stageFacBtn = document.getElementById("btn-wb-stage-fac");
+    if (stageFacBtn) {
+        stageFacBtn.addEventListener("click", () => {
+            const name = (document.getElementById("wb-fac-name")?.value || "").trim();
+            if (!name) return;
+            const disposition = document.getElementById("wb-fac-disp")?.value || "neutral";
+            const influence = parseInt(document.getElementById("wb-fac-influence")?.value || "50", 10);
+            const agenda = (document.getElementById("wb-fac-agenda")?.value || "").trim();
+            const rep = (document.getElementById("wb-fac-rep")?.value || "").trim();
+            tempByocState.factions.push({
+                name,
+                disposition,
+                influence_score: influence,
+                agenda,
+                public_reputation: rep
+            });
+            document.getElementById("wb-fac-name").value = "";
+            document.getElementById("wb-fac-agenda").value = "";
+            document.getElementById("wb-fac-rep").value = "";
+            renderWbStagedFactions();
+            updateByocSummaryBadge();
+        });
+    }
+
+    // 7. Tab 3: Objective addition & Quest staging
+    const addObjBtn = document.getElementById("btn-wb-add-obj");
+    const objInput = document.getElementById("wb-quest-obj-input");
+    if (addObjBtn && objInput) {
+        const handleAddObj = () => {
+            const val = objInput.value.trim();
+            if (val) {
+                wbPendingObjectives.push(val);
+                objInput.value = "";
+                renderWbPendingObjectives();
+            }
+        };
+        addObjBtn.addEventListener("click", handleAddObj);
+        objInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); handleAddObj(); }
+        });
+    }
+
+    const stageQuestBtn = document.getElementById("btn-wb-stage-quest");
+    if (stageQuestBtn) {
+        stageQuestBtn.addEventListener("click", () => {
+            const title = (document.getElementById("wb-quest-title")?.value || "").trim();
+            if (!title) return;
+            const giver = (document.getElementById("wb-quest-giver")?.value || "").trim();
+            const summary = (document.getElementById("wb-quest-summary")?.value || "").trim();
+            const objectives = wbPendingObjectives.map((desc, idx) => ({
+                id: `obj_${idx + 1}`,
+                description: desc,
+                is_completed: false,
+                is_mandatory: true
+            }));
+            tempByocState.quests.push({
+                title,
+                giver_npc: giver,
+                summary,
+                objectives
+            });
+            document.getElementById("wb-quest-title").value = "";
+            document.getElementById("wb-quest-giver").value = "";
+            document.getElementById("wb-quest-summary").value = "";
+            wbPendingObjectives = [];
+            renderWbPendingObjectives();
+            renderWbStagedQuests();
+            updateByocSummaryBadge();
+        });
+    }
+
+    // 8. Tab 4: Clue staging
+    const stageClueBtn = document.getElementById("btn-wb-stage-clue");
+    if (stageClueBtn) {
+        stageClueBtn.addEventListener("click", () => {
+            const title = (document.getElementById("wb-clue-title")?.value || "").trim();
+            const content = (document.getElementById("wb-clue-content")?.value || "").trim();
+            if (!title || !content) return;
+            const isRevealed = document.getElementById("wb-clue-revealed")?.checked || false;
+            tempByocState.clues.push({
+                title,
+                content,
+                is_revealed: isRevealed
+            });
+            document.getElementById("wb-clue-title").value = "";
+            document.getElementById("wb-clue-content").value = "";
+            document.getElementById("wb-clue-revealed").checked = false;
+            renderWbStagedClues();
+            updateByocSummaryBadge();
+        });
+    }
+
+    // 9. Revert to Defaults
+    if (revertWbBtn) {
+        revertWbBtn.addEventListener("click", () => {
+            tempByocState = getDefaultByocSeed();
+            wbPendingHazards = [];
+            wbPendingObjectives = [];
+            hydrateWorldBuilderModal();
+            updateByocSummaryBadge();
+        });
+    }
+
+    // 10. Apply World Seed
+    if (applyWbBtn && wbModal) {
+        applyWbBtn.addEventListener("click", () => {
+            // Auto-stage any pending inputs in the active tab
+            const locName = (document.getElementById("wb-loc-name")?.value || "").trim();
+            if (locName) {
+                tempByocState.locations.push({
+                    name: locName,
+                    type: document.getElementById("wb-loc-type")?.value || "dungeon",
+                    description: (document.getElementById("wb-loc-desc")?.value || "").trim(),
+                    hazards: [...wbPendingHazards]
+                });
+                document.getElementById("wb-loc-name").value = "";
+                document.getElementById("wb-loc-desc").value = "";
+                wbPendingHazards = [];
+            }
+            const facName = (document.getElementById("wb-fac-name")?.value || "").trim();
+            if (facName) {
+                tempByocState.factions.push({
+                    name: facName,
+                    disposition: document.getElementById("wb-fac-disp")?.value || "neutral",
+                    influence_score: parseInt(document.getElementById("wb-fac-influence")?.value || "50", 10),
+                    agenda: (document.getElementById("wb-fac-agenda")?.value || "").trim(),
+                    public_reputation: (document.getElementById("wb-fac-rep")?.value || "").trim()
+                });
+                document.getElementById("wb-fac-name").value = "";
+                document.getElementById("wb-fac-agenda").value = "";
+                document.getElementById("wb-fac-rep").value = "";
+            }
+            const questTitle = (document.getElementById("wb-quest-title")?.value || "").trim();
+            if (questTitle) {
+                const objectives = wbPendingObjectives.map((desc, idx) => ({
+                    id: `obj_${idx + 1}`,
+                    description: desc,
+                    is_completed: false,
+                    is_mandatory: true
+                }));
+                tempByocState.quests.push({
+                    title: questTitle,
+                    giver_npc: (document.getElementById("wb-quest-giver")?.value || "").trim(),
+                    summary: (document.getElementById("wb-quest-summary")?.value || "").trim(),
+                    objectives
+                });
+                document.getElementById("wb-quest-title").value = "";
+                document.getElementById("wb-quest-giver").value = "";
+                document.getElementById("wb-quest-summary").value = "";
+                wbPendingObjectives = [];
+            }
+            const clueTitle = (document.getElementById("wb-clue-title")?.value || "").trim();
+            const clueContent = (document.getElementById("wb-clue-content")?.value || "").trim();
+            if (clueTitle && clueContent) {
+                tempByocState.clues.push({
+                    title: clueTitle,
+                    content: clueContent,
+                    is_revealed: document.getElementById("wb-clue-revealed")?.checked || false
+                });
+                document.getElementById("wb-clue-title").value = "";
+                document.getElementById("wb-clue-content").value = "";
+                document.getElementById("wb-clue-revealed").checked = false;
+            }
+
+            updateByocSummaryBadge();
+            wbModal.classList.add("hidden");
+        });
+    }
+}
+
+function getByocModalData() {
+    const grittiness = parseInt(document.getElementById("campaign-tone-grittiness")?.value || "5", 10);
+    const magic = parseInt(document.getElementById("campaign-tone-magic")?.value || "7", 10);
+    const intrigue = parseInt(document.getElementById("campaign-tone-intrigue")?.value || "5", 10);
+
+    return {
+        genre: tempByocState.genre || "heroic_fantasy",
+        tone_sliders: {
+            grittiness,
+            magic_tech_level: magic,
+            political_intrigue: intrigue
+        },
+        locations: tempByocState.locations || [],
+        factions: tempByocState.factions || [],
+        quests: tempByocState.quests || [],
+        clues: tempByocState.clues || []
+    };
+}
+
+async function renderWorldStateLedger() {
+    const worldPane = document.getElementById("rp-world-pane");
+    if (!worldPane) return;
+
+    let worldState = ttrpgData.world_state;
+    let worldContext = ttrpgData.world_context || "";
+
+    if ((!worldState || !worldState.title) && window.pywebview && window.pywebview.api && window.pywebview.api.get_ttrpg_world_state) {
+        try {
+            const res = await window.pywebview.api.get_ttrpg_world_state();
+            if (res && res.status === "success") {
+                worldState = res.manifest;
+                worldContext = res.context || "";
+                ttrpgData.world_state = worldState;
+                ttrpgData.world_context = worldContext;
+            }
+        } catch (e) {
+            console.error("[RolePlay] Failed to query world state:", e);
+        }
+    }
+
+    if (!worldState) {
+        const meta = ttrpgData.active_campaign_meta || {};
+        worldState = {
+            title: meta.title || "Active Campaign",
+            ruleset: meta.system_preset || "dnd_5e",
+            genre: "heroic_fantasy",
+            tone_sliders: { grittiness: 5, magic_tech_level: 7, political_intrigue: 5 },
+            premise: meta.setting_overview || "No premise recorded yet.",
+            locations: {},
+            factions: {},
+            quests: {},
+            clues: {}
+        };
+    }
+
+    // Header Banner
+    const titleEl = document.getElementById("byoc-campaign-title");
+    if (titleEl) titleEl.textContent = worldState.title || "World State & Narrative Anchors";
+
+    const rulesetBadge = document.getElementById("byoc-ruleset-badge");
+    if (rulesetBadge) rulesetBadge.textContent = (worldState.ruleset || "dnd_5e").toUpperCase().replace("_", " ");
+
+    const genreBadge = document.getElementById("byoc-genre-badge");
+    if (genreBadge) genreBadge.textContent = (worldState.genre || "heroic_fantasy").toUpperCase().replace("_", " ");
+
+    const premiseEl = document.getElementById("byoc-campaign-premise");
+    if (premiseEl) premiseEl.textContent = worldState.premise || "Ruleset-agnostic world ledger tracking geography, factions, quests, and secret clues.";
+
+    const sliders = worldState.tone_sliders || { grittiness: 5, magic_tech_level: 7, political_intrigue: 5 };
+    const pillG = document.getElementById("byoc-pill-grittiness");
+    if (pillG) pillG.textContent = `${sliders.grittiness || 5}/10`;
+    const pillM = document.getElementById("byoc-pill-magic");
+    if (pillM) pillM.textContent = `${sliders.magic_tech_level || 7}/10`;
+    const pillI = document.getElementById("byoc-pill-intrigue");
+    if (pillI) pillI.textContent = `${sliders.political_intrigue || 5}/10`;
+
+    // 1. Locations
+    renderByocLocations(worldState);
+
+    // 2. Factions
+    renderByocFactions(worldState);
+
+    // 3. Quests
+    renderByocQuests(worldState);
+
+    // 4. Clues
+    renderByocClues(worldState);
+
+    // 5. Context injection preview
+    const preEl = document.getElementById("byoc-context-pre");
+    if (preEl) {
+        preEl.textContent = worldContext || "GM context assembled dynamically.";
+    }
+}
+
+function renderByocLocations(worldState) {
+    const activeBox = document.getElementById("byoc-active-location-card");
+    const listEl = document.getElementById("byoc-location-list");
+    if (!activeBox || !listEl) return;
+
+    const locations = worldState.locations || {};
+    const locEntries = Object.values(locations);
+    const activeId = worldState.active_location_id;
+    const activeLoc = activeId && locations[activeId] ? locations[activeId] : (locEntries[0] || null);
+
+    if (activeLoc) {
+        const hazardBadges = (activeLoc.hazards || []).map(h =>
+            `<span class="byoc-disp-badge byoc-disp-hostile" style="font-size: 0.65rem;">⚠️ ${escapeRpHtml(h)}</span>`
+        ).join(" ");
+
+        const connectionBtns = (activeLoc.connected_location_ids || []).map(cid => {
+            const dest = locations[cid];
+            const name = dest ? dest.name : cid;
+            return `<button type="button" class="action-btn" onclick="window.handleByocNavigateLocation('${cid}')">Travel to ${escapeRpHtml(name)} ▶</button>`;
+        }).join(" ");
+
+        activeBox.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="color: #38bdf8; font-weight: 700; font-size: 0.95rem;">${escapeRpHtml(activeLoc.name)}</span>
+                    <span class="system-tag" style="font-size: 0.62rem;">${escapeRpHtml((activeLoc.type || "region").toUpperCase())}</span>
+                </div>
+                <span style="font-size: 0.68rem; color: #4ade80; font-weight: 600;">📍 ACTIVE POSITION</span>
+            </div>
+            <p style="margin: 2px 0 0 0; font-size: 0.74rem; color: #cbd5e1; line-height: 1.35;">${escapeRpHtml(activeLoc.description || "No description provided.")}</p>
+            ${hazardBadges ? `<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px;">${hazardBadges}</div>` : ""}
+            ${connectionBtns ? `<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; align-items: center;"><span style="font-size: 0.68rem; color: #94a3b8;">Pathways:</span>${connectionBtns}</div>` : ""}
+        `;
+    } else {
+        activeBox.innerHTML = `<span style="font-size: 0.74rem; color: #64748b;">No active location. Click "+ Add Node" to establish your starting location.</span>`;
+    }
+
+    if (locEntries.length === 0) {
+        listEl.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No locations recorded yet.</span>`;
+        return;
+    }
+
+    listEl.innerHTML = locEntries.map(loc => {
+        const isActive = activeLoc && activeLoc.id === loc.id;
+        return `
+            <div class="byoc-item-card" style="${isActive ? 'border-color: #0ea5e9;' : ''}">
+                <div class="byoc-item-header">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(loc.name)}</span>
+                        <span class="system-tag" style="font-size: 0.6rem; padding: 1px 4px;">${escapeRpHtml((loc.type || "node").toUpperCase())}</span>
+                    </div>
+                    ${isActive ? `<span style="font-size: 0.65rem; color: #38bdf8; font-weight: 600;">CURRENT</span>` :
+                        `<button type="button" class="action-btn" onclick="window.handleByocNavigateLocation('${loc.id}')">Travel Here</button>`}
+                </div>
+                ${loc.description ? `<div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25;">${escapeRpHtml(loc.description)}</div>` : ""}
+                ${loc.hazards && loc.hazards.length ? `<div style="font-size: 0.68rem; color: #f87171;">⚠️ ${escapeRpHtml(loc.hazards.join(", "))}</div>` : ""}
+            </div>
+        `;
+    }).join("");
+}
+
+function renderByocFactions(worldState) {
+    const listEl = document.getElementById("byoc-faction-list");
+    if (!listEl) return;
+
+    const factions = Object.values(worldState.factions || {});
+    if (factions.length === 0) {
+        listEl.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No regional factions defined. Click "+ Add Faction" to create one.</span>`;
+        return;
+    }
+
+    listEl.innerHTML = factions.map(fac => {
+        const disp = (fac.disposition || "neutral").toLowerCase();
+        return `
+            <div class="byoc-item-card">
+                <div class="byoc-item-header">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(fac.name)}</span>
+                        <span class="byoc-disp-badge byoc-disp-${disp}">${escapeRpHtml(disp)}</span>
+                    </div>
+                    <span style="font-size: 0.7rem; color: #38bdf8; font-weight: 600;">${fac.influence_score}% Inf</span>
+                </div>
+                <div class="byoc-influence-bar-bg">
+                    <div class="byoc-influence-fill" style="width: ${Math.max(0, Math.min(100, fac.influence_score))}%;"></div>
+                </div>
+                ${fac.agenda ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;"><strong>Agenda:</strong> ${escapeRpHtml(fac.agenda)}</div>` : ""}
+                ${fac.public_reputation ? `<div style="font-size: 0.68rem; color: #64748b;">${escapeRpHtml(fac.public_reputation)}</div>` : ""}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+                    <select style="background: #0f172a; border: 1px solid #334155; color: #cbd5e1; font-size: 0.68rem; border-radius: 4px; padding: 2px 4px;"
+                            onchange="window.handleByocChangeFactionDisp('${fac.id}', this.value)">
+                        <option value="allied" ${disp === 'allied' ? 'selected' : ''}>Allied</option>
+                        <option value="friendly" ${disp === 'friendly' ? 'selected' : ''}>Friendly</option>
+                        <option value="neutral" ${disp === 'neutral' ? 'selected' : ''}>Neutral</option>
+                        <option value="suspicious" ${disp === 'suspicious' ? 'selected' : ''}>Suspicious</option>
+                        <option value="hostile" ${disp === 'hostile' ? 'selected' : ''}>Hostile</option>
+                    </select>
+                    <div style="display: flex; gap: 4px;">
+                        <button type="button" class="action-btn" onclick="window.handleByocAdjustFaction('${fac.id}', -5)">-5</button>
+                        <button type="button" class="action-btn" onclick="window.handleByocAdjustFaction('${fac.id}', 5)">+5</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+function renderByocQuests(worldState) {
+    const listEl = document.getElementById("byoc-quest-list");
+    if (!listEl) return;
+
+    const quests = Object.values(worldState.quests || {});
+    if (quests.length === 0) {
+        listEl.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No quests logged. Click "+ Add Quest" to add an adventure objective.</span>`;
+        return;
+    }
+
+    listEl.innerHTML = quests.map(q => {
+        const isDone = q.status === "completed";
+        const isFail = q.status === "failed";
+        const badgeClass = isDone ? "byoc-disp-friendly" : (isFail ? "byoc-disp-hostile" : "byoc-disp-neutral");
+
+        const objsHtml = (q.objectives || []).map(obj => `
+            <label class="byoc-obj-item ${obj.is_completed ? 'completed' : ''}" style="cursor: pointer; user-select: none;">
+                <input type="checkbox" ${obj.is_completed ? 'checked' : ''} style="accent-color: #0ea5e9;"
+                       onchange="window.handleByocCompleteObjective('${q.id}', '${obj.id}')">
+                <span>${escapeRpHtml(obj.description)}</span>
+            </label>
+        `).join("");
+
+        return `
+            <div class="byoc-item-card">
+                <div class="byoc-item-header">
+                    <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(q.title)}</span>
+                    <span class="byoc-disp-badge ${badgeClass}">${escapeRpHtml(q.status.toUpperCase())}</span>
+                </div>
+                ${q.giver_npc ? `<div style="font-size: 0.68rem; color: #64748b;">Given by: ${escapeRpHtml(q.giver_npc)}</div>` : ""}
+                ${q.summary ? `<div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25;">${escapeRpHtml(q.summary)}</div>` : ""}
+                <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
+                    ${objsHtml}
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+function renderByocClues(worldState) {
+    const listEl = document.getElementById("byoc-clue-list");
+    if (!listEl) return;
+
+    const clues = Object.values(worldState.clues || {});
+    const hiddenClues = clues.filter(c => !c.is_revealed);
+    const revealedClues = clues.filter(c => c.is_revealed);
+
+    const secretBanner = `
+        <div style="background: rgba(30, 41, 59, 0.6); border: 1px dashed rgba(148, 163, 184, 0.25); border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; color: #94a3b8; display: flex; justify-content: space-between; align-items: center;">
+            <span>🔒 Secret GM Partition: <strong>${hiddenClues.length}</strong> hidden</span>
+            <span style="font-size: 0.65rem; color: #f59e0b;">Kept secret from player prompt</span>
+        </div>
+    `;
+
+    const revealedHtml = revealedClues.map(c => `
+        <div class="byoc-item-card" style="border-left: 3px solid #38bdf8;">
+            <div class="byoc-item-header">
+                <span style="font-weight: 600; font-size: 0.78rem; color: #38bdf8;">${escapeRpHtml(c.title)}</span>
+                <span class="byoc-disp-badge byoc-disp-friendly" style="font-size: 0.6rem;">DISCOVERED</span>
+            </div>
+            <div style="font-size: 0.72rem; color: #cbd5e1; line-height: 1.3;">${escapeRpHtml(c.content)}</div>
+        </div>
+    `).join("");
+
+    const hiddenHtml = hiddenClues.map(c => `
+        <div class="byoc-item-card" style="border-left: 3px solid #f59e0b; background: rgba(22, 19, 15, 0.7);">
+            <div class="byoc-item-header">
+                <span style="font-weight: 600; font-size: 0.78rem; color: #f59e0b;">🔒 ${escapeRpHtml(c.title)}</span>
+                <button type="button" class="action-btn" onclick="window.handleByocRevealClue('${c.id}')">Reveal to Party</button>
+            </div>
+            <div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25; font-style: italic;">${escapeRpHtml(c.content)}</div>
+        </div>
+    `).join("");
+
+    listEl.innerHTML = secretBanner + (revealedHtml || "") + (hiddenHtml || "");
+}
+
+// Global window action handlers for BYOC
+window.handleByocNavigateLocation = async (locId) => {
+    if (!locId) return;
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_set_active_location) {
+            await window.pywebview.api.byoc_set_active_location(locId);
+            ttrpgData.world_state = null;
+            await renderWorldStateLedger();
+        }
+    } catch (e) {
+        console.error("[BYOC] Navigation error:", e);
+    }
+};
+
+window.handleByocChangeFactionDisp = async (facId, disp) => {
+    if (!facId) return;
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_adjust_faction) {
+            await window.pywebview.api.byoc_adjust_faction(facId, 0, disp);
+            ttrpgData.world_state = null;
+            await renderWorldStateLedger();
+        }
+    } catch (e) {
+        console.error("[BYOC] Faction disp error:", e);
+    }
+};
+
+window.handleByocAdjustFaction = async (facId, delta) => {
+    if (!facId) return;
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_adjust_faction) {
+            await window.pywebview.api.byoc_adjust_faction(facId, delta, null);
+            ttrpgData.world_state = null;
+            await renderWorldStateLedger();
+        }
+    } catch (e) {
+        console.error("[BYOC] Faction adjust error:", e);
+    }
+};
+
+window.handleByocCompleteObjective = async (questId, objId) => {
+    if (!questId || !objId) return;
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_complete_objective) {
+            await window.pywebview.api.byoc_complete_objective(questId, objId);
+            ttrpgData.world_state = null;
+            await renderWorldStateLedger();
+        }
+    } catch (e) {
+        console.error("[BYOC] Objective completion error:", e);
+    }
+};
+
+window.handleByocRevealClue = async (clueId) => {
+    if (!clueId) return;
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_reveal_clue) {
+            await window.pywebview.api.byoc_reveal_clue(clueId);
+            ttrpgData.world_state = null;
+            await renderWorldStateLedger();
+        }
+    } catch (e) {
+        console.error("[BYOC] Clue reveal error:", e);
+    }
+};
+
+function initByocWorldModals() {
+    initByocCreationModal();
+
+    // Context toggle
+    const toggleCtxBtn = document.getElementById("btn-toggle-context-preview");
+    const ctxBody = document.getElementById("byoc-context-body");
+    const ctxArrow = document.getElementById("byoc-context-arrow");
+    if (toggleCtxBtn && ctxBody) {
+        toggleCtxBtn.addEventListener("click", () => {
+            const isHidden = ctxBody.classList.contains("hidden");
+            if (isHidden) {
+                ctxBody.classList.remove("hidden");
+                if (ctxArrow) ctxArrow.textContent = "▲ Click to collapse";
+            } else {
+                ctxBody.classList.add("hidden");
+                if (ctxArrow) ctxArrow.textContent = "▼ Click to expand";
+            }
+        });
+    }
+
+    // Modal: Add Location
+    const openLocBtn = document.getElementById("btn-byoc-open-add-loc");
+    const locModal = document.getElementById("modal-byoc-add-loc");
+    const closeLocBtn = document.getElementById("btn-close-byoc-loc-modal");
+    const cancelLocBtn = document.getElementById("btn-cancel-byoc-loc");
+    const confirmLocBtn = document.getElementById("btn-confirm-byoc-loc");
+
+    if (openLocBtn && locModal) {
+        openLocBtn.addEventListener("click", () => {
+            document.getElementById("modal-loc-name").value = "";
+            document.getElementById("modal-loc-desc").value = "";
+            document.getElementById("modal-loc-hazards").value = "";
+            locModal.classList.remove("hidden");
+        });
+    }
+    if (closeLocBtn && locModal) closeLocBtn.addEventListener("click", () => locModal.classList.add("hidden"));
+    if (cancelLocBtn && locModal) cancelLocBtn.addEventListener("click", () => locModal.classList.add("hidden"));
+    if (confirmLocBtn && locModal) {
+        confirmLocBtn.addEventListener("click", async () => {
+            const name = (document.getElementById("modal-loc-name")?.value || "").trim();
+            if (!name) return;
+            const type = document.getElementById("modal-loc-type")?.value || "dungeon";
+            const desc = (document.getElementById("modal-loc-desc")?.value || "").trim();
+            const hazards = (document.getElementById("modal-loc-hazards")?.value || "").trim();
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_add_location) {
+                await window.pywebview.api.byoc_add_location({ name, type, description: desc, hazards });
+                locModal.classList.add("hidden");
+                ttrpgData.world_state = null;
+                await renderWorldStateLedger();
+            }
+        });
+    }
+
+    // Modal: Add Faction
+    const openFacBtn = document.getElementById("btn-byoc-open-add-fac");
+    const facModal = document.getElementById("modal-byoc-add-fac");
+    const closeFacBtn = document.getElementById("btn-close-byoc-fac-modal");
+    const cancelFacBtn = document.getElementById("btn-cancel-byoc-fac");
+    const confirmFacBtn = document.getElementById("btn-confirm-byoc-fac");
+
+    if (openFacBtn && facModal) {
+        openFacBtn.addEventListener("click", () => {
+            document.getElementById("modal-fac-name").value = "";
+            document.getElementById("modal-fac-agenda").value = "";
+            document.getElementById("modal-fac-rep").value = "";
+            facModal.classList.remove("hidden");
+        });
+    }
+    if (closeFacBtn && facModal) closeFacBtn.addEventListener("click", () => facModal.classList.add("hidden"));
+    if (cancelFacBtn && facModal) cancelFacBtn.addEventListener("click", () => facModal.classList.add("hidden"));
+    if (confirmFacBtn && facModal) {
+        confirmFacBtn.addEventListener("click", async () => {
+            const name = (document.getElementById("modal-fac-name")?.value || "").trim();
+            if (!name) return;
+            const disposition = document.getElementById("modal-fac-disp")?.value || "neutral";
+            const influence = parseInt(document.getElementById("modal-fac-influence")?.value || "50", 10);
+            const agenda = (document.getElementById("modal-fac-agenda")?.value || "").trim();
+            const rep = (document.getElementById("modal-fac-rep")?.value || "").trim();
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_add_faction) {
+                await window.pywebview.api.byoc_add_faction({ name, disposition, influence_score: influence, agenda, public_reputation: rep });
+                facModal.classList.add("hidden");
+                ttrpgData.world_state = null;
+                await renderWorldStateLedger();
+            }
+        });
+    }
+
+    // Modal: Add Quest
+    const openQuestBtn = document.getElementById("btn-byoc-open-add-quest");
+    const questModal = document.getElementById("modal-byoc-add-quest");
+    const closeQuestBtn = document.getElementById("btn-close-byoc-quest-modal");
+    const cancelQuestBtn = document.getElementById("btn-cancel-byoc-quest");
+    const confirmQuestBtn = document.getElementById("btn-confirm-byoc-quest");
+
+    if (openQuestBtn && questModal) {
+        openQuestBtn.addEventListener("click", () => {
+            document.getElementById("modal-quest-title").value = "";
+            document.getElementById("modal-quest-giver").value = "";
+            document.getElementById("modal-quest-summary").value = "";
+            document.getElementById("modal-quest-obj").value = "";
+            questModal.classList.remove("hidden");
+        });
+    }
+    if (closeQuestBtn && questModal) closeQuestBtn.addEventListener("click", () => questModal.classList.add("hidden"));
+    if (cancelQuestBtn && questModal) cancelQuestBtn.addEventListener("click", () => questModal.classList.add("hidden"));
+    if (confirmQuestBtn && questModal) {
+        confirmQuestBtn.addEventListener("click", async () => {
+            const title = (document.getElementById("modal-quest-title")?.value || "").trim();
+            if (!title) return;
+            const giver = (document.getElementById("modal-quest-giver")?.value || "").trim();
+            const summary = (document.getElementById("modal-quest-summary")?.value || "").trim();
+            const obj = (document.getElementById("modal-quest-obj")?.value || "").trim();
+            const objectives = obj ? [{ id: "obj_1", description: obj, is_completed: false, is_mandatory: true }] : [];
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_add_quest) {
+                await window.pywebview.api.byoc_add_quest({ title, giver_npc: giver, summary, objectives });
+                questModal.classList.add("hidden");
+                ttrpgData.world_state = null;
+                await renderWorldStateLedger();
+            }
+        });
+    }
+
+    // Modal: Add Clue
+    const openClueBtn = document.getElementById("btn-byoc-open-add-clue");
+    const clueModal = document.getElementById("modal-byoc-add-clue");
+    const closeClueBtn = document.getElementById("btn-close-byoc-clue-modal");
+    const cancelClueBtn = document.getElementById("btn-cancel-byoc-clue");
+    const confirmClueBtn = document.getElementById("btn-confirm-byoc-clue");
+
+    if (openClueBtn && clueModal) {
+        openClueBtn.addEventListener("click", () => {
+            document.getElementById("modal-clue-title").value = "";
+            document.getElementById("modal-clue-content").value = "";
+            document.getElementById("modal-clue-revealed").checked = false;
+            clueModal.classList.remove("hidden");
+        });
+    }
+    if (closeClueBtn && clueModal) closeClueBtn.addEventListener("click", () => clueModal.classList.add("hidden"));
+    if (cancelClueBtn && clueModal) cancelClueBtn.addEventListener("click", () => clueModal.classList.add("hidden"));
+    if (confirmClueBtn && clueModal) {
+        confirmClueBtn.addEventListener("click", async () => {
+            const title = (document.getElementById("modal-clue-title")?.value || "").trim();
+            const content = (document.getElementById("modal-clue-content")?.value || "").trim();
+            if (!title || !content) return;
+            const isRevealed = document.getElementById("modal-clue-revealed")?.checked || false;
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.byoc_add_clue) {
+                await window.pywebview.api.byoc_add_clue({ title, content, is_revealed: isRevealed });
+                clueModal.classList.add("hidden");
+                ttrpgData.world_state = null;
+                await renderWorldStateLedger();
+            }
+        });
+    }
+}
+
