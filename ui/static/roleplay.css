@@ -425,6 +425,7 @@
   flex-direction: column;
   gap: 16px;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -445,24 +446,62 @@
 
 /* Character Vitals Cards */
 .roster-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
-  gap: 16px;
-  overflow: visible;
-  height: auto;
-  max-height: none;
-  padding-right: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 18px;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  padding-bottom: 8px;
+  box-sizing: border-box;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.35) rgba(13, 21, 30, 0.8);
+}
+
+.roster-grid::-webkit-scrollbar {
+  height: 8px;
+}
+
+.roster-grid::-webkit-scrollbar-track {
+  background: rgba(13, 21, 30, 0.85);
+  border-radius: 4px;
+}
+
+.roster-grid::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.28);
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+
+.roster-grid::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 243, 255, 0.55);
+  border-color: #00F3FF;
 }
 
 .character-card {
+  flex: 0 0 460px;
+  width: 460px;
+  min-width: 440px;
+  max-width: 480px;
+  height: 100%;
+  max-height: calc(100vh - 240px);
+  min-height: 520px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   background: #111a24;
   border: 1px solid #1f2e3d;
   border-radius: 8px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  transition: border-color 0.2s ease;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .character-card:hover {
@@ -546,9 +585,27 @@
 
 .char-card-top {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 10px 14px;
+  background: rgba(17, 26, 36, 0.98);
+  border-bottom: 1px solid #1f2e3d;
+  flex-shrink: 0;
+}
+
+.char-card-header-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.char-card-identity-row {
+  display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+  width: 100%;
 }
 
 .char-name-title {
@@ -564,6 +621,15 @@
   font-weight: 600;
 }
 
+.char-badges-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  margin-top: 4px;
+  width: 100%;
+}
+
 .char-guard-badge {
   background: rgba(56, 189, 248, 0.12);
   border: 1px solid rgba(56, 189, 248, 0.35);
@@ -572,7 +638,47 @@
   padding: 3px 8px;
   font-size: 11px;
   font-weight: 700;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.card-stats-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 14px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.35) rgba(13, 21, 30, 0.8);
+}
+
+.card-stats-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.card-stats-scroll::-webkit-scrollbar-track {
+  background: rgba(13, 21, 30, 0.6);
+  border-radius: 3px;
+}
+
+.card-stats-scroll::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.25);
+  border-radius: 3px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.card-stats-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 243, 255, 0.5);
+  border-color: #00F3FF;
 }
 
 /* Vitals Bar */
@@ -639,7 +745,7 @@
 
 .attributes-strip {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 4px;
   background: #0c131b;
   border: 1px solid #1a2736;
@@ -1069,6 +1175,7 @@
   gap: 8px;
   margin-bottom: 12px;
   font-size: 0.78rem;
+  width: 100%;
 }
 
 .rp-meta-pill {
@@ -1080,10 +1187,60 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .rp-meta-pill strong {
   color: #cbd5e1;
+}
+
+/* Dedicated Stacked Clues Section in Journal & Recap */
+.rp-journal-clues-box {
+  width: 100%;
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.rp-clues-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.rp-clues-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 2px 4px 2px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.rp-clues-stack::-webkit-scrollbar {
+  width: 4px;
+}
+
+.rp-clues-stack::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.rp-clues-stack::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 2px;
 }
 
 .rp-clue-badge {
@@ -1091,9 +1248,21 @@
   border: 1px solid rgba(245, 158, 11, 0.4);
   color: #fcd34d;
   border-radius: 4px;
-  padding: 2px 7px;
+  padding: 3px 8px;
   font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: normal;
+  word-break: break-word;
+  max-width: 100%;
   display: inline-block;
+  box-sizing: border-box;
+}
+
+.rp-clues-stack .rp-clue-badge {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 10px;
 }
 
 .rp-journal-entries-list {
@@ -1399,14 +1568,23 @@
   flex-direction: column;
   gap: 14px;
   width: 100%;
+  min-width: 0;
 }
 
 .rp-subpane.active {
   display: flex;
 }
 
-.rp-workspace.view-all .rp-subpane {
+#rp-roster-pane.active {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.rp-workspace.view-all #rp-roster-pane {
   display: flex !important;
+  flex: none;
+  height: 600px;
 }
 
 /* Dedicated Adventure Story Card */
@@ -2225,6 +2403,737 @@
 .wb-obj-item-row .wb-obj-remove:hover {
   color: #ef4444;
 }
+
+/* =========================================================================
+   Phase 1: Character Vault System Tabs & D&D 5e Compendium / Homebrew UI
+   ========================================================================= */
+
+.vault-tabs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.16);
+}
+
+.vault-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #94a3b8;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.vault-tab-btn:hover {
+  color: #f1f5f9;
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.vault-tab-btn.active {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+  border-color: rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+}
+
+.vault-tab-count {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #cbd5e1;
+}
+
+.vault-crossover-banner {
+  background: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  color: #e9d5ff;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+
+.vault-crossover-banner.hidden {
+  display: none;
+}
+
+/* Compendium Modal Layout */
+.compendium-modal-card {
+  max-width: 1020px;
+  width: 95%;
+  height: 85vh;
+  max-height: 820px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.compendium-tabs-bar {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px;
+  background: rgba(11, 17, 29, 0.95);
+  border-bottom: 1px solid #1e293b;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.comp-tab-btn {
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.comp-tab-btn:hover {
+  color: #f1f5f9;
+}
+
+.comp-tab-btn.active {
+  color: #38bdf8;
+  border-bottom-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.compendium-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(15, 23, 42, 0.72);
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.comp-search-input {
+  flex: 1 1 220px;
+  min-width: 180px;
+  padding: 6px 10px !important;
+  font-size: 0.82rem !important;
+}
+
+.comp-select {
+  width: auto !important;
+  min-width: 135px;
+  padding: 6px 8px !important;
+  font-size: 0.78rem !important;
+}
+
+.comp-subfilters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.comp-subfilters.hidden {
+  display: none;
+}
+
+.comp-results-badge {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #94a3b8;
+  background: rgba(30, 41, 59, 0.8);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.compendium-split-body {
+  display: grid;
+  grid-template-columns: minmax(290px, 42%) 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.compendium-split-body.hidden,
+.compendium-homebrew-body.hidden,
+.compendium-filter-bar.hidden {
+  display: none;
+}
+
+.comp-results-list {
+  overflow-y: auto;
+  border-right: 1px solid #1e293b;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(9, 13, 22, 0.55);
+}
+
+.comp-list-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.comp-list-item:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(30, 41, 59, 0.75);
+}
+
+.comp-list-item.selected {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.comp-list-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.comp-list-name {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.comp-list-sub {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.comp-badges-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.comp-pill {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+
+.comp-pill-ed {
+  background: rgba(56, 189, 248, 0.14);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.comp-pill-hb {
+  background: rgba(168, 85, 247, 0.18);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+.comp-pill-magic {
+  background: rgba(250, 204, 21, 0.14);
+  color: #fde047;
+  border: 1px solid rgba(250, 204, 21, 0.35);
+}
+
+.comp-pill-mastery {
+  background: rgba(249, 115, 22, 0.16);
+  color: #fdba74;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+}
+
+.comp-detail-pane {
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.comp-detail-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.86rem;
+  padding: 24px;
+}
+
+.comp-detail-card-head h4 {
+  margin: 0 0 6px 0;
+  font-size: 1.15rem;
+  color: #f8fafc;
+}
+
+.comp-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.comp-stat-cell strong {
+  display: block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.comp-stat-cell span {
+  font-size: 0.84rem;
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.comp-desc-box {
+  background: rgba(11, 17, 29, 0.8);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+}
+
+.comp-grant-box {
+  margin-top: auto;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Homebrew Lab Layout */
+.compendium-homebrew-body {
+  display: grid;
+  grid-template-columns: minmax(250px, 34%) 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.hb-list-column {
+  border-right: 1px solid #1e293b;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(9, 13, 22, 0.55);
+  overflow: hidden;
+}
+
+.hb-entries-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hb-editor-column {
+  overflow-y: auto;
+  padding: 14px 18px;
+}
+
+.hb-section-box {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+
+.hb-section-box.hidden {
+  display: none;
+}
+
+.hb-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hb-form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hb-class-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 0.76rem;
+  color: #cbd5e1;
+  padding: 4px 0;
+}
+
+.hb-class-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+/* =========================================================================
+   Phase 2: Location-Based Merchant Shop & Interactive Short / Long Rest UI
+   ========================================================================= */
+
+.shop-modal-card,
+.rest-modal-card {
+  max-width: 1080px;
+  width: 94%;
+  height: 86vh;
+}
+
+.shop-pricing-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: rgba(15, 23, 42, 0.85);
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.shop-control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shop-wallet-pill {
+  margin-left: auto;
+  background: rgba(250, 204, 21, 0.12);
+  border: 1px solid rgba(250, 204, 21, 0.4);
+  color: #fde047;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.shop-mode-toggle {
+  display: inline-flex;
+  background: rgba(9, 13, 22, 0.85);
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.shop-mode-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.shop-mode-btn.active {
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+}
+
+.shop-flavor-banner {
+  padding: 7px 16px;
+  background: rgba(56, 189, 248, 0.08);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.25);
+  color: #bae6fd;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.shop-flavor-banner.hidden {
+  display: none;
+}
+
+.shop-price-tag {
+  font-size: 0.76rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.shop-price-standard {
+  color: #fde047;
+}
+
+.shop-price-discount {
+  color: #4ade80;
+}
+
+.shop-price-markup {
+  color: #fb923c;
+}
+
+.rest-top-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(15, 23, 42, 0.85);
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.rest-hero-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rest-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.rest-section-card {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rest-section-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #38bdf8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rest-item-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(9, 13, 22, 0.65);
+  border: 1px solid rgba(51, 65, 85, 0.45);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #e2e8f0;
+}
+
+.rest-spell-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 6px;
+  max-height: 270px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.rest-spell-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 6px 8px;
+  background: rgba(9, 13, 22, 0.7);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 6px;
+  font-size: 0.76rem;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.rest-spell-card.prepared {
+  border-color: rgba(168, 85, 247, 0.55);
+  background: rgba(168, 85, 247, 0.12);
+}
+
+.rest-spell-card.locked {
+  opacity: 0.85;
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+/* ==========================================================================
+   Phase 3: Guided Level-Up & Multiclass Wizard Styles
+   ========================================================================== */
+.levelup-modal-card {
+  max-width: 1040px;
+  width: 94%;
+  max-height: 90vh;
+}
+
+.levelup-top-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(15, 23, 42, 0.72);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.levelup-split-body {
+  min-height: 440px;
+}
+
+.levelup-class-pane {
+  width: 305px;
+  min-width: 265px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.levelup-pane-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #38bdf8;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.55);
+}
+
+.levelup-class-group-hdr {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-top: 6px;
+  padding: 2px 4px;
+}
+
+.levelup-class-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.levelup-class-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid #1e293b;
+  color: #e2e8f0;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.levelup-class-card:hover {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(30, 41, 59, 0.85);
+}
+
+.levelup-class-card.selected {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25);
+}
+
+.levelup-class-card.locked {
+  opacity: 0.65;
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.levelup-detail-pane {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.levelup-summary-banner {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(168, 85, 247, 0.12));
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.levelup-asi-box {
+  background: rgba(9, 13, 22, 0.65);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 7px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.levelup-stat-preview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.levelup-stat-pill {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(51, 65, 85, 0.55);
+  color: #cbd5e1;
+}
+
+.levelup-stat-pill.boosted {
+  border-color: rgba(74, 222, 128, 0.65);
+  color: #4ade80;
+  background: rgba(34, 197, 94, 0.1);
+}
+
+
 
 
 

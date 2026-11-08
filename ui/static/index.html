@@ -465,6 +465,9 @@
                 <button type="button" class="rp-tab-btn" data-rp-pane="all" id="btn-rp-tab-all">◫ Full View</button>
               </div>
               <div class="rp-subnav-actions">
+                <button type="button" id="open-shop-btn" class="cyber-btn-small" title="Open Location Merchant Shop (Buy/Sell gear with regional pricing)">🏪 Shop</button>
+                <button type="button" id="open-rest-btn" class="cyber-btn-small" title="Open Interactive Short / Long Rest (Hit Dice, Potions, Armor/Attunement, Spells)">⛺ Rest</button>
+                <button type="button" id="open-compendium-btn" class="cyber-btn-small" title="Browse D&amp;D 5e (2014 &amp; 2024) SRD Weapons, Armor, Items, Spells &amp; Homebrew Lab">📖 Compendium</button>
                 <button type="button" id="open-vault-btn" class="cyber-btn-small" title="Open persistent Character Vault across campaigns and genres">🏛️ Character Vault</button>
                 <button type="button" id="refresh-roster-btn" class="cyber-btn-small" title="Refresh &amp; load character sheets from uploaded files if someone is missing">🔄 Refresh Sheets</button>
                 <button type="button" id="add-character-btn" class="cyber-btn-small">+ Add Character</button>
@@ -652,7 +655,16 @@
                 <button class="modal-close-btn" id="close-vault-modal-btn">✕</button>
               </div>
 
-              <div class="modal-body" style="max-height: 520px; overflow-y: auto; padding: 14px 16px;">
+              <div class="modal-body" style="max-height: 540px; overflow-y: auto; padding: 14px 16px;">
+                <!-- Top TTRPG System Filter Tabs -->
+                <div class="vault-tabs-bar" id="vault-system-tabs-bar">
+                  <button type="button" class="vault-tab-btn active" data-vault-tab="dnd_5e">⚔️ D&amp;D 5E <span class="vault-tab-count" id="vault-tab-count-dnd_5e">0</span></button>
+                  <button type="button" class="vault-tab-btn" data-vault-tab="pathfinder_2e">🗡️ Pathfinder <span class="vault-tab-count" id="vault-tab-count-pathfinder_2e">0</span></button>
+                  <button type="button" class="vault-tab-btn" data-vault-tab="call_of_cthulhu">🐙 Call of Cthulhu <span class="vault-tab-count" id="vault-tab-count-call_of_cthulhu">0</span></button>
+                  <button type="button" class="vault-tab-btn" data-vault-tab="cyberpunk">⚡ Cyberpunk <span class="vault-tab-count" id="vault-tab-count-cyberpunk">0</span></button>
+                  <button type="button" class="vault-tab-btn" data-vault-tab="all">🌐 All / Other <span class="vault-tab-count" id="vault-tab-count-all">0</span></button>
+                </div>
+
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; flex-wrap: wrap;">
                   <span id="vault-count-badge" style="font-size: 11px; color: #64748b; font-weight: 600;">0 CHARACTERS IN VAULT</span>
                   <div style="display: flex; gap: 6px; align-items: center;">
@@ -667,6 +679,10 @@
                       🏰 From Campaign
                     </button>
                   </div>
+                </div>
+
+                <div id="vault-crossover-banner" class="vault-crossover-banner hidden">
+                  ⚡ <strong>Cross-Genre Import Enabled:</strong> Importing a hero from another system into your active campaign will open Cross-Genre Adjudication so they can join an absurd/crossover adventure!
                 </div>
 
                 <!-- Dropzone for Vault Sheet Ingestion -->
@@ -2971,6 +2987,27 @@
               💡 <em>Aether already knows standard rules (D&amp;D 5e, Cyberpunk, etc.). Only upload <strong>custom supplements or house rules</strong> if you have rule changes. Focus your uploads on the <strong>adventure module</strong> and <strong>character sheets</strong>!</em>
             </div>
           </div>
+
+          <!-- Story Adherence & GM Freedom Slider (3 Steps) -->
+          <div class="modal-field" id="modal-camp-adherence-section" style="margin-top: 10px; background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 10px 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span class="modal-label" style="margin-bottom: 0; display: flex; align-items: center; gap: 6px;">
+                <span>📖 Module Story Adherence &amp; GM Pacing</span>
+              </span>
+              <span id="val-module-adherence" style="font-size: 0.75rem; color: #38bdf8; font-weight: 600; background: rgba(56, 189, 248, 0.12); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.25);">
+                Strict Module (By the Book)
+              </span>
+            </div>
+            <input type="range" id="campaign-module-adherence" min="1" max="3" step="1" value="3" class="byoc-slider" style="width: 100%; accent-color: #0ea5e9;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.68rem; color: #94a3b8; margin-top: 4px;">
+              <span style="text-align: left; max-width: 30%;">1: Creative Sandbox</span>
+              <span style="text-align: center; max-width: 30%;">2: Guided / Balanced</span>
+              <span style="text-align: right; max-width: 30%;">3: Strict Module</span>
+            </div>
+            <div id="desc-module-adherence" style="font-size: 0.72rem; color: #64748b; margin-top: 6px; line-height: 1.35;">
+              Follows published acts, scenes, boxed text, and mandatory encounters sequentially by the book. High rolls grant immediate scene insight, never skipping intermediate encounters.
+            </div>
+          </div>
         </div>
 
         <!-- Source View B: Build Your Own World -->
@@ -4783,6 +4820,693 @@
       <div class="modal-footer">
         <button type="button" class="btn-primary-sm" id="btn-save-rp-note" style="padding: 7px 16px;">Save Note</button>
         <button type="button" class="btn-secondary-sm" id="btn-cancel-rp-note" style="padding: 7px 16px;">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: D&D 5e (2014 & 2024) SRD Compendium & Homebrew Lab -->
+  <div id="compendium-modal" class="modal-overlay hidden" style="z-index: 100040;">
+    <div class="modal-card compendium-modal-card">
+      <div class="modal-header">
+        <div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.25rem;">📖</span>
+            <h3 style="margin: 0; font-size: 1.05rem; color: #f1f5f9;">D&amp;D 5e Compendium &amp; Homebrew Workshop</h3>
+          </div>
+          <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">
+            2014 SRD 5.1 &amp; 2024 SRD 5.2 (Weapon Masteries, Updated Spells) • Custom Homebrew Creation
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-compendium-modal" title="Close">✕</button>
+      </div>
+
+      <!-- Top Tabs Bar -->
+      <div class="compendium-tabs-bar" id="compendium-tabs-bar">
+        <button type="button" class="comp-tab-btn active" data-comp-tab="weapons">⚔️ Weapons</button>
+        <button type="button" class="comp-tab-btn" data-comp-tab="armor">🛡️ Armor &amp; Shields</button>
+        <button type="button" class="comp-tab-btn" data-comp-tab="items">🎒 Items &amp; Magic</button>
+        <button type="button" class="comp-tab-btn" data-comp-tab="spells">✨ Spells</button>
+        <button type="button" class="comp-tab-btn" data-comp-tab="homebrew">🛠️ Homebrew Lab</button>
+      </div>
+
+      <!-- Browse Filter Toolbar -->
+      <div id="compendium-filter-bar" class="compendium-filter-bar">
+        <input type="text" id="input-compendium-search" class="modal-input comp-search-input" placeholder="Search name, damage, school, class, mastery, property..." />
+        <select id="select-compendium-edition" class="modal-input comp-select">
+          <option value="all">2014 + 2024 Rules</option>
+          <option value="2024">2024 Rules Only</option>
+          <option value="2014">2014 Rules Only</option>
+          <option value="homebrew">Homebrew Only</option>
+        </select>
+
+        <!-- Weapon Filters -->
+        <div id="comp-filter-weapon-wrap" class="comp-subfilters">
+          <select id="select-comp-weapon-cat" class="modal-input comp-select">
+            <option value="">All Weapon Types</option>
+            <option value="Simple">Simple</option>
+            <option value="Martial">Martial</option>
+            <option value="Melee">Melee</option>
+            <option value="Ranged">Ranged</option>
+          </select>
+          <select id="select-comp-weapon-mastery" class="modal-input comp-select">
+            <option value="">All Masteries (2024)</option>
+            <option value="Cleave">Cleave</option>
+            <option value="Graze">Graze</option>
+            <option value="Nick">Nick</option>
+            <option value="Push">Push</option>
+            <option value="Sap">Sap</option>
+            <option value="Slow">Slow</option>
+            <option value="Topple">Topple</option>
+            <option value="Vex">Vex</option>
+          </select>
+        </div>
+
+        <!-- Armor Filters -->
+        <div id="comp-filter-armor-wrap" class="comp-subfilters hidden">
+          <select id="select-comp-armor-cat" class="modal-input comp-select">
+            <option value="">All Armor &amp; Shields</option>
+            <option value="Light">Light Armor</option>
+            <option value="Medium">Medium Armor</option>
+            <option value="Heavy">Heavy Armor</option>
+            <option value="Shield">Shields</option>
+            <option value="Magic">Magic Armor</option>
+          </select>
+        </div>
+
+        <!-- Item Filters -->
+        <div id="comp-filter-item-wrap" class="comp-subfilters hidden">
+          <select id="select-comp-item-cat" class="modal-input comp-select">
+            <option value="">All Gear &amp; Magic</option>
+            <option value="Adventuring Gear">Adventuring Gear</option>
+            <option value="Equipment Pack">Equipment Packs</option>
+            <option value="Tool">Tools</option>
+            <option value="Ammunition">Ammunition</option>
+            <option value="Potion">Potions &amp; Poisons</option>
+            <option value="Magic">Magic Items</option>
+          </select>
+          <select id="select-comp-item-rarity" class="modal-input comp-select">
+            <option value="">Any Rarity</option>
+            <option value="Common">Common</option>
+            <option value="Uncommon">Uncommon</option>
+            <option value="Rare">Rare</option>
+            <option value="Very Rare">Very Rare</option>
+            <option value="Legendary">Legendary</option>
+          </select>
+        </div>
+
+        <!-- Spell Filters -->
+        <div id="comp-filter-spell-wrap" class="comp-subfilters hidden">
+          <select id="select-comp-spell-class" class="modal-input comp-select">
+            <option value="">All Caster Classes</option>
+            <option value="Artificer">Artificer</option>
+            <option value="Bard">Bard</option>
+            <option value="Cleric">Cleric</option>
+            <option value="Druid">Druid</option>
+            <option value="Paladin">Paladin</option>
+            <option value="Ranger">Ranger</option>
+            <option value="Sorcerer">Sorcerer</option>
+            <option value="Warlock">Warlock</option>
+            <option value="Wizard">Wizard</option>
+          </select>
+          <select id="select-comp-spell-level" class="modal-input comp-select">
+            <option value="">All Levels</option>
+            <option value="0">Cantrip (0)</option>
+            <option value="1">1st Level</option>
+            <option value="2">2nd Level</option>
+            <option value="3">3rd Level</option>
+            <option value="4">4th Level</option>
+            <option value="5">5th Level</option>
+            <option value="6">6th Level</option>
+            <option value="7">7th Level</option>
+            <option value="8">8th Level</option>
+            <option value="9">9th Level</option>
+          </select>
+        </div>
+
+        <span id="compendium-results-count" class="comp-results-badge">0 entries</span>
+      </div>
+
+      <!-- Browse Split Pane -->
+      <div id="compendium-browse-pane" class="compendium-split-body">
+        <div id="compendium-results-list" class="comp-results-list">
+          <!-- Populated dynamically -->
+        </div>
+        <div id="compendium-detail-pane" class="comp-detail-pane">
+          <div class="comp-detail-empty">
+            <span style="font-size: 2rem;">📖</span>
+            <p>Select any weapon, armor, item, pack, or spell on the left to inspect its 2014 &amp; 2024 rules, grant it to a party hero, or clone it as Homebrew.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Homebrew Lab Pane -->
+      <div id="compendium-homebrew-pane" class="compendium-homebrew-body hidden">
+        <div class="hb-list-column">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px;">
+            <select id="select-hb-list-filter" class="modal-input" style="font-size: 0.78rem; padding: 5px 8px;">
+              <option value="all">All Homebrew</option>
+              <option value="weapons">Weapons</option>
+              <option value="armor">Armor &amp; Shields</option>
+              <option value="items">Items &amp; Magic</option>
+              <option value="spells">Spells</option>
+            </select>
+            <button type="button" id="btn-hb-new-entry" class="cyber-btn-small" style="white-space: nowrap;">+ New</button>
+          </div>
+          <div id="hb-entries-list" class="hb-entries-list">
+            <!-- Saved homebrew entries -->
+          </div>
+        </div>
+
+        <div class="hb-editor-column">
+          <input type="hidden" id="hb-field-index" value="" />
+          <div class="hb-form-grid">
+            <div>
+              <label class="modal-label">Creation Type</label>
+              <select id="hb-field-category" class="modal-input">
+                <option value="weapons">⚔️ Weapon / Magic Weapon</option>
+                <option value="armor">🛡️ Armor / Shield</option>
+                <option value="items">🎒 Gear / Potion / Magic Item</option>
+                <option value="spells">✨ Custom Spell</option>
+              </select>
+            </div>
+            <div>
+              <label class="modal-label">Name <span style="color:#ef4444;">*</span></label>
+              <input type="text" id="hb-field-name" class="modal-input" placeholder="e.g. Sunfire Claymore or Arcane Pulse" />
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 14px; align-items: center; margin: 8px 0; font-size: 0.78rem; color: #cbd5e1;">
+            <span style="font-weight: 600; color: #94a3b8;">Ruleset Editions:</span>
+            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-ed-2014" checked /> 2014 (5e)</label>
+            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-ed-2024" checked /> 2024 (5.24)</label>
+          </div>
+
+          <!-- Shared Cost / Weight / Magic Metadata (Weapons, Armor, Items) -->
+          <div id="hb-group-gear-meta" class="hb-section-box">
+            <div class="hb-form-grid-3">
+              <div>
+                <label class="modal-label">Cost</label>
+                <div style="display: flex; gap: 4px;">
+                  <input type="number" id="hb-field-cost-qty" class="modal-input" min="0" value="50" style="width: 65%;" />
+                  <select id="hb-field-cost-unit" class="modal-input" style="width: 35%;">
+                    <option value="gp" selected>gp</option>
+                    <option value="sp">sp</option>
+                    <option value="cp">cp</option>
+                    <option value="ep">ep</option>
+                    <option value="pp">pp</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="modal-label">Weight (lb)</label>
+                <input type="number" id="hb-field-weight" class="modal-input" min="0" step="0.5" value="2" />
+              </div>
+              <div>
+                <label class="modal-label">Rarity</label>
+                <select id="hb-field-rarity" class="modal-input">
+                  <option value="Common">Common</option>
+                  <option value="Uncommon">Uncommon</option>
+                  <option value="Rare">Rare</option>
+                  <option value="Very Rare">Very Rare</option>
+                  <option value="Legendary">Legendary</option>
+                  <option value="Artifact">Artifact</option>
+                </select>
+              </div>
+            </div>
+            <div style="display: flex; gap: 16px; margin-top: 8px; font-size: 0.78rem; color: #cbd5e1;">
+              <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-field-is-magic" /> ✨ Magic Item</label>
+              <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-field-attunement" /> 🔗 Requires Attunement</label>
+            </div>
+          </div>
+
+          <!-- Weapons Specifics -->
+          <div id="hb-group-weapons" class="hb-section-box">
+            <div class="hb-form-grid">
+              <div>
+                <label class="modal-label">Weapon Category</label>
+                <select id="hb-field-wpn-cat" class="modal-input">
+                  <option value="Martial Melee">Martial Melee</option>
+                  <option value="Simple Melee">Simple Melee</option>
+                  <option value="Martial Ranged">Martial Ranged</option>
+                  <option value="Simple Ranged">Simple Ranged</option>
+                </select>
+              </div>
+              <div>
+                <label class="modal-label">Weapon Mastery (2024)</label>
+                <select id="hb-field-wpn-mastery" class="modal-input">
+                  <option value="">None</option>
+                  <option value="Cleave">Cleave</option>
+                  <option value="Graze">Graze</option>
+                  <option value="Nick">Nick</option>
+                  <option value="Push">Push</option>
+                  <option value="Sap">Sap</option>
+                  <option value="Slow">Slow</option>
+                  <option value="Topple">Topple</option>
+                  <option value="Vex">Vex</option>
+                </select>
+              </div>
+            </div>
+            <div class="hb-form-grid-3" style="margin-top: 8px;">
+              <div>
+                <label class="modal-label">Damage Dice</label>
+                <input type="text" id="hb-field-wpn-dice" class="modal-input" placeholder="e.g. 1d8 or 2d6" value="1d8" />
+              </div>
+              <div>
+                <label class="modal-label">Damage Type</label>
+                <select id="hb-field-wpn-dmgtype" class="modal-input">
+                  <option value="Slashing">Slashing</option>
+                  <option value="Piercing">Piercing</option>
+                  <option value="Bludgeoning">Bludgeoning</option>
+                  <option value="Fire">Fire</option>
+                  <option value="Cold">Cold</option>
+                  <option value="Lightning">Lightning</option>
+                  <option value="Radiant">Radiant</option>
+                  <option value="Necrotic">Necrotic</option>
+                  <option value="Force">Force</option>
+                  <option value="Psychic">Psychic</option>
+                  <option value="Acid">Acid</option>
+                  <option value="Poison">Poison</option>
+                  <option value="Thunder">Thunder</option>
+                </select>
+              </div>
+              <div>
+                <label class="modal-label">Magic Bonus</label>
+                <select id="hb-field-wpn-bonus" class="modal-input">
+                  <option value="">+0 (Mundane)</option>
+                  <option value="+1">+1</option>
+                  <option value="+2">+2</option>
+                  <option value="+3">+3</option>
+                </select>
+              </div>
+            </div>
+            <div class="hb-form-grid" style="margin-top: 8px;">
+              <div>
+                <label class="modal-label">Range</label>
+                <input type="text" id="hb-field-wpn-range" class="modal-input" value="5 ft." placeholder="5 ft. or 80/320 ft." />
+              </div>
+              <div>
+                <label class="modal-label">Properties (comma-separated)</label>
+                <input type="text" id="hb-field-wpn-props" class="modal-input" placeholder="Finesse, Light, Versatile (1d10)" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Armor Specifics -->
+          <div id="hb-group-armor" class="hb-section-box hidden">
+            <div class="hb-form-grid-3">
+              <div>
+                <label class="modal-label">Armor Category</label>
+                <select id="hb-field-arm-cat" class="modal-input">
+                  <option value="Light Armor">Light Armor</option>
+                  <option value="Medium Armor">Medium Armor</option>
+                  <option value="Heavy Armor">Heavy Armor</option>
+                  <option value="Shield">Shield</option>
+                </select>
+              </div>
+              <div>
+                <label class="modal-label">Base AC</label>
+                <input type="number" id="hb-field-arm-ac" class="modal-input" min="0" value="14" />
+              </div>
+              <div>
+                <label class="modal-label">Magic AC Bonus</label>
+                <input type="number" id="hb-field-arm-bonus" class="modal-input" min="0" max="5" value="0" />
+              </div>
+            </div>
+            <div class="hb-form-grid-3" style="margin-top: 8px;">
+              <div>
+                <label class="modal-label">Max DEX Bonus (blank = unlimited)</label>
+                <input type="number" id="hb-field-arm-maxdex" class="modal-input" placeholder="e.g. 2" />
+              </div>
+              <div>
+                <label class="modal-label">STR Minimum</label>
+                <input type="number" id="hb-field-arm-strmin" class="modal-input" min="0" value="0" />
+              </div>
+              <div style="display:flex; flex-direction:column; justify-content:flex-end; gap:4px; font-size:0.78rem; color:#cbd5e1;">
+                <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-field-arm-dex" checked /> Add DEX Mod</label>
+                <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-field-arm-stealth" /> Stealth Disadvantage</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Items Specifics -->
+          <div id="hb-group-items" class="hb-section-box hidden">
+            <div class="hb-form-grid">
+              <div>
+                <label class="modal-label">Item Subcategory</label>
+                <input type="text" id="hb-field-item-subcat" class="modal-input" value="Adventuring Gear" placeholder="Potion, Wondrous Item, Tool, Poison..." />
+              </div>
+              <div style="display:flex; align-items:flex-end; padding-bottom: 6px; font-size:0.78rem; color:#cbd5e1;">
+                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input type="checkbox" id="hb-field-item-consumable" /> Consumable (Potion / Scroll / Charge)</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Spells Specifics -->
+          <div id="hb-group-spells" class="hb-section-box hidden">
+            <div class="hb-form-grid-3">
+              <div>
+                <label class="modal-label">Spell Level</label>
+                <select id="hb-field-sp-level" class="modal-input">
+                  <option value="0">Cantrip (0)</option>
+                  <option value="1" selected>1st Level</option>
+                  <option value="2">2nd Level</option>
+                  <option value="3">3rd Level</option>
+                  <option value="4">4th Level</option>
+                  <option value="5">5th Level</option>
+                  <option value="6">6th Level</option>
+                  <option value="7">7th Level</option>
+                  <option value="8">8th Level</option>
+                  <option value="9">9th Level</option>
+                </select>
+              </div>
+              <div>
+                <label class="modal-label">School</label>
+                <select id="hb-field-sp-school" class="modal-input">
+                  <option value="Evocation">Evocation</option>
+                  <option value="Abjuration">Abjuration</option>
+                  <option value="Conjuration">Conjuration</option>
+                  <option value="Divination">Divination</option>
+                  <option value="Enchantment">Enchantment</option>
+                  <option value="Illusion">Illusion</option>
+                  <option value="Necromancy">Necromancy</option>
+                  <option value="Transmutation">Transmutation</option>
+                </select>
+              </div>
+              <div>
+                <label class="modal-label">Casting Time</label>
+                <input type="text" id="hb-field-sp-time" class="modal-input" value="1 action" />
+              </div>
+            </div>
+
+            <div class="hb-form-grid-3" style="margin-top: 8px;">
+              <div>
+                <label class="modal-label">Range</label>
+                <input type="text" id="hb-field-sp-range" class="modal-input" value="60 feet" />
+              </div>
+              <div>
+                <label class="modal-label">Duration</label>
+                <input type="text" id="hb-field-sp-duration" class="modal-input" value="Instantaneous" />
+              </div>
+              <div>
+                <label class="modal-label">Components</label>
+                <input type="text" id="hb-field-sp-comps" class="modal-input" value="V, S" placeholder="V, S, M" />
+              </div>
+            </div>
+
+            <div class="hb-form-grid-3" style="margin-top: 8px;">
+              <div>
+                <label class="modal-label">Damage / Healing</label>
+                <input type="text" id="hb-field-sp-dmg" class="modal-input" placeholder="e.g. 3d6 Fire or 2d8 Healing" />
+              </div>
+              <div>
+                <label class="modal-label">Save Type (if any)</label>
+                <select id="hb-field-sp-dc" class="modal-input">
+                  <option value="">None / Attack Roll</option>
+                  <option value="DEX">DEX Save</option>
+                  <option value="CON">CON Save</option>
+                  <option value="WIS">WIS Save</option>
+                  <option value="INT">INT Save</option>
+                  <option value="CHA">CHA Save</option>
+                  <option value="STR">STR Save</option>
+                </select>
+              </div>
+              <div>
+                <label class="modal-label">Attack Type</label>
+                <select id="hb-field-sp-atktype" class="modal-input">
+                  <option value="">None</option>
+                  <option value="ranged">Ranged Spell Attack</option>
+                  <option value="melee">Melee Spell Attack</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="margin-top: 8px;">
+              <label class="modal-label">Caster Class Lists</label>
+              <div class="hb-class-checks" id="hb-spell-classes-checks">
+                <label><input type="checkbox" value="Artificer" /> Artificer</label>
+                <label><input type="checkbox" value="Bard" /> Bard</label>
+                <label><input type="checkbox" value="Cleric" /> Cleric</label>
+                <label><input type="checkbox" value="Druid" /> Druid</label>
+                <label><input type="checkbox" value="Paladin" /> Paladin</label>
+                <label><input type="checkbox" value="Ranger" /> Ranger</label>
+                <label><input type="checkbox" value="Sorcerer" /> Sorcerer</label>
+                <label><input type="checkbox" value="Warlock" /> Warlock</label>
+                <label><input type="checkbox" value="Wizard" checked /> Wizard</label>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 16px; margin-top: 8px; font-size: 0.78rem; color: #cbd5e1;">
+              <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-field-sp-conc" /> Concentration</label>
+              <label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="hb-field-sp-ritual" /> Ritual</label>
+            </div>
+          </div>
+
+          <div style="margin-top: 8px;">
+            <label class="modal-label">Rules Description &amp; Effects</label>
+            <textarea id="hb-field-description" class="modal-input" rows="4" placeholder="Describe mechanical effects, special traits, upcasting rules, or lore..."></textarea>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; gap: 10px;">
+            <span id="hb-save-status" style="font-size: 0.76rem; color: #4ade80;"></span>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="btn-hb-reset" class="btn-secondary-sm" style="padding: 7px 14px;">Clear / New</button>
+              <button type="button" id="btn-hb-save" class="btn-primary-sm" style="padding: 7px 18px;">💾 Save Homebrew</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 16px;">
+        <button type="button" id="btn-close-compendium-footer" class="btn-secondary-sm" style="padding: 7px 16px;">Close Compendium</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Location-Based Merchant Shop (Buy / Sell + Regional Markup/Discount) -->
+  <div id="shop-modal" class="modal-overlay hidden" style="z-index: 100052;">
+    <div class="modal-card compendium-modal-card shop-modal-card">
+      <div class="modal-header" style="padding: 12px 18px; border-bottom: 1px solid #1e293b;">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+          <span style="font-size: 1.3rem;">🏪</span>
+          <div style="min-width: 0;">
+            <h3 id="shop-modal-title" style="margin: 0; font-size: 1.05rem; color: #f8fafc;">Merchant Shop &amp; Quartermaster</h3>
+            <span id="shop-modal-subtitle" style="font-size: 0.72rem; color: #94a3b8;">Regional Pricing (50%–200%) • Multi-Coin Settlement • Automatic Change</span>
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-shop-modal" title="Close Shop">✕</button>
+      </div>
+
+      <!-- Location Pricing & Character Purse Bar -->
+      <div class="shop-pricing-bar">
+        <div class="shop-control-group">
+          <label class="modal-label" for="select-shop-location-preset" style="margin:0;">Location / Preset</label>
+          <select id="select-shop-location-preset" class="modal-input comp-select" style="min-width: 215px;">
+            <option value="village_general" data-mult="1.0" data-spec="general">Village General Store (1.0x Standard)</option>
+            <option value="city_bazaar" data-mult="0.9" data-spec="general">City Trade Bazaar (0.9x Discount)</option>
+            <option value="faction_quartermaster" data-mult="0.8" data-spec="weapons_armor">Faction Quartermaster (0.8x Ally)</option>
+            <option value="camp_outpost" data-mult="1.25" data-spec="general">Frontier Outpost (1.25x Markup)</option>
+            <option value="black_market" data-mult="1.5" data-spec="magic_poison">Black Market (1.5x Markup)</option>
+            <option value="luxury_emporium" data-mult="1.15" data-spec="arcane">Arcane Emporium (1.15x Fine Goods)</option>
+          </select>
+        </div>
+
+        <div class="shop-control-group" style="min-width: 190px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; width:100%; font-size:0.72rem; color:#94a3b8;">
+            <span>Price Rate:</span>
+            <strong id="shop-multiplier-label" style="color:#38bdf8;">1.00x (Standard)</strong>
+          </div>
+          <input type="range" id="input-shop-multiplier" min="0.5" max="2.0" step="0.05" value="1.0" style="width:100%; accent-color:#38bdf8; cursor:pointer;" />
+        </div>
+
+        <div class="shop-control-group">
+          <label class="modal-label" for="select-shop-character" style="margin:0;">Active Hero</label>
+          <select id="select-shop-character" class="modal-input comp-select" style="min-width: 165px;"></select>
+        </div>
+
+        <div class="shop-wallet-pill" id="shop-char-wallet-badge" title="Hero's coin purse (pp/gp/ep/sp/cp)">
+          🪙 Purse: 0 gp
+        </div>
+      </div>
+
+      <!-- Mode Tabs + Filter Bar -->
+      <div class="compendium-filter-bar" style="gap: 8px;">
+        <div class="shop-mode-toggle">
+          <button type="button" id="btn-shop-mode-buy" class="shop-mode-btn active">🛒 Buy Goods</button>
+          <button type="button" id="btn-shop-mode-sell" class="shop-mode-btn">💰 Sell Gear (50%)</button>
+        </div>
+        <input type="text" id="input-shop-search" class="modal-input comp-search-input" placeholder="Search rations, rope, healing potion, longsword, armor..." />
+        <select id="select-shop-specialty" class="modal-input comp-select">
+          <option value="all">All Merchant Wares</option>
+          <option value="general">General Outfitter</option>
+          <option value="weapons_armor">Weapons &amp; Armor</option>
+          <option value="armor">Armor &amp; Shields</option>
+          <option value="potions">Alchemist &amp; Potions</option>
+          <option value="gear">Adventuring Gear &amp; Packs</option>
+          <option value="arcane">Arcane &amp; Foci</option>
+          <option value="magic_poison">Black Market &amp; Poison</option>
+        </select>
+        <select id="select-shop-edition" class="modal-input comp-select" style="min-width: 110px;">
+          <option value="2024" selected>2024 Rules</option>
+          <option value="2014">2014 Rules</option>
+        </select>
+        <label style="display:flex; align-items:center; gap:5px; font-size:0.76rem; color:#cbd5e1; cursor:pointer; white-space:nowrap;">
+          <input type="checkbox" id="chk-shop-include-magic" /> ✨ Magic Items
+        </label>
+        <span id="shop-results-count" class="comp-results-badge">0 items</span>
+      </div>
+
+      <div id="shop-banner-flavor" class="shop-flavor-banner hidden"></div>
+
+      <!-- Split Body -->
+      <div class="compendium-split-body">
+        <div id="shop-items-list" class="comp-results-list"></div>
+        <div id="shop-detail-pane" class="comp-detail-pane">
+          <div class="comp-detail-empty">
+            <span style="font-size: 2rem;">🏪</span>
+            <p>Select any item, weapon, armor, or pack on the left to inspect its local price and purchase it, or switch to <strong>Sell Gear</strong> to sell owned equipment.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 16px; display:flex; justify-content:space-between; align-items:center;">
+        <span id="shop-global-feedback" style="font-size: 0.78rem; color: #4ade80;"></span>
+        <button type="button" id="btn-close-shop-footer" class="btn-secondary-sm" style="padding: 7px 16px;">Leave Shop</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Interactive Short / Long Rest Manager -->
+  <div id="rest-modal" class="modal-overlay hidden" style="z-index: 100053;">
+    <div class="modal-card compendium-modal-card rest-modal-card">
+      <div class="modal-header" style="padding: 12px 18px; border-bottom: 1px solid #1e293b;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.3rem;">⛺</span>
+          <div>
+            <h3 style="margin: 0; font-size: 1.05rem; color: #f8fafc;">Party Rest &amp; Camp Preparation</h3>
+            <span id="rest-modal-subtitle" style="font-size: 0.72rem; color: #94a3b8;">Spend Hit Dice, use potions/rations, swap armor &amp; attunement (max 3), and prepare spells</span>
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-rest-modal" title="Close Rest">✕</button>
+      </div>
+
+      <div class="rest-top-controls">
+        <div class="shop-mode-toggle">
+          <button type="button" id="btn-rest-type-short" class="shop-mode-btn active">⏳ Short Rest (1 hr)</button>
+          <button type="button" id="btn-rest-type-long" class="shop-mode-btn">🌙 Long Rest (8 hrs)</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <select id="select-rest-edition" class="modal-input comp-select" style="min-width: 120px;">
+            <option value="2024" selected>2024 Rules</option>
+            <option value="2014">2014 Rules</option>
+          </select>
+          <span id="rest-dice-mode-pill" class="comp-pill comp-pill-ed">⚡ Digital Dice</span>
+        </div>
+      </div>
+
+      <div id="rest-reason-banner" class="shop-flavor-banner hidden"></div>
+
+      <!-- Hero Tabs -->
+      <div id="rest-hero-tabs" class="compendium-tabs-bar" style="padding: 0 16px;"></div>
+
+      <!-- Per-Hero Camp Preparation Workspace -->
+      <div id="rest-hero-body" class="rest-hero-body">
+        <div style="padding: 24px; text-align:center; color:#64748b;">Loading party rest state...</div>
+      </div>
+
+      <div class="modal-footer" style="border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <span id="rest-feedback" style="font-size: 0.78rem; color: #f87171;"></span>
+        <div style="display:flex; gap:8px;">
+          <button type="button" id="btn-cancel-rest" class="btn-secondary-sm" style="padding: 7px 14px;">Cancel</button>
+          <button type="button" id="btn-commit-rest" class="btn-primary-sm" style="padding: 7px 18px;">⛺ Complete Short Rest</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Guided Level-Up & Multiclass Wizard (D&D 2014/2024 + Vault & Non-D&D Progression) -->
+  <div id="levelup-wizard-modal" class="modal-overlay hidden" style="z-index: 100054;">
+    <div class="modal-card compendium-modal-card levelup-modal-card">
+      <div class="modal-header" style="padding: 12px 18px; border-bottom: 1px solid #1e293b;">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+          <span style="font-size: 1.3rem;">⭐</span>
+          <div style="min-width: 0;">
+            <h3 id="levelup-modal-title" style="margin: 0; font-size: 1.05rem; color: #f8fafc;">Guided Level-Up &amp; Multiclass Wizard</h3>
+            <span id="levelup-modal-subtitle" style="font-size: 0.74rem; color: #94a3b8;">Choose class advancement, multiclassing, HP roll, Subclass, ASI / Feat, and new spells</span>
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-levelup-modal" title="Close Level-Up Wizard">✕</button>
+      </div>
+
+      <!-- Edition + Inline XP Bar + Prereq Override -->
+      <div class="levelup-top-bar">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <select id="select-levelup-edition" class="modal-input comp-select" style="min-width: 118px;">
+            <option value="2024" selected>2024 Rules</option>
+            <option value="2014">2014 Rules</option>
+          </select>
+          <span id="levelup-xp-badge" class="comp-pill comp-pill-ed">XP: 0 / 300</span>
+        </div>
+        <div id="levelup-xp-award-group" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+          <input type="number" id="input-levelup-award-xp" class="modal-input" min="1" step="50" value="300" style="width: 92px; padding: 5px 8px; font-size: 0.78rem;" title="XP amount to award" />
+          <button type="button" id="btn-levelup-award-xp" class="btn-secondary-sm" style="padding: 5px 10px; font-size: 0.76rem;">+ Award XP</button>
+        </div>
+        <label id="levelup-bypass-wrap" style="display:flex; align-items:center; gap:5px; font-size:0.75rem; color:#cbd5e1; cursor:pointer; white-space:nowrap;">
+          <input type="checkbox" id="chk-levelup-bypass-prereqs" /> Override Multiclass Prereqs
+        </label>
+      </div>
+
+      <div id="levelup-reason-banner" class="shop-flavor-banner hidden"></div>
+
+      <!-- D&D 5e Guided Wizard Split Body -->
+      <div id="levelup-dnd-body" class="compendium-split-body levelup-split-body">
+        <div class="comp-results-list levelup-class-pane">
+          <div class="levelup-pane-title">1. Class Selection</div>
+          <div id="levelup-class-list" class="levelup-class-list">
+            <div style="padding: 18px; color: #64748b; text-align: center;">Loading classes...</div>
+          </div>
+        </div>
+        <div id="levelup-wizard-body" class="comp-detail-pane levelup-detail-pane">
+          <div style="padding: 24px; color: #64748b; text-align: center;">Select a class on the left to preview level-up options.</div>
+        </div>
+      </div>
+
+      <!-- Non-D&D Fallback Progression Body -->
+      <div id="levelup-nondnd-body" class="rest-hero-body hidden">
+        <div class="rest-section-card">
+          <div class="rest-section-title">
+            <span id="levelup-nondnd-ruleset-title">🎲 Character Progression</span>
+            <span id="levelup-nondnd-level-badge" class="comp-pill comp-pill-ed">Lv. 1 → Lv. 2</span>
+          </div>
+          <p style="margin:0; font-size:0.8rem; color:#94a3b8;">Advance your character by 1 level/tier and optionally boost a core attribute or record a new talent/cyberware/skill edge.</p>
+          <div class="rest-grid-2">
+            <div>
+              <label class="modal-label" for="select-nondnd-attr">Attribute to Boost (Optional)</label>
+              <select id="select-nondnd-attr" class="modal-input"></select>
+            </div>
+            <div>
+              <label class="modal-label" for="input-nondnd-boost">Boost Amount</label>
+              <input type="number" id="input-nondnd-boost" class="modal-input" min="0" max="10" value="1" />
+            </div>
+          </div>
+          <div class="rest-grid-2">
+            <div>
+              <label class="modal-label" for="input-nondnd-trait-name">New Feature / Edge / Talent (Optional)</label>
+              <input type="text" id="input-nondnd-trait-name" class="modal-input" placeholder="e.g. Combat Reflexes, Expert Dodge..." />
+            </div>
+            <div>
+              <label class="modal-label" for="input-nondnd-trait-desc">Feature Notes (Optional)</label>
+              <input type="text" id="input-nondnd-trait-desc" class="modal-input" placeholder="Short description of effect..." />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <span id="levelup-feedback" style="font-size: 0.78rem; color: #4ade80;"></span>
+        <div style="display:flex; gap:8px;">
+          <button type="button" id="btn-cancel-levelup" class="btn-secondary-sm" style="padding: 7px 14px;">Cancel</button>
+          <button type="button" id="btn-commit-levelup" class="btn-primary-sm" style="padding: 7px 18px;">✨ Confirm Level Up</button>
+        </div>
       </div>
     </div>
   </div>

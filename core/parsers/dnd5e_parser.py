@@ -84,10 +84,14 @@ def parse_multiclass_string(class_str: str) -> List[Dict[str, Any]]:
     return parsed if parsed else [{"class": "Fighter", "level": 1}]
 
 
-def calculate_multiclass_spell_slots(classes: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Calculates unified spell slots according to the official multiclass spell matrix."""
+def calculate_multiclass_spell_slots(
+    classes: List[Dict[str, Any]],
+    edition: str = "2014",
+) -> Dict[str, Dict[str, Any]]:
+    """Calculates unified spell slots according to the official multiclass spell matrix (2014 & 2024)."""
     ecl = 0
     has_spellcaster = False
+    is_2024 = str(edition or "2014").strip() == "2024"
 
     for c in classes:
         name = c["class"].lower()
@@ -97,13 +101,13 @@ def calculate_multiclass_spell_slots(classes: List[Dict[str, Any]]) -> Dict[str,
             ecl += lvl
             has_spellcaster = True
         elif any(hc in name for hc in ["paladin", "ranger"]):
-            ecl += lvl // 2
+            ecl += ((lvl + 1) // 2) if is_2024 else (lvl // 2)
             has_spellcaster = True
         elif "artificer" in name:
             ecl += (lvl + 1) // 2
             has_spellcaster = True
         elif any(tc in name for tc in ["eldritch knight", "arcane trickster"]):
-            ecl += lvl // 3
+            ecl += ((lvl + 2) // 3) if is_2024 else (lvl // 3)
             has_spellcaster = True
 
     slots = {f"level_{r}": {"current": 0, "max": 0, "reset_on": "long_rest"} for r in range(1, 10)}

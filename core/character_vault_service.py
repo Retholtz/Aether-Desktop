@@ -918,6 +918,66 @@ class CharacterVaultService:
             "is_root_updated": is_in_native_world
         }
 
+    def get_dnd_advancement_options(
+        self,
+        char_id: str,
+        edition: str = "2024",
+        target_class: Optional[str] = None,
+        bypass_prereqs: bool = False,
+    ) -> Dict[str, Any]:
+        """Returns D&D 5e advancement & multiclass preview options for a Vault hero."""
+        char = self.get_character(char_id)
+        if not char:
+            return {"status": "error", "message": f"Character '{char_id}' not found in Vault."}
+
+        from core.compendiums.dnd_advancement import get_advancement_options
+
+        ed = edition if str(edition).strip() in ("2014", "2024") else (char.get("ruleset_edition") or "2024")
+        opts = get_advancement_options(
+            char,
+            edition=ed,
+            target_class=target_class,
+            bypass_prereqs=bypass_prereqs,
+        )
+        opts["source"] = "vault"
+        opts["character_id"] = char["id"]
+        return opts
+
+    def apply_dnd_level_up(
+        self,
+        char_id: str,
+        payload: Optional[Dict[str, Any]] = None,
+        current_campaign_genre: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Applies guided D&D 5e advancement to a Vault character while preserving Root vs Crossover branch isolation.
+        """
+        char = self.get_character(char_id)
+        if not char:
+            return {"status": "error", "message": f"Character '{char_id}' not found in Vault."}
+
+        from core.compendiums.dnd_advancement import apply_level_up
+
+        res = apply_level_up(char, payload or {})
+        if res.get("status") != "success":
+            return res
+
+        native_genre = char.get("native_genre")
+        is_root = bool(char.get("is_root", True))
+        if current_campaign_genre:
+            is_in_native = are_rulesets_compatible(native_genre or "dnd_5e", current_campaign_genre)
+        else:
+            is_in_native = is_root
+
+        char["updated_at"] = _utc_now_iso()
+        self._save_character(char)
+
+        target_type = "Canonical Root" if (is_root and is_in_native) else f"Crossover Variant ({char.get('current_genre') or current_campaign_genre or 'branch'})"
+        res["target_updated"] = target_type
+        res["is_root_updated"] = bool(is_root and is_in_native)
+        logger.info(f"[VAULT] D&D Level-Up: '{char['name']}' -> {res['class_summary']} [{target_type}].")
+        return res
+
     def adjudicate_item(
         self,
         char_id: str,

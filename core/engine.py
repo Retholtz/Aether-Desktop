@@ -432,6 +432,9 @@ def sanitize_speech_text(text: str) -> str:
     # Remove code blocks fences but keep the code content
     cleaned = re.sub(r'```[a-zA-Z0-9_-]*\n?(.*?)```', r'\1', text, flags=re.DOTALL)
 
+    # Remove dice formula parentheticals like (1d20+5) or (d20) so speech engines do not read formula math aloud
+    cleaned = re.sub(r'\s*\(\s*(?:\d+)?d\d+\s*(?:[+\-]\s*\d+)?\s*\)', '', cleaned)
+
     # Remove inline backticks
     cleaned = re.sub(r'`([^`]+)`', r'\1', cleaned)
 
@@ -1486,10 +1489,19 @@ class AetherEngine:
             if hasattr(self, "ttrpg_service") and self.ttrpg_service:
                 self.ttrpg_service.manifest["active_campaign"] = context_id
                 self.ttrpg_service.active_campaign_id = context_id
-                if hasattr(self.ttrpg_service, "build_gm_system_prompt"):
-                    self.active_system_prompt = self.ttrpg_service.build_gm_system_prompt(context_id)
-                elif hasattr(self.ttrpg_service, "build_gm_context_prompt"):
-                    self.active_system_prompt = self.ttrpg_service.build_gm_context_prompt()
+                try:
+                    if hasattr(self.ttrpg_service, "load_active_campaign_state"):
+                        self.ttrpg_service.load_active_campaign_state()
+                    if hasattr(self.ttrpg_service, "build_gm_system_prompt"):
+                        self.active_system_prompt = self.ttrpg_service.build_gm_system_prompt(context_id)
+                    elif hasattr(self.ttrpg_service, "build_gm_context_prompt"):
+                        self.active_system_prompt = self.ttrpg_service.build_gm_context_prompt()
+                except Exception as e:
+                    logger.error(f"[ENGINE] Failed to build GM prompt for campaign {context_id}: {e}", exc_info=True)
+                    self.active_system_prompt = (
+                        f"You are Aether, the Game Master (DM/GM) for the tabletop campaign '{context_id}'. "
+                        "Guide the adventure, narrate scenes, and adjudicate player actions strictly within the campaign."
+                    )
             if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "set_active_scope"):
                 self.dispatcher.set_active_scope(["ttrpg_tools", "media_tools"])
         elif workspace_type == "project":
@@ -1685,6 +1697,8 @@ class AetherEngine:
         cleaned = re.sub(r'^(?:aether|the dm|the gm)\s+rolls?\s+(?:for\s+[^:,\.\-\n]+)?[:,\-\.]*\s*', '', cleaned, flags=re.IGNORECASE).strip()
         cleaned = re.sub(r'^(?:i\s+am|i\'m)\s+rolling\s+(?:for\s+[^:,\.\-\n]+)?[:,\-\.]*\s*', '', cleaned, flags=re.IGNORECASE).strip()
         cleaned = re.sub(r'^rolling\s+(?:for\s+[^:,\.\-\n]+)?[:,\-\.]*\s*', '', cleaned, flags=re.IGNORECASE).strip()
+        # Cleanse formula parentheticals like "(1d20+5)" or "(d20)" so narrative output stays natural
+        cleaned = re.sub(r'\s*\(\s*(?:\d+)?d\d+\s*(?:[+\-]\s*\d+)?\s*\)', '', cleaned).strip()
         return cleaned or assistant_text.strip()
 
     @property
@@ -2594,7 +2608,7 @@ class AetherEngine:
             else:
                 self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
 
-    async def send_text(self, text: str):
+    async def send_text(self, text: str, display_text: Optional[str] = None):
         """Queues a typed message to be sent into the active Gemini Live session."""
         clean_text = text.strip()
         if not clean_text:
@@ -2618,9 +2632,10 @@ class AetherEngine:
         if self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED:
             await self._ensure_live_connected(reason="Typed text sent")
         await self._text_queue.put(clean_text)
+        shown_text = (display_text or clean_text).strip()
         self.notify("chat_event", {
             "type": "user",
-            "content": clean_text,
+            "content": shown_text,
             "source": "text",
             "workspace_type": getattr(self, "active_workspace_type", "general"),
             "context_id": getattr(self, "active_workspace_context_id", "default")
@@ -2725,7 +2740,12 @@ class AetherEngine:
                     self.last_user_turn_timestamp = now_ts
                     self._in_active_turn = True
                     if hasattr(self, "session_lifecycle") and self.session_lifecycle:
-                        self.session_lifecycle.record_turn("user", clean_typed)
+                        record_text = clean_typed
+                        if record_text.startswith("[TABLETOP ROLEPLAY ACTION"):
+                            m = re.search(r"Player Action / Dialogue:\s*(.*?)(?:\n\[GAME MASTER DIRECTIVE|\Z)", record_text, re.DOTALL)
+                            if m:
+                                record_text = m.group(1).strip()
+                        self.session_lifecycle.record_turn("user", record_text)
                     content = types.Content(
                         role="user",
                         parts=[types.Part.from_text(text=clean_typed)]
@@ -4865,15 +4885,22 @@ class AetherEngine:
         base_inst = ""
 
         # MODE 1: Tabletop Role Play Mode (Live Game Master / DM)
-        # Strictly gated behind an active adventure session!
-        if self.is_ttrpg_session_active():
+        # Strictly exclusive to an active adventure session or campaign workspace!
+        if self.is_ttrpg_session_active() or getattr(self, "active_workspace_type", "") == "campaign":
             if hasattr(self, "ttrpg_service") and self.ttrpg_service:
                 try:
                     gm_ctx = self.ttrpg_service.build_gm_context_prompt()
                     if gm_ctx:
                         base_inst = gm_ctx
                 except Exception as e:
-                    logger.debug(f"[ENGINE] TTRPG GM context building failed: {e}")
+                    logger.error(f"[ENGINE] TTRPG GM context building failed: {e}", exc_info=True)
+            if not base_inst:
+                active_id = getattr(getattr(self, "ttrpg_service", None), "manifest", {}).get("active_campaign", "the campaign")
+                base_inst = (
+                    f"You are Aether, the Dungeon Master and Game Master (DM/GM) running the active tabletop roleplaying adventure '{active_id}'. "
+                    "Adjudicate all player actions in character, narrate the setting and NPCs, enforce game rules, and keep all responses strictly within this roleplaying campaign. "
+                    "Do NOT answer as a general desktop assistant."
+                )
 
         # MODE 2: Video Game Companion Mode (e.g. Crimson Desert, Steam, etc.)
         if not base_inst:
@@ -4946,10 +4973,27 @@ class AetherEngine:
                 "update_campaign_details",
                 "record_campaign_notes",
                 "get_campaign_notes",
+                "manage_party_inventory",
+                "cast_spell",
+                "modify_vitals",
+                "modify_resource_meter",
+                "apply_condition",
+                "execute_rest",
+                "prompt_party_rest",
+                "apply_physical_hit_die_roll",
+                "level_up_character",
+                "prompt_level_up_wizard",
+                "lookup_dnd_compendium",
+                "open_merchant_shop",
+                "merchant_transaction",
+                "cast_pathfinder_spell",
+                "cast_coc_spell",
+                "apply_cyberpunk_damage",
                 "export_character_to_vault",
                 "import_character_from_vault",
                 "list_vault_characters",
                 "get_vault_character",
+                "inspect_vault_roster",
                 "play_ambient_audio",
                 "stop_ambient_audio",
                 "set_ambient_volume",
@@ -5962,10 +6006,18 @@ class AetherEngine:
             try:
                 if hasattr(self, "ttrpg_service") and self.ttrpg_service and getattr(self.ttrpg_service, "active_state", None):
                     try:
-                        raw_turns = self.session_lifecycle.get_raw_turns()
+                        raw_turns = []
+                        if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+                            raw_turns = self.session_lifecycle.get_raw_turns()
+                        if (not raw_turns or len(raw_turns) < 2) and hasattr(self, "session_manager") and self.session_manager:
+                            raw_turns = getattr(self.session_manager, "history", [])
                         if raw_turns:
-                            self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=self.session_lifecycle.session_id)
-                            self.notify("ttrpg_state_updated", {"status": "success", "session_id": self.session_lifecycle.session_id})
+                            sid = (
+                                getattr(self.session_lifecycle, "session_id", None)
+                                or getattr(self.session_manager, "active_session_id", "campaign")
+                            )
+                            self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=sid)
+                            self.notify("ttrpg_state_updated", {"status": "success", "session_id": sid})
                     except Exception as e_rp:
                         logger.warning(f"[STOP] TTRPG auto session notes error: {e_rp}")
 

@@ -6829,7 +6829,8 @@ class GuiBridge:
         difficulty: str = "helpful",
         linked_project_id: str = "",
         initial_files: Optional[List[Dict[str, Any]]] = None,
-        byoc_data: Optional[Dict[str, Any]] = None
+        byoc_data: Optional[Dict[str, Any]] = None,
+        module_adherence: str = "strict"
     ) -> Dict[str, Any]:
         res = self.ttrpg_service.create_campaign(
             title=title,
@@ -6839,7 +6840,8 @@ class GuiBridge:
             tone=tone,
             difficulty=difficulty,
             linked_project_id=linked_project_id,
-            initial_files=initial_files
+            initial_files=initial_files,
+            module_adherence=module_adherence
         )
         if res.get("status") == "success":
             cid = (res.get("campaign") or {}).get("id")
@@ -6855,6 +6857,7 @@ class GuiBridge:
                     c_mgr.manifest.title = title
                     c_mgr.manifest.ruleset = system_preset or "dnd_5e"
                     c_mgr.manifest.premise = setting_overview or f"The adventure begins in {title}."
+                    c_mgr.manifest.module_adherence = module_adherence or "strict"
 
                     if byoc_data and isinstance(byoc_data, dict):
                         if byoc_data.get("genre"):
@@ -6980,7 +6983,9 @@ class GuiBridge:
         setting_overview: Optional[str] = None,
         tone: Optional[str] = None,
         difficulty: Optional[str] = None,
-        linked_project_id: Optional[str] = None
+        linked_project_id: Optional[str] = None,
+        dice_mode: Optional[str] = None,
+        module_adherence: Optional[str] = None
     ) -> Dict[str, Any]:
         res = self.ttrpg_service.update_campaign(
             campaign_id=campaign_id,
@@ -6990,7 +6995,9 @@ class GuiBridge:
             setting_overview=setting_overview,
             tone=tone,
             difficulty=difficulty,
-            linked_project_id=linked_project_id
+            linked_project_id=linked_project_id,
+            dice_mode=dice_mode,
+            module_adherence=module_adherence
         )
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
@@ -7323,13 +7330,21 @@ class GuiBridge:
                     logger.info("[TTRPG] Tabletop session concluded: Restored Target Speaker Filter to ON.")
 
                 # Auto-summarize session turns into campaign journal & recap on conclusion
-                if eng and hasattr(eng, "session_lifecycle") and eng.session_lifecycle:
+                if eng:
                     try:
-                        raw_turns = eng.session_lifecycle.get_raw_turns()
+                        raw_turns = []
+                        if hasattr(eng, "session_lifecycle") and eng.session_lifecycle:
+                            raw_turns = eng.session_lifecycle.get_raw_turns()
+                        if (not raw_turns or len(raw_turns) < 2) and hasattr(eng, "session_manager") and eng.session_manager:
+                            raw_turns = getattr(eng.session_manager, "history", [])
                         if raw_turns:
-                            self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=eng.session_lifecycle.session_id)
+                            sid = (
+                                getattr(eng.session_lifecycle, "session_id", None)
+                                or getattr(eng.session_manager, "active_session_id", "campaign")
+                            )
+                            self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=sid)
                             if hasattr(self, "_on_engine_event"):
-                                self._on_engine_event("ttrpg_state_updated", {"status": "success", "session_id": eng.session_lifecycle.session_id})
+                                self._on_engine_event("ttrpg_state_updated", {"status": "success", "session_id": sid})
                     except Exception as e_rp:
                         logger.warning(f"[TTRPG] Auto session notes error on session end: {e_rp}")
 
@@ -7374,6 +7389,31 @@ class GuiBridge:
             self.start_assistant()
         self.set_ttrpg_session_active(True)
         active_id = self.ttrpg_service.manifest.get("active_campaign")
+        if not active_id and self.ttrpg_service.manifest.get("campaigns"):
+            active_id = next(iter(self.ttrpg_service.manifest["campaigns"]))
+            self.ttrpg_service.manifest["active_campaign"] = active_id
+            self.ttrpg_service.save_manifest()
+
+        if not active_id:
+            return {"success": False, "error": "No campaign selected or available to resume"}
+
+        # Ensure campaign state is loaded if not already in memory
+        if hasattr(self.ttrpg_service, "load_active_campaign_state") and not self.ttrpg_service.active_state:
+            self.ttrpg_service.load_active_campaign_state()
+
+        # Synchronize location and recap from recent session turns if available so resume location is never stale
+        eng = getattr(self, "_engine", None)
+        if eng and hasattr(eng, "session_manager") and eng.session_manager:
+            active_sid = f"campaign_{active_id}".lower().strip()
+            hist = getattr(eng.session_manager, "history", [])
+            if (not hist or getattr(eng.session_manager, "active_session_id", "") != active_sid) and hasattr(eng.session_manager, "switch_session"):
+                hist = eng.session_manager.switch_session("campaign", active_id)
+            if hist and len(hist) >= 2:
+                try:
+                    self.ttrpg_service.auto_summarize_session_to_journal(hist, session_id=active_sid)
+                except Exception as e_sync:
+                    logger.debug(f"[TTRPG] Resume turn auto-sync check error: {e_sync}")
+
         camp = self.ttrpg_service.manifest.get("campaigns", {}).get(active_id, {}) if active_id else {}
         camp_title = camp.get("title", active_id or "the campaign")
         state = self.ttrpg_service.active_state or {}
@@ -7412,9 +7452,7 @@ class GuiBridge:
                 f"Introduce the setting and our characters from the party roster, and set the opening scene from the adventure module.{doc_hint}{diff_note} "
                 f"What do we see and what are our immediate choices?"
             )
-        if active_id:
-            return self.send_workspace_message("campaign", active_id, prompt)
-        return self.send_text_message(prompt)
+        return self.send_workspace_message("campaign", active_id, prompt)
 
     def manage_ttrpg_progression(
         self,
@@ -7433,11 +7471,19 @@ class GuiBridge:
             self._on_engine_event("ttrpg_state_updated", res)
         return res
 
-    def roll_ttrpg_dice(self, formula: str, roll_type: str = "normal", purpose: Optional[str] = None) -> Dict[str, Any]:
-        res = self.ttrpg_service.parse_and_roll(formula, roll_type)
-        if res.get("status") == "success" and purpose:
-            res["purpose"] = purpose
+    def roll_ttrpg_dice(
+        self,
+        formula: str,
+        roll_type: str = "normal",
+        purpose: Optional[str] = None,
+        character_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        res = self.ttrpg_service.parse_and_roll(formula, roll_type, character_name=character_name)
         if res.get("status") == "success":
+            if purpose:
+                res["purpose"] = purpose
+            if character_name:
+                res["character_name"] = character_name
             self._on_engine_event("dice_roll_event", res)
         return res
 
@@ -7538,20 +7584,43 @@ class GuiBridge:
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
         spells: Optional[List[Any]] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        storage_location: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Adds or removes weapons, items, and spells for a character in the active campaign."""
+        """Adds, removes, disarms, or retrieves weapons, items, and spells for a character or party in the active campaign."""
         res = self.ttrpg_service.manage_character_inventory(
             character_name=character_name,
             action=action,
             items=items,
             weapons=weapons,
             spells=spells,
-            reason=reason
+            reason=reason,
+            storage_location=storage_location
         )
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
         return res
+
+    def manage_ttrpg_inventory(
+        self,
+        character_name: str,
+        action: str = "add",
+        items: Optional[List[str]] = None,
+        weapons: Optional[List[Dict[str, str]]] = None,
+        spells: Optional[List[Any]] = None,
+        reason: Optional[str] = None,
+        storage_location: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Convenience alias for manage_ttrpg_character_inventory supporting party-wide disarm/retrieve."""
+        return self.manage_ttrpg_character_inventory(
+            character_name=character_name,
+            action=action,
+            items=items,
+            weapons=weapons,
+            spells=spells,
+            reason=reason,
+            storage_location=storage_location
+        )
 
     def reformat_ttrpg_weapons_or_items(self, raw_text: str, ruleset: str = "dnd_5e") -> Dict[str, Any]:
         """Parses and reformats raw unformatted weapon or item text into structured character sheet records."""
@@ -7880,6 +7949,12 @@ class GuiBridge:
             if not text:
                 continue
 
+            # Strip any GM framing wrapper from displayed history turns
+            if text.startswith("[TABLETOP ROLEPLAY ACTION"):
+                match = re.search(r"Player Action / Dialogue:\s*(.*?)(?:\n\[GAME MASTER DIRECTIVE|\Z)", text, re.DOTALL)
+                if match:
+                    text = match.group(1).strip()
+
             msg_type = "user" if role == "user" else "assistant"
             formatted.append({
                 "type": msg_type,
@@ -7949,16 +8024,65 @@ class GuiBridge:
             return {"success": False, "error": "Engine not running"}
 
         sid = f"{workspace_type}_{context_id}".lower().strip()
-        if getattr(eng, "active_workspace_type", "") != workspace_type or getattr(eng, "active_workspace_context_id", "") != context_id:
+
+        # Enforce TTRPG engine locking when routing to campaign workspace
+        if workspace_type == "campaign":
+            self.set_ttrpg_session_active(True)
+            if hasattr(eng, "set_ttrpg_session_active"):
+                eng.set_ttrpg_session_active(True)
+            try:
+                from core.campaign.campaign_manager import CampaignManager
+                import tools.campaign_tools as ct
+                ct._CAMPAIGN = CampaignManager(campaign_id=context_id)
+            except Exception as e:
+                logger.debug(f"[GUIBridge] Failed to update campaign_tools singleton: {e}")
+
+        needs_switch = (
+            getattr(eng, "active_workspace_type", "") != workspace_type
+            or getattr(eng, "active_workspace_context_id", "") != context_id
+        )
+        if needs_switch:
             eng.set_active_workspace(workspace_type, context_id)
+        elif workspace_type == "campaign":
+            if hasattr(self, "ttrpg_service") and self.ttrpg_service:
+                self.ttrpg_service.manifest["active_campaign"] = context_id
+                self.ttrpg_service.active_campaign_id = context_id
+                try:
+                    eng.active_system_prompt = self.ttrpg_service.build_gm_context_prompt()
+                except Exception as e:
+                    logger.error(f"[GUI_BRIDGE] Error refreshing TTRPG GM prompt: {e}", exc_info=True)
 
         try:
             if not eng.is_running:
                 logger.info(f"[GUI_BRIDGE] Auto-starting engine from workspace message ({workspace_type}:{context_id})")
                 self.start_assistant()
-            asyncio.run_coroutine_threadsafe(eng.send_text(clean_text), self._loop)
+
+            prompt_to_send = clean_text
+            display_text = clean_text
+            if workspace_type == "campaign":
+                camp = self.ttrpg_service.manifest.get("campaigns", {}).get(context_id, {}) if hasattr(self, "ttrpg_service") and self.ttrpg_service else {}
+                camp_title = camp.get("title", context_id or "Active Campaign")
+                if not clean_text.startswith("Aether, please act as our Game Master") and not clean_text.startswith("[TABLETOP ROLEPLAY"):
+                    prompt_to_send = (
+                        f"[TABLETOP ROLEPLAY ACTION — CAMPAIGN: {camp_title}]\n"
+                        f"Player Action / Dialogue: {clean_text}\n"
+                        f"[GAME MASTER DIRECTIVE: Adjudicate this action strictly within the active adventure '{camp_title}'.\n"
+                        f"- MANDATORY CHARACTER SELECTION & PLAYER AGENCY:\n"
+                        f"  * The party has multiple player characters (Joe, Sam, Shadow). YOU DO NOT CHOOSE WHO ACTS!\n"
+                        f"  * If the player specifies who acts (e.g. 'Shadow examines the locket', 'Joe speaks to Olaf'): resolve immediately with that character.\n"
+                        f"  * If the player did NOT name a character (e.g. '{clean_text}'):\n"
+                        f"    - If this is dialogue, asking an NPC questions, or movement: DO NOT ROLL DICE! Answer directly in-character as the NPC or describe the travel.\n"
+                        f"    - If an action genuinely requires a skill check: ASK THE TABLE: 'Who in the party steps forward to do this? Joe, Sam, or Shadow?' DO NOT arbitrarily pick an actor or call roll_dice until the player specifies who acts!\n"
+                        f"- STRICT BAN ON UNSOLICITED DIALOGUE ROLLS: Routine conversation with NPCs ('Press Sandra for information', 'Ask about Imis', 'Question the guards') is NORMAL DIALOGUE, NOT a Persuasion check! Moving to an area ('Head to the western gate') is MOVEMENT, NOT a Survival check! Never roll dice for ordinary conversation or travel!\n"
+                        f"- ACTOR ATTRIBUTION & CLEAN NARRATION: Every dice roll MUST be explicitly attributed to a character or monster/DM. Always pass their name in `character_name` when calling `roll_dice`. In your narration, state the character and the final total (e.g. 'Joe rolled a 16')—DO NOT read off or append dice formulas like '(1d20+4)'.\n"
+                        f"- Do NOT answer as a general desktop assistant.]"
+                    )
+
+            coro = eng.send_text(prompt_to_send, display_text=display_text)
+            asyncio.run_coroutine_threadsafe(coro, self._loop)
             return {"success": True, "session_id": sid}
         except Exception as e:
+            logger.error(f"[GUI_BRIDGE] send_workspace_message error: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
     def set_active_workspace(
@@ -7974,6 +8098,446 @@ class GuiBridge:
             formatted = self._format_history_turns(history)
             return {"status": "success", "history": formatted, "session_id": f"{workspace_type}_{context_id}"}
         return {"status": "error", "message": "Engine not initialized"}
+
+    # --- D&D 5e (2014 & 2024) SRD Compendium & Custom Homebrew Endpoints ---
+
+    def search_dnd_compendium(
+        self,
+        category: str = "all",
+        query: str = "",
+        edition: str = "all",
+        filters: Optional[Dict[str, Any]] = None,
+        homebrew_only: bool = False,
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        """Searches the offline D&D 5e (2014/2024 SRD + Homebrew) compendium."""
+        try:
+            from core.compendiums import search_compendium, get_compendium_stats
+            items = search_compendium(
+                category=category,
+                query=query,
+                edition=edition,
+                filters=filters,
+                homebrew_only=bool(homebrew_only),
+                limit=int(limit) if limit else 200,
+            )
+            stats = get_compendium_stats()
+            return {"status": "success", "items": items, "count": len(items), "stats": stats}
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] search_dnd_compendium error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e), "items": [], "count": 0}
+
+    def get_dnd_compendium_item(
+        self,
+        category: str,
+        index_or_name: str,
+        edition: str = "2024",
+    ) -> Dict[str, Any]:
+        """Retrieves full details (including pack contents or 2014/2024 notes) for a compendium item."""
+        try:
+            from core.compendiums.dnd_weapons import get_weapon
+            from core.compendiums.dnd_armor import get_armor
+            from core.compendiums.dnd_items import get_item, expand_pack_contents
+            from core.compendiums.dnd_spells import get_spell
+
+            cat = (category or "").strip().lower()
+            entry = None
+            if cat in ("weapons", "weapon"):
+                entry = get_weapon(index_or_name)
+            elif cat in ("armor", "armors", "shield", "shields"):
+                entry = get_armor(index_or_name)
+            elif cat in ("items", "item", "gear", "magic_items"):
+                entry = get_item(index_or_name)
+                if entry and entry.get("contents"):
+                    entry["expanded_contents"] = expand_pack_contents(entry.get("index") or entry["name"])
+            elif cat in ("spells", "spell"):
+                entry = get_spell(index_or_name, edition=edition)
+
+            if not entry:
+                return {"status": "error", "message": f"'{index_or_name}' not found in '{category}'."}
+            return {"status": "success", "item": entry}
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] get_dnd_compendium_item error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def get_dnd_compendium_stats(self) -> Dict[str, Any]:
+        """Returns entry counts across Weapons, Armor, Items, Spells, and Homebrew."""
+        try:
+            from core.compendiums import get_compendium_stats
+            return {"status": "success", "stats": get_compendium_stats()}
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] get_dnd_compendium_stats error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def list_weapon_masteries(self) -> Dict[str, Any]:
+        """Returns 2024 D&D 5e Weapon Mastery properties (Cleave, Graze, Nick, Push, Sap, Slow, Topple, Vex)."""
+        try:
+            from core.compendiums.dnd_weapons import list_weapon_masteries
+            return {"status": "success", "masteries": list_weapon_masteries()}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "masteries": []}
+
+    def list_homebrew_entries(self, category: str = "all") -> Dict[str, Any]:
+        """Lists all custom homebrew weapons, armor, items, and spells."""
+        try:
+            from core.compendiums.homebrew_manager import get_default_homebrew_manager
+            entries = get_default_homebrew_manager().list_entries(category=category)
+            return {"status": "success", "entries": entries, "count": len(entries)}
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] list_homebrew_entries error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e), "entries": []}
+
+    def save_homebrew_entry(self, category: str, entry_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Creates or updates a custom homebrew weapon, armor, item, or spell."""
+        try:
+            from core.compendiums.homebrew_manager import get_default_homebrew_manager
+            res = get_default_homebrew_manager().save_entry(category=category, entry=entry_data or {})
+            if res.get("status") == "success":
+                self._on_engine_event("homebrew_updated", res)
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] save_homebrew_entry error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def delete_homebrew_entry(self, category: str, entry_id: str) -> Dict[str, Any]:
+        """Deletes a custom homebrew entry from persistent JSON storage."""
+        try:
+            from core.compendiums.homebrew_manager import get_default_homebrew_manager
+            res = get_default_homebrew_manager().delete_entry(category=category, entry_id=entry_id)
+            if res.get("status") == "success":
+                self._on_engine_event("homebrew_updated", res)
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] delete_homebrew_entry error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def add_compendium_entry_to_character(
+        self,
+        character_name: str,
+        category: str,
+        index_or_name: str,
+        edition: str = "2024",
+        expand_pack: bool = True,
+        qty: int = 1,
+        equip: bool = False,
+        bypass_class_check: bool = False,
+    ) -> Dict[str, Any]:
+        """Grants a compendium item/weapon/armor/spell directly to a character in the active campaign."""
+        try:
+            res = self.ttrpg_service.add_compendium_entry_to_character(
+                character_name=character_name,
+                category=category,
+                index_or_name=index_or_name,
+                edition=edition,
+                expand_pack=bool(expand_pack),
+                qty=max(1, int(qty or 1)),
+                equip=bool(equip),
+                bypass_class_check=bool(bypass_class_check),
+            )
+            if res.get("status") == "success":
+                self._on_engine_event("ttrpg_state_updated", res)
+                self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] add_compendium_entry_to_character error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def check_spell_class_eligibility(
+        self,
+        character_name: str,
+        spell_name: str,
+        edition: str = "2024",
+    ) -> Dict[str, Any]:
+        """Validates if a campaign character is eligible to learn/prepare a spell according to D&D 5e class rules."""
+        try:
+            if not self.ttrpg_service._ensure_active_state():
+                return {"status": "error", "message": "No active campaign loaded.", "can_learn": True}
+            cid, char_data = self.ttrpg_service._find_character(character_name)
+            if not char_data:
+                return {"status": "error", "message": f"Character '{character_name}' not found.", "can_learn": True}
+            from core.compendiums.dnd_spells import validate_character_spell_assignment
+            val = validate_character_spell_assignment(char_data, spell_name, edition=edition)
+            val["status"] = "success"
+            return val
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] check_spell_class_eligibility error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e), "can_learn": True}
+
+    # --- Phase 2: Location-Based Merchant Shop & Interactive Short / Long Rest ---
+
+    def get_merchant_catalog(
+        self,
+        specialty: str = "all",
+        query: str = "",
+        edition: Optional[str] = None,
+        price_multiplier: float = 1.0,
+        include_magic: bool = False,
+    ) -> Dict[str, Any]:
+        """Returns priced shop items/weapons/armor with location markup/discount multiplier."""
+        try:
+            return self.ttrpg_service.get_merchant_catalog(
+                specialty=specialty,
+                query=query,
+                edition=edition,
+                price_multiplier=float(price_multiplier or 1.0),
+                include_magic=bool(include_magic),
+            )
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] get_merchant_catalog error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e), "items": []}
+
+    def open_merchant_shop(
+        self,
+        shop_name: str = "Local Merchant",
+        location_name: str = "",
+        price_multiplier: float = 1.0,
+        specialty: str = "general",
+        description: str = "",
+        include_magic: bool = False,
+    ) -> Dict[str, Any]:
+        """Sets active shop metadata and emits shop_opened event."""
+        try:
+            res = self.ttrpg_service.set_active_shop(
+                shop_name=shop_name,
+                location_name=location_name,
+                price_multiplier=float(price_multiplier or 1.0),
+                specialty=specialty,
+                description=description,
+                include_magic=bool(include_magic),
+            )
+            if res.get("status") == "success":
+                self._on_engine_event("shop_opened", res["shop"])
+                self._on_engine_event("ttrpg_state_updated", res)
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] open_merchant_shop error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def purchase_merchant_item(
+        self,
+        character_name: str,
+        category: str = "auto",
+        index_or_name: str = "",
+        qty: int = 1,
+        price_multiplier: float = 1.0,
+        expand_pack: bool = True,
+        edition: Optional[str] = None,
+        equip: bool = False,
+    ) -> Dict[str, Any]:
+        """Purchases an item from the active shop using character currency."""
+        try:
+            res = self.ttrpg_service.purchase_merchant_item(
+                character_name=character_name,
+                category=category,
+                index_or_name=index_or_name,
+                qty=max(1, int(qty or 1)),
+                price_multiplier=float(price_multiplier or 1.0),
+                expand_pack=bool(expand_pack),
+                edition=edition,
+                equip=bool(equip),
+            )
+            if res.get("status") == "success":
+                self._on_engine_event("ttrpg_state_updated", res)
+                self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] purchase_merchant_item error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def sell_merchant_item(
+        self,
+        character_name: str,
+        item_name: str,
+        sell_rate: float = 0.5,
+        qty: int = 1,
+        source: str = "auto",
+        override_value_gp: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Sells an owned inventory item or weapon to a merchant."""
+        try:
+            res = self.ttrpg_service.sell_merchant_item(
+                character_name=character_name,
+                item_name=item_name,
+                sell_rate=float(sell_rate or 0.5),
+                qty=max(1, int(qty or 1)),
+                source=source,
+                override_value_gp=override_value_gp,
+            )
+            if res.get("status") == "success":
+                self._on_engine_event("ttrpg_state_updated", res)
+                self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] sell_merchant_item error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def get_rest_modal_state(self, rest_type: str = "short", edition: Optional[str] = None) -> Dict[str, Any]:
+        """Returns interactive Short/Long Rest state across all campaign characters."""
+        try:
+            return self.ttrpg_service.get_rest_modal_state(rest_type=rest_type, edition=edition)
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] get_rest_modal_state error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e), "characters": []}
+
+    def commit_party_rest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Applies interactive Short/Long Rest choices (Hit Dice, consumables, gear, attunement, spells)."""
+        try:
+            res = self.ttrpg_service.commit_interactive_rest(payload or {})
+            if res.get("status") == "success":
+                self._on_engine_event("ttrpg_state_updated", res)
+                self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] commit_party_rest error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    # --- Phase 3: D&D 5e (2014 & 2024) Guided Level-Up & Multiclass Wizard ---
+
+    @staticmethod
+    def _is_dnd_character_dict(char_data: Dict[str, Any]) -> bool:
+        ruleset = str(char_data.get("ruleset") or char_data.get("native_system") or "").strip().lower()
+        if ruleset in ("coc_7e", "coc", "call_of_cthulhu", "cyberpunk_red", "cyberpunk", "pf2e", "pathfinder", "pathfinder_2e"):
+            return False
+        attrs = char_data.get("attributes") or {}
+        vitals = char_data.get("vitals") or {}
+        if "SAN" in vitals or "sanity" in vitals:
+            return False
+        if any(k in ruleset for k in ("dnd", "5e", "dungeons", "heroic_d20", "fantasy")):
+            return True
+        if attrs.get("Strength") is not None:
+            return True
+        return True if not ruleset else False
+
+    def get_character_advancement_options(
+        self,
+        char_id_or_name: str,
+        edition: Optional[str] = None,
+        target_class: Optional[str] = None,
+        source: str = "campaign",
+        bypass_prereqs: bool = False,
+    ) -> Dict[str, Any]:
+        """Returns Guided Level-Up & Multiclass options for a Campaign or Vault character."""
+        try:
+            src = str(source or "campaign").strip().lower()
+            if src == "vault":
+                eng = getattr(self, "_engine", getattr(self, "engine", None))
+                svc = getattr(eng, "vault_service", None)
+                if not svc:
+                    from core.character_vault_service import CharacterVaultService
+                    svc = CharacterVaultService()
+                char_obj = svc.get_character(char_id_or_name)
+                if not char_obj:
+                    return {"status": "error", "message": f"Character '{char_id_or_name}' not found in Vault."}
+                if not self._is_dnd_character_dict(char_obj):
+                    return {
+                        "status": "success",
+                        "is_dnd": False,
+                        "source": "vault",
+                        "ruleset": char_obj.get("ruleset") or char_obj.get("native_system") or "generic",
+                        "ruleset_label": char_obj.get("ruleset_label") or char_obj.get("ruleset") or "Tabletop RPG",
+                        "character_id": char_obj.get("id", char_id_or_name),
+                        "character_name": char_obj.get("name", "Adventurer"),
+                        "archetype": char_obj.get("archetype", ""),
+                        "current_total_level": int(char_obj.get("level", 1) or 1),
+                        "next_total_level": int(char_obj.get("level", 1) or 1) + 1,
+                        "experience_points": int(char_obj.get("experience_points", 0) or 0),
+                        "attributes": char_obj.get("attributes") or {},
+                    }
+                ed = edition if str(edition or "").strip() in ("2014", "2024") else (
+                    char_obj.get("ruleset_edition")
+                    or (self.ttrpg_service._get_campaign_edition() if hasattr(self.ttrpg_service, "_get_campaign_edition") else "2024")
+                )
+                res = svc.get_dnd_advancement_options(
+                    char_id=char_obj["id"],
+                    edition=ed,
+                    target_class=target_class,
+                    bypass_prereqs=bool(bypass_prereqs),
+                )
+                res["is_dnd"] = True
+                res["ruleset"] = char_obj.get("ruleset") or "dnd_5e"
+                return res
+
+            # Campaign source
+            if not self.ttrpg_service._ensure_active_state():
+                return {"status": "error", "message": "No active campaign loaded."}
+            cid, char_obj = self.ttrpg_service._find_character(char_id_or_name)
+            if not char_obj:
+                return {"status": "error", "message": f"Character '{char_id_or_name}' not found."}
+            if not self._is_dnd_character_dict(char_obj):
+                return {
+                    "status": "success",
+                    "is_dnd": False,
+                    "source": "campaign",
+                    "ruleset": char_obj.get("ruleset") or "generic",
+                    "ruleset_label": char_obj.get("ruleset_label") or char_obj.get("ruleset") or "Tabletop RPG",
+                    "character_id": cid,
+                    "character_name": char_obj.get("name", char_id_or_name),
+                    "archetype": char_obj.get("archetype", ""),
+                    "current_total_level": int(char_obj.get("level", 1) or 1),
+                    "next_total_level": int(char_obj.get("level", 1) or 1) + 1,
+                    "experience_points": int(char_obj.get("experience_points", 0) or 0),
+                    "attributes": char_obj.get("attributes") or {},
+                }
+            res = self.ttrpg_service.get_character_advancement_options(
+                character_name_or_id=char_id_or_name,
+                edition=edition,
+                target_class=target_class,
+                bypass_prereqs=bool(bypass_prereqs),
+            )
+            res["is_dnd"] = True
+            res["ruleset"] = char_obj.get("ruleset") or "dnd_5e"
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] get_character_advancement_options error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def apply_character_dnd_level_up(
+        self,
+        char_id_or_name: str,
+        payload: Optional[Dict[str, Any]] = None,
+        source: str = "campaign",
+    ) -> Dict[str, Any]:
+        """Applies guided D&D 5e (2014 or 2024) single-class or multiclass level-up for Campaign or Vault."""
+        try:
+            src = str(source or "campaign").strip().lower()
+            data = dict(payload or {})
+            if src == "vault":
+                eng = getattr(self, "_engine", getattr(self, "engine", None))
+                svc = getattr(eng, "vault_service", None)
+                if not svc:
+                    from core.character_vault_service import CharacterVaultService
+                    svc = CharacterVaultService()
+                active_genre = eng._get_current_campaign_genre() if (eng and hasattr(eng, "_get_current_campaign_genre")) else None
+                res = svc.apply_dnd_level_up(
+                    char_id=char_id_or_name,
+                    payload=data,
+                    current_campaign_genre=active_genre,
+                )
+                if res.get("status") == "success":
+                    updated_char = res.get("character")
+                    chars = (self.ttrpg_service.active_state or {}).get("characters", {})
+                    if updated_char and (
+                        char_id_or_name in chars
+                        or any(c.get("name") == updated_char.get("name") for c in chars.values())
+                    ):
+                        self.ttrpg_service.add_character(updated_char)
+                        self._on_engine_event("ttrpg_state_updated", res)
+                        self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+                    self._on_engine_event("vault_character_updated", res)
+                return res
+
+            res = self.ttrpg_service.apply_dnd_level_up(
+                character_name_or_id=char_id_or_name,
+                payload=data,
+            )
+            if res.get("status") == "success":
+                self._on_engine_event("ttrpg_state_updated", res)
+                self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] apply_character_dnd_level_up error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
 
 GUIBridge = GuiBridge
 

@@ -167,6 +167,104 @@ class TestWorkspaceSessions(unittest.TestCase):
         self.assertEqual(b_res["status"], "success")
         mock_engine.set_active_workspace.assert_called_with("campaign", "test_camp")
 
+    def test_ttrpg_roleplay_chat_locking(self):
+        """Verifies that sending messages to campaign workspace locks session to TTRPG and frames actions."""
+        from core.ttrpg_service import TTRPGService
+        test_manifest_path = os.path.join(self.temp_dir, "test_camp_manifest.json")
+        svc = TTRPGService(data_dir=self.temp_dir, manifest_path=test_manifest_path)
+        svc.manifest = {
+            "active_campaign": "elf_hunt",
+            "campaigns": {
+                "elf_hunt": {
+                    "title": "Elf Hunt",
+                    "system_preset": "heroic_d20",
+                    "difficulty": "helpful"
+                }
+            }
+        }
+        svc.active_state = {
+            "latest_recap": "Joe found a locket and contemplates speaking to Chief Olaf.",
+            "current_location": "Village Hall",
+            "characters": {}
+        }
+
+        mock_engine = MagicMock()
+        mock_engine.is_running = True
+        mock_engine.active_workspace_type = "general"
+        mock_engine.active_workspace_context_id = "default"
+        mock_engine.send_text = AsyncMock()
+
+        bridge = GuiBridge(engine=mock_engine)
+        bridge.ttrpg_service = svc
+
+        # Player sends action from Role Play tab chat box: "Speak to Olaf"
+        res = bridge.send_workspace_message("campaign", "elf_hunt", "Speak to Olaf")
+        self.assertTrue(res["success"])
+
+        # Engine must be switched to campaign and TTRPG session marked active
+        mock_engine.set_active_workspace.assert_called_with("campaign", "elf_hunt")
+        mock_engine.set_ttrpg_session_active.assert_called_with(True)
+
+        # Verify prompt delivered to model has GM directive and display_text is clean
+        mock_engine.send_text.assert_called_once()
+        sent_prompt = mock_engine.send_text.call_args[0][0]
+        kwargs = mock_engine.send_text.call_args[1]
+        self.assertIn("[TABLETOP ROLEPLAY ACTION — CAMPAIGN: Elf Hunt]", sent_prompt)
+        self.assertIn("Player Action / Dialogue: Speak to Olaf", sent_prompt)
+        self.assertIn("GAME MASTER DIRECTIVE", sent_prompt)
+        self.assertEqual(kwargs.get("display_text"), "Speak to Olaf")
+
+        # Verify history formatter strips framing for player view
+        raw_history = [
+            {"role": "user", "parts": [{"text": sent_prompt}], "timestamp": "2026-11-07T12:00:00Z"},
+            {"role": "model", "parts": [{"text": "Chief Olaf looks up with a furrowed brow."}]}
+        ]
+        formatted = bridge._format_history_turns(raw_history)
+        self.assertEqual(len(formatted), 2)
+        self.assertEqual(formatted[0]["content"], "Speak to Olaf")
+        self.assertEqual(formatted[1]["content"], "Chief Olaf looks up with a furrowed brow.")
+
+    def test_start_or_resume_ttrpg_campaign_locking(self):
+        """Verifies start_or_resume_ttrpg_campaign starts engine, activates TTRPG mode, and builds prompt."""
+        from core.ttrpg_service import TTRPGService
+        test_manifest_path = os.path.join(self.temp_dir, "test_resume_manifest.json")
+        svc = TTRPGService(data_dir=self.temp_dir, manifest_path=test_manifest_path)
+        svc.manifest = {
+            "active_campaign": "elf_hunt",
+            "campaigns": {
+                "elf_hunt": {
+                    "title": "Elf Hunt",
+                    "system_preset": "heroic_d20",
+                    "difficulty": "helpful",
+                    "dice_mode": "digital"
+                }
+            }
+        }
+        svc.active_state = {
+            "latest_recap": "Joe found a tarnished locket. They face the decision of reporting to Chief Olaf.",
+            "current_location": "Investigation scene",
+            "characters": {}
+        }
+
+        mock_engine = MagicMock()
+        mock_engine.is_running = True
+        mock_engine.active_workspace_type = "campaign"
+        mock_engine.active_workspace_context_id = "elf_hunt"
+        mock_engine.send_text = AsyncMock()
+
+        bridge = GuiBridge(engine=mock_engine)
+        bridge.ttrpg_service = svc
+
+        res = bridge.start_or_resume_ttrpg_campaign()
+        self.assertTrue(res["success"])
+        self.assertEqual(res["session_id"], "campaign_elf_hunt")
+        mock_engine.set_ttrpg_session_active.assert_called_with(True)
+
+        sent_prompt = mock_engine.send_text.call_args[0][0]
+        self.assertIn("Aether, please act as our Game Master and resume our campaign 'Elf Hunt'", sent_prompt)
+        self.assertIn("at Investigation scene", sent_prompt)
+        self.assertIn("Helpful / Beginner mode with digital dice", sent_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

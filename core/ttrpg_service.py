@@ -7,6 +7,7 @@ import os
 import re
 import json
 import copy
+import uuid
 import base64
 import secrets
 import difflib
@@ -63,6 +64,15 @@ PRESET_RULES_DIRECTIVES: Dict[str, str] = {
         "- Mechanics: Flexible GM ruling based on the user-defined character vitals, attributes, and meters."
     )
 }
+
+MERCHANT_LOCATION_PRESETS: List[Dict[str, Any]] = [
+    {"id": "village_general", "label": "Village General Store (1.0x Standard)", "multiplier": 1.0, "specialty": "general"},
+    {"id": "city_bazaar", "label": "City Bazaar / Guild Market (0.9x Discount)", "multiplier": 0.9, "specialty": "general"},
+    {"id": "faction_quartermaster", "label": "Faction / Allied Quartermaster (0.8x Ally Rate)", "multiplier": 0.8, "specialty": "weapons_armor"},
+    {"id": "camp_outpost", "label": "Frontier / Camp Outpost (1.25x Markup)", "multiplier": 1.25, "specialty": "general"},
+    {"id": "black_market", "label": "Shady Alley / Black Market (1.5x Markup)", "multiplier": 1.5, "specialty": "magic_poison"},
+    {"id": "luxury_emporium", "label": "Arcane / Luxury Emporium (1.15x Fine Goods)", "multiplier": 1.15, "specialty": "arcane"},
+]
 
 
 class TTRPGService:
@@ -172,6 +182,7 @@ class TTRPGService:
                     self.active_state.setdefault("current_location", "")
                     self.active_state.setdefault("discovered_clues", [])
                     self.active_state.setdefault("campaign_synopsis", {})
+                    self.active_state.setdefault("stored_items", [])
 
                     # Ensure no lingering character sheets remain in documents map or files dir (one-and-done)
                     docs = self.active_state.get("documents", {})
@@ -201,6 +212,22 @@ class TTRPGService:
         else:
             self.active_state = self._generate_default_state(active_id)
             self.save_active_campaign_state()
+
+    def _ensure_active_state(self, campaign_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Guarantees active campaign state is loaded in memory, auto-loading from disk if needed."""
+        cid = campaign_id or getattr(self, "active_campaign_id", None) or self.manifest.get("active_campaign")
+        if not cid and self.manifest.get("campaigns"):
+            cid = next(iter(self.manifest["campaigns"].keys()))
+            self.manifest["active_campaign"] = cid
+            self.active_campaign_id = cid
+
+        if not self.active_state or (cid and self.active_state.get("campaign_id") != cid):
+            if cid:
+                self.manifest["active_campaign"] = cid
+                self.active_campaign_id = cid
+            self.load_active_campaign_state()
+
+        return self.active_state
 
     def save_active_campaign_state(self):
         if not self.active_state:
@@ -240,7 +267,8 @@ class TTRPGService:
             "active_quest": "",
             "current_location": "",
             "discovered_clues": [],
-            "campaign_synopsis": {}
+            "campaign_synopsis": {},
+            "stored_items": []
         }
 
     # --- Campaign Management Helpers ---
@@ -254,7 +282,8 @@ class TTRPGService:
         difficulty: str = "helpful",
         linked_project_id: str = "",
         campaign_id: Optional[str] = None,
-        initial_files: Optional[List[Dict[str, Any]]] = None
+        initial_files: Optional[List[Dict[str, Any]]] = None,
+        module_adherence: str = "strict"
     ) -> Dict[str, Any]:
         clean_title = (title or "").strip()
         # If title is blank but an initial file was uploaded, derive title from module/adventure file
@@ -293,6 +322,14 @@ class TTRPGService:
             else:
                 return {"status": "error", "message": f"Campaign '{cid}' already exists."}
 
+        clean_adh = str(module_adherence or "strict").lower().strip()
+        if clean_adh in ("1", "creative"):
+            adh_val = "creative"
+        elif clean_adh in ("2", "balanced"):
+            adh_val = "balanced"
+        else:
+            adh_val = "strict"
+
         meta = {
             "id": cid,
             "title": clean_title,
@@ -302,6 +339,7 @@ class TTRPGService:
             "tone": tone or "Cinematic, grounded",
             "difficulty": difficulty or "helpful",
             "linked_project_id": linked_project_id or "",
+            "module_adherence": adh_val,
             "party_count": 0,
             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         }
@@ -385,7 +423,8 @@ class TTRPGService:
         tone: Optional[str] = None,
         difficulty: Optional[str] = None,
         linked_project_id: Optional[str] = None,
-        dice_mode: Optional[str] = None
+        dice_mode: Optional[str] = None,
+        module_adherence: Optional[str] = None
     ) -> Dict[str, Any]:
         """Updates an existing campaign's metadata in data/campaigns.json."""
         cid = campaign_id or self.manifest.get("active_campaign")
@@ -413,6 +452,14 @@ class TTRPGService:
             meta["linked_project_id"] = linked_project_id.strip()
         if dice_mode is not None:
             meta["dice_mode"] = "physical" if str(dice_mode).lower().strip() in ("physical", "irl", "tabletop", "manual") else "digital"
+        if module_adherence is not None:
+            clean_adh = str(module_adherence).lower().strip()
+            if clean_adh in ("1", "creative"):
+                meta["module_adherence"] = "creative"
+            elif clean_adh in ("2", "balanced"):
+                meta["module_adherence"] = "balanced"
+            else:
+                meta["module_adherence"] = "strict"
 
         meta["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.save_manifest()
@@ -2566,15 +2613,8 @@ Respond ONLY with valid JSON."""
         Appends a structured journal entry to the active campaign's persistent memory,
         updates the live session recap, current location, active quest, and discovered clues.
         """
-        if not self.active_state:
-            self.load_manifest()
-            self.load_active_campaign_state()
-        if not self.active_state:
-            active_id = self.manifest.get("active_campaign")
-            if active_id:
-                self.active_state = self._generate_default_state(active_id)
-            else:
-                return {"status": "error", "message": "No active campaign loaded."}
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
 
         clean_summary = (summary or "").strip()
         if not clean_summary:
@@ -2613,8 +2653,18 @@ Respond ONLY with valid JSON."""
         if clues_list:
             existing_clues = self.active_state.setdefault("discovered_clues", [])
             for c in clues_list:
-                if c not in existing_clues:
-                    existing_clues.append(c)
+                c_clean = str(c).strip()
+                if not c_clean:
+                    continue
+                c_low = c_clean.lower()
+                is_duplicate = False
+                for ec in existing_clues:
+                    ec_low = str(ec).strip().lower()
+                    if c_low == ec_low or (len(c_low) > 15 and (c_low in ec_low or ec_low in c_low)):
+                        is_duplicate = True
+                        break
+                if not is_duplicate:
+                    existing_clues.append(c_clean)
 
         self.save_active_campaign_state()
         logger.info(f"[TTRPG] Recorded campaign journal entry {entry_id} for '{self.active_state.get('campaign_id')}'.")
@@ -2673,7 +2723,7 @@ Respond ONLY with valid JSON."""
             return {}
 
         existing_synopsis = state.get("campaign_synopsis", {})
-        if existing_synopsis and isinstance(existing_synopsis, dict) and existing_synopsis.get("setting") and existing_synopsis.get("starting_scene"):
+        if existing_synopsis and isinstance(existing_synopsis, dict) and existing_synopsis.get("setting") and existing_synopsis.get("starting_scene") and existing_synopsis.get("acts_and_scenes"):
             return existing_synopsis
 
         files_dir = self.get_campaign_files_dir(cid)
@@ -2701,27 +2751,50 @@ Respond ONLY with valid JSON."""
         client = self._get_genai_client()
         synopsis_data = None
         if client:
+            # Send up to 100,000 characters so full multi-act adventure modules are completely analyzed
+            module_text = full_text[:100000]
             prompt = f"""You are an expert tabletop RPG adventure module analyzer.
-Analyze the following comprehensive excerpt from the adventure module:
-{full_text[:30000]}
+Analyze the following comprehensive text from the published adventure module:
+{module_text}
 
-Extract the essential campaign grounding and the EXACT starting scene into valid JSON with this schema:
+Extract the complete campaign structure, all acts and scenes, encounters, monsters/bosses, and encounter tables into valid JSON with this schema:
 {{
   "module_title": "<module name and author>",
   "setting": "<geographic setting and realm>",
   "primary_hub": "<starting settlement / base of operations>",
-  "key_npcs": ["<name and role of major NPCs>"],
-  "target_or_threat": "<antagonist or target of the quest>",
-  "core_mission": "<the central quest and what the party is hired to do>",
+  "key_npcs": [
+    {{"name": "<NPC name>", "role": "<NPC role, allegiance, and stats/importance>"}}
+  ],
+  "target_or_threat": "<antagonist or primary target of the adventure>",
+  "core_mission": "<the central quest and objectives>",
   "opening_hook": "<how the adventure begins>",
   "synopsis": "<3-4 sentence comprehensive premise of the module>",
   "starting_scene": {{
     "scene_name": "<exact scene heading, e.g. 'Act 1: Prologue — Scene 1: The Beginning'>",
-    "location": "<exact location from module, e.g. 'Town Square', 'Village Hall', or 'Tavern'>",
+    "location": "<exact location from module>",
     "boxed_text": "<verbatim boxed narration text intended for the DM to read to players upon entering the scene>",
     "active_npc": "<name and stat/personality details of the NPC present in this scene>",
     "quest_briefing": "<what the quest-giver explains to the party>",
     "immediate_choices": ["<choice 1>", "<choice 2>", "<choice 3>", "<choice 4>"]
+  }},
+  "acts_and_scenes": [
+    {{
+      "act": "<Act name and title>",
+      "scenes": [
+        {{
+          "scene_name": "<Scene name and number>",
+          "location": "<Location>",
+          "boxed_text": "<Boxed descriptive text>",
+          "challenges": "<DCs, hazards, enemies, or exploration challenges>"
+        }}
+      ]
+    }}
+  ],
+  "encounter_tables": {{
+    "<table_name>": {{"<roll>": "<encounter description>"}}
+  }},
+  "monsters_and_bosses": {{
+    "<monster_name>": "<AC, HP, attack bonuses, special abilities, spells>"
   }}
 }}
 Respond ONLY with valid JSON."""
@@ -2747,23 +2820,24 @@ Respond ONLY with valid JSON."""
             synopsis_data = {
                 "module_title": "Elfhunt by Jussi R. Foltmar Svendsen" if "elfhunt" in module_file.lower() else module_file,
                 "setting": "Jungles of Chult, Forgotten Realms" if "elfhunt" in module_file.lower() else "Tabletop Adventure Realm",
-                "primary_hub": "Camp Highmore" if "elfhunt" in module_file.lower() else "Adventure Outpost",
+                "primary_hub": "Camp Highmore (Walled trading outpost in the Chult wilderness)" if "elfhunt" in module_file.lower() else "Adventure Outpost",
                 "key_npcs": [
-                    "High Chief Highmore (Leader of Camp Highmore)",
-                    "Chief Filip (Commander of guards and soldiers, conspirator married to Shandra)",
-                    "Chief Shandra (Tribal chief handling camp diplomacy, conspirator married to Filip)",
-                    "Johan Petry (Retired veteran adventurer infatuated with Shandra, quest-giver)",
-                    "Tane Here (Leader of chaotic rogues opposing camp authority)",
-                    "Imis Elvan (Wood elf illusionist who fled with evidence of Filip and Shandra's conspiracy)"
+                    {"name": "High Chief Highmore", "role": "Ruler of Camp Highmore, fair but besieged by plotting chieftains"},
+                    {"name": "Chief Filip", "role": "Chief of the Tribe of the Moonweavers, overseer of camp military & guards. Conspirator married to Shandra. (CR 5 Boss: AC 17 half plate, HP 157, Greataxe +7, Leap Attack, Whirlwind, Call for Help)"},
+                    {"name": "Chief Shandra", "role": "Chief of the Tribe of the Red Ravens, diplomacy & politics. Filip's secret wife and co-conspirator. Greedy, manipulative."},
+                    {"name": "Johan Petry", "role": "Retired veteran adventurer (Tribe of the Black Phoenix). Infatuated with Shandra, hired the party under false pretenses."},
+                    {"name": "Tane Here", "role": "Leader of the chaotic rogues / thieves' guild in Camp Highmore opposing Filip's tyranny"},
+                    {"name": "Imis Elvan", "role": "Wood elf illusionist who uncovered Filip & Shandra's coup and fled into the jungle. (CR 8: AC 15, HP 192, Mirror Image, Misty Step, Cone of Cold, Thunderwave)"},
+                    {"name": "Habrision and Torcassa", "role": "Wood elf scouts stationed near the camp gate who assist with tracking"}
                 ] if "elfhunt" in module_file.lower() else [],
-                "target_or_threat": "Chief Filip and Chief Shandra (secret conspirators framing the party); Imis Elvan as initial bounty target",
-                "core_mission": "Track down and recover the elven fugitive Imis Elvan in the Chult jungle under the pretense that she stole military secrets",
+                "target_or_threat": "Chief Filip and Chief Shandra (secret schemers framing the party); Imis Elvan (initial bounty target)",
+                "core_mission": "Investigate the theft of military secrets, track Imis Elvan through the Chultan jungle into the Feywild labyrinth, and uncover the coup plot against Camp Highmore.",
                 "opening_hook": "The party is invited to Johan Petry's house in Camp Highmore, who hires them to track down Imis Elvan.",
                 "synopsis": (
-                    "In the wilderness trade hub of Camp Highmore, Chief Filip and Chief Shandra plot to overthrow High Chief Highmore to seize regional control. "
-                    "When the wood elf Imis Elvan discovers their conspiracy and flees into the Chultan jungle with incriminating evidence, the schemers recruit "
-                    "an adventuring party through Johan Petry to track her down under false charges of military theft. As the adventurers investigate, Filip and Petry "
-                    "attempt to frame them, forcing the party to align with rebel leader Tane Here, escape the camp, and locate Imis Elvan to expose the true conspirators."
+                    "In the wilderness trade hub of Camp Highmore, Chief Filip and Chief Shandra plot to overthrow High Chief Highmore during the upcoming harvest festival. "
+                    "When wood elf illusionist Imis Elvan discovers their conspiracy and flees into the Chultan jungle with incriminating evidence, the schemers manipulate "
+                    "Johan Petry into hiring an adventuring party to hunt her down under false charges of military theft. The hunt leads through dangerous jungle beasts, "
+                    "ancient dryad-guarded fey portals, and a minotaur-defended hedge labyrinth, culminating in a climactic confrontation with Chief Filip."
                     if "elfhunt" in module_file.lower() else full_text[:400].strip()
                 ),
                 "starting_scene": {
@@ -2778,6 +2852,168 @@ Respond ONLY with valid JSON."""
                         "3. Inquire around town / criminal underground (attracting the attention of Tane Here and his rogues).",
                         "4. Go directly to the camp gate to pick up Imis Elvan's trail into the jungle."
                     ]
+                } if "elfhunt" in module_file.lower() else {},
+                "acts_and_scenes": [
+                    {
+                        "act": "Act 1: Prologue (Camp Highmore)",
+                        "scenes": [
+                            {
+                                "scene_name": "Scene 1: The Beginning",
+                                "location": "Johan Petry's House",
+                                "boxed_text": "The large single-room hall has walls lined with monster trophies. Johan Petry hires the party to track down wood elf Imis Elvan.",
+                                "challenges": "Roleplay with Johan Petry; contract negotiation."
+                            },
+                            {
+                                "scene_name": "Scene 2: Meeting at the House of Chiefs",
+                                "location": "House of Chiefs, Camp Highmore",
+                                "boxed_text": "A bustling tribal meeting hall where Chief Shandra holds audience.",
+                                "challenges": "DC 15 Insight to perceive Shandra's deceit and hidden alliance with Filip."
+                            },
+                            {
+                                "scene_name": "Scene 3: Investigation at the Barracks",
+                                "location": "Guard Barracks, Camp Highmore",
+                                "boxed_text": "A disciplined military compound guarded by Highmore soldiers. Commander Filip oversees drills.",
+                                "challenges": "Investigating the office crime scene or questioning Chief Filip. CRITICAL MANDATORY TRIGGER: Questioning Chief Filip or investigating the barracks triggers Act 2 Scene 1 (The Arrest) in the very next scene! Filip and Johan frame the party to protect their coup. You CANNOT let the party reach the jungle without running the arrest encounter!"
+                            }
+                        ]
+                    },
+                    {
+                        "act": "Act 2: Conflict (The Frame-Up)",
+                        "scenes": [
+                            {
+                                "scene_name": "Scene 1: The Arrest",
+                                "location": "Camp Highmore Streets / En Route to Gate",
+                                "boxed_text": "A dozen guards come marching up towards you in a stern, orderly fashion with spears leveled and crossbows held at the ready. Chief Filip steps forward, his half plate gleaming: 'You halt! By order of the council, you are under arrest for aiding and abetting in the theft of secret military information. Drop your weapons and surrender, or we will use force!'",
+                                "challenges": "Mandatory Encounter: Arrest by Chief Filip, 2 knights, and 11 Highmore guards. Party choices: 1. Surrender -> taken to underground dungeon (Act 2 Scene 2); 2. Fight -> knocked unconscious at 0 HP, stripped of weapons, wake up in dungeon; 3. Flee -> chase through camp, rescued into sewers by Tane Here (Act 3 Scene 1). The party CANNOT bypass to the jungle!"
+                            },
+                            {
+                                "scene_name": "Scene 2: The Prison & Trial",
+                                "location": "Camp Stockade / Tribal Court",
+                                "boxed_text": "Dark log holding cells beneath the stockade where political prisoners wait.",
+                                "challenges": "Skill checks to escape or diversion by Tane Here's rogues."
+                            }
+                        ]
+                    },
+                    {
+                        "act": "Act 3: Rising Action (The Underground Resistance)",
+                        "scenes": [
+                            {
+                                "scene_name": "Scene 1: Thieves' Hideout",
+                                "location": "Hidden Cellar beneath Camp Highmore",
+                                "boxed_text": "A torch-lit cellar smelling of ale and damp stone. Tane Here sits on a wooden crate polishing a dagger.",
+                                "challenges": "Social interaction with Tane Here; learning Filip and Shandra's harvest festival coup plot."
+                            },
+                            {
+                                "scene_name": "Scene 4: Stealth Escape",
+                                "location": "Camp Highmore Palisades / River Drain",
+                                "boxed_text": "A narrow drainage canal sneaking under the spiked wooden palisades into the jungle beyond.",
+                                "challenges": "DC 14 Stealth check to slip past perimeter patrols into the Chult wilderness."
+                            }
+                        ]
+                    },
+                    {
+                        "act": "Act 4: Action (The Hunt through Chult & Feywild)",
+                        "scenes": [
+                            {
+                                "scene_name": "Scene 1: The Gate",
+                                "location": "Main Gate Outskirts, Camp Highmore",
+                                "boxed_text": "A well-travelled path leads away from the wooden gate flanked by wooden beams that make up the camp's palisades. Nearly a hundred feet of jungle has been cleared from the camp's boundary. The path winds into the rocky jungle covered in vines and large green trees of various sorts. Danger looms beyond but your search for the elf begins here.",
+                                "challenges": "DC 20 Perception/Investigation to find torn cloth and elven brooch; DC 20 Survival to identify Imis's trail into the jungle. Wood elf scouts Habrision and Torcassa assist if needed."
+                            },
+                            {
+                                "scene_name": "Scene 2: Jungle Animals (Wilderness Hazards)",
+                                "location": "Dense Jungles of Chult",
+                                "boxed_text": "The jungle canopy closes overhead like a dense emerald dome, shutting out the sun. Humid air clings to your skin as the sounds of exotic birds, buzzing insects, and distant predator calls echo through the ancient trees.",
+                                "challenges": "Mandatory Jungle Hazard Encounter (roll 2d6): 2=Treant, 3=Faerie Dragons, 4=Harpies ambush from canopy, 5=Gnoll hunting pack, 6=Stalking jungle wolves, 7=Territorial ape troop, 8=Black bears, 9=Hippogriffs, 10=Ogre pair, 11=Chimera ambush (CR 6), 12=Guardian Naga."
+                            },
+                            {
+                                "scene_name": "Scene 3: Elven Tracks & River Crossing",
+                                "location": "Chultan Riverbank & Campsite",
+                                "boxed_text": "A rushing jungle river cuts across the terrain, spanned only by a mossy fallen log bridge. Across the water, partially masked beneath broad palm fronds, lies a small abandoned campsite.",
+                                "challenges": "DC 12 Acrobatics/Athletics to cross slippery log; DC 15 Survival to inspect campsite (finds discarded bandages and fresh tracks heading toward elven ruins)."
+                            },
+                            {
+                                "scene_name": "Scene 4: Gatekeepers (The Fey Portal)",
+                                "location": "Ancient Overgrown Stone Archway",
+                                "boxed_text": "Partially swallowed by massive roots and flowering vines stands an ancient elven stone archway. A gentle, shimmering vibration in the air suggests a portal to another plane. Suddenly, the trees around you rustle with unnatural hostility as five lithe, bark-skinned figures emerge from the trunks.",
+                                "challenges": "Combat Encounter: 5 Dryads guard this portal to the Feywild! They challenge intruders, casting Barkskin (AC 16, 22 HP), Shillelagh (+4 to hit, 1d8+2 magic bludgeoning), Tree Stride, and Entangle (DC 14 STR save)."
+                            },
+                            {
+                                "scene_name": "Scene 5: Feywild Transition",
+                                "location": "The Feywild Threshold",
+                                "boxed_text": "Passing through the shimmering arch, the stifling heat of Chult vanishes in an instant, replaced by a crisp, cool twilight breeze. The sky above is locked in eternal purple-and-gold dusk, and the flora hums with soft, iridescent light.",
+                                "challenges": "Feywild Crossing effect: Each player must make a DC 10 Wisdom saving throw or lose memory of time spent in the Feywild upon leaving."
+                            },
+                            {
+                                "scene_name": "Scene 6: Land of the Fey",
+                                "location": "Twilight Forest of the Feywild",
+                                "boxed_text": "The ethereal forest feels alive, with giant bioluminescent mushrooms and shifting twilight trails that seem to warp distance and direction.",
+                                "challenges": "Feywild Encounter (roll 2d6): 2=Night Hag illusionist, 3-4=Nomadic wandering Ogres, 5=Centaur hunting patrol, 6=Playful pixies, 7=Dryad grove, 8=Faerie Dragons, 9=Satyrs with enchanted wine, 10=Sprites, 11=Unicorn, 12=Fey Treant guardian."
+                            },
+                            {
+                                "scene_name": "Scene 7: The Labyrinth",
+                                "location": "The Fog-Shrouded Hedge Maze",
+                                "boxed_text": "Your journey through the Feywild brings you out of the woodland to a towering wall of dense magical fog. As you draw closer, the fog disperses just enough to reveal an immense, towering hedge maze of living brambles. From within the winding paths echoes the deep, guttural snorting of heavy beasts.",
+                                "challenges": "Dungeon Combat Encounter: Defended by 2 Minotaurs (AC 14, 76 HP each, Greataxe +6 to hit, 2d12+4 slashing; Gore +6 to hit, 2d8+4 piercing + Charge; Reckless attack). One minotaur attacks from the front while the second blocks their rear, forcing combat to reach the maze center!"
+                            }
+                        ]
+                    },
+                    {
+                        "act": "Act 5: Resolution (The Boss Encounters & Camp Fate)",
+                        "scenes": [
+                            {
+                                "scene_name": "Scene 1: Meeting Imis Elvan",
+                                "location": "Center of the Fey Labyrinth (Redwood Grove & Fountain)",
+                                "boxed_text": "The center of the labyrinth is amazing and peaceful—a large circular grove surrounded by immense redwood pine trees with strange yellow lights embedded in their bark. Luminescent fireflies drift around an ancient stone fountain. On a bed of soft moss rests an elven maiden with silver eyes, smooth black hair, and dark green facial tattoos. As you enter, she springs to her feet, hands glowing with arcane energy: 'Who are you, and who sent you?'",
+                                "challenges": "Encounter with Imis Elvan (CR 8 wood elf illusionist, AC 15, 192 HP, spells: Cone of Cold, Mirror Image, Misty Step, Thunderwave, Phantasmal Killer). If calmed or captured, she reveals Filip and Shandra's coup and provides evidence."
+                            },
+                            {
+                                "scene_name": "Scene 2: Filip's Fall",
+                                "location": "Camp Highmore (House of Chiefs / Barracks)",
+                                "boxed_text": "Returning to Camp Highmore with Imis and the recovered evidence, you confront Chief Filip in front of the assembled council. Filip draws his massive greataxe, his eyes blazing with fury: 'You miserable mercenaries should have died in the jungle! Highmore is mine!'",
+                                "challenges": "Climactic Boss Fight: Chief Filip (CR 5 Boss: AC 17 half plate, 157 HP, Greataxe +7 to hit, 1d12+4 slashing; Leap Attack 30ft; Whirlwind Attack targeting all adjacent foes; Bonus Action 'Call for Help' summoning 2 Highmore Guards with AC 15, 22 HP)."
+                            },
+                            {
+                                "scene_name": "Scene 3: Conclusion & Reward",
+                                "location": "Council Chamber of High Chief Highmore",
+                                "boxed_text": "With Filip defeated and the conspiracy laid bare, High Chief Highmore steps forward to thank the adventurers before the entire camp.",
+                                "challenges": "Party vindicated; awarded 2,500 gp in uncut gemstones, regional honors, and level up to 6th level."
+                            }
+                        ]
+                    }
+                ] if "elfhunt" in module_file.lower() else [],
+                "encounter_tables": {
+                    "jungle_random_encounters_2d6": {
+                        "2": "Treant (Protector of the jungle, peaceful unless trees harmed)",
+                        "3": "Faerie Dragons (Playful Fey creatures)",
+                        "4": "Harpies (Ambush from canopy with luring song)",
+                        "5": "Gnolls (Pack of 4 bloodthirsty hyena-men)",
+                        "6": "Jungle Wolves (Dire wolves stalking the party)",
+                        "7": "Chultan Apes (Territorial troop hurling stones and charging)",
+                        "8": "Black Bears (Mated pair defending den)",
+                        "9": "Hippogriffs (Soaring jungle predators)",
+                        "10": "Ogres (Nomadic brutes looking for meat)",
+                        "11": "Chimera (Deadly dragon-lion-goat beast, CR 6)",
+                        "12": "Guardian Naga (Benevolent serpent guarding ancient ruins)"
+                    },
+                    "feywild_random_encounters_2d6": {
+                        "2": "Night Hag (Shapeshifted wicked deceiver)",
+                        "3-4": "Ogres (Nomadic Fey ogres)",
+                        "5": "Centaurs (Hunting band of 3-4 warriors)",
+                        "6": "Pixies (Invisible pranksters testing party morals)",
+                        "7": "Dryads (Fey grove guardians)",
+                        "8": "Faerie Dragons (Curious and whimsical)",
+                        "9": "Satyrs (Piping dancers with enchanted wine)",
+                        "10": "Sprites (Tiny inquisitors detecting alignment)",
+                        "11": "Unicorn (Majestic celestial guardian)",
+                        "12": "Fey Treant (Elder spirit of the twilight forest)"
+                    }
+                } if "elfhunt" in module_file.lower() else {},
+                "monsters_and_bosses": {
+                    "Dryad (x5 at Portal)": "AC 16 (barkskin), HP 22, Spells: Shillelagh (+4 to hit, 1d8+2), Tree Stride, Entangle (DC 14 STR save)",
+                    "Minotaur (x2 in Labyrinth)": "AC 14, HP 76, Speed 40 ft., Greataxe (+6 to hit, 2d12+4 slashing), Gore (+6 to hit, 2d8+4 piercing + Charge 10 extra damage DC 14 STR knockdown), Reckless Attack",
+                    "Imis Elvan": "CR 8 Wood Elf Illusionist, AC 15, HP 192, Speed 35 ft., Spells: Cone of Cold (8d8 cold, DC 16 CON save), Mirror Image (3 duplicates), Misty Step, Thunderwave, Phantasmal Killer, Disguise Self",
+                    "Chief Filip": "CR 5 Conspirator Boss, AC 17 (half plate), HP 157, Speed 30 ft., Greataxe (+7 to hit, 1d12+4 slashing), Leap Attack (jumps up to 30 ft without provoking opportunity attacks and slams target), Whirlwind (attacks all creatures within 5 ft), Bonus Action 'Call for Help' (summons 2 Highmore Guards, AC 15, HP 22)"
                 } if "elfhunt" in module_file.lower() else {}
             }
 
@@ -2796,7 +3032,7 @@ Respond ONLY with valid JSON."""
     ) -> Optional[Dict[str, Any]]:
         """
         Inspects session turns for TTRPG / campaign activity. If roleplay turns occurred,
-        generates a concise journal entry and updates latest_recap in active_state.
+        generates a concise journal entry and updates latest_recap and current_location in active_state.
         """
         if not turns or not self.active_state:
             return None
@@ -2805,34 +3041,53 @@ Respond ONLY with valid JSON."""
         camp_meta = self.manifest.get("campaigns", {}).get(active_id, {})
         camp_title = camp_meta.get("title", active_id or "")
 
-        chars = self.active_state.get("characters", {})
-        char_names = [c.get("name", "").lower() for c in chars.values() if c.get("name")]
-        keywords = ["dungeon master", "dm", "ttrpg", "roll", "initiative", "campaign", camp_title.lower()] + char_names
-
         rp_turns = []
         for t in turns:
-            txt = (t.get("content") or t.get("text") or "").strip()
-            if txt and any(k in txt.lower() for k in keywords):
-                rp_turns.append(f"{t.get('role', 'speaker')}: {txt}")
+            txt = ""
+            role = "speaker"
+            if isinstance(t, dict):
+                role = t.get("role") or "speaker"
+                if t.get("content"):
+                    txt = str(t["content"]).strip()
+                elif t.get("text"):
+                    txt = str(t["text"]).strip()
+                elif t.get("parts") and isinstance(t["parts"], list):
+                    p_texts = []
+                    for p in t["parts"]:
+                        if isinstance(p, dict) and p.get("text"):
+                            p_texts.append(p["text"])
+                        elif isinstance(p, str):
+                            p_texts.append(p)
+                    txt = " ".join(p_texts).strip()
+            elif isinstance(t, str):
+                txt = t.strip()
 
-        if len(rp_turns) < 2:
+            if txt:
+                # Clean role naming for prompt
+                clean_role = "GM" if role in ("model", "assistant") else "Player"
+                rp_turns.append(f"{clean_role}: {txt}")
+
+        if not rp_turns:
             return None
 
+        recent_turns = rp_turns[-16:]
+
+        summary_data = None
         client = self._get_genai_client()
         if client:
             prompt = f"""You are a Game Master session journal recorder for the TTRPG campaign '{camp_title}'.
 Review these dialogue turns from the recent game session:
-{chr(10).join(rp_turns[-10:])}
+{chr(10).join(recent_turns)}
 
 Extract a concise 2-3 sentence DM journal recap covering:
 1. What the party did and discovered in this session.
-2. Where the party is currently standing / left off.
+2. Where the party is currently standing / left off (exact current room or location, e.g. 'Camp Highmore Jail / Cell', 'Camp Gate', etc.).
 3. The immediate next action or decision facing them.
 
 Respond in JSON with schema:
 {{
   "summary": "<2-3 sentence recap>",
-  "location": "<current scene location>",
+  "location": "<exact current scene location>",
   "active_quest": "<current immediate goal>",
   "new_clues": ["<key item, clue, or observation discovered>"],
   "last_action": "<exact last action taken>"
@@ -2851,21 +3106,55 @@ Respond in JSON with schema:
                 if text:
                     data = json.loads(text)
                     if isinstance(data, dict) and data.get("summary"):
-                        return self.record_campaign_notes(
-                            summary=data["summary"],
-                            location=data.get("location"),
-                            key_clues=data.get("new_clues"),
-                            active_quest=data.get("active_quest"),
-                            last_action=data.get("last_action"),
-                            session_id=session_id
-                        )
+                        summary_data = data
             except Exception as e:
                 logger.warning(f"[TTRPG] AI session journal summarization failed: {e}")
 
-        # Fallback summary
-        last_turn_text = rp_turns[-1] if rp_turns else ""
+        # Smart heuristic fallback if AI call fails or is unavailable
+        if not summary_data:
+            all_text = " ".join(recent_turns).lower()
+            last_model_turn = ""
+            for rt in reversed(recent_turns):
+                if rt.startswith("GM:"):
+                    last_model_turn = rt.split(":", 1)[1].strip()
+                    break
+            if not last_model_turn and recent_turns:
+                last_model_turn = recent_turns[-1].split(":", 1)[-1].strip()
+
+            detected_loc = None
+            if any(k in all_text for k in ("jail", "cell", "prison", "dungeon", "bars on the window", "iron bars", "locked cell")):
+                detected_loc = "Camp Highmore Jail / Cell"
+            elif "barracks" in all_text:
+                detected_loc = "Camp Highmore Barracks"
+            elif any(k in all_text for k in ("camp gate", "main gate", "gate leading")):
+                detected_loc = "Camp Highmore Gate"
+            elif any(k in all_text for k in ("tane here", "hideout", "warehouse")):
+                detected_loc = "Tane Here's Hideout"
+            elif any(k in all_text for k in ("house of chiefs", "chief shandra")):
+                detected_loc = "House of Chiefs"
+            elif any(k in all_text for k in ("jungle", "forest", "trail", "ruin")):
+                detected_loc = "Jungle Outskirts"
+
+            last_action_text = ""
+            for rt in reversed(recent_turns):
+                if rt.startswith("Player:"):
+                    last_action_text = rt.split(":", 1)[1].strip()
+                    break
+
+            summary_data = {
+                "summary": last_model_turn[:300] if last_model_turn else "Party advanced through the campaign.",
+                "location": detected_loc or self.active_state.get("current_location", "Camp Highmore"),
+                "active_quest": self.active_state.get("active_quest", ""),
+                "new_clues": [],
+                "last_action": last_action_text[:120] if last_action_text else "Concluded turn"
+            }
+
         return self.record_campaign_notes(
-            summary=f"Session concluded after: {last_turn_text[:200]}",
+            summary=summary_data["summary"],
+            location=summary_data.get("location"),
+            key_clues=summary_data.get("new_clues"),
+            active_quest=summary_data.get("active_quest"),
+            last_action=summary_data.get("last_action"),
             session_id=session_id
         )
 
@@ -2899,11 +3188,22 @@ Respond in JSON with schema:
         preset_key = (meta.get("system_preset") or "heroic_d20").lower()
         rule_directive = PRESET_RULES_DIRECTIVES.get(preset_key, PRESET_RULES_DIRECTIVES.get("heroic_d20", ""))
 
+        adherence = (meta.get("module_adherence") or "strict").lower().strip()
+        if adherence not in ("creative", "balanced", "strict"):
+            adherence = "strict"
+
+        adherence_labels = {
+            "creative": "Level 1 (Creative Sandbox / High GM Freedom)",
+            "balanced": "Level 2 (Guided / Balanced Narrative)",
+            "strict": "Level 3 (Strict Module Fidelity / By the Book)"
+        }
+
         lines = [
             f"[UNIVERSAL TABLETOP ROLEPLAYING ENGINE — ACTIVE CAMPAIGN: {meta.get('title', active_id)} ({active_id})]",
             f"- System Archetype / Ruleset: {meta.get('system_preset', 'heroic_d20')}",
             f"- Game Master Mode: {meta.get('gm_mode', 'interactive_narrator')}",
             f"- Narrative Tone: {meta.get('tone', 'Cinematic, grounded')}",
+            f"- Story Adherence & GM Pacing: {adherence_labels.get(adherence, adherence_labels['strict'])}",
         ]
         if meta.get("setting_overview"):
             lines.append(f"- Setting & Premise: {meta['setting_overview']}")
@@ -2916,15 +3216,18 @@ Respond in JSON with schema:
 
         if difficulty == "helpful":
             dice_help_line = (
-                "* PHYSICAL DICE MODE: Educate and explicitly guide the player on which physical dice to roll and what exact modifier to add from their character sheet (e.g., 'Roll 1d20+4 for your attack roll!').\n"
+                "* PHYSICAL DICE MODE: Guide the player on which physical dice to roll and modifiers to add from their sheet.\n"
                 if dice_mode == "physical"
-                else "* DIGITAL MODE ACTIVE: Do NOT tell or ask the player to roll dice; execute `roll_dice` automatically for them.\n"
+                else "* DIGITAL DICE AUTOMATION: When a roll IS required for an established actor, call `roll_dice` automatically—never ask human players to roll physical plastic dice at their table.\n"
             )
             lines.append(
                 "\n[DM GUIDANCE & CHALLENGE LEVEL: HELPFUL / BEGINNER-FRIENDLY MENTOR]\n"
                 "* The players may be beginners or learning the rules. Act as an encouraging, patient guide and Dungeon Master.\n"
                 "* Whenever you present a situation or prompt a player, ALWAYS offer 2-3 clear, recommended options for what their character can do (e.g. 'Option 1: You can swing your Longsword (+4 to hit)... Option 2: Shoot with your Heavy Crossbow... Option 3: Attempt to negotiate or intimidate...'), UNLESS the player has already declared their action.\n"
-                "* When a player has ALREADY declared an action (e.g. 'I attack the goblin', 'I pick the lock'), IMMEDIATELY adjudicate that action without offering alternative options.\n"
+                "* When a player declares an action AND specifies which character performs it (e.g. 'Joe attacks the goblin', 'Shadow picks the lock'), adjudicate that action directly.\n"
+                "* When a player declares an action WITHOUT naming a character (e.g. 'Press Sandra for information', 'Ask about Imis', 'Search the room', 'Head to the gate') in a multi-character party:\n"
+                "  - If it is standard dialogue or movement: DO NOT ROLL DICE! Answer as the NPC or describe the travel.\n"
+                "  - If a skill check is genuinely required: ASK THE TABLE who steps forward to do it (e.g. 'Who is speaking to Shandra? Joe, Sam, or Shadow?'). DO NOT pick a character arbitrarily!\n"
                 + dice_help_line +
                 "* Proactively remind players of their character's equipment, healing potions, and class features (like Second Wind, Sneak Attack, or Action Surge) when relevant.\n"
                 "* Keep explanations friendly, clear, and educational."
@@ -2960,11 +3263,21 @@ Respond in JSON with schema:
             )
         else:
             lines.append(
-                "\n[DICE ROLLING MODE: DIGITAL DICE (AUTOMATIC RESOLUTION)]\n"
-                "* DIGITAL DICE (AETHER ROLLS FOR PLAYERS): You (the Game Master) handle all dice rolling automatically using the `roll_dice` tool.\n"
-                "* CRITICAL RULE — NEVER ASK PLAYERS TO ROLL: Never tell or ask players to roll dice. Do not say 'Eric, roll 1d20+4' or wait for players to roll. Execute `roll_dice` directly in your turn.\n"
-                "* CRITICAL RULE — NO META-NARRATION: Never say 'Aether rolls for Eric', 'I am rolling for you', or narrate in the third person about rolling. The roll is an invisible mechanical resolution.\n"
-                "* NATURAL GM NARRATION: Weave the roll outcome directly and smoothly into the narrative: e.g., 'With an 18 to hit, your blade strikes true, dealing 8 slashing damage!' or 'The lock resists your picks with a total of 9.'"
+                "\n[DICE ROLLING MODE: DIGITAL DICE (AETHER ROLLS FOR PLAYERS)]\n"
+                "* DIGITAL DICE ACTIVE: When a dice roll IS required for an established actor, you (the Game Master) execute `roll_dice` automatically—you do not make human players roll physical dice at their table.\n"
+                "* MANDATORY PLAYER AGENCY — NEVER ARBITRARILY ASSIGN CHARACTERS:\n"
+                "  1. If the player specifies who acts (e.g. 'Have Shadow roll investigation', 'Joe attacks the orc'): resolve the action immediately with that character, applying their sheet modifiers.\n"
+                "  2. If the player states an action without naming a character (e.g. 'Press Sandra for information', 'Ask about Imis', 'Search the ruins', 'Head to the gate'):\n"
+                "     - If it is dialogue or conversation: DO NOT ROLL DICE! Simply answer in-character as the NPC!\n"
+                "     - If a skill check is genuinely needed: ASK THE TABLE: 'Who steps forward to attempt this? Joe, Sam, or Shadow?' DO NOT arbitrarily choose a character or execute `roll_dice` until the player answers!\n"
+                "* STRICT BAN ON UNSOLICITED ROLLS FOR CONVERSATION OR MOVEMENT:\n"
+                "  - Asking an NPC a question ('Press Sandra for information', 'Ask about Imis', 'Question the guards') is NORMAL ROLEPLAY DIALOGUE, NOT an automatic Persuasion check! Reply in-character as the NPC without calling `roll_dice`!\n"
+                "  - Walking to an area ('Head to the western gate', 'Move to the barracks') is NORMAL MOVEMENT, NOT a Survival check! Describe the movement without calling `roll_dice`!\n"
+                "  - ONLY call `roll_dice` when an action carries genuine uncertainty, high stakes, or active contested opposition (e.g. deceiving a hostile commander, picking a difficult lock, or tracking deep in the wilderness).\n"
+                "* MANDATORY ACTOR ATTRIBUTION: Every dice roll MUST be explicitly attributed to a specific party character (e.g. 'Joe', 'Sam', 'Shadow') or monster/NPC/DM. Always pass `character_name` when calling `roll_dice`.\n"
+                "* NATURAL GM NARRATION & CLEAN OUTPUT:\n"
+                "  - Weave the character's name and final total naturally into the narrative (e.g., 'Joe rolled a 16 on his Athletics check', 'Shadow rolled an 11 on Investigation', or 'With a 22 Persuasion, Joe convinces the guard...').\n"
+                "  - DO NOT read off or append dice formulas or math! NEVER say or write formula parentheticals like '(1d20+3)' or '(1d20+4)' in your spoken narration. The players already see the complete dice breakdown in the UI audit log. Keep your storytelling natural without reciting math."
             )
 
         lines.append(
@@ -2974,6 +3287,49 @@ Respond in JSON with schema:
             "* NO ROBOTIC MENUS: Never list 'Option 1: ... Option 2: ... Option 3: ...' when a player has already declared an action. Only offer brief, organic suggestions if a player explicitly asks what they can do or is visibly stuck.\n"
             "* IMMERSIVE GM VOICE: Never mention system tools, JSON, meters, or 'Aether'. Speak as an evocative, living Dungeon Master."
         )
+
+        lines.append(
+            "\n[INVENTORY, EQUIPMENT & LOOT DIRECTIVES]\n"
+            "* AUTOMATIC INVENTORY UPDATES: Whenever a character finds, loots, receives, pockets, buys, drops, gives away, loses, or consumes an item or weapon (e.g., 'Joe finds a locket and puts it in his pocket', 'The wizard drinks a potion', 'Sam buys a crossbow'), you MUST IMMEDIATELY execute the `manage_party_inventory` tool in that same turn!\n"
+            "* MANDATORY DISARMING & ARREST DIRECTIVE:\n"
+            "  - Whenever characters are arrested, captured, imprisoned, surrender, or are ordered to disarm (e.g., Filip and the guards intercept and arrest the party):\n"
+            "    YOU MUST IMMEDIATELY CALL `manage_party_inventory(character_name='all', action='disarm', storage_location='<e.g. Camp Highmore Guard Barracks - Evidence Chest>', reason='Arrested by Chief Filip')`!\n"
+            "  - NEVER merely narrate disarming in text without executing this tool! Calling `action='disarm'` strips manufactured weapons from the Party Roster and secures them in the world cache under their storage location!\n"
+            "* ITEM PERSISTENCE & RETRIEVAL:\n"
+            "  - Weapons and gear taken from characters are NOT destroyed; their physical location is tracked in the world cache.\n"
+            "  - When characters pick locks, defeat guards, search the evidence locker, or break into the guardroom, execute `manage_party_inventory(character_name='all', action='retrieve', storage_location='...')` to return their weapons to the party roster!\n"
+            "* NEVER RELY SOLELY ON DIALOGUE: Simply narrating that a character took, dropped, or lost an item does NOT update the party roster or character sheet. You must execute `manage_party_inventory` so the inventory is mechanically tracked and preserved across sessions.\n"
+            "* NPCS & CAPTIVES ARE NEVER INVENTORY: Do NOT call `manage_party_inventory` for persons, enemies, allies, or captives (e.g. capturing, guarding, or keeping Imis bound is a narrative/condition event, NEVER an inventory item!). Only tangible physical objects, gear, documents, weapons, and coins belong in inventory.\n"
+            "* MERCHANT SHOPS & DYNAMIC STORY PRICING:\n"
+            "  - AUTOMATIC STORY-BASED PRICE SCALING: As the DM, you MUST dynamically set `price_multiplier` when opening a shop or executing a transaction to reflect the current narrative context:\n"
+            "    * Frontier outposts, remote wilderness/jungle bases, or isolated supply depots (e.g. Camp Highmore, Tane Here's warehouse): 1.20x to 1.35x markup due to transport hazards, distance & scarcity.\n"
+            "    * Besieged, famine-stricken, war-torn regions, or black markets / contraband / rare goods: 1.50x to 2.00x markup.\n"
+            "    * Major trade cities, coastal ports, or bustling trade bazaars: 0.90x to 1.00x standard competitive rates.\n"
+            "    * Faction allies, military quartermasters, or merchants the party aided/saved: 0.75x to 0.85x discount.\n"
+            "  - HAGGLING & ROLEPLAY DIRECTIVES:\n"
+            "    * When players negotiate, haggle, or make a Charisma (Persuasion/Deception/Intimidation) check, evaluate their roleplay and roll.\n"
+            "    * On a success (DC 12-15), immediately reward them by calling `open_merchant_shop` with a reduced `price_multiplier` (e.g. dropping from 1.25x down to 1.00x or 0.85x) with in-character description acknowledging the deal, so the UI updates with discounted prices in real time!\n"
+            "  - When the party enters any store, shop, or meets a merchant NPC, call `open_merchant_shop(shop_name=..., location_name=..., price_multiplier=..., specialty=..., description=...)` so the UI shop pops open with story pricing!\n"
+            "  - If the player buys or sells via voice/chat directly with you, execute `merchant_transaction` AND use `lookup_dnd_compendium` for exact SRD stats and prices (2014 & 2024 rules).\n"
+            "  - When players decide to camp or take a Short Rest or Long Rest and want to spend Hit Dice, drink potions, swap armor/attunement, or prepare spells, call `prompt_party_rest(rest_type='short'|'long')` to open the Rest modal (or `execute_rest` for automated quick rests).\n"
+            "* GUIDED LEVEL-UP & MULTICLASSING:\n"
+            "  - When a character reaches an XP threshold or story milestone to gain a level, call `prompt_level_up_wizard(character_name=..., reason=...)` so the interactive D&D 5e (2014 & 2024) Level-Up & Multiclass Wizard opens for the player (do NOT silently auto-pick feats or multiclasses without letting the player use the wizard, unless they ask you to quick-level via `level_up_character`)."
+        )
+
+        stored_items_list = state.get("stored_items", [])
+        if stored_items_list:
+            lines.append("\n[CONFISCATED & STORED PARTY ITEMS / WORLD CACHES]")
+            by_loc = {}
+            for it in stored_items_list:
+                loc_name = it.get("storage_location", "Unknown Evidence Cache")
+                by_loc.setdefault(loc_name, []).append(f"{it.get('original_owner', 'Party')}'s {it.get('name', 'Item')} ({it.get('type', 'gear')})")
+            for loc_name, items_str in by_loc.items():
+                lines.append(f"- Location: {loc_name}\n  * Held Gear: {', '.join(items_str)}")
+            lines.append(
+                "* RETRIEVAL DIRECTIVE: These belongings exist in the physical world at the locations above! "
+                "If characters pick the lock, defeat the guards, or search that room, describe finding their gear and call "
+                "`manage_party_inventory(character_name='all', action='retrieve', storage_location=...)` to restore their equipment to the party roster!"
+            )
 
         # 1. Grounded Adventure Module Details (Prevents shooting from the hip)
         if synopsis and isinstance(synopsis, dict) and synopsis.get("setting"):
@@ -2989,38 +3345,134 @@ Respond in JSON with schema:
             if synopsis.get("core_mission"):
                 lines.append(f"- Primary Mission: {synopsis['core_mission']}")
             if synopsis.get("key_npcs"):
-                lines.append(f"- Key NPCs: {', '.join(synopsis['key_npcs'])}")
+                npc_parts = [(n.get("name") if isinstance(n, dict) else str(n)).strip() for n in synopsis["key_npcs"] if n]
+                lines.append(f"- Key NPCs: {', '.join(npc_parts)}")
             if synopsis.get("opening_hook"):
                 lines.append(f"- Opening Hook: {synopsis['opening_hook']}")
 
-            # Starting Scene Grounding & Boxed Text
-            start_scene = synopsis.get("starting_scene")
-            if start_scene and isinstance(start_scene, dict) and start_scene.get("location"):
-                lines.append("\n[ACTIVE ADVENTURE SCENE NARRATIVE & SCRIPT — MANDATORY]")
-                lines.append(f"- Active Scene: {start_scene.get('scene_name', 'Scene 1: The Beginning')}")
-                lines.append(f"- Scene Location: {start_scene.get('location')}")
-                if start_scene.get("boxed_text"):
-                    lines.append(f"- VERBATIM BOXED NARRATION (Read or paraphrase this text when introducing the scene):\n  \"{start_scene['boxed_text']}\"")
-                if start_scene.get("active_npc"):
-                    lines.append(f"- Key NPC Present & In-Character: {start_scene['active_npc']}")
-                if start_scene.get("quest_briefing"):
-                    lines.append(f"- Quest Briefing: {start_scene['quest_briefing']}")
-                if start_scene.get("immediate_choices"):
-                    choices_formatted = "\n  ".join(f"* {c}" for c in start_scene["immediate_choices"])
-                    lines.append(f"- Established Player Choices for this Scene:\n  {choices_formatted}")
+            # Dynamic Active Scene & Module Progression
+            acts_scenes = synopsis.get("acts_and_scenes", [])
+            current_scene_obj = None
+            current_act_name = state.get("current_act", "")
+            saved_scene_name = state.get("current_scene", "")
+            current_loc = state.get("current_location", "")
 
-            lines.append(
-                "* MANDATORY GM GROUNDING DIRECTIVE: You are the Game Master running THIS specific published module. "
-                "You MUST anchor your narrative, opening scene, NPCs, dialogue, and environment strictly to this module's "
-                "setting, factions, and premise! Never invent generic fantasy taverns, random barkeeps, or unrelated storytelling when "
-                "this module specifies its own settlements, NPCs, and quest line!"
-            )
+            # 1. Try finding matching scene from state.current_scene or current_location
+            if acts_scenes:
+                for act in acts_scenes:
+                    act_name = act.get("act", "")
+                    for sc in act.get("scenes", []):
+                        sc_name = sc.get("scene_name", "")
+                        sc_loc = sc.get("location", "")
+                        if saved_scene_name and (saved_scene_name.lower() in sc_name.lower() or sc_name.lower() in saved_scene_name.lower()):
+                            current_scene_obj = sc
+                            current_act_name = act_name
+                            break
+                        if current_loc and (current_loc.lower() in sc_loc.lower() or sc_loc.lower() in current_loc.lower() or current_loc.lower() in sc_name.lower()):
+                            current_scene_obj = sc
+                            current_act_name = act_name
+                            break
+                    if current_scene_obj:
+                        break
+
+            # Fall back to starting scene if no scene identified
+            if not current_scene_obj:
+                current_scene_obj = synopsis.get("starting_scene") or {}
+                if not current_act_name and acts_scenes:
+                    current_act_name = acts_scenes[0].get("act", "Act 1: Prologue")
+
+            lines.append("\n[ACTIVE ADVENTURE SCENE NARRATIVE & SCRIPT — MANDATORY]")
+            if current_act_name:
+                lines.append(f"- Active Act: {current_act_name}")
+            lines.append(f"- Active Scene: {current_scene_obj.get('scene_name', 'Scene 1: The Beginning')}")
+            lines.append(f"- Scene Location: {current_scene_obj.get('location', 'Camp Highmore')}")
+            if current_scene_obj.get("boxed_text"):
+                lines.append(f"- VERBATIM BOXED NARRATION (Read or paraphrase this text when introducing the scene):\n  \"{current_scene_obj['boxed_text']}\"")
+            if current_scene_obj.get("active_npc"):
+                lines.append(f"- Key NPC Present & In-Character: {current_scene_obj['active_npc']}")
+            if current_scene_obj.get("challenges"):
+                lines.append(f"- Scene Challenges / Encounters / Guardians: {current_scene_obj['challenges']}")
+            if current_scene_obj.get("quest_briefing"):
+                lines.append(f"- Quest Briefing: {current_scene_obj['quest_briefing']}")
+            if current_scene_obj.get("immediate_choices"):
+                choices_formatted = "\n  ".join(f"* {c}" for c in current_scene_obj["immediate_choices"])
+                lines.append(f"- Established Player Choices for this Scene:\n  {choices_formatted}")
+
+            # Module Roadmap / Scene Flow
+            if acts_scenes:
+                lines.append("\n[PUBLISHED MODULE SCENE ROADMAP (STRICT PROGRESSION)]")
+                for act in acts_scenes:
+                    sc_names = [s.get("scene_name", "") for s in act.get("scenes", []) if s.get("scene_name")]
+                    lines.append(f"* {act.get('act', 'Act')}: {' -> '.join(sc_names)}")
+
+            # Encounter Tables
+            enc_tables = synopsis.get("encounter_tables", {})
+            if enc_tables and isinstance(enc_tables, dict):
+                lines.append("\n[MODULE RANDOM ENCOUNTER TABLES]")
+                for tbl_name, tbl_rolls in enc_tables.items():
+                    rolls_str = "; ".join(f"[{k}] {v}" for k, v in tbl_rolls.items())
+                    lines.append(f"- {tbl_name}: {rolls_str}")
+
+            # Key Monster & Boss Stat Blocks
+            bosses = synopsis.get("monsters_and_bosses", {})
+            if bosses and isinstance(bosses, dict):
+                lines.append("\n[KEY ENEMY & GUARDIAN STAT BLOCKS]")
+                for b_name, b_stats in bosses.items():
+                    lines.append(f"- {b_name}: {b_stats}")
+
+            if adherence == "creative":
+                lines.append(
+                    "\n[MODULE ADHERENCE LEVEL: 1 / 3 — CREATIVE SANDBOX (HIGH GM FREEDOM)]\n"
+                    "* CREATIVE GM FREEDOM: Treat the published module as an inspirational world guide, NPC roster, and thematic backdrop.\n"
+                    "* You have full creative license to improvise new locations, remix, reorder or substitute encounters, invent emergent side quests, and adapt the narrative dynamically based on player choices and curiosity, rather than strictly following module chapters in order.\n"
+                    "* Core NPCs, lore, and themes remain grounded in the module, but the narrative journey is flexible and emergent.\n"
+                    "* Procedural pacing still applies: present one situation at a time, let players declare actions, and resolve skill checks fairly without skipping tactical gameplay."
+                )
+            elif adherence == "balanced":
+                lines.append(
+                    "\n[MODULE ADHERENCE LEVEL: 2 / 3 — GUIDED & BALANCED NARRATIVE]\n"
+                    "* GUIDED / BALANCED MODULE PACING: Preserve the module's core narrative spine, major story milestones, central mystery/threat, and climactic boss encounters, while offering flexibility in scene transitions and player-driven choices.\n"
+                    "* Accommodate creative player detours, alternative tactics, and emergent roleplay dialogue organically, but gently steer the party back toward the module's primary milestones.\n"
+                    "* Encounters can be negotiated, bypassed through clever strategy, or tackled in varying sequence, provided the narrative remains coherent and true to the module's overarching story."
+                )
+                if current_scene_obj.get("critical_trigger"):
+                    lines.append(f"\n* KEY MODULE TRIGGER: {current_scene_obj['critical_trigger']}")
+                elif "elfhunt" in str(synopsis.get("module_title", "")).lower() or active_id == "elf_hunt":
+                    lines.append(
+                        "\n* KEY MODULE PLOT BEAT (ACT 1 BARRACKS -> ACT 2 CONFLICT):\n"
+                        "  - If the players investigated the barracks or questioned Chief Filip, Filip and Petry suspect the party knows too much and attempt to intercept or frame them before they leave Camp Highmore."
+                    )
+            else:  # strict (default)
+                lines.append(
+                    "\n[MODULE ADHERENCE LEVEL: 3 / 3 — STRICT MODULE FIDELITY (BY THE BOOK)]\n"
+                    "* STRICT MODULE FIDELITY: You are the Game Master running THIS specific published module by the book. "
+                    "You MUST follow the module's written acts, scenes, and narrative progression sequentially! Never skip scenes or invent unrelated side stories.\n"
+                    "* SKILL CHECKS NEVER SKIP SCENES, ENCOUNTERS, OR TRAVEL:\n"
+                    "  - A high roll (e.g. DC 20+ check or Natural 20) only grants exceptional information, quick track finding, or tactical advantage WITHIN THE CURRENT SCENE!\n"
+                    "  - A HIGH ROLL NEVER TELEPORTS THE PARTY PAST INTERMEDIATE SCENES, COMBATS, HAZARDS, OR DUNGEON ROOMS!\n"
+                    "  - For example, succeeding on a tracking or navigation check finds the path into the next area; it does NOT bypass the wilderness monsters, environmental hazards, or guardian encounters along that path!\n"
+                    "* MANDATORY GUARDIANS & COMBAT ENCOUNTERS:\n"
+                    "  - If the module places enemies, guards, traps, or obstacles guarding a location, passage, or portal, the party MUST encounter them!\n"
+                    "  - You CANNOT describe the party simply walking past them or arriving at the objective without triggering and resolving these encounters.\n"
+                    "* PROCEDURAL PACING: Tabletop RPGs are about the journey, tactical choices, and encounters. Present one scene and obstacle at a time, let players state their actions, roll necessary checks or initiative, and adjudicate before transitioning to the next scene."
+                )
+                if current_scene_obj.get("critical_trigger"):
+                    lines.append(f"\n* ACTIVE SCENE MANDATORY TRIGGER: {current_scene_obj['critical_trigger']}")
+                elif "elfhunt" in str(synopsis.get("module_title", "")).lower() or active_id == "elf_hunt":
+                    lines.append(
+                        "\n* MANDATORY MODULE SCENE TRIGGERS (ACT 1 BARRACKS -> ACT 2 ARREST):\n"
+                        "  - In this module, if the players visited the barracks or questioned Chief Filip, Filip immediately plots with Johan Petry to frame the party for the theft to protect their coup!\n"
+                        "  - ACT 2 SCENE 1 (THE ARREST) TRIGGERS AUTOMATICALLY as soon as the party finishes at the barracks, speaks with Shandra, or attempts to reach the camp gate!\n"
+                        "  - Chief Filip and a squad of 11 guards and 2 knights intercept them with spears leveled and crossbows drawn to arrest them under false charges.\n"
+                        "  - DO NOT steer players into the jungle or narrate jungle travel if they questioned Chief Filip or investigated the barracks! You MUST run Act 2 Scene 1: The Arrest first!"
+                    )
 
         # 2. Persistent Campaign Memory & Last Turn Recap (Recap across Restarts)
         recap = state.get("latest_recap")
         loc = state.get("current_location")
         quest = state.get("active_quest")
-        clues = state.get("discovered_clues", [])
+        clues_raw = state.get("discovered_clues", [])
+        clues = [(c.get("name") if isinstance(c, dict) else str(c)).strip() for c in clues_raw if c]
         last_action = state.get("last_action")
 
         if recap or loc or quest or clues or last_action:
@@ -3048,23 +3500,27 @@ Respond in JSON with schema:
                 hp = ch.get("vitals", {}).get("health", {})
                 guard = ch.get("vitals", {}).get("guard", {})
                 conds = ch.get("conditions", [])
-                cond_str = f" [Conditions: {', '.join(conds)}]" if conds else ""
+                cond_parts = [(c.get("name") if isinstance(c, dict) else str(c)).strip() for c in conds if c]
+                cond_str = f" [Conditions: {', '.join(cond_parts)}]" if cond_parts else ""
                 lvl_str = f"Lv. {ch.get('level', 1)}"
                 xp_str = f"{ch.get('experience_points', 0)} XP" if ch.get("experience_points") else ""
                 lvl_xp = f" ({', '.join(filter(None, [lvl_str, xp_str]))})"
 
                 wpns = ch.get("weapons", [])
-                wpn_parts = [f"{w.get('name', 'Weapon')} ({w.get('atk_bonus', '+0')}, {w.get('damage', '1d4')})" for w in wpns]
+                wpn_parts = [f"{(w.get('name') if isinstance(w, dict) else str(w))} ({w.get('atk_bonus', '+0') if isinstance(w, dict) else '+0'}, {w.get('damage', '1d4') if isinstance(w, dict) else '1d4'})" for w in wpns if w]
                 wpn_str = f" | Attacks: {', '.join(wpn_parts)}" if wpn_parts else ""
 
                 inv = ch.get("inventory", [])
-                inv_str = f" | Key Items: {', '.join(inv[:8])}" if inv else ""
+                inv_parts = [(i.get("name") if isinstance(i, dict) else str(i)).strip() for i in inv[:8] if i]
+                inv_str = f" | Key Items: {', '.join(inv_parts)}" if inv_parts else ""
 
                 spells = ch.get("spells", [])
-                spell_str = f" | Spells/Cantrips: {', '.join(spells[:6])}" if spells else ""
+                spell_parts = [(s.get("name") if isinstance(s, dict) else str(s)).strip() for s in spells[:6] if s]
+                spell_str = f" | Spells/Cantrips: {', '.join(spell_parts)}" if spell_parts else ""
 
                 feats = ch.get("features_and_traits", [])
-                feat_str = f" | Features: {', '.join(feats[:4])}" if feats else ""
+                feat_parts = [(f.get("name") if isinstance(f, dict) else str(f)).strip() for f in feats[:4] if f]
+                feat_str = f" | Features: {', '.join(feat_parts)}" if feat_parts else ""
 
                 init = ch.get("initiative", "")
                 init_str = f", Init: {init}" if init else ""
@@ -3076,6 +3532,10 @@ Respond in JSON with schema:
             lines.append("\n- Active Party Roster: \n  * " + "\n  * ".join(char_summaries))
         else:
             lines.append("\n- Active Party Roster: Empty (use `upsert_ttrpg_character` to add characters).")
+
+        caller_id = state.get("party_caller_id")
+        caller_name = chars.get(caller_id, {}).get("name") if (caller_id and chars and isinstance(chars.get(caller_id), dict)) else "None (Group Decision - Ask players who acts if unspecified)"
+        lines.append(f"- Designated Party Caller: {caller_name}")
 
         # 4. Combat Initiative
         if ladder:
@@ -3103,16 +3563,19 @@ Respond in JSON with schema:
                 lines.append("- Reference Core Rulebooks (On-Demand only): " + ", ".join(rules_references))
                 lines.append("  * NOTE: You already know the base rules for this system. Only query reference rulebooks if a player specifically asks about an obscure rule!")
 
-            lines.append(
-                "  * NOTE: When players make significant discoveries or complete a scene beat, call `record_campaign_notes` "
-                "to preserve the progress in the persistent campaign journal so it is retained across restarts!"
-            )
+        lines.append(
+            "\n[SCENE PROGRESSION & LOCATION TRACKING DIRECTIVE — MANDATORY]\n"
+            "* Whenever the party transitions to a new location (e.g. Camp Gate -> Camp Jail Cell, Barracks -> Warehouse, Camp Highmore -> Jungle Edge), "
+            "or when a major scene beat or encounter finishes:\n"
+            "  YOU MUST IMMEDIATELY CALL `record_campaign_notes(location='<New Exact Location>', summary='<2-3 sentence recap>', last_action='<action>')` in that turn!\n"
+            "* NEVER narrate arriving in a cell or moving across the settlement without recording the new location. This keeps the party's current location and recap synchronized across reloads and restarts!"
+        )
 
         return "\n".join(lines) + "\n\n"
 
     # --- Cryptographic Dice Engine ---
     @staticmethod
-    def parse_and_roll(formula: str, roll_type: str = "normal") -> Dict[str, Any]:
+    def parse_and_roll(formula: str, roll_type: str = "normal", character_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Evaluates dice expressions like: '1d20+5', '2d6-1', '8d6', '1d100'.
         Supports roll_type in ('normal', 'advantage', 'disadvantage').
@@ -3136,6 +3599,9 @@ Respond in JSON with schema:
         if num_dice <= 0 or sides <= 0 or num_dice > 100:
             return {"status": "error", "message": "Dice quantity or sides out of supported bounds."}
 
+        clean_char = str(character_name).strip() if character_name else None
+        char_prefix = f"[{clean_char}] " if clean_char else ""
+
         # Handle Advantage / Disadvantage for single-die rolls (e.g., d20)
         if roll_type in ("advantage", "disadvantage") and num_dice == 1:
             roll_a = secrets.randbelow(sides) + 1
@@ -3148,7 +3614,7 @@ Respond in JSON with schema:
                 dropped_roll = max(roll_a, roll_b)
 
             total = chosen_roll + modifier
-            return {
+            res = {
                 "status": "success",
                 "roll_id": secrets.token_hex(6),
                 "formula": formula,
@@ -3158,14 +3624,17 @@ Respond in JSON with schema:
                 "dropped_die": dropped_roll,
                 "modifier": modifier,
                 "total": total,
-                "summary": f"Rolled [{roll_a}, {roll_b}] ({roll_type}) -> Kept {chosen_roll} + ({modifier}) = {total}"
+                "summary": f"{char_prefix}Rolled [{roll_a}, {roll_b}] ({roll_type}) -> Kept {chosen_roll} + ({modifier}) = {total}"
             }
+            if clean_char:
+                res["character_name"] = clean_char
+            return res
 
         # Standard Multi-Dice Roll
         rolls = [secrets.randbelow(sides) + 1 for _ in range(num_dice)]
         total = sum(rolls) + modifier
 
-        return {
+        res = {
             "status": "success",
             "roll_id": secrets.token_hex(6),
             "formula": formula,
@@ -3174,8 +3643,11 @@ Respond in JSON with schema:
             "dice_rolled": rolls,
             "modifier": modifier,
             "total": total,
-            "summary": f"Rolled {rolls} + ({modifier}) = {total}" if modifier != 0 else f"Rolled {rolls} = {total}"
+            "summary": f"{char_prefix}Rolled {rolls} + ({modifier}) = {total}" if modifier != 0 else f"{char_prefix}Rolled {rolls} = {total}"
         }
+        if clean_char:
+            res["character_name"] = clean_char
+        return res
 
     # --- Character State & Vitals Management ---
     @staticmethod
@@ -3226,12 +3698,14 @@ Respond in JSON with schema:
 
         prev = existing_char or {}
         prev_vitals = prev.get("vitals", {})
+        raw_vitals_in = char_payload.get("vitals")
+        raw_v_health = raw_vitals_in.get("health") if isinstance(raw_vitals_in, dict) and isinstance(raw_vitals_in.get("health"), dict) else {}
 
         default_max_hp = self._safe_int(prev_vitals.get("health", {}).get("max"), 25)
-        raw_max_hp = char_payload.get("max_health") or char_payload.get("hp_max") or char_payload.get("hp")
+        raw_max_hp = char_payload.get("max_health") or char_payload.get("hp_max") or char_payload.get("hp") or raw_v_health.get("max")
         max_hp = max(1, self._safe_int(raw_max_hp, default_max_hp))
         default_cur_hp = self._safe_int(prev_vitals.get("health", {}).get("current"), max_hp)
-        raw_cur_hp = char_payload.get("current_health") or char_payload.get("hp_current") or char_payload.get("health")
+        raw_cur_hp = char_payload.get("current_health") or char_payload.get("hp_current") or char_payload.get("health") or raw_v_health.get("current")
         cur_hp = self._safe_int(raw_cur_hp, default_cur_hp)
         cur_hp = max(0, min(max_hp, cur_hp))
 
@@ -3419,7 +3893,10 @@ Respond in JSON with schema:
             "weight_carried", "encumbered", "push_drag_lift", "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
             "creature_type", "backstory", "additional_notes",
             "personality_traits", "ideals", "bonds", "flaws", "appearance", "allies",
-            "inspiration", "ability_save_dc", "attuned_magic_items", "spell_slots", "roleplay_anchors", "native_system_data"
+            "inspiration", "ability_save_dc", "attuned_magic_items", "attuned_items",
+            "armor_equipped", "shield_equipped", "stealth_disadvantage",
+            "subclass", "subclasses", "feats", "class_levels", "ruleset_edition", "max_prepared_leveled_spells",
+            "spell_slots", "roleplay_anchors", "native_system_data"
         ):
             if opt_key in char_payload and char_payload[opt_key] is not None:
                 char_entry[opt_key] = char_payload[opt_key]
@@ -3477,22 +3954,10 @@ Respond in JSON with schema:
         if not char_id or not char_obj:
             return {"status": "error", "message": f"Character '{character_name}' not found."}
 
+        from core.compendiums.dnd_advancement import XP_THRESHOLDS, apply_level_up, proficiency_bonus_for_level
+
         cur_level = int(char_obj.get("level", 1))
         cur_xp = int(char_obj.get("experience_points", 0))
-
-        # 5e standard XP thresholds
-        xp_thresholds = {
-            1: 0,
-            2: 300,
-            3: 900,
-            4: 2700,
-            5: 6500,
-            6: 14000,
-            7: 23000,
-            8: 34000,
-            9: 48000,
-            10: 64000
-        }
 
         act = (action or "award_xp").lower().strip()
         level_up_ready = False
@@ -3501,37 +3966,44 @@ Respond in JSON with schema:
             add_xp = max(0, int(amount_or_level))
             new_xp = cur_xp + add_xp
             char_obj["experience_points"] = new_xp
-            next_req = xp_thresholds.get(cur_level + 1, (cur_level + 1) * 10000)
-            if new_xp >= next_req:
+            next_req = XP_THRESHOLDS.get(min(20, cur_level + 1), 355000)
+            if cur_level < 20 and new_xp >= next_req:
                 level_up_ready = True
-                msg = f"Awarded {add_xp} XP to {char_obj['name']} (Total: {new_xp} XP). QUALIFIES FOR LEVEL UP to Level {cur_level + 1}! Next step: call `manage_character_progression` with action='level_up' to advance."
+                msg = f"Awarded {add_xp} XP to {char_obj['name']} (Total: {new_xp} XP). QUALIFIES FOR LEVEL UP to Level {cur_level + 1}! Next step: open the Guided Level-Up Wizard or call `level_up_character`."
+            elif cur_level >= 20:
+                msg = f"Awarded {add_xp} XP to {char_obj['name']} (Total: {new_xp} XP, Max Level 20)."
             else:
                 msg = f"Awarded {add_xp} XP to {char_obj['name']}. Current: {new_xp} / {next_req} XP for Level {cur_level + 1}."
 
         elif act == "level_up":
-            target_level = cur_level + 1 if (amount_or_level <= 0 or amount_or_level <= cur_level) else int(amount_or_level)
-            char_obj["level"] = target_level
-
-            # Calculate HP bonus (approx +6 for d8/d10 hit die + CON mod)
-            vigor = char_obj.get("attributes", {}).get("Vigor", 10)
-            con_mod = (vigor - 10) // 2
-            hp_gain = max(1, 6 + con_mod)
-
-            vitals = char_obj.setdefault("vitals", {})
-            hp_data = vitals.setdefault("health", {"current": 20, "max": 20, "label": "Health"})
-            hp_data["max"] += hp_gain
-            hp_data["current"] += hp_gain
-
-            # Update hit dice custom meter
-            hd_meter = char_obj.setdefault("custom_meters", {}).setdefault("hit_dice", {"current": cur_level, "max": cur_level, "label": "Hit Dice"})
-            hd_meter["max"] = target_level
-            hd_meter["current"] = target_level
-
-            # Update prof bonus
-            prof = "+2" if target_level < 5 else ("+3" if target_level < 9 else "+4")
-            char_obj["prof_bonus"] = prof
-
-            msg = f"{char_obj['name']} leveled up from Level {cur_level} to Level {target_level}! Max HP increased by {hp_gain} (new max: {hp_data['max']}). Proficiency Bonus: {prof}. Hit Dice updated to {target_level}."
+            target_level = cur_level + 1 if (amount_or_level <= 0 or amount_or_level <= cur_level) else min(20, int(amount_or_level))
+            ruleset_low = str(char_obj.get("ruleset") or (self.manifest.get("campaigns") or {}).get(self.manifest.get("active_campaign") or "", {}).get("system_preset") or "dnd_5e").lower()
+            is_dnd = any(k in ruleset_low for k in ("dnd", "5e", "heroic_d20", "fantasy")) or ("Strength" in (char_obj.get("attributes") or {}))
+            if is_dnd:
+                ed = self._get_campaign_edition()
+                steps = max(1, target_level - cur_level)
+                last_res = None
+                for _ in range(steps):
+                    last_res = apply_level_up(char_obj, {"edition": ed, "hp_mode": "fixed"})
+                if last_res and last_res.get("status") == "success":
+                    msg = last_res["message"]
+                else:
+                    return last_res or {"status": "error", "message": "Failed to level up character."}
+            else:
+                char_obj["level"] = target_level
+                vigor = char_obj.get("attributes", {}).get("Vigor", 10)
+                con_mod = (vigor - 10) // 2
+                hp_gain = max(1, 6 + con_mod)
+                vitals = char_obj.setdefault("vitals", {})
+                hp_data = vitals.setdefault("health", {"current": 20, "max": 20, "label": "Health"})
+                hp_data["max"] += hp_gain
+                hp_data["current"] += hp_gain
+                hd_meter = char_obj.setdefault("custom_meters", {}).setdefault("hit_dice", {"current": cur_level, "max": cur_level, "label": "Hit Dice"})
+                hd_meter["max"] = target_level
+                hd_meter["current"] = target_level
+                prof = f"+{proficiency_bonus_for_level(target_level)}"
+                char_obj["prof_bonus"] = prof
+                msg = f"{char_obj['name']} leveled up from Level {cur_level} to Level {target_level}! Max HP increased by {hp_gain} (new max: {hp_data['max']}). Proficiency Bonus: {prof}."
 
         else:
             return {"status": "error", "message": f"Unsupported progression action '{action}'. Use 'award_xp' or 'level_up'."}
@@ -3556,7 +4028,7 @@ Respond in JSON with schema:
         is_custom_meter: bool = False
     ) -> Dict[str, Any]:
         """Modifies HP, defense, or custom meters with strict upper/lower clamping."""
-        if not self.active_state:
+        if not self._ensure_active_state():
             return {"status": "error", "message": "No active campaign loaded."}
 
         char_id, char_data = self._find_character(character_name)
@@ -3613,124 +4085,358 @@ Respond in JSON with schema:
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
         spells: Optional[List[Any]] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        storage_location: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Adds or removes items, weapons, and spells from a character's inventory in the active campaign.
-        Enables both the user and Aether DM to update gear and spells when items are found, looted, bought, used, or lost.
+        Adds, removes, disarms, or retrieves items, weapons, and spells from character(s) in the active campaign.
+        Enables both the user and Aether DM to update gear when items are found, looted, bought, used, lost,
+        or confiscated/disarmed upon arrest (with item persistence tracking where confiscated weapons are stored).
         """
-        if not self.active_state:
+        if not self._ensure_active_state():
             return {"status": "error", "message": "No active campaign loaded."}
 
-        char_id, char_data = self._find_character(character_name)
-        if not char_data:
-            return {"status": "error", "message": f"Character '{character_name}' not found."}
+        self.active_state.setdefault("stored_items", [])
+        stored_items_list = self.active_state["stored_items"]
+
+        # Support party-wide operations (e.g. 'all', 'party', 'everyone')
+        target_chars: List[Tuple[str, Dict[str, Any]]] = []
+        is_party_wide = (character_name or "").lower().strip() in ("all", "party", "everyone", "all_characters", "team")
+        if is_party_wide:
+            chars_dict = self.active_state.get("characters", {})
+            if not chars_dict:
+                return {"status": "error", "message": "No characters in party roster."}
+            target_chars = list(chars_dict.items())
+        else:
+            cid, cdata = self._find_character(character_name)
+            if not cdata:
+                return {"status": "error", "message": f"Character '{character_name}' not found."}
+            target_chars = [(cid, cdata)]
 
         action_norm = (action or "add").lower().strip()
-        current_inv = char_data.setdefault("inventory", [])
-        current_wpns = char_data.setdefault("weapons", [])
-        current_spells = char_data.setdefault("spells", [])
-        modified_items: List[str] = []
-        modified_weapons: List[str] = []
-        modified_spells: List[str] = []
 
-        if action_norm in ("add", "loot", "receive", "learn"):
-            if items:
-                for it in items:
-                    clean_it = str(it).strip()
-                    if clean_it:
-                        # Append or ensure present
-                        current_inv.append(clean_it)
-                        modified_items.append(clean_it)
-            if weapons:
-                for w in weapons:
-                    if isinstance(w, dict) and w.get("name"):
-                        w_record = {
-                            "name": str(w["name"]).strip(),
-                            "atk_bonus": str(w.get("atk_bonus", "+0")).strip(),
-                            "damage": str(w.get("damage", "1d4")).strip(),
-                            "notes": str(w.get("notes", "")).strip()
-                        }
-                        # Replace if existing or append
-                        existing_w = next((x for x in current_wpns if x.get("name", "").lower() == w_record["name"].lower()), None)
-                        if existing_w:
-                            existing_w.update(w_record)
-                        else:
-                            current_wpns.append(w_record)
-                        modified_weapons.append(w_record["name"])
-            if spells:
-                for s in spells:
-                    if isinstance(s, dict) and s.get("name"):
-                        s_record = {
-                            "name": str(s["name"]).strip(),
-                            "level": str(s.get("level", "Cantrip")).strip(),
-                            "school": str(s.get("school", "")).strip(),
-                            "atk_bonus": str(s.get("atk_bonus", "")).strip(),
-                            "save_dc": str(s.get("save_dc", "")).strip(),
-                            "damage": str(s.get("damage", "")).strip(),
-                            "range": str(s.get("range", "")).strip(),
-                            "notes": str(s.get("notes", "")).strip()
-                        }
-                        existing_s = next((x for x in current_spells if (x.get("name", "") if isinstance(x, dict) else str(x)).lower() == s_record["name"].lower()), None)
-                        if existing_s and isinstance(existing_s, dict):
-                            existing_s.update(s_record)
-                        else:
-                            current_spells.append(s_record)
-                        modified_spells.append(s_record["name"])
-                    elif isinstance(s, str) and s.strip():
-                        clean_s = s.strip()
-                        if clean_s not in current_spells:
-                            current_spells.append(clean_s)
-                        modified_spells.append(clean_s)
+        # Handle Retrieve / Reclaim from storage location
+        if action_norm in ("retrieve", "reclaim", "recover"):
+            reclaimed_items: List[str] = []
+            reclaimed_weapons: List[str] = []
+            target_char_ids = {c[0]: c[1] for c in target_chars}
 
-        elif action_norm in ("remove", "delete", "use", "consume", "drop", "lose", "unlearn"):
-            if items:
-                for it in items:
-                    target_name = str(it).strip().lower()
-                    for idx, cur_it in enumerate(list(current_inv)):
-                        cur_name = (cur_it.get("name") if isinstance(cur_it, dict) else str(cur_it)).strip().lower()
-                        if cur_name == target_name or target_name in cur_name:
-                            removed = current_inv.pop(idx)
-                            rem_name = removed.get("name", target_name) if isinstance(removed, dict) else str(removed)
-                            modified_items.append(rem_name)
-                            break
-            if weapons:
-                for w in weapons:
-                    w_name = (w.get("name") if isinstance(w, dict) else str(w)).strip().lower()
-                    for idx, cur_w in enumerate(list(current_wpns)):
-                        if cur_w.get("name", "").lower() == w_name or w_name in cur_w.get("name", "").lower():
-                            removed = current_wpns.pop(idx)
-                            modified_weapons.append(removed.get("name", w_name))
-                            break
-            if spells:
-                for s in spells:
-                    s_name = (s.get("name") if isinstance(s, dict) else str(s)).strip().lower()
-                    for idx, cur_s in enumerate(list(current_spells)):
-                        cur_name = (cur_s.get("name") if isinstance(cur_s, dict) else str(cur_s)).strip().lower()
-                        if cur_name == s_name or s_name in cur_name:
-                            removed = current_spells.pop(idx)
-                            rem_name = removed.get("name", s_name) if isinstance(removed, dict) else str(removed)
-                            modified_spells.append(rem_name)
-                            break
+            # Filter items from stored_items
+            remaining_stored = []
+            for entry in list(stored_items_list):
+                owner_id = entry.get("original_owner_id")
+                owner_name = entry.get("original_owner", "").lower()
+                matches_owner = is_party_wide or (owner_id in target_char_ids) or any(c[1].get("name", "").lower() == owner_name for c in target_chars)
+                matches_loc = True
+                if storage_location:
+                    matches_loc = (storage_location.lower() in entry.get("storage_location", "").lower()) or (entry.get("storage_location", "").lower() in storage_location.lower())
+
+                # If specific item/weapon names requested
+                matches_item = True
+                entry_name = entry.get("name", "").lower()
+                if items or weapons:
+                    req_names = [str(x.get("name") if isinstance(x, dict) else x).lower() for x in (items or []) + (weapons or [])]
+                    matches_item = any(rn in entry_name or entry_name in rn for rn in req_names)
+
+                if matches_owner and matches_loc and matches_item:
+                    # Restore item to target character
+                    dest_char = target_char_ids.get(owner_id)
+                    if not dest_char:
+                        dest_char = next((c[1] for c in target_chars if c[1].get("name", "").lower() == owner_name), target_chars[0][1])
+
+                    if entry.get("type") == "weapon":
+                        dest_wpns = dest_char.setdefault("weapons", [])
+                        dest_wpns.append(entry.get("data") or {"name": entry.get("name", "Weapon"), "atk_bonus": "+0", "damage": "1d4"})
+                        reclaimed_weapons.append(f"{dest_char['name']}: {entry['name']}")
+                    else:
+                        dest_inv = dest_char.setdefault("inventory", [])
+                        dest_inv.append(entry.get("data") or entry.get("name", "Item"))
+                        reclaimed_items.append(f"{dest_char['name']}: {entry['name']}")
+                else:
+                    remaining_stored.append(entry)
+
+            self.active_state["stored_items"] = remaining_stored
+            self.save_active_campaign_state()
+            logger.info(f"[TTRPG] Retrieved stored gear: Weapons={reclaimed_weapons}, Items={reclaimed_items}. Remaining stored: {len(remaining_stored)}")
+
+            return {
+                "status": "success",
+                "action": "retrieve",
+                "reclaimed_weapons": reclaimed_weapons,
+                "reclaimed_items": reclaimed_items,
+                "remaining_stored_count": len(remaining_stored),
+                "message": f"Successfully retrieved {len(reclaimed_weapons)} weapon(s) and {len(reclaimed_items)} item(s) from storage."
+            }
+
+        # Handle Disarm / Confiscate (Strips weapons, records storage location)
+        if action_norm in ("disarm", "confiscate"):
+            default_loc = storage_location or (self.active_state.get("current_location") and f"{self.active_state['current_location']} - Evidence Locker") or "Camp Highmore Guard Barracks - Evidence Chest"
+            disarmed_weapons: List[str] = []
+            disarmed_items: List[str] = []
+
+            for char_id, char_data in target_chars:
+                current_wpns = char_data.setdefault("weapons", [])
+                current_inv = char_data.setdefault("inventory", [])
+
+                # Disarm manufactured weapons, keep unarmed strike
+                weapons_to_keep = []
+                for w in list(current_wpns):
+                    w_name = (w.get("name") if isinstance(w, dict) else str(w)).strip()
+                    if w_name.lower() in ("unarmed strike", "fist", "fists", "punch", "kick", "natural weapon", "bite"):
+                        weapons_to_keep.append(w)
+                    else:
+                        # Store in world cache
+                        stored_entry = {
+                            "id": f"stored_{uuid.uuid4().hex[:8]}",
+                            "name": w_name,
+                            "type": "weapon",
+                            "original_owner": char_data["name"],
+                            "original_owner_id": char_id,
+                            "data": copy.deepcopy(w) if isinstance(w, dict) else {"name": w_name, "atk_bonus": "+0", "damage": "1d4"},
+                            "storage_location": default_loc,
+                            "status": "confiscated",
+                            "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "reason": reason or "Disarmed upon arrest / surrender"
+                        }
+                        stored_items_list.append(stored_entry)
+                        disarmed_weapons.append(f"{char_data['name']}: {w_name}")
+
+                # Ensure character has at least Unarmed Strike so sheet stays functional
+                if not any(w.get("name", "").lower() in ("unarmed strike", "fist", "fists") for w in weapons_to_keep if isinstance(w, dict)):
+                    weapons_to_keep.insert(0, {"name": "Unarmed Strike", "atk_bonus": "+0", "damage": "1d4 bludgeoning", "notes": "Natural attack"})
+                char_data["weapons"] = weapons_to_keep
+
+                # Also confiscate specific items if passed
+                if items:
+                    for it in items:
+                        target_name = (it.get("name") if isinstance(it, dict) else str(it)).strip().lower()
+                        for idx, cur_it in enumerate(list(current_inv)):
+                            cur_name = (cur_it.get("name") if isinstance(cur_it, dict) else str(cur_it)).strip().lower()
+                            if cur_name == target_name or target_name in cur_name:
+                                removed = current_inv.pop(idx)
+                                rem_name = removed.get("name", target_name) if isinstance(removed, dict) else str(removed)
+                                stored_entry = {
+                                    "id": f"stored_{uuid.uuid4().hex[:8]}",
+                                    "name": rem_name,
+                                    "type": "item",
+                                    "original_owner": char_data["name"],
+                                    "original_owner_id": char_id,
+                                    "data": copy.deepcopy(removed),
+                                    "storage_location": default_loc,
+                                    "status": "confiscated",
+                                    "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    "reason": reason or "Confiscated upon arrest"
+                                }
+                                stored_items_list.append(stored_entry)
+                                disarmed_items.append(f"{char_data['name']}: {rem_name}")
+                                break
+
+            self.save_active_campaign_state()
+            logger.info(f"[TTRPG] Disarmed party/character(s) at '{default_loc}': Weapons={disarmed_weapons}, Items={disarmed_items}. Total stored in world cache: {len(stored_items_list)}")
+
+            return {
+                "status": "success",
+                "action": "disarm",
+                "storage_location": default_loc,
+                "disarmed_weapons": disarmed_weapons,
+                "disarmed_items": disarmed_items,
+                "total_stored_items": len(stored_items_list),
+                "message": f"Successfully disarmed character(s). Confiscated {len(disarmed_weapons)} weapon(s) and secured them at '{default_loc}'."
+            }
+
+        # Living beings, NPCs, and captives are not inventory items
+        npc_names = set()
+        synopsis = (self.active_state or {}).get("campaign_synopsis", {})
+        if isinstance(synopsis, dict) and synopsis.get("key_npcs"):
+            for npc in synopsis["key_npcs"]:
+                n_str = (npc.get("name") if isinstance(npc, dict) else str(npc)).strip().lower()
+                first = n_str.split()[0] if n_str else ""
+                if len(first) > 2:
+                    npc_names.add(first)
+                if n_str:
+                    npc_names.add(n_str)
+
+        def _is_living_being(item_name: str) -> bool:
+            low = item_name.lower().strip()
+            if any(low == n or low.startswith(f"{n} ") or f" {n} " in f" {low} " for n in npc_names):
+                return True
+            if any(term in low for term in ("captive", "prisoner", "hostage", "npc")):
+                return True
+            return False
+
+        safe_items = []
+        if items:
+            for it in items:
+                it_name = (it.get("name") if isinstance(it, dict) else str(it)).strip()
+                if _is_living_being(it_name):
+                    logger.info(f"[TTRPG] Excluded living entity '{it_name}' from inventory items (NPCs/captives are not items).")
+                    continue
+                safe_items.append(it)
+
+        # For Add / Remove / Use on target character(s)
+        total_modified_items: List[str] = []
+        total_modified_weapons: List[str] = []
+        total_modified_spells: List[str] = []
+
+        for char_id, char_data in target_chars:
+            current_inv = char_data.setdefault("inventory", [])
+            current_wpns = char_data.setdefault("weapons", [])
+            current_spells = char_data.setdefault("spells", [])
+
+            if action_norm in ("add", "loot", "receive", "learn"):
+                if safe_items:
+                    for it in safe_items:
+                        if isinstance(it, dict) and it.get("name"):
+                            item_record = {
+                                "name": str(it["name"]).strip(),
+                                "qty": str(it.get("qty", "1")).strip(),
+                                "weight": str(it.get("weight", "")).strip(),
+                                "category": str(it.get("category", "Gear")).strip(),
+                                "notes": str(it.get("notes", "")).strip()
+                            }
+                            current_inv.append(item_record)
+                            total_modified_items.append(item_record["name"])
+                        else:
+                            clean_it = str(it).strip()
+                            if clean_it:
+                                if current_inv and any(isinstance(x, dict) for x in current_inv):
+                                    item_record = {
+                                        "name": clean_it,
+                                        "qty": "1",
+                                        "weight": "",
+                                        "category": "Gear",
+                                        "notes": ""
+                                    }
+                                    current_inv.append(item_record)
+                                else:
+                                    current_inv.append(clean_it)
+                                total_modified_items.append(clean_it)
+                if weapons:
+                    for w in weapons:
+                        if isinstance(w, dict) and w.get("name"):
+                            w_record = {
+                                "name": str(w["name"]).strip(),
+                                "atk_bonus": str(w.get("atk_bonus", "+0")).strip(),
+                                "damage": str(w.get("damage", "1d4")).strip(),
+                                "notes": str(w.get("notes", "")).strip()
+                            }
+                            existing_w = next((x for x in current_wpns if isinstance(x, dict) and x.get("name", "").lower() == w_record["name"].lower()), None)
+                            if existing_w:
+                                existing_w.update(w_record)
+                            else:
+                                current_wpns.append(w_record)
+                            total_modified_weapons.append(w_record["name"])
+                if spells:
+                    for s in spells:
+                        if isinstance(s, dict) and s.get("name"):
+                            s_record = {
+                                "name": str(s["name"]).strip(),
+                                "level": str(s.get("level", "Cantrip")).strip(),
+                                "school": str(s.get("school", "")).strip(),
+                                "atk_bonus": str(s.get("atk_bonus", "")).strip(),
+                                "save_dc": str(s.get("save_dc", "")).strip(),
+                                "damage": str(s.get("damage", "")).strip(),
+                                "range": str(s.get("range", "")).strip(),
+                                "notes": str(s.get("notes", "")).strip()
+                            }
+                            existing_s = next((x for x in current_spells if (x.get("name", "") if isinstance(x, dict) else str(x)).lower() == s_record["name"].lower()), None)
+                            if existing_s and isinstance(existing_s, dict):
+                                existing_s.update(s_record)
+                            else:
+                                current_spells.append(s_record)
+                            total_modified_spells.append(s_record["name"])
+                        elif isinstance(s, str) and s.strip():
+                            clean_s = s.strip()
+                            if clean_s not in current_spells:
+                                current_spells.append(clean_s)
+                            total_modified_spells.append(clean_s)
+
+            elif action_norm in ("remove", "delete", "use", "consume", "drop", "lose", "unlearn"):
+                if items:
+                    for it in items:
+                        target_name = (it.get("name") if isinstance(it, dict) else str(it)).strip().lower()
+                        for idx, cur_it in enumerate(list(current_inv)):
+                            cur_name = (cur_it.get("name") if isinstance(cur_it, dict) else str(cur_it)).strip().lower()
+                            if cur_name == target_name or target_name in cur_name:
+                                removed = current_inv.pop(idx)
+                                rem_name = removed.get("name", target_name) if isinstance(removed, dict) else str(removed)
+                                total_modified_items.append(rem_name)
+                                # If storage_location is provided, preserve in stored_items
+                                if storage_location and action_norm not in ("use", "consume"):
+                                    stored_items_list.append({
+                                        "id": f"stored_{uuid.uuid4().hex[:8]}",
+                                        "name": rem_name,
+                                        "type": "item",
+                                        "original_owner": char_data["name"],
+                                        "original_owner_id": char_id,
+                                        "data": copy.deepcopy(removed),
+                                        "storage_location": storage_location,
+                                        "status": "stored",
+                                        "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                        "reason": reason or "Stored / Dropped"
+                                    })
+                                break
+                if weapons:
+                    for w in weapons:
+                        w_name = (w.get("name") if isinstance(w, dict) else str(w)).strip().lower()
+                        for idx, cur_w in enumerate(list(current_wpns)):
+                            cur_w_name = (cur_w.get("name") if isinstance(cur_w, dict) else str(cur_w)).lower()
+                            if cur_w_name == w_name or w_name in cur_w_name:
+                                removed = current_wpns.pop(idx)
+                                rem_name = removed.get("name", w_name) if isinstance(removed, dict) else str(removed)
+                                total_modified_weapons.append(rem_name)
+                                if storage_location and action_norm not in ("use", "consume"):
+                                    stored_items_list.append({
+                                        "id": f"stored_{uuid.uuid4().hex[:8]}",
+                                        "name": rem_name,
+                                        "type": "weapon",
+                                        "original_owner": char_data["name"],
+                                        "original_owner_id": char_id,
+                                        "data": copy.deepcopy(removed),
+                                        "storage_location": storage_location,
+                                        "status": "stored",
+                                        "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                        "reason": reason or "Stored / Dropped"
+                                    })
+                                break
+                if spells:
+                    for s in spells:
+                        s_name = (s.get("name") if isinstance(s, dict) else str(s)).strip().lower()
+                        for idx, cur_s in enumerate(list(current_spells)):
+                            cur_name = (cur_s.get("name") if isinstance(cur_s, dict) else str(cur_s)).strip().lower()
+                            if cur_name == s_name or s_name in cur_name:
+                                removed = current_spells.pop(idx)
+                                rem_name = removed.get("name", s_name) if isinstance(removed, dict) else str(removed)
+                                total_modified_spells.append(rem_name)
+                                break
+
+            # Keep live_inventory synchronized if present
+            if "live_inventory" in char_data and isinstance(char_data["live_inventory"], list):
+                char_data["live_inventory"] = [
+                    (x if isinstance(x, dict) else {"name": x, "category": "utility", "genre": char_data.get("ruleset", "fantasy_d20"), "status": "active"})
+                    for x in current_inv
+                ]
 
         self.save_active_campaign_state()
-        logger.info(f"[TTRPG] Inventory/Spells {action_norm} for '{char_data['name']}': Items={modified_items}, Weapons={modified_weapons}, Spells={modified_spells}. Reason: {reason or 'Manual/DM update'}")
+        primary_name = "Party" if is_party_wide else target_chars[0][1]["name"]
+        logger.info(f"[TTRPG] Inventory/Spells {action_norm} for '{primary_name}': Items={total_modified_items}, Weapons={total_modified_weapons}, Spells={total_modified_spells}. Reason: {reason or 'Manual/DM update'}")
 
-        return {
+        res_payload = {
             "status": "success",
-            "character_name": char_data["name"],
+            "character_name": primary_name,
             "action": action_norm,
-            "modified_items": modified_items,
-            "modified_weapons": modified_weapons,
-            "modified_spells": modified_spells,
-            "total_inventory_count": len(current_inv),
-            "total_weapons_count": len(current_wpns),
-            "total_spells_count": len(current_spells),
-            "inventory": current_inv,
-            "weapons": current_wpns,
-            "spells": current_spells,
-            "message": f"Successfully updated inventory for '{char_data['name']}' ({action_norm}: {len(modified_items)} item(s), {len(modified_weapons)} weapon(s))."
+            "modified_items": total_modified_items,
+            "modified_weapons": total_modified_weapons,
+            "modified_spells": total_modified_spells,
+            "storage_location": storage_location,
+            "total_stored_items": len(stored_items_list),
+            "message": f"Successfully updated inventory for '{primary_name}' ({action_norm}: {len(total_modified_items)} item(s), {len(total_modified_weapons)} weapon(s))."
         }
+        if not is_party_wide and len(target_chars) == 1:
+            res_payload["inventory"] = target_chars[0][1].get("inventory", [])
+            res_payload["weapons"] = target_chars[0][1].get("weapons", [])
+            res_payload["spells"] = target_chars[0][1].get("spells", [])
+        return res_payload
 
     def reformat_weapons_or_items(self, raw_text: str, ruleset: str = "dnd_5e") -> Dict[str, Any]:
         """
@@ -3937,7 +4643,7 @@ Return ONLY valid JSON.
 
     def advance_turn(self) -> Dict[str, Any]:
         """Advances combat to the next turn, automatically incrementing rounds."""
-        if not self.active_state:
+        if not self._ensure_active_state():
             return {"status": "error", "message": "No active campaign."}
 
         ladder = self.active_state.get("initiative_order", [])
@@ -4050,7 +4756,9 @@ Return ONLY valid JSON.
             hp_cur = c.get("vitals", {}).get("health", {}).get("current", 0)
             hp_max = c.get("vitals", {}).get("health", {}).get("max", 0)
             guard = c.get("vitals", {}).get("guard", {}).get("current", 0)
-            conds = ", ".join(c.get("conditions", [])) or "Clear"
+            raw_conds = c.get("conditions", [])
+            cond_list = [(x.get("name") if isinstance(x, dict) else str(x)).strip() for x in raw_conds if x]
+            conds = ", ".join(cond_list) or "Clear"
             hud.append(
                 f"- {c.get('name', 'Hero')} [{c.get('archetype', 'Hero')}]: {hp_cur}/{hp_max} HP | "
                 f"Guard: {guard} | Conditions: {conds}"
@@ -4061,7 +4769,7 @@ Return ONLY valid JSON.
 
     # --- Internal Helpers ---
     def _find_character(self, name: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-        if not self.active_state:
+        if not self._ensure_active_state():
             return None, None
         chars = self.active_state.get("characters", {})
         clean = (name or "").lower().strip()
@@ -4120,6 +4828,1631 @@ Return ONLY valid JSON.
             "current": new_cur,
             "max": s_data["max"]
         }
+
+    def _get_character_ability_score(self, char_data: Dict[str, Any], ability: str, default: int = 10) -> int:
+        """Resolves a D&D ability score (STR/DEX/CON/INT/WIS/CHA) across attributes and native_system_data."""
+        attrs = char_data.get("attributes") or {}
+        native = char_data.get("native_system_data") or {}
+        n_scores = native.get("ability_scores") or {}
+
+        key_map = {
+            "STR": ("Strength", "STR", "Might"),
+            "DEX": ("Dexterity", "DEX", "Agility"),
+            "CON": ("Constitution", "CON", "Vigor"),
+            "INT": ("Intelligence", "INT", "Intellect"),
+            "WIS": ("Wisdom", "WIS", "Presence"),
+            "CHA": ("Charisma", "CHA", "Presence"),
+        }
+        ab = (ability or "STR").strip().upper()[:3]
+        for k in key_map.get(ab, (ab,)):
+            if k in n_scores and n_scores[k] is not None:
+                return self._safe_int(n_scores[k], default)
+            if k in attrs and attrs[k] is not None:
+                return self._safe_int(attrs[k], default)
+        return default
+
+    def _sync_char_inventory_views(self, char_data: Dict[str, Any], new_items: List[Dict[str, Any]]) -> List[str]:
+        """Appends/merges structured compendium items into root inventory and secondary list mirrors."""
+        added_names: List[str] = []
+        inv = char_data.setdefault("inventory", [])
+
+        def _merge_into(target_list: List[Any], entry_dict: Dict[str, Any], default_genre: str):
+            name_low = entry_dict["name"].strip().lower()
+            idx_low = (entry_dict.get("compendium_index") or "").strip().lower()
+            notes_str = (entry_dict.get("notes") or "").strip()
+            for existing in target_list:
+                if isinstance(existing, dict):
+                    ex_name = (existing.get("name") or "").strip().lower()
+                    ex_idx = (existing.get("compendium_index") or "").strip().lower()
+                    ex_notes = (existing.get("notes") or "").strip()
+                    same_idx = bool(idx_low and ex_idx and idx_low == ex_idx)
+                    same_name = (ex_name == name_low)
+                    if (same_idx or same_name) and ex_notes == notes_str and not entry_dict.get("equipped"):
+                        cur_q = self._safe_int(existing.get("qty"), 1)
+                        add_q = self._safe_int(entry_dict.get("qty"), 1)
+                        existing["qty"] = str(cur_q + add_q)
+                        return
+            cloned = copy.deepcopy(entry_dict)
+            cloned.setdefault("genre", default_genre)
+            cloned.setdefault("status", "active")
+            target_list.append(cloned)
+
+        ruleset_val = char_data.get("ruleset", "dnd_5e")
+        for item_dict in new_items:
+            _merge_into(inv, item_dict, ruleset_val)
+            added_names.append(item_dict["name"])
+
+            native = char_data.get("native_system_data")
+            if isinstance(native, dict) and isinstance(native.get("inventory"), list):
+                _merge_into(native["inventory"], item_dict, ruleset_val)
+
+            if isinstance(char_data.get("live_inventory"), list):
+                _merge_into(char_data["live_inventory"], item_dict, ruleset_val)
+
+            if isinstance(char_data.get("tagged_inventory"), list):
+                _merge_into(char_data["tagged_inventory"], item_dict, ruleset_val)
+
+        return added_names
+
+    def add_compendium_entry_to_character(
+        self,
+        character_name: str,
+        category: str,
+        index_or_name: str,
+        edition: str = "2024",
+        expand_pack: bool = True,
+        qty: int = 1,
+        equip: bool = False,
+        bypass_class_check: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Grants a weapon, armor/shield, gear/magic item, or spell from the offline 5e SRD / Homebrew
+        compendium directly onto a campaign character sheet, computing character-specific modifiers
+        and keeping root & native_system_data views synchronized.
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        char_id, char_data = self._find_character(character_name)
+        if not char_data:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        from core.compendiums.dnd_weapons import get_weapon, format_weapon_for_sheet
+        from core.compendiums.dnd_armor import get_armor, compute_armor_class
+        from core.compendiums.dnd_items import get_item, expand_pack_contents, format_item_for_sheet
+        from core.compendiums.dnd_spells import get_spell, format_spell_for_sheet, validate_character_spell_assignment
+
+        cat = (category or "").strip().lower()
+        lvl = max(1, self._safe_int(char_data.get("level"), 1))
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else None
+
+        str_score = self._get_character_ability_score(char_data, "STR", 10)
+        dex_score = self._get_character_ability_score(char_data, "DEX", 10)
+        str_mod = (str_score - 10) // 2
+        dex_mod = (dex_score - 10) // 2
+
+        prof_raw = char_data.get("prof_bonus") or (native.get("proficiency_bonus") if native else None)
+        if prof_raw is not None:
+            prof_bonus = max(2, self._safe_int(prof_raw, calculate_dnd_proficiency(lvl)))
+        else:
+            prof_bonus = calculate_dnd_proficiency(lvl)
+
+        # Resolve spellcasting stats
+        cast_ab = (
+            char_data.get("spellcasting_ability")
+            or (native.get("spellcasting_ability") if native else None)
+            or ""
+        ).strip().upper()[:3]
+        if cast_ab not in ("INT", "WIS", "CHA"):
+            arch_low = (char_data.get("archetype") or char_data.get("class_and_level") or "").lower()
+            if any(c in arch_low for c in ("cleric", "druid", "ranger", "monk")):
+                cast_ab = "WIS"
+            elif any(c in arch_low for c in ("bard", "paladin", "sorcerer", "warlock")):
+                cast_ab = "CHA"
+            else:
+                cast_ab = "INT"
+
+        cast_score = self._get_character_ability_score(char_data, cast_ab, 10)
+        cast_mod = (cast_score - 10) // 2
+        default_dc = 8 + prof_bonus + cast_mod
+        default_atk = prof_bonus + cast_mod
+        spell_dc_val = self._safe_int(
+            char_data.get("spell_save_dc")
+            or char_data.get("ability_save_dc")
+            or (native.get("ability_save_dc") if native else None),
+            default_dc,
+        )
+        spell_atk_raw = (
+            char_data.get("spell_attack_bonus")
+            or (native.get("spell_attack_bonus") if native else None)
+        )
+        if spell_atk_raw is not None and str(spell_atk_raw).strip():
+            atk_num = self._safe_int(spell_atk_raw, default_atk)
+            spell_atk_str = f"+{atk_num}" if atk_num >= 0 else str(atk_num)
+        else:
+            spell_atk_str = f"+{default_atk}" if default_atk >= 0 else str(default_atk)
+
+        if cat in ("weapons", "weapon"):
+            wpn = get_weapon(index_or_name)
+            if not wpn:
+                return {"status": "error", "message": f"Weapon '{index_or_name}' not found in compendium."}
+            sheet_wpn = format_weapon_for_sheet(
+                wpn,
+                str_mod=str_mod,
+                dex_mod=dex_mod,
+                prof_bonus=prof_bonus,
+                proficient=True,
+                edition=edition,
+            )
+            wpns_list = char_data.setdefault("weapons", [])
+            existing_w = next(
+                (w for w in wpns_list if isinstance(w, dict) and w.get("name", "").strip().lower() == sheet_wpn["name"].lower()),
+                None,
+            )
+            if existing_w:
+                existing_w.update(sheet_wpn)
+            else:
+                wpns_list.append(sheet_wpn)
+
+            if native is not None and isinstance(native.get("weapons"), list):
+                ex_nw = next(
+                    (w for w in native["weapons"] if isinstance(w, dict) and w.get("name", "").strip().lower() == sheet_wpn["name"].lower()),
+                    None,
+                )
+                if ex_nw:
+                    ex_nw.update(copy.deepcopy(sheet_wpn))
+                else:
+                    native["weapons"].append(copy.deepcopy(sheet_wpn))
+
+            self.save_active_campaign_state()
+            return {
+                "status": "success",
+                "category": "weapons",
+                "character_name": char_data["name"],
+                "character_id": char_id,
+                "granted": [sheet_wpn["name"]],
+                "entry": sheet_wpn,
+                "message": f"Granted weapon '{sheet_wpn['name']}' ({sheet_wpn['atk_bonus']} to hit, {sheet_wpn['damage']}) to {char_data['name']}.",
+            }
+
+        elif cat in ("armor", "armors", "shield", "shields"):
+            arm = get_armor(index_or_name)
+            if not arm:
+                return {"status": "error", "message": f"Armor '{index_or_name}' not found in compendium."}
+            is_shield = (arm.get("category") == "Shield")
+            ac_note_parts = []
+            if is_shield:
+                bonus_val = 2 + int(arm.get("ac_bonus") or 0)
+                ac_note_parts.append(f"+{bonus_val} AC")
+            else:
+                base_ac = int(arm.get("ac_base") or 10)
+                extra_ac = int(arm.get("ac_bonus") or 0)
+                dex_txt = ""
+                if arm.get("dex_bonus"):
+                    max_d = arm.get("max_dex_bonus")
+                    dex_txt = f" + DEX (max {max_d})" if max_d is not None else " + DEX"
+                ac_note_parts.append(f"AC {base_ac + extra_ac}{dex_txt}")
+            if arm.get("stealth_disadvantage"):
+                ac_note_parts.append("Stealth Disadv.")
+            if arm.get("str_minimum"):
+                ac_note_parts.append(f"STR {arm['str_minimum']}+")
+
+            inv_entry = {
+                "name": arm["name"],
+                "qty": str(max(1, int(qty or 1))),
+                "weight": f"{arm['weight']} lb" if arm.get("weight") else "",
+                "category": "Shield" if is_shield else "Armor",
+                "notes": ", ".join(ac_note_parts),
+                "equipped": bool(equip),
+                "compendium_index": arm.get("index", ""),
+                "is_magic": bool(arm.get("is_magic", False)),
+            }
+
+            if equip:
+                # Unequip previous items in the same slot (Armor vs Shield)
+                for target_inv in (
+                    [char_data.get("inventory")]
+                    + ([native.get("inventory")] if native else [])
+                    + [char_data.get("live_inventory"), char_data.get("tagged_inventory")]
+                ):
+                    if isinstance(target_inv, list):
+                        for ex in target_inv:
+                            if isinstance(ex, dict) and ex.get("category") == inv_entry["category"]:
+                                ex["equipped"] = False
+
+            added = self._sync_char_inventory_views(char_data, [inv_entry])
+            ac_report = None
+            if equip:
+                if is_shield:
+                    cur_armor = char_data.get("armor_equipped")
+                    if not cur_armor:
+                        # Look for currently equipped body armor in inventory
+                        eq_arm = next(
+                            (
+                                it.get("name")
+                                for it in char_data.get("inventory", [])
+                                if isinstance(it, dict) and it.get("category") == "Armor" and it.get("equipped")
+                            ),
+                            None,
+                        )
+                        cur_armor = eq_arm
+                    s_bonus = 2 + int(arm.get("ac_bonus") or 0)
+                    has_sh = True
+                else:
+                    cur_armor = arm["name"]
+                    has_sh = bool(char_data.get("shield_equipped"))
+                    s_bonus = 2
+                ac_report = compute_armor_class(
+                    armor_name=cur_armor,
+                    has_shield=has_sh,
+                    dex_mod=dex_mod,
+                    shield_bonus=s_bonus,
+                    str_score=str_score,
+                )
+                new_ac = ac_report["armor_class"]
+                char_data["armor_class"] = new_ac
+                char_data["armor_equipped"] = ac_report["armor_equipped"]
+                char_data["shield_equipped"] = ac_report["shield_equipped"]
+                char_data["stealth_disadvantage"] = ac_report["stealth_disadvantage"]
+                guard_obj = char_data.setdefault("vitals", {}).setdefault("guard", {"current": new_ac, "max": new_ac, "label": "Armor Defense"})
+                guard_obj["current"] = new_ac
+                guard_obj["max"] = max(1, new_ac)
+                if native is not None:
+                    native["armor_class"] = new_ac
+                    native["armor_equipped"] = ac_report["armor_equipped"]
+                    native["shield_equipped"] = ac_report["shield_equipped"]
+
+            self.save_active_campaign_state()
+            msg = f"Granted armor '{arm['name']}' to {char_data['name']}."
+            if ac_report:
+                msg += f" Equipped! AC is now {ac_report['armor_class']}."
+                if ac_report["warnings"]:
+                    msg += " (" + "; ".join(ac_report["warnings"]) + ")"
+            return {
+                "status": "success",
+                "category": "armor",
+                "character_name": char_data["name"],
+                "character_id": char_id,
+                "granted": added,
+                "entry": inv_entry,
+                "ac_report": ac_report,
+                "message": msg,
+            }
+
+        elif cat in ("items", "item", "gear", "magic_items"):
+            it = get_item(index_or_name)
+            if not it:
+                return {"status": "error", "message": f"Item '{index_or_name}' not found in compendium."}
+
+            item_qty = max(1, int(qty or 1))
+            if expand_pack and it.get("contents"):
+                expanded = expand_pack_contents(it.get("index") or it["name"])
+                for sub in expanded:
+                    sub["qty"] = str(max(1, self._safe_int(sub.get("qty"), 1)) * item_qty)
+                entries_to_add = expanded
+            else:
+                entries_to_add = [format_item_for_sheet(it, qty=item_qty)]
+
+            added = self._sync_char_inventory_views(char_data, entries_to_add)
+            self.save_active_campaign_state()
+            return {
+                "status": "success",
+                "category": "items",
+                "character_name": char_data["name"],
+                "character_id": char_id,
+                "granted": added,
+                "expanded_pack": bool(expand_pack and it.get("contents")),
+                "message": f"Added {len(added)} item entry(s) ('{it['name']}') to {char_data['name']}'s inventory.",
+            }
+
+        elif cat in ("spells", "spell"):
+            sp = get_spell(index_or_name, edition=edition)
+            if not sp:
+                return {"status": "error", "message": f"Spell '{index_or_name}' not found in compendium."}
+
+            # Enforce D&D 5e class spell list validation (blocks wrong-class assignment unless bypass_class_check=True)
+            val = validate_character_spell_assignment(
+                char_data=char_data,
+                spell_entry_or_name=sp,
+                edition=edition,
+                bypass_class_check=bypass_class_check,
+            )
+            if not val.get("can_learn"):
+                return {
+                    "status": "error",
+                    "code": "invalid_spell_class",
+                    "message": val.get("reason"),
+                    "allowed_spell_classes": val.get("allowed_spell_classes", []),
+                    "character_classes": val.get("character_classes", []),
+                }
+
+            sheet_spell = format_spell_for_sheet(
+                sp,
+                spell_atk=spell_atk_str,
+                spell_dc=str(spell_dc_val),
+                prepared=True,
+            )
+
+            def _upsert_spell(spell_list: List[Any], sp_entry: Dict[str, Any]):
+                sp_low = sp_entry["name"].strip().lower()
+                for idx_s, cur_s in enumerate(spell_list):
+                    if isinstance(cur_s, dict) and cur_s.get("name", "").strip().lower() == sp_low:
+                        cur_s.update(copy.deepcopy(sp_entry))
+                        return
+                    elif isinstance(cur_s, str) and cur_s.strip().lower() == sp_low:
+                        spell_list[idx_s] = copy.deepcopy(sp_entry)
+                        return
+                spell_list.append(copy.deepcopy(sp_entry))
+
+            root_spells = char_data.setdefault("spells", [])
+            _upsert_spell(root_spells, sheet_spell)
+            if native is not None:
+                native_spells = native.setdefault("spells", [])
+                _upsert_spell(native_spells, sheet_spell)
+
+            self.save_active_campaign_state()
+
+            if val.get("matched_via") == "magical_secrets":
+                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']} via Bard Magical Secrets."
+            elif val.get("matched_via") == "bypass":
+                success_msg = f"Added out-of-class spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']} (DM Override)."
+            elif val.get("matched_via") == "subclass_bonus":
+                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']} ({val.get('reason')})."
+            else:
+                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']}."
+
+            return {
+                "status": "success",
+                "category": "spells",
+                "character_name": char_data["name"],
+                "character_id": char_id,
+                "granted": [sheet_spell["name"]],
+                "entry": sheet_spell,
+                "validation": val,
+                "message": success_msg,
+            }
+
+        return {"status": "error", "message": f"Unknown compendium category '{category}'. Use weapons, armor, items, or spells."}
+
+    # =========================================================================
+    # Phase 2: Location-Based Merchant Shop & Interactive Short / Long Rest
+    # =========================================================================
+
+    def _get_campaign_edition(self, explicit_edition: Optional[str] = None) -> str:
+        if explicit_edition and str(explicit_edition).strip() in ("2014", "2024"):
+            return str(explicit_edition).strip()
+        meta = (self.manifest.get("campaigns") or {}).get(self.manifest.get("active_campaign") or "", {})
+        ed = str(meta.get("ruleset_edition") or (self.active_state or {}).get("ruleset_edition") or "2024").strip()
+        return ed if ed in ("2014", "2024") else "2024"
+
+    def _normalize_wallet(self, char_data: Dict[str, Any]) -> Dict[str, int]:
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else {}
+        src = char_data.get("currency")
+        if not isinstance(src, dict) or not src:
+            src = native.get("currency") if isinstance(native.get("currency"), dict) else {}
+        gp_raw = src.get("gp") if src.get("gp") is not None else src.get("gold", 0)
+        return {
+            "cp": max(0, self._safe_int(src.get("cp"), 0)),
+            "sp": max(0, self._safe_int(src.get("sp"), 0)),
+            "ep": max(0, self._safe_int(src.get("ep"), 0)),
+            "gp": max(0, self._safe_int(gp_raw, 0)),
+            "pp": max(0, self._safe_int(src.get("pp"), 0)),
+        }
+
+    def _write_wallet(self, char_data: Dict[str, Any], wallet: Dict[str, int]) -> None:
+        cur = char_data.setdefault("currency", {})
+        if isinstance(cur, dict):
+            for k in ("cp", "sp", "ep", "gp", "pp"):
+                cur[k] = max(0, int(wallet.get(k) or 0))
+            if "gold" in cur:
+                cur["gold"] = cur["gp"]
+        else:
+            char_data["currency"] = {k: max(0, int(wallet.get(k) or 0)) for k in ("cp", "sp", "ep", "gp", "pp")}
+        native = char_data.get("native_system_data")
+        if isinstance(native, dict):
+            ncur = native.setdefault("currency", {})
+            if isinstance(ncur, dict):
+                for k in ("cp", "sp", "ep", "gp", "pp"):
+                    ncur[k] = max(0, int(wallet.get(k) or 0))
+                if "gold" in ncur:
+                    ncur["gold"] = ncur["gp"]
+
+    def _recompute_and_apply_character_ac(
+        self,
+        char_data: Dict[str, Any],
+        armor_name: Optional[str],
+        has_shield: bool,
+    ) -> Dict[str, Any]:
+        from core.compendiums.dnd_armor import get_armor, compute_armor_class
+
+        dex_mod = (self._get_character_ability_score(char_data, "DEX", 10) - 10) // 2
+        str_score = self._get_character_ability_score(char_data, "STR", 10)
+
+        # Resolve shield bonus (+2 base + magic ac_bonus if shield is magical in inventory)
+        shield_bonus = 2
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else None
+        eq_armor_clean = (armor_name or "").strip()
+        if eq_armor_clean.lower() in ("none", "unarmored", ""):
+            eq_armor_clean = ""
+
+        # Sync equipped flags across inventory mirrors
+        all_invs = [char_data.get("inventory"), char_data.get("live_inventory"), char_data.get("tagged_inventory")]
+        if native and isinstance(native.get("inventory"), list):
+            all_invs.append(native["inventory"])
+
+        shield_toggled = False
+        for inv_list in all_invs:
+            if not isinstance(inv_list, list):
+                continue
+            for entry in inv_list:
+                if not isinstance(entry, dict):
+                    continue
+                e_name = (entry.get("name") or "").strip()
+                e_cat = (entry.get("category") or "").strip().lower()
+                arm_ref = None
+                if e_cat in ("armor", "shield", "", "gear", "magic"):
+                    cand_arm = get_armor(e_name)
+                    if cand_arm and (e_cat in ("armor", "shield") or cand_arm.get("name", "").lower() == e_name.lower() or len(e_name) >= 5):
+                        arm_ref = cand_arm
+                is_shield_item = (e_cat == "shield") or bool(arm_ref and arm_ref.get("category") == "Shield")
+                is_armor_item = (e_cat == "armor") or bool(arm_ref and arm_ref.get("category") != "Shield")
+
+                if is_shield_item:
+                    if has_shield and not shield_toggled:
+                        entry["equipped"] = True
+                        shield_toggled = True
+                        if arm_ref and arm_ref.get("ac_bonus"):
+                            shield_bonus = 2 + int(arm_ref.get("ac_bonus") or 0)
+                    else:
+                        entry["equipped"] = False
+                elif is_armor_item:
+                    entry["equipped"] = bool(eq_armor_clean and e_name.lower() == eq_armor_clean.lower())
+            shield_toggled = False
+
+        report = compute_armor_class(
+            armor_name=eq_armor_clean or None,
+            has_shield=bool(has_shield),
+            dex_mod=dex_mod,
+            shield_bonus=shield_bonus,
+            str_score=str_score,
+        )
+        new_ac = report["armor_class"]
+        char_data["armor_class"] = new_ac
+        char_data["armor_equipped"] = report["armor_equipped"]
+        char_data["shield_equipped"] = report["shield_equipped"]
+        char_data["stealth_disadvantage"] = report["stealth_disadvantage"]
+        guard_obj = char_data.setdefault("vitals", {}).setdefault("guard", {"current": new_ac, "max": new_ac, "label": "Armor Defense"})
+        guard_obj["current"] = new_ac
+        guard_obj["max"] = max(1, new_ac)
+        if native is not None:
+            native["armor_class"] = new_ac
+            native["armor_equipped"] = report["armor_equipped"]
+            native["shield_equipped"] = report["shield_equipped"]
+        return report
+
+    def _decrement_inventory_item(
+        self,
+        char_data: Dict[str, Any],
+        item_name: str,
+        qty: int = 1,
+    ) -> Tuple[int, Optional[Dict[str, Any]]]:
+        """Decrements/removes `qty` matching `item_name` across all inventory mirrors. Returns (qty_removed, sample_entry)."""
+        target_low = (item_name or "").strip().lower()
+        if not target_low:
+            return 0, None
+
+        qty_needed = max(1, int(qty or 1))
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else None
+        inv_lists = [char_data.get("inventory")]
+        if native and isinstance(native.get("inventory"), list):
+            inv_lists.append(native["inventory"])
+        if isinstance(char_data.get("live_inventory"), list):
+            inv_lists.append(char_data["live_inventory"])
+        if isinstance(char_data.get("tagged_inventory"), list):
+            inv_lists.append(char_data["tagged_inventory"])
+
+        removed_count = 0
+        sample_entry: Optional[Dict[str, Any]] = None
+
+        for list_idx, inv in enumerate(inv_lists):
+            if not isinstance(inv, list):
+                continue
+
+            # Exact name match first, then substring fallback
+            match_idx = None
+            for i, it in enumerate(inv):
+                nm = (it.get("name") if isinstance(it, dict) else str(it)).strip().lower()
+                nm_clean = re.sub(r"\s*(?:\(x\s*\d+\)|x\s*\d+)$", "", nm, flags=re.IGNORECASE).strip()
+                if nm == target_low or nm_clean == target_low:
+                    match_idx = i
+                    break
+            if match_idx is None:
+                for i, it in enumerate(inv):
+                    nm = (it.get("name") if isinstance(it, dict) else str(it)).strip().lower()
+                    if target_low in nm:
+                        match_idx = i
+                        break
+            if match_idx is None:
+                continue
+
+            entry = inv[match_idx]
+            if isinstance(entry, dict):
+                cur_q = max(1, self._safe_int(entry.get("qty"), 1))
+                take = min(qty_needed, cur_q)
+                if list_idx == 0:
+                    removed_count = take
+                    sample_entry = copy.deepcopy(entry)
+                if cur_q - take > 0:
+                    entry["qty"] = str(cur_q - take)
+                else:
+                    inv.pop(match_idx)
+            else:
+                s_val = str(entry).strip()
+                qm = re.search(r"\s*x\s*(\d+)$", s_val, flags=re.IGNORECASE)
+                cur_q = int(qm.group(1)) if qm else 1
+                take = min(qty_needed, cur_q)
+                if list_idx == 0:
+                    removed_count = take
+                    sample_entry = {"name": re.sub(r"\s*x\s*\d+$", "", s_val, flags=re.IGNORECASE).strip(), "qty": str(cur_q), "category": "Gear"}
+                if cur_q - take > 0:
+                    base_n = re.sub(r"\s*x\s*\d+$", "", s_val, flags=re.IGNORECASE).strip()
+                    inv[match_idx] = f"{base_n} x{cur_q - take}" if (cur_q - take) > 1 else base_n
+                else:
+                    inv.pop(match_idx)
+
+        return removed_count, sample_entry
+
+    def set_active_shop(
+        self,
+        shop_name: str = "Local Merchant",
+        location_name: str = "",
+        price_multiplier: float = 1.0,
+        specialty: str = "general",
+        description: str = "",
+        include_magic: bool = False,
+    ) -> Dict[str, Any]:
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+        mult = round(max(0.5, min(2.0, float(price_multiplier or 1.0))), 2)
+        shop_obj = {
+            "shop_name": (shop_name or "Local Merchant").strip(),
+            "location_name": (location_name or self.active_state.get("current_location") or "Camp / Settlement").strip(),
+            "price_multiplier": mult,
+            "specialty": (specialty or "general").strip().lower(),
+            "description": (description or "").strip(),
+            "include_magic": bool(include_magic),
+            "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        self.active_state["active_shop"] = shop_obj
+        self.save_active_campaign_state()
+        return {"status": "success", "shop": shop_obj}
+
+    def get_merchant_catalog(
+        self,
+        specialty: str = "all",
+        query: str = "",
+        edition: Optional[str] = None,
+        price_multiplier: float = 1.0,
+        include_magic: bool = False,
+    ) -> Dict[str, Any]:
+        """Builds a priced shop inventory across Weapons, Armor, and Items applying regional markup/discount."""
+        from core.compendiums.dnd_weapons import list_weapons
+        from core.compendiums.dnd_armor import list_armor
+        from core.compendiums.dnd_items import list_items, cost_to_cp, format_cp
+
+        ed = self._get_campaign_edition(edition) if (edition or "").lower() != "all" else "all"
+        mult = round(max(0.5, min(2.0, float(price_multiplier or 1.0))), 2)
+        spec = (specialty or "all").strip().lower()
+        q = (query or "").strip()
+
+        catalog: List[Dict[str, Any]] = []
+
+        def _enrich_entry(raw: Dict[str, Any], cat_key: str) -> Optional[Dict[str, Any]]:
+            base_cp = int(raw.get("cost_cp") or cost_to_cp(raw.get("cost")) or 0)
+            if base_cp <= 0 and not raw.get("is_homebrew") and not include_magic:
+                return None
+            adj_cp = max(1, int(round(base_cp * mult))) if base_cp > 0 else 0
+            ent = dict(raw)
+            ent["compendium_type"] = cat_key
+            ent["base_cost_cp"] = base_cp
+            ent["base_cost_display"] = raw.get("cost_display") or format_cp(base_cp)
+            ent["adjusted_cost_cp"] = adj_cp
+            ent["adjusted_cost_display"] = format_cp(adj_cp) if adj_cp > 0 else "Negotiable / Priceless"
+            ent["price_multiplier"] = mult
+            return ent
+
+        include_wpns = spec in ("all", "general", "weapons", "weapons_armor", "smith")
+        include_arms = spec in ("all", "general", "armor", "armorer", "weapons_armor", "smith")
+        include_items = spec in ("all", "general", "gear", "outfitter", "items", "potions", "alchemist", "magic_poison", "arcane", "magic")
+
+        if include_magic and spec in ("arcane", "magic", "magic_poison"):
+            include_wpns = True
+            include_arms = True
+
+        if include_wpns:
+            for w in list_weapons(edition=ed, include_magic=include_magic, query=q):
+                if spec in ("arcane", "magic") and not w.get("is_magic") and not w.get("is_homebrew"):
+                    continue
+                enriched = _enrich_entry(w, "weapons")
+                if enriched:
+                    catalog.append(enriched)
+
+        if include_arms:
+            for a in list_armor(edition=ed, include_magic=include_magic, query=q):
+                if spec in ("arcane", "magic") and not a.get("is_magic") and not a.get("is_homebrew"):
+                    continue
+                enriched = _enrich_entry(a, "armor")
+                if enriched:
+                    catalog.append(enriched)
+
+        if include_items:
+            for it in list_items(edition=ed, include_magic=include_magic, query=q):
+                sub_low = f"{it.get('category', '')} {it.get('subcategory', '')} {it.get('name', '')}".lower()
+                if spec in ("potions", "alchemist"):
+                    if not any(k in sub_low for k in ("potion", "elixir", "alchem", "healer", "antitoxin", "herb")):
+                        continue
+                elif spec == "magic_poison":
+                    if not (it.get("is_magic") or "poison" in sub_low or "potion" in sub_low or it.get("is_homebrew")):
+                        continue
+                elif spec in ("arcane", "magic"):
+                    if not (it.get("is_magic") or any(k in sub_low for k in ("arcane", "focus", "spell", "scroll", "potion", "component"))):
+                        continue
+                enriched = _enrich_entry(it, "items")
+                if enriched:
+                    catalog.append(enriched)
+
+        # Sort shop cleanly: exact query relevance -> category order -> cost -> name
+        cat_rank = {"weapons": 0, "armor": 1, "items": 2}
+        catalog.sort(key=lambda x: (cat_rank.get(x.get("compendium_type"), 3), x.get("adjusted_cost_cp", 0), x.get("name", "").lower()))
+
+        active_shop = (self.active_state or {}).get("active_shop")
+        return {
+            "status": "success",
+            "edition": ed,
+            "specialty": spec,
+            "price_multiplier": mult,
+            "include_magic": bool(include_magic),
+            "count": len(catalog),
+            "items": catalog,
+            "presets": MERCHANT_LOCATION_PRESETS,
+            "active_shop": active_shop,
+        }
+
+    def purchase_merchant_item(
+        self,
+        character_name: str,
+        category: str = "auto",
+        index_or_name: str = "",
+        qty: int = 1,
+        price_multiplier: float = 1.0,
+        expand_pack: bool = True,
+        edition: Optional[str] = None,
+        equip: bool = False,
+    ) -> Dict[str, Any]:
+        """Purchases a weapon/armor/item for a character, deducting multi-coin D&D currency with automatic change."""
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+        char_id, char_data = self._find_character(character_name)
+        if not char_data:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        from core.compendiums.dnd_weapons import get_weapon
+        from core.compendiums.dnd_armor import get_armor
+        from core.compendiums.dnd_items import (
+            get_item, cost_to_cp, currency_dict_to_cp, deduct_currency, format_cp,
+        )
+
+        ed = self._get_campaign_edition(edition)
+        cat_clean = (category or "auto").strip().lower()
+        target = (index_or_name or "").strip()
+        if not target:
+            return {"status": "error", "message": "No item name provided for purchase."}
+
+        entry = None
+        resolved_cat = cat_clean
+        if cat_clean in ("auto", "all", ""):
+            entry = get_weapon(target)
+            if entry:
+                resolved_cat = "weapons"
+            else:
+                entry = get_armor(target)
+                if entry:
+                    resolved_cat = "armor"
+                else:
+                    entry = get_item(target)
+                    if entry:
+                        resolved_cat = "items"
+        elif cat_clean in ("weapons", "weapon"):
+            entry = get_weapon(target)
+            resolved_cat = "weapons"
+        elif cat_clean in ("armor", "armors", "shield", "shields"):
+            entry = get_armor(target)
+            resolved_cat = "armor"
+        else:
+            entry = get_item(target)
+            resolved_cat = "items"
+
+        if not entry:
+            return {"status": "error", "message": f"'{index_or_name}' not found in merchant catalog."}
+
+        buy_qty = max(1, int(qty or 1))
+        mult = max(0.5, min(2.0, float(price_multiplier or 1.0)))
+        base_cp = int(entry.get("cost_cp") or cost_to_cp(entry.get("cost")) or 0)
+        unit_cp = max(1, int(round(base_cp * mult))) if base_cp > 0 else 0
+        total_cp = unit_cp * buy_qty
+
+        wallet = self._normalize_wallet(char_data)
+        ok, new_wallet, coin_msg = deduct_currency(wallet, total_cp)
+        if not ok:
+            return {"status": "error", "message": f"{char_data['name']}: {coin_msg}"}
+
+        grant_res = self.add_compendium_entry_to_character(
+            character_name=char_data["name"],
+            category=resolved_cat,
+            index_or_name=entry.get("index") or entry["name"],
+            edition=ed,
+            expand_pack=bool(expand_pack),
+            qty=buy_qty,
+            equip=bool(equip),
+        )
+        if grant_res.get("status") != "success":
+            return grant_res
+
+        self._write_wallet(char_data, new_wallet)
+        self.save_active_campaign_state()
+        rem_cp = currency_dict_to_cp(new_wallet)
+        return {
+            "status": "success",
+            "character_name": char_data["name"],
+            "character_id": char_id,
+            "category": resolved_cat,
+            "item_name": entry["name"],
+            "qty": buy_qty,
+            "unit_price_cp": unit_cp,
+            "total_cost_cp": total_cp,
+            "total_cost_display": format_cp(total_cp),
+            "currency": new_wallet,
+            "wallet_display": format_cp(rem_cp),
+            "granted": grant_res.get("granted", []),
+            "message": f"{char_data['name']} bought {buy_qty}x {entry['name']} for {format_cp(total_cp)}. Remaining: {format_cp(rem_cp)}.",
+        }
+
+    def sell_merchant_item(
+        self,
+        character_name: str,
+        item_name: str,
+        sell_rate: float = 0.5,
+        qty: int = 1,
+        source: str = "auto",
+        override_value_gp: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Sells an item or weapon back to a merchant, crediting multi-coin payout and updating AC/attunement if needed."""
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+        char_id, char_data = self._find_character(character_name)
+        if not char_data:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        from core.compendiums.dnd_weapons import get_weapon
+        from core.compendiums.dnd_armor import get_armor
+        from core.compendiums.dnd_items import (
+            get_item, cost_to_cp, add_currency, currency_dict_to_cp, format_cp,
+        )
+
+        target = (item_name or "").strip()
+        if not target:
+            return {"status": "error", "message": "No item specified to sell."}
+
+        rate = max(0.1, min(1.0, float(sell_rate or 0.5)))
+        sell_qty_req = max(1, int(qty or 1))
+        src_mode = (source or "auto").strip().lower()
+
+        sold_qty = 0
+        sold_entry: Optional[Dict[str, Any]] = None
+        sold_from = "inventory"
+
+        if src_mode in ("auto", "inventory", "items", "armor"):
+            sold_qty, sold_entry = self._decrement_inventory_item(char_data, target, qty=sell_qty_req)
+
+        if sold_qty <= 0 and src_mode in ("auto", "weapons", "weapon"):
+            wpns = char_data.get("weapons") or []
+            native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else None
+            t_low = target.lower()
+            w_idx = next(
+                (i for i, w in enumerate(wpns) if ((w.get("name") if isinstance(w, dict) else str(w)).strip().lower() == t_low)),
+                None,
+            )
+            if w_idx is None:
+                w_idx = next(
+                    (i for i, w in enumerate(wpns) if t_low in (w.get("name") if isinstance(w, dict) else str(w)).strip().lower()),
+                    None,
+                )
+            if w_idx is not None:
+                rem_w = wpns[w_idx]
+                w_nm = (rem_w.get("name") if isinstance(rem_w, dict) else str(rem_w)).strip()
+                if w_nm.lower() in ("unarmed strike", "fist", "fists", "natural weapon"):
+                    return {"status": "error", "message": "Cannot sell Unarmed Strike."}
+                wpns.pop(w_idx)
+                if native and isinstance(native.get("weapons"), list):
+                    for nw_i, nw in enumerate(native["weapons"]):
+                        nw_nm = (nw.get("name") if isinstance(nw, dict) else str(nw)).strip().lower()
+                        if nw_nm == w_nm.lower():
+                            native["weapons"].pop(nw_i)
+                            break
+                sold_qty = 1
+                sold_entry = {"name": w_nm, "qty": "1", "category": "Weapon"}
+                sold_from = "weapons"
+
+        if sold_qty <= 0 or not sold_entry:
+            return {"status": "error", "message": f"'{item_name}' was not found on {char_data['name']}'s sheet."}
+
+        resolved_name = sold_entry.get("name") or target
+        if override_value_gp is not None:
+            unit_base_cp = max(0, int(round(float(override_value_gp) * 100)))
+        else:
+            ref = get_item(resolved_name) or get_armor(resolved_name) or get_weapon(resolved_name)
+            if ref:
+                raw_cp = int(ref.get("cost_cp") or cost_to_cp(ref.get("cost")) or 0)
+                bundle_q = max(1, int(ref.get("quantity_bundle") or 1))
+                unit_base_cp = max(1, raw_cp // bundle_q) if raw_cp > 0 else 100
+            else:
+                unit_base_cp = 100
+
+        payout_cp = max(1, int(round(unit_base_cp * rate * sold_qty)))
+        wallet = self._normalize_wallet(char_data)
+        new_wallet = add_currency(wallet, payout_cp)
+        self._write_wallet(char_data, new_wallet)
+
+        # If sold item was equipped armor or shield, recompute AC
+        if sold_entry.get("equipped") or (sold_entry.get("category") in ("Armor", "Shield")):
+            still_armor = next(
+                (it.get("name") for it in char_data.get("inventory", []) if isinstance(it, dict) and it.get("category") == "Armor" and it.get("equipped")),
+                None,
+            )
+            still_shield = any(
+                isinstance(it, dict) and it.get("category") == "Shield" and it.get("equipped")
+                for it in char_data.get("inventory", [])
+            )
+            self._recompute_and_apply_character_ac(char_data, still_armor, still_shield)
+
+        # If sold item was attuned, remove from attunement
+        att_list = char_data.get("attuned_items")
+        if isinstance(att_list, list):
+            new_att = [a for a in att_list if a.strip().lower() != resolved_name.lower()]
+            if len(new_att) != len(att_list):
+                char_data["attuned_items"] = new_att
+                char_data["attuned_magic_items"] = {"current": len(new_att), "max": 3}
+
+        self.save_active_campaign_state()
+        total_cp = currency_dict_to_cp(new_wallet)
+        return {
+            "status": "success",
+            "character_name": char_data["name"],
+            "character_id": char_id,
+            "sold_item": resolved_name,
+            "sold_from": sold_from,
+            "qty": sold_qty,
+            "payout_cp": payout_cp,
+            "payout_display": format_cp(payout_cp),
+            "currency": new_wallet,
+            "wallet_display": format_cp(total_cp),
+            "message": f"{char_data['name']} sold {sold_qty}x {resolved_name} for {format_cp(payout_cp)}. Total purse: {format_cp(total_cp)}.",
+        }
+
+    def _parse_class_spell_profile(self, char_data: Dict[str, Any], edition: str = "2024") -> Dict[str, Any]:
+        """Resolves spellcasting classes, preparation style, max slot level, and prepared spell limit."""
+        from core.compendiums.dnd_spells import CLASS_PREPARATION_TYPE, CASTER_CLASSES
+
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else {}
+        class_str = str(
+            char_data.get("class_and_level")
+            or native.get("class_level")
+            or char_data.get("archetype")
+            or ""
+        ).strip()
+        lvl_fallback = max(1, self._safe_int(char_data.get("level"), 1))
+        ed = "2024" if str(edition).strip() == "2024" else "2014"
+
+        found_classes: List[Tuple[str, int]] = []
+        for cls in CASTER_CLASSES:
+            m = re.search(rf"\b{re.escape(cls)}\s*(\d+)?\b", class_str, flags=re.IGNORECASE)
+            if m:
+                c_lvl = int(m.group(1)) if m.group(1) else lvl_fallback
+                found_classes.append((cls, max(1, c_lvl)))
+
+        # Check subclass casters (Eldritch Knight / Arcane Trickster -> Wizard list)
+        if not found_classes:
+            if "eldritch knight" in class_str.lower() or "arcane trickster" in class_str.lower():
+                found_classes.append(("Wizard", lvl_fallback))
+
+        slots = native.get("spell_slots") or char_data.get("spell_slots") or {}
+        slot_max_rank = 0
+        for rank in range(1, 10):
+            s_ent = slots.get(f"level_{rank}")
+            if isinstance(s_ent, dict) and int(s_ent.get("max") or 0) > 0:
+                slot_max_rank = rank
+
+        is_caster = bool(found_classes or slot_max_rank > 0 or char_data.get("spells") or native.get("spells"))
+        primary_class = found_classes[0][0] if found_classes else ""
+        primary_lvl = found_classes[0][1] if found_classes else lvl_fallback
+
+        if slot_max_rank <= 0 and found_classes:
+            p_low = primary_class.lower()
+            if p_low in ("cleric", "druid", "wizard", "bard", "sorcerer"):
+                slot_max_rank = min(9, (primary_lvl + 1) // 2)
+            elif p_low == "warlock":
+                slot_max_rank = min(5, (primary_lvl + 1) // 2)
+            elif p_low in ("paladin", "ranger", "artificer"):
+                if ed == "2024" or p_low == "artificer" or primary_lvl >= 2:
+                    slot_max_rank = min(5, max(1, (primary_lvl + 3) // 4))
+
+        prep_style = CLASS_PREPARATION_TYPE.get(primary_class.lower(), "known")
+        if primary_class.lower() == "ranger" and ed == "2024":
+            prep_style = "prepared_full_list"
+
+        can_swap_from_class_list = primary_class.lower() in ("cleric", "druid", "paladin", "artificer") or (
+            primary_class.lower() == "ranger" and ed == "2024"
+        )
+        can_swap_from_spellbook = primary_class.lower() == "wizard"
+        can_swap_spells = bool(can_swap_from_class_list or can_swap_from_spellbook)
+
+        # Compute max prepared cap
+        stored_cap = char_data.get("max_prepared_leveled_spells")
+        if stored_cap is None:
+            stored_cap = native.get("max_prepared_leveled_spells")
+
+        int_mod = (self._get_character_ability_score(char_data, "INT", 10) - 10) // 2
+        wis_mod = (self._get_character_ability_score(char_data, "WIS", 10) - 10) // 2
+        cha_mod = (self._get_character_ability_score(char_data, "CHA", 10) - 10) // 2
+
+        mod_by_class = {
+            "cleric": wis_mod, "druid": wis_mod, "ranger": wis_mod,
+            "wizard": int_mod, "artificer": int_mod,
+            "paladin": cha_mod, "bard": cha_mod, "sorcerer": cha_mod, "warlock": cha_mod,
+        }
+        c_mod = mod_by_class.get(primary_class.lower(), int_mod)
+
+        if stored_cap is not None and self._safe_int(stored_cap, 0) > 0:
+            max_prepared = self._safe_int(stored_cap, 1)
+        elif ed == "2024" and primary_class.lower() in ("cleric", "druid", "wizard"):
+            prep_2024_full = {
+                1: 4, 2: 5, 3: 6, 4: 7, 5: 9, 6: 10, 7: 11, 8: 12, 9: 14, 10: 15,
+                11: 16, 12: 16, 13: 17, 14: 17, 15: 18, 16: 18, 17: 19, 18: 20, 19: 21, 20: 22,
+            }
+            max_prepared = prep_2024_full.get(min(20, primary_lvl), primary_lvl + 2)
+        elif ed == "2024" and primary_class.lower() in ("paladin", "ranger"):
+            prep_2024_half = {
+                1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 6, 7: 7, 8: 7, 9: 9, 10: 9,
+                11: 10, 12: 10, 13: 11, 14: 11, 15: 12, 16: 12, 17: 14, 18: 14, 19: 15, 20: 15,
+            }
+            max_prepared = prep_2024_half.get(min(20, primary_lvl), max(2, primary_lvl // 2 + 2))
+        elif primary_class.lower() in ("cleric", "druid", "wizard"):
+            max_prepared = max(1, c_mod + primary_lvl)
+        elif primary_class.lower() in ("paladin", "artificer", "ranger"):
+            max_prepared = max(1, c_mod + max(1, primary_lvl // 2))
+        else:
+            max_prepared = max(1, primary_lvl + 1)
+
+        return {
+            "is_caster": is_caster,
+            "class_names": [c for c, _ in found_classes],
+            "primary_class": primary_class,
+            "prep_style": prep_style,
+            "can_swap_spells": can_swap_spells,
+            "can_swap_from_class_list": can_swap_from_class_list,
+            "can_swap_from_spellbook": can_swap_from_spellbook,
+            "max_slot_level": slot_max_rank,
+            "max_prepared_leveled_spells": max_prepared,
+            "edition": ed,
+        }
+
+    def get_rest_modal_state(self, rest_type: str = "short", edition: Optional[str] = None) -> Dict[str, Any]:
+        """Builds full interactive Rest UI payload across the active campaign party."""
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        from core.compendiums.dnd_armor import get_armor
+        from core.compendiums.dnd_items import get_item
+        from core.compendiums.dnd_spells import get_spells_for_class
+
+        ed = self._get_campaign_edition(edition)
+        dice_mode = self.get_dice_mode()
+        chars_dict = self.active_state.get("characters", {})
+        char_summaries: List[Dict[str, Any]] = []
+
+        for cid, ch in chars_dict.items():
+            native = ch.get("native_system_data") if isinstance(ch.get("native_system_data"), dict) else {}
+            vitals = ch.get("vitals") or {}
+            hp_obj = vitals.get("health") or {"current": ch.get("current_health", 10), "max": ch.get("max_health", 10)}
+            cur_hp = self._safe_int(hp_obj.get("current"), 10)
+            max_hp = max(1, self._safe_int(hp_obj.get("max"), 10))
+            lvl = max(1, self._safe_int(ch.get("level"), 1))
+
+            str_score = self._get_character_ability_score(ch, "STR", 10)
+            dex_score = self._get_character_ability_score(ch, "DEX", 10)
+            con_score = self._get_character_ability_score(ch, "CON", 10)
+            dex_mod = (dex_score - 10) // 2
+            con_mod = (con_score - 10) // 2
+
+            # Hit dice resolution (from custom_meters['hit_dice'], root hit_dice string, or class default)
+            meters = ch.get("custom_meters") or native.get("custom_meters") or {}
+            hd_meter = meters.get("hit_dice") if isinstance(meters, dict) else None
+            raw_hd_str = str(
+                (hd_meter.get("label") if isinstance(hd_meter, dict) else "")
+                or ch.get("hit_dice")
+                or (native.get("hit_dice", {}).get("die") if isinstance(native.get("hit_dice"), dict) else native.get("hit_dice"))
+                or ""
+            )
+            die_m = re.search(r"d(4|6|8|10|12)\b", raw_hd_str, flags=re.IGNORECASE)
+            if die_m:
+                die_face = int(die_m.group(1))
+            else:
+                arch_low = (ch.get("archetype") or ch.get("class_and_level") or "").lower()
+                if any(k in arch_low for k in ("wizard", "sorcerer")):
+                    die_face = 6
+                elif any(k in arch_low for k in ("fighter", "paladin", "ranger")):
+                    die_face = 10
+                elif "barbarian" in arch_low:
+                    die_face = 12
+                else:
+                    die_face = 8
+
+            hd_cur = self._safe_int(hd_meter.get("current"), lvl) if isinstance(hd_meter, dict) else lvl
+            hd_max = max(1, self._safe_int(hd_meter.get("max"), lvl)) if isinstance(hd_meter, dict) else lvl
+
+            # Expendable class meters (excluding hit_dice)
+            exp_meters = []
+            if isinstance(meters, dict):
+                for m_key, m_val in meters.items():
+                    if m_key == "hit_dice" or not isinstance(m_val, dict):
+                        continue
+                    exp_meters.append({
+                        "key": m_key,
+                        "label": m_val.get("label") or m_key,
+                        "current": self._safe_int(m_val.get("current"), 0),
+                        "max": max(1, self._safe_int(m_val.get("max"), 1)),
+                        "reset_on": m_val.get("reset_on", "long_rest"),
+                    })
+
+            # Scan inventory for Consumables, Armor/Shields, and Attunable Magic Items
+            raw_inv = ch.get("inventory") if isinstance(ch.get("inventory"), list) else (native.get("inventory") or [])
+            consumables: List[Dict[str, Any]] = []
+            owned_armor: List[Dict[str, Any]] = []
+            owned_shields: List[Dict[str, Any]] = []
+            attunable_items: List[Dict[str, Any]] = []
+            seen_att = set()
+
+            for it in raw_inv:
+                if isinstance(it, dict):
+                    i_name = (it.get("name") or "").strip()
+                    i_qty = max(1, self._safe_int(it.get("qty"), 1))
+                    i_cat = (it.get("category") or "").strip()
+                    i_notes = (it.get("notes") or "").strip()
+                    i_eq = bool(it.get("equipped", False))
+                    i_magic = bool(it.get("is_magic", False))
+                    i_req_att = bool(it.get("requires_attunement", False))
+                else:
+                    s_raw = str(it).strip()
+                    qm = re.search(r"^(.*?)\s*x\s*(\d+)$", s_raw, flags=re.IGNORECASE)
+                    i_name = qm.group(1).strip() if qm else s_raw
+                    i_qty = int(qm.group(2)) if qm else 1
+                    i_cat = ""
+                    i_notes = ""
+                    i_eq = False
+                    i_magic = False
+                    i_req_att = False
+
+                if not i_name:
+                    continue
+                low_n = i_name.lower()
+
+                # Armor/Shield detection
+                cat_low = i_cat.lower()
+                arm_ref = None
+                if cat_low in ("armor", "shield", "", "gear", "magic"):
+                    cand_arm = get_armor(i_name)
+                    if cand_arm and (cat_low in ("armor", "shield") or cand_arm.get("name", "").lower() == low_n or len(low_n) >= 5):
+                        arm_ref = cand_arm
+                if cat_low == "shield" or (arm_ref and arm_ref.get("category") == "Shield"):
+                    owned_shields.append({
+                        "name": i_name,
+                        "equipped": i_eq,
+                        "ac_bonus": 2 + int((arm_ref or {}).get("ac_bonus") or 0),
+                        "notes": i_notes or "+2 AC",
+                    })
+                elif i_cat.lower() == "armor" or (arm_ref and arm_ref.get("category") != "Shield"):
+                    owned_armor.append({
+                        "name": i_name,
+                        "equipped": i_eq,
+                        "ac_base": (arm_ref or {}).get("ac_base", 10),
+                        "dex_bonus": (arm_ref or {}).get("dex_bonus", True),
+                        "max_dex_bonus": (arm_ref or {}).get("max_dex_bonus"),
+                        "ac_bonus": (arm_ref or {}).get("ac_bonus", 0),
+                        "str_minimum": (arm_ref or {}).get("str_minimum", 0),
+                        "stealth_disadvantage": bool((arm_ref or {}).get("stealth_disadvantage", False)),
+                        "notes": i_notes,
+                    })
+
+                # Consumable detection
+                item_ref = get_item(i_name)
+                is_cons = (
+                    i_cat.lower() == "consumable"
+                    or bool((item_ref or {}).get("consumable"))
+                    or any(kw in low_n for kw in ("potion", "elixir", "ration", "goodberry", "antitoxin", "healer", "scroll"))
+                )
+                if is_cons:
+                    heal_formula = ""
+                    if "supreme" in low_n and ("healing" in low_n or "potion" in low_n):
+                        heal_formula = "10d4+20"
+                    elif "superior" in low_n and ("healing" in low_n or "potion" in low_n):
+                        heal_formula = "8d4+8"
+                    elif "greater" in low_n and ("healing" in low_n or "potion" in low_n):
+                        heal_formula = "4d4+4"
+                    elif "healing" in low_n or "healing potion" in low_n:
+                        heal_formula = "2d4+2"
+                    elif "goodberry" in low_n:
+                        heal_formula = "1"
+                    consumables.append({
+                        "name": i_name,
+                        "qty": i_qty,
+                        "heal_formula": heal_formula,
+                        "notes": i_notes,
+                    })
+
+                # Attunable item detection
+                if i_req_att or (item_ref and item_ref.get("requires_attunement")) or (i_magic and "attun" in i_notes.lower()):
+                    if low_n not in seen_att:
+                        seen_att.add(low_n)
+                        attunable_items.append({
+                            "name": i_name,
+                            "rarity": (item_ref or {}).get("rarity", "Magic"),
+                            "description": (item_ref or {}).get("description", i_notes),
+                        })
+
+            for w in ch.get("weapons") or []:
+                if isinstance(w, dict) and w.get("name"):
+                    wn = w["name"].strip()
+                    w_notes = str(w.get("notes") or "")
+                    if "attun" in w_notes.lower() and wn.lower() not in seen_att:
+                        seen_att.add(wn.lower())
+                        attunable_items.append({"name": wn, "rarity": "Magic", "description": w_notes})
+
+            attuned_items = list(ch.get("attuned_items") or [])
+            for att_name in attuned_items:
+                if att_name and att_name.strip().lower() not in seen_att:
+                    seen_att.add(att_name.strip().lower())
+                    attunable_items.append({"name": att_name.strip(), "rarity": "Magic", "description": ""})
+
+            equipped_armor_name = ch.get("armor_equipped") or ""
+            if not equipped_armor_name:
+                eq_arm = next((a["name"] for a in owned_armor if a.get("equipped")), "")
+                equipped_armor_name = eq_arm
+            shield_equipped = bool(ch.get("shield_equipped")) or any(s.get("equipped") for s in owned_shields)
+
+            # Spellcasting profile & eligible class spells
+            spell_prof = self._parse_class_spell_profile(ch, edition=ed)
+            raw_spells = native.get("spells") if isinstance(native.get("spells"), list) and native.get("spells") else (ch.get("spells") or [])
+            cur_spells: List[Dict[str, Any]] = []
+            for sp in raw_spells:
+                if isinstance(sp, dict):
+                    s_lvl_raw = sp.get("level", 0)
+                    if isinstance(s_lvl_raw, int):
+                        s_lvl = s_lvl_raw
+                    else:
+                        lm = re.search(r"\d+", str(s_lvl_raw))
+                        s_lvl = 0 if "cantrip" in str(s_lvl_raw).lower() else (int(lm.group(0)) if lm else 1)
+                    cur_spells.append({
+                        "name": sp.get("name", ""),
+                        "level": s_lvl,
+                        "level_label": sp.get("level") if isinstance(sp.get("level"), str) else ("Cantrip" if s_lvl == 0 else f"Level {s_lvl}"),
+                        "school": sp.get("school", ""),
+                        "is_cantrip": bool(sp.get("is_cantrip") or s_lvl == 0),
+                        "prepared": bool(sp.get("prepared", True) if (sp.get("is_cantrip") or s_lvl == 0 or sp.get("is_always_prepared")) else sp.get("prepared", False)),
+                        "is_always_prepared": bool(sp.get("is_always_prepared", False)),
+                    })
+                elif isinstance(sp, str) and sp.strip():
+                    cur_spells.append({
+                        "name": sp.strip(),
+                        "level": 1,
+                        "level_label": "Spell",
+                        "school": "",
+                        "is_cantrip": "cantrip" in sp.lower(),
+                        "prepared": True,
+                        "is_always_prepared": False,
+                    })
+
+            eligible_class_spells: List[Dict[str, Any]] = []
+            if spell_prof["can_swap_from_class_list"] and spell_prof["primary_class"]:
+                max_sl = max(1, spell_prof["max_slot_level"])
+                for cs in get_spells_for_class(
+                    class_name=spell_prof["primary_class"],
+                    max_spell_level=max_sl,
+                    edition=ed,
+                    include_cantrips=False,
+                ):
+                    eligible_class_spells.append({
+                        "name": cs["name"],
+                        "index": cs.get("index", ""),
+                        "level": int(cs.get("level", 1)),
+                        "level_label": cs.get("level_label", ""),
+                        "school": cs.get("school", ""),
+                        "concentration": bool(cs.get("concentration", False)),
+                        "ritual": bool(cs.get("ritual", False)),
+                        "damage": cs.get("damage", ""),
+                        "description": str(cs.get("description_2024") if ed == "2024" and cs.get("description_2024") else cs.get("description", ""))[:240],
+                    })
+
+            slots = native.get("spell_slots") or ch.get("spell_slots") or {}
+            char_summaries.append({
+                "id": ch.get("id") or cid,
+                "name": ch.get("name", cid),
+                "archetype": ch.get("archetype", "Adventurer"),
+                "level": lvl,
+                "hp": {"current": cur_hp, "max": max_hp, "temp_hp": self._safe_int(vitals.get("temp_hp", ch.get("temp_hp")), 0)},
+                "armor_class": self._safe_int(ch.get("armor_class", vitals.get("guard", {}).get("current")), 10),
+                "armor_equipped": equipped_armor_name,
+                "shield_equipped": shield_equipped,
+                "dex_mod": dex_mod,
+                "str_score": str_score,
+                "hit_dice": {
+                    "current": hd_cur,
+                    "max": hd_max,
+                    "die_face": die_face,
+                    "die_str": f"1d{die_face}",
+                    "con_mod": con_mod,
+                },
+                "expendable_meters": exp_meters,
+                "consumables": consumables,
+                "owned_armor": owned_armor,
+                "owned_shields": owned_shields,
+                "attunable_items": attunable_items,
+                "attuned_items": attuned_items,
+                "max_attuned": 3,
+                "spell_slots": slots,
+                "spellcasting": {
+                    **spell_prof,
+                    "current_spells": cur_spells,
+                    "eligible_class_spells": eligible_class_spells,
+                },
+            })
+
+        return {
+            "status": "success",
+            "rest_type": "long" if str(rest_type).lower().strip() == "long" else "short",
+            "dice_mode": dice_mode,
+            "edition": ed,
+            "characters": char_summaries,
+        }
+
+    def commit_interactive_rest(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Commits an interactive Short or Long Rest across party characters:
+        - Enforces max-3 Attunement limit
+        - Spends Hit Dice (digital auto-roll OR physical reported healing)
+        - Uses Consumables / Healing Potions
+        - Swaps equipped Armor / Shield & recomputes AC
+        - Updates Prepared Spells / Class Spell List preparations
+        - Recharges Pact Slots / Short-Rest pools or performs full Long Rest recovery (2014 vs 2024 Hit Dice recovery)
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        from core.compendiums.dnd_spells import get_spell, format_spell_for_sheet
+
+        data = payload or {}
+        is_long = (str(data.get("rest_type") or "short").lower().strip() == "long")
+        dice_mode = (str(data.get("dice_mode") or self.get_dice_mode()).lower().strip())
+        ed = self._get_campaign_edition(data.get("edition"))
+        char_inputs = data.get("characters") if isinstance(data.get("characters"), dict) else {}
+
+        chars_dict = self.active_state.get("characters", {})
+
+        # Pre-pass validation: never partially save if any hero exceeds max 3 attunement slots
+        resolved_targets: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
+        for cid, ch in chars_dict.items():
+            c_in = char_inputs.get(cid) or char_inputs.get(ch.get("name", "")) or {}
+            if "attuned_items" in c_in and c_in["attuned_items"] is not None:
+                att_in = [str(x).strip() for x in c_in["attuned_items"] if str(x).strip()]
+                dedup_att = list(dict.fromkeys(att_in))
+                if len(dedup_att) > 3:
+                    return {
+                        "status": "error",
+                        "message": f"{ch.get('name', cid)} cannot attune to more than 3 magic items (selected {len(dedup_att)}).",
+                    }
+            resolved_targets.append((cid, ch, c_in))
+
+        reports: List[str] = []
+        char_outcomes: Dict[str, Any] = {}
+
+        for cid, ch, c_in in resolved_targets:
+            name = ch.get("name", cid)
+            native = ch.get("native_system_data") if isinstance(ch.get("native_system_data"), dict) else None
+            vitals = ch.setdefault("vitals", {})
+            hp_obj = vitals.setdefault("health", {"current": 10, "max": 10, "label": "Health"})
+            max_hp = max(1, self._safe_int(hp_obj.get("max"), 10))
+            hp_obj["max"] = max_hp
+            hp_obj["current"] = max(0, min(max_hp, self._safe_int(hp_obj.get("current"), max_hp)))
+
+            lvl = max(1, self._safe_int(ch.get("level"), 1))
+            con_mod = (self._get_character_ability_score(ch, "CON", 10) - 10) // 2
+
+            meters = ch.setdefault("custom_meters", {})
+            if "hit_dice" not in meters:
+                raw_hd_str = str(ch.get("hit_dice") or (native.get("hit_dice", {}).get("die") if native and isinstance(native.get("hit_dice"), dict) else "") or "")
+                dm = re.search(r"d(4|6|8|10|12)\b", raw_hd_str, flags=re.IGNORECASE)
+                d_face = int(dm.group(1)) if dm else 8
+                meters["hit_dice"] = {"label": f"Hit Dice ({lvl}d{d_face})", "current": lvl, "max": lvl, "reset_on": "long_rest"}
+            hd_meter = meters["hit_dice"]
+            dm_hd = re.search(r"d(4|6|8|10|12)\b", str(hd_meter.get("label") or ch.get("hit_dice") or ""), flags=re.IGNORECASE)
+            die_face = int(dm_hd.group(1)) if dm_hd else 8
+
+            notes: List[str] = []
+
+            # 1. Hit Dice healing (Short Rest)
+            hd_spend_req = max(0, self._safe_int(c_in.get("hit_dice_to_spend"), 0))
+            if not is_long and hd_spend_req > 0 and hd_meter.get("current", 0) > 0:
+                spent = min(hd_spend_req, int(hd_meter.get("current", 0)))
+                healed_total = 0
+                if dice_mode == "physical":
+                    healed_total = max(0, self._safe_int(c_in.get("manual_hp_gain"), 0))
+                else:
+                    for _ in range(spent):
+                        roll_r = self.parse_and_roll(f"1d{die_face}", character_name=name)
+                        roll_v = roll_r.get("total", 4) if roll_r.get("status") == "success" else 4
+                        healed_total += max(1, roll_v + con_mod)
+                old_hp = hp_obj["current"]
+                hp_obj["current"] = min(max_hp, old_hp + healed_total)
+                hd_meter["current"] -= spent
+                notes.append(f"spent {spent} Hit Dice (+{hp_obj['current'] - old_hp} HP -> {hp_obj['current']}/{max_hp})")
+
+            # 2. Consumables used
+            for cons in (c_in.get("consumables_used") or []):
+                if isinstance(cons, str):
+                    c_name, c_qty, c_manual = cons, 1, None
+                elif isinstance(cons, dict):
+                    c_name = str(cons.get("name") or "").strip()
+                    c_qty = max(1, self._safe_int(cons.get("qty"), 1))
+                    c_manual = cons.get("manual_hp_gain")
+                else:
+                    continue
+                if not c_name:
+                    continue
+                taken, _ = self._decrement_inventory_item(ch, c_name, qty=c_qty)
+                if taken <= 0:
+                    continue
+                low_cn = c_name.lower()
+                heal_f = ""
+                if "supreme" in low_cn and ("healing" in low_cn or "potion" in low_cn):
+                    heal_f = "10d4+20"
+                elif "superior" in low_cn and ("healing" in low_cn or "potion" in low_cn):
+                    heal_f = "8d4+8"
+                elif "greater" in low_cn and ("healing" in low_cn or "potion" in low_cn):
+                    heal_f = "4d4+4"
+                elif "healing" in low_cn or "potion of healing" in low_cn:
+                    heal_f = "2d4+2"
+                elif "goodberry" in low_cn:
+                    heal_f = "1"
+
+                if heal_f:
+                    gain = 0
+                    if c_manual is not None and dice_mode == "physical":
+                        gain = max(0, self._safe_int(c_manual, 0))
+                    else:
+                        for _ in range(taken):
+                            if heal_f == "1":
+                                gain += 1
+                            else:
+                                r_p = self.parse_and_roll(heal_f, character_name=name)
+                                gain += max(1, r_p.get("total", 5))
+                    old_hp = hp_obj["current"]
+                    hp_obj["current"] = min(max_hp, old_hp + gain)
+                    notes.append(f"used {taken}x {c_name} (+{hp_obj['current'] - old_hp} HP)")
+                else:
+                    notes.append(f"used {taken}x {c_name}")
+
+            # 3. Armor & Shield Swap + Live AC Recompute
+            if "equipped_armor" in c_in or "shield_equipped" in c_in:
+                new_arm = c_in.get("equipped_armor", ch.get("armor_equipped"))
+                new_sh = bool(c_in.get("shield_equipped", ch.get("shield_equipped", False)))
+                ac_res = self._recompute_and_apply_character_ac(ch, new_arm, new_sh)
+                notes.append(f"gear -> AC {ac_res['armor_class']} ({ac_res['armor_equipped']}{'+Shield' if ac_res['shield_equipped'] else ''})")
+
+            # 4. Attunement Slots (Max 3 enforced above)
+            if "attuned_items" in c_in and c_in["attuned_items"] is not None:
+                clean_att = list(dict.fromkeys([str(x).strip() for x in c_in["attuned_items"] if str(x).strip()]))
+                ch["attuned_items"] = clean_att
+                ch["attuned_magic_items"] = {"current": len(clean_att), "max": 3}
+                if native is not None:
+                    native["attuned_items"] = list(clean_att)
+                    native["attuned_magic_items"] = {"current": len(clean_att), "max": 3}
+                notes.append(f"attuned ({len(clean_att)}/3)")
+
+            # 5. Prepared Spells / Class Spell List Swap
+            if "prepared_spell_names" in c_in and isinstance(c_in["prepared_spell_names"], list):
+                target_prep = {str(x).strip().lower(): str(x).strip() for x in c_in["prepared_spell_names"] if str(x).strip()}
+                spell_prof = self._parse_class_spell_profile(ch, edition=ed)
+                prof_b = max(2, self._safe_int(ch.get("prof_bonus") or (native.get("proficiency_bonus") if native else None), calculate_dnd_proficiency(lvl)))
+                cast_ab = (ch.get("spellcasting_ability") or (native.get("spellcasting_ability") if native else None) or "INT").strip().upper()[:3]
+                if cast_ab not in ("INT", "WIS", "CHA"):
+                    p_cls = spell_prof.get("primary_class", "").lower()
+                    cast_ab = "WIS" if p_cls in ("cleric", "druid", "ranger") else ("CHA" if p_cls in ("bard", "paladin", "sorcerer", "warlock") else "INT")
+                c_mod = (self._get_character_ability_score(ch, cast_ab, 10) - 10) // 2
+                s_dc = str(8 + prof_b + c_mod)
+                s_atk = f"+{prof_b + c_mod}" if (prof_b + c_mod) >= 0 else str(prof_b + c_mod)
+
+                # Merge existing spells from root & native
+                existing_raw = []
+                if isinstance(ch.get("spells"), list) and ch["spells"]:
+                    existing_raw = list(ch["spells"])
+                elif native and isinstance(native.get("spells"), list):
+                    existing_raw = list(native["spells"])
+
+                updated_spells: List[Dict[str, Any]] = []
+                present_lows = set()
+                for s_ent in existing_raw:
+                    if isinstance(s_ent, dict):
+                        clone = copy.deepcopy(s_ent)
+                        sn_low = (clone.get("name") or "").strip().lower()
+                        is_c = bool(clone.get("is_cantrip") or "cantrip" in str(clone.get("level", "")).lower())
+                        is_alw = bool(clone.get("is_always_prepared", False))
+                        if not is_c and not is_alw:
+                            clone["prepared"] = (sn_low in target_prep)
+                        else:
+                            clone["prepared"] = True
+                        updated_spells.append(clone)
+                        present_lows.add(sn_low)
+                    elif isinstance(s_ent, str) and s_ent.strip():
+                        sn = s_ent.strip()
+                        sn_low = sn.lower()
+                        is_c = "cantrip" in sn_low
+                        updated_spells.append({
+                            "name": sn,
+                            "level": "Cantrip" if is_c else "1st Level",
+                            "is_cantrip": is_c,
+                            "prepared": True if is_c else (sn_low in target_prep),
+                        })
+                        present_lows.add(sn_low)
+
+                for low_k, orig_name in target_prep.items():
+                    if low_k not in present_lows:
+                        sp_comp = get_spell(orig_name, edition=ed)
+                        if sp_comp:
+                            updated_spells.append(format_spell_for_sheet(sp_comp, spell_atk=s_atk, spell_dc=s_dc, prepared=True))
+                        else:
+                            updated_spells.append({"name": orig_name, "level": "1st Level", "is_cantrip": False, "prepared": True})
+
+                ch["spells"] = updated_spells
+                if native is not None:
+                    native["spells"] = copy.deepcopy(updated_spells)
+                prep_count = sum(1 for sp in updated_spells if not sp.get("is_cantrip") and sp.get("prepared"))
+                notes.append(f"{prep_count} leveled spells prepared")
+
+            # 6. Apply Rest Recovery (Long vs Short)
+            root_slots = ch.get("spell_slots") if isinstance(ch.get("spell_slots"), dict) else {}
+            nat_slots = native.get("spell_slots") if native and isinstance(native.get("spell_slots"), dict) else {}
+            merged_slots = nat_slots or root_slots
+
+            if is_long:
+                hp_obj["current"] = max_hp
+                vitals["temp_hp"] = 0
+                ch["temp_hp"] = 0
+                for s_v in merged_slots.values():
+                    if isinstance(s_v, dict) and "max" in s_v:
+                        s_v["current"] = s_v["max"]
+                if ed == "2024":
+                    hd_meter["current"] = hd_meter["max"]
+                else:
+                    rec_hd = max(1, int(hd_meter.get("max", 1)) // 2)
+                    hd_meter["current"] = min(int(hd_meter.get("max", 1)), int(hd_meter.get("current", 0)) + rec_hd)
+                for m_k, m_v in meters.items():
+                    if m_k != "hit_dice" and isinstance(m_v, dict) and m_v.get("reset_on") in ("long_rest", "short_rest", "rest"):
+                        m_v["current"] = m_v["max"]
+                ch["conditions"] = [c for c in ch.get("conditions", []) if c == "Attuned"]
+                notes.append("Full Long Rest recovery")
+            else:
+                is_pact = bool(native.get("is_pact_magic", False) if native else ch.get("is_pact_magic", False))
+                has_long_slots = any(
+                    isinstance(sv, dict) and sv.get("reset_on") == "long_rest" and int(sv.get("max") or 0) > 0
+                    for sv in merged_slots.values()
+                )
+                for s_v in merged_slots.values():
+                    if isinstance(s_v, dict):
+                        if s_v.get("pact_max") is not None:
+                            s_v["pact_current"] = s_v["pact_max"]
+                        if s_v.get("is_pact_magic") or s_v.get("reset_on") == "short_rest" or (is_pact and not has_long_slots and s_v.get("reset_on") != "long_rest"):
+                            s_v["current"] = s_v["max"]
+                for m_v in meters.values():
+                    if isinstance(m_v, dict) and m_v.get("reset_on") in ("short_rest", "rest"):
+                        m_v["current"] = m_v["max"]
+                notes.append("Short Rest pools recharged")
+
+            # Mirror updated slots & meters to native/root
+            if native is not None:
+                if merged_slots:
+                    native["spell_slots"] = copy.deepcopy(merged_slots)
+                native["custom_meters"] = copy.deepcopy(meters)
+            if merged_slots:
+                ch["spell_slots"] = copy.deepcopy(merged_slots)
+
+            summary_part = f"{name}: " + "; ".join(notes)
+            reports.append(summary_part)
+            char_outcomes[cid] = {
+                "name": name,
+                "hp_current": hp_obj["current"],
+                "hp_max": max_hp,
+                "armor_class": ch.get("armor_class"),
+                "hit_dice_remaining": hd_meter.get("current", 0),
+                "notes": notes,
+            }
+
+        self.save_active_campaign_state()
+        rest_label = "Long Rest" if is_long else "Short Rest"
+        return {
+            "status": "success",
+            "rest_type": rest_label,
+            "edition": ed,
+            "dice_mode": dice_mode,
+            "reports": reports,
+            "characters": char_outcomes,
+            "summary": f"{rest_label} completed ({ed} rules): " + " | ".join(reports),
+        }
+
+    # --- Phase 3: D&D 5e (2014 & 2024) Guided Level-Up & Multiclass Engine ---
+
+    def get_character_advancement_options(
+        self,
+        character_name_or_id: str,
+        edition: Optional[str] = None,
+        target_class: Optional[str] = None,
+        bypass_prereqs: bool = False,
+    ) -> Dict[str, Any]:
+        """Returns complete D&D 5e advancement & multiclass preview options for an active campaign hero."""
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        char_id, char_obj = self._find_character(character_name_or_id)
+        if not char_obj:
+            return {"status": "error", "message": f"Character '{character_name_or_id}' not found."}
+
+        from core.compendiums.dnd_advancement import get_advancement_options
+
+        ed = self._get_campaign_edition(edition)
+        opts = get_advancement_options(
+            char_obj,
+            edition=ed,
+            target_class=target_class,
+            bypass_prereqs=bypass_prereqs,
+        )
+        opts["source"] = "campaign"
+        opts["character_id"] = char_id
+        opts["dice_mode"] = self.get_dice_mode()
+        return opts
+
+    def apply_dnd_level_up(
+        self,
+        character_name_or_id: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Applies guided D&D 5e (2014 or 2024) single-class or multiclass advancement and saves state."""
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        char_id, char_obj = self._find_character(character_name_or_id)
+        if not char_obj:
+            return {"status": "error", "message": f"Character '{character_name_or_id}' not found."}
+
+        from core.compendiums.dnd_advancement import apply_level_up
+
+        data = dict(payload or {})
+        data["edition"] = self._get_campaign_edition(data.get("edition"))
+        res = apply_level_up(char_obj, data)
+        if res.get("status") != "success":
+            return res
+
+        self.save_active_campaign_state()
+        res["character_id"] = char_id
+        res["state"] = self.active_state
+        return res
 
 
 # Full Caster Slot Table (Levels 1-20 -> Ranks 1-9)

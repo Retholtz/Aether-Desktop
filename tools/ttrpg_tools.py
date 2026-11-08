@@ -3,7 +3,8 @@ tools/ttrpg_tools.py - Agent Tools for Tabletop Adjudication & DM Document Groun
 Exposes mathematical dice rolling, vitals modification, turn ladder control,
 campaign document review (rulesets, modules, character sheets), and roster character sync.
 """
-from typing import Dict, Any, Optional
+import re
+from typing import Dict, Any, List, Optional
 from core.ttrpg_service import TTRPGService, level_up_dnd_character
 
 
@@ -28,16 +29,59 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
             except Exception:
                 pass
 
-    async def roll_dice(formula: str, roll_type: str = "normal", purpose: Optional[str] = None) -> Dict[str, Any]:
+    async def roll_dice(
+        formula: str,
+        roll_type: str = "normal",
+        purpose: Optional[str] = None,
+        character_name: Optional[str] = None,
+        actor: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Executes a cryptographically fair dice roll.
         Formula must be in standard notation like '1d20+5', '2d6', or '8d6+2'.
         roll_type must be one of: 'normal', 'advantage', 'disadvantage'.
+        character_name / actor: The name of the character from the party roster, or monster/NPC/DM name.
         """
-        res = service.parse_and_roll(formula, roll_type)
-        if res.get("status") == "success" and purpose:
-            res["purpose"] = purpose
+        target_char = (character_name or actor or "").strip() or None
+        state = getattr(service, "active_state", {}) or {}
+        chars = state.get("characters", {}) if isinstance(state, dict) else {}
+        if not target_char and purpose:
+            for cid, cdata in chars.items():
+                cname = (cdata.get("name") if isinstance(cdata, dict) else str(cdata)).strip()
+                if cname and re.search(r'\b' + re.escape(cname) + r'\b', purpose, re.IGNORECASE):
+                    target_char = cname
+                    break
+        if not target_char:
+            caller_ref = state.get("party_caller_id") or state.get("party_caller")
+            if caller_ref:
+                if isinstance(chars, dict) and caller_ref in chars:
+                    c = chars[caller_ref]
+                    target_char = c.get("name") if isinstance(c, dict) else str(c)
+                elif isinstance(chars, dict):
+                    for cdata in chars.values():
+                        cname = cdata.get("name") if isinstance(cdata, dict) else str(cdata)
+                        if cname and cname.lower() == str(caller_ref).lower():
+                            target_char = cname
+                            break
+                if not target_char:
+                    target_char = str(caller_ref)
+            if not target_char:
+                ladder = state.get("initiative_order", [])
+                turn_idx = state.get("active_turn_index", 0)
+                if ladder and 0 <= turn_idx < len(ladder):
+                    target_char = ladder[turn_idx].get("name")
+            if not target_char and chars and len(chars) == 1:
+                single_char = next(iter(chars.values()))
+                target_char = single_char.get("name") if isinstance(single_char, dict) else str(single_char)
+            if not target_char:
+                target_char = "DM"
+
+        res = service.parse_and_roll(formula, roll_type, character_name=target_char)
         if res.get("status") == "success":
+            if purpose:
+                res["purpose"] = purpose
+            if target_char:
+                res["character_name"] = target_char
             emit_update("dice_roll_event", res)
         return res
 
@@ -213,13 +257,14 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
 
     dispatcher.register_tool(
         name="roll_dice",
-        description="Rolls fair dice using standard notation (e.g., '1d20+5', '2d6') with support for advantage and disadvantage.",
+        description="Rolls fair dice using standard notation (e.g., '1d20+5', '2d6') with support for advantage and disadvantage. Must always be associated with a player character from the party roster or monster/NPC/DM.",
         parameters={
             "type": "object",
             "properties": {
                 "formula": {"type": "string", "description": "Dice expression (e.g., '1d20+7', '3d6')."},
                 "roll_type": {"type": "string", "enum": ["normal", "advantage", "disadvantage"], "description": "Roll modifier."},
-                "purpose": {"type": "string", "description": "Context of roll (e.g., 'Kaelen Athletics Check', 'Fireball Damage')."}
+                "purpose": {"type": "string", "description": "Context of roll (e.g., 'Joe Investigation Check', 'Goblin Scimitar Attack', 'Fireball Damage')."},
+                "character_name": {"type": "string", "description": "Name of the character from the Party Roster performing the action (e.g. 'Joe', 'Sam', 'Shadow'), or NPC/Monster/DM name (e.g. 'Chief Olaf', 'Goblin', 'Game Master')."}
             },
             "required": ["formula"]
         },
@@ -416,14 +461,16 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         action: str = "add",
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        storage_location: Optional[str] = None
     ) -> Dict[str, Any]:
         res = service.manage_character_inventory(
             character_name=character_name,
             action=action,
             items=items,
             weapons=weapons,
-            reason=reason
+            reason=reason,
+            storage_location=storage_location
         )
         if res.get("status") == "success":
             emit_update("ttrpg_state_updated", res)
@@ -431,23 +478,23 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
 
     dispatcher.register_tool(
         name="manage_party_inventory",
-        description="Adds, removes, or uses items and weapons for a party member (e.g. when looting chests, finding weapons, drinking healing potions, spending rations, dropping gear, or losing equipment).",
+        description="Adds, removes, uses, disarms, or retrieves physical items and weapons for a party member or the entire party. Supports 'disarm' upon arrest/surrender (storing weapons in evidence) and 'retrieve' (reclaiming stored gear). Tracks item persistence in world storage caches. NOTE: Captives, prisoners, and living NPCs are NOT inventory!",
         parameters={
             "type": "object",
             "properties": {
                 "character_name": {
                     "type": "string",
-                    "description": "Name of the character whose inventory or equipment is changing."
+                    "description": "Name of the character (e.g. 'Joe', 'Shadow'), or 'all'/'party' to disarm or retrieve gear for the entire party at once."
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["add", "remove", "use"],
-                    "description": "Whether items/weapons are being added (looted/bought), removed (discarded/lost), or used (potions/scrolls consumed)."
+                    "enum": ["add", "remove", "use", "disarm", "retrieve"],
+                    "description": "Action type: 'add' (loot/receive), 'remove' (discard/drop), 'use' (potions/scrolls), 'disarm' (strip weapons upon arrest/surrender and store in evidence), or 'retrieve' (reclaim stored/confiscated weapons/items from evidence or storage cache)."
                 },
                 "items": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of item names to add or remove (e.g. ['Potion of Healing', '50 ft. Rope', 'Gold pouch'])."
+                    "description": "List of item names to add, remove, or retrieve (e.g. ['Potion of Healing', '50 ft. Rope', 'Gold pouch'])."
                 },
                 "weapons": {
                     "type": "array",
@@ -463,14 +510,261 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
                     },
                     "description": "List of structured weapon dictionaries to add or remove."
                 },
+                "storage_location": {
+                    "type": "string",
+                    "description": "Physical in-world location where removed/confiscated items are placed or retrieved from (e.g. 'Camp Highmore Guard Barracks - Evidence Chest', 'Jailor's Office Strongbox', 'Behind loose brick in cell'). Ensures item persistence so players can reclaim gear later."
+                },
                 "reason": {
                     "type": "string",
-                    "description": "In-world narrative reason for the inventory change (e.g. 'Found in dungeon chest', 'Consumed during battle')."
+                    "description": "In-world narrative reason for the inventory change (e.g. 'Arrested by Chief Filip', 'Found in dungeon chest', 'Consumed during battle')."
                 }
             },
             "required": ["character_name", "action"]
         },
         handler=manage_party_inventory
+    )
+
+    async def lookup_dnd_compendium(
+        query_or_name: str = "",
+        category: str = "all",
+        edition: str = "2024",
+        class_name: Optional[str] = None,
+        max_level: Optional[int] = None,
+        expand_pack: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Searches the offline D&D 5e (2014 SRD 5.1 & 2024 SRD 5.2) + Custom Homebrew compendium
+        for weapons, 2024 weapon masteries, armor/shields, adventuring gear/packs/magic items,
+        and class spells with rules, damage, cost, weight, and 2014 vs 2024 differences.
+        """
+        cat_clean = (category or "all").strip().lower()
+        q_clean = (query_or_name or "").strip()
+        ed_clean = (edition or "2024").strip().lower()
+
+        if cat_clean in ("masteries", "mastery", "weapon_masteries"):
+            from core.compendiums.dnd_weapons import list_weapon_masteries
+            masteries = list_weapon_masteries()
+            if q_clean:
+                ql = q_clean.lower()
+                masteries = [m for m in masteries if ql in m.get("name", "").lower() or ql in m.get("description", "").lower()]
+            return {
+                "status": "success",
+                "category": "masteries",
+                "edition": "2024",
+                "count": len(masteries),
+                "results": masteries,
+                "summary": ", ".join(f"{m['name']}: {m['description']}" for m in masteries[:8]),
+            }
+
+        from core.compendiums import search_compendium
+        from core.compendiums.dnd_items import expand_pack_contents
+
+        filters: Dict[str, Any] = {}
+        if class_name:
+            filters["class_name"] = class_name
+        if max_level is not None:
+            filters["max_level"] = int(max_level)
+
+        matches = search_compendium(
+            category=cat_clean,
+            query=q_clean,
+            edition=ed_clean,
+            filters=filters or None,
+            limit=12,
+        )
+
+        compact_results = []
+        for m in matches:
+            ctype = m.get("compendium_type", cat_clean)
+            entry: Dict[str, Any] = {
+                "name": m.get("name"),
+                "index": m.get("index"),
+                "category": ctype,
+                "editions": m.get("editions", []),
+                "is_homebrew": bool(m.get("is_homebrew", False)),
+            }
+            if ctype == "weapons":
+                entry.update({
+                    "weapon_category": m.get("category"),
+                    "damage": m.get("damage"),
+                    "properties": m.get("properties", []),
+                    "mastery": m.get("mastery", ""),
+                    "range": m.get("range", ""),
+                    "cost": m.get("cost_display", ""),
+                    "weight": m.get("weight", 0),
+                })
+                if m.get("description"):
+                    entry["description"] = str(m["description"])[:320]
+            elif ctype == "armor":
+                entry.update({
+                    "armor_category": m.get("category"),
+                    "ac_base": m.get("ac_base"),
+                    "dex_bonus": m.get("dex_bonus"),
+                    "max_dex_bonus": m.get("max_dex_bonus"),
+                    "str_minimum": m.get("str_minimum"),
+                    "stealth_disadvantage": m.get("stealth_disadvantage"),
+                    "cost": m.get("cost_display", ""),
+                    "weight": m.get("weight", 0),
+                })
+            elif ctype == "items":
+                entry.update({
+                    "subcategory": m.get("subcategory") or m.get("category"),
+                    "cost": m.get("cost_display", ""),
+                    "cost_cp": m.get("cost_cp", 0),
+                    "weight": m.get("weight", 0),
+                    "is_magic": bool(m.get("is_magic", False)),
+                    "rarity": m.get("rarity", "Common"),
+                    "requires_attunement": bool(m.get("requires_attunement", False)),
+                    "description": str(m.get("description") or "")[:360],
+                })
+                if expand_pack and m.get("contents"):
+                    entry["pack_contents"] = expand_pack_contents(m.get("index") or m.get("name"))
+            elif ctype == "spells":
+                desc = (
+                    m.get("description_2024")
+                    if ed_clean == "2024" and m.get("description_2024")
+                    else (m.get("description_2014") if ed_clean == "2014" and m.get("description_2014") else m.get("description", ""))
+                )
+                entry.update({
+                    "level": m.get("level", 0),
+                    "level_label": m.get("level_label", ""),
+                    "school": m.get("school", ""),
+                    "classes": m.get("classes", []),
+                    "casting_time": m.get("casting_time", ""),
+                    "range": m.get("range", ""),
+                    "components": m.get("components", []),
+                    "material": m.get("material", ""),
+                    "duration": m.get("duration", ""),
+                    "concentration": bool(m.get("concentration", False)),
+                    "ritual": bool(m.get("ritual", False)),
+                    "damage": m.get("damage", ""),
+                    "dc_type": m.get("dc_type", ""),
+                    "description": str(desc or "")[:450],
+                })
+                if m.get("notes_2024"):
+                    entry["notes_2024"] = m["notes_2024"]
+            compact_results.append(entry)
+
+        summary_names = ", ".join(r["name"] for r in compact_results[:6] if r.get("name"))
+        return {
+            "status": "success",
+            "category": cat_clean,
+            "edition": ed_clean,
+            "count": len(compact_results),
+            "results": compact_results,
+            "summary": f"Found {len(compact_results)} D&D 5e ({ed_clean}) compendium match(es): {summary_names}" if compact_results else f"No D&D 5e compendium matches found for '{q_clean}' in '{cat_clean}'.",
+        }
+
+    dispatcher.register_tool(
+        name="lookup_dnd_compendium",
+        description="Looks up official D&D 5e (2014 & 2024 SRD) and Homebrew weapons, 2024 weapon masteries, armor/shields, equipment/magic items, equipment packs, and class spells with stats, prices, and descriptions.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query_or_name": {"type": "string", "description": "Item, weapon, armor, spell, mastery name, or search keyword (empty to list by filters)."},
+                "category": {"type": "string", "enum": ["all", "weapons", "armor", "items", "spells", "masteries"], "description": "Compendium table to query."},
+                "edition": {"type": "string", "enum": ["2024", "2014", "all"], "description": "D&D 5e rules edition filter (defaults to 2024)."},
+                "class_name": {"type": "string", "description": "Optional spellcaster class filter when category='spells' (e.g. 'Cleric', 'Wizard', 'Paladin')."},
+                "max_level": {"type": "integer", "description": "Optional max spell level filter (0-9) when category='spells'."},
+                "expand_pack": {"type": "boolean", "description": "If true, expands Equipment Pack contents (e.g. Explorer's Pack)."}
+            }
+        },
+        handler=lookup_dnd_compendium
+    )
+
+    async def open_merchant_shop(
+        shop_name: str = "Merchant's Wares",
+        location_name: str = "",
+        price_multiplier: float = 1.0,
+        specialty: str = "general",
+        description: str = "",
+        include_magic: bool = False,
+    ) -> Dict[str, Any]:
+        """Opens the interactive Merchant Shop modal in the UI with regional markup/discount pricing."""
+        res = service.set_active_shop(
+            shop_name=shop_name,
+            location_name=location_name,
+            price_multiplier=price_multiplier,
+            specialty=specialty,
+            description=description,
+            include_magic=include_magic,
+        )
+        if res.get("status") == "success":
+            emit_update("shop_opened", res["shop"])
+            emit_update("ttrpg_state_updated", res)
+        return res
+
+    async def merchant_transaction(
+        character_name: str,
+        action: str = "buy",
+        item_name: str = "",
+        category: str = "auto",
+        qty: int = 1,
+        price_multiplier: float = 1.0,
+        sell_rate: float = 0.5,
+        equip: bool = False,
+    ) -> Dict[str, Any]:
+        """Executes a merchant buy or sell transaction with multi-coin currency conversion and inventory sync."""
+        act = (action or "buy").strip().lower()
+        if act in ("sell", "trade_in"):
+            res = service.sell_merchant_item(
+                character_name=character_name,
+                item_name=item_name,
+                sell_rate=sell_rate,
+                qty=qty,
+                source=category if category in ("inventory", "weapons") else "auto",
+            )
+        else:
+            res = service.purchase_merchant_item(
+                character_name=character_name,
+                category=category,
+                index_or_name=item_name,
+                qty=qty,
+                price_multiplier=price_multiplier,
+                expand_pack=True,
+                equip=equip,
+            )
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("roster_updated", service.get_campaign_roster())
+        return res
+
+    dispatcher.register_tool(
+        name="open_merchant_shop",
+        description="Opens or updates the interactive Merchant Shop UI popup with story-driven markup/discount pricing (e.g. 0.8x allied quartermaster, 1.0x village, 1.25x-1.35x frontier outpost/scarcity, 1.5x black market). Call this tool whenever the party enters a shop or when haggling/story events change merchant prices.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "shop_name": {"type": "string", "description": "Shop or merchant NPC name (e.g. 'Tane Here\'s Trade Post', 'Ironforge Smithy')."},
+                "location_name": {"type": "string", "description": "World location or district (e.g. 'Camp Highmore Outpost', 'Waterdeep Trade Ward')."},
+                "price_multiplier": {"type": "number", "description": "Price multiplier from 0.5 (50% discount) to 2.0 (2x markup) based on location, scarcity, or haggling. Default 1.0."},
+                "specialty": {"type": "string", "enum": ["general", "weapons_armor", "smith", "potions", "alchemist", "arcane", "magic_poison", "gear"], "description": "Merchant stock specialization."},
+                "description": {"type": "string", "description": "Short shopkeeper flavor note or haggling response shown at top of the shop."},
+                "include_magic": {"type": "boolean", "description": "Whether magic items are stocked."}
+            },
+            "required": ["shop_name"]
+        },
+        handler=open_merchant_shop
+    )
+
+    dispatcher.register_tool(
+        name="merchant_transaction",
+        description="Buys or sells an SRD/Homebrew weapon, armor, potion, pack, or gear item for a character using their D&D coin purse (pp/gp/ep/sp/cp) with automatic change and inventory updates.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string", "description": "Character paying or receiving coins."},
+                "action": {"type": "string", "enum": ["buy", "sell"], "description": "'buy' to purchase or 'sell' to sell owned gear."},
+                "item_name": {"type": "string", "description": "Item, weapon, armor, or pack name (e.g. 'Rations (1 day)', 'Longsword', 'Explorer\'s Pack')."},
+                "category": {"type": "string", "enum": ["auto", "weapons", "armor", "items", "inventory"], "description": "Item category (default 'auto')."},
+                "qty": {"type": "integer", "description": "Quantity to buy or sell (default 1)."},
+                "price_multiplier": {"type": "number", "description": "Merchant markup/discount when buying (0.5 to 2.0, default 1.0)."},
+                "sell_rate": {"type": "number", "description": "Fraction of base value paid when selling (default 0.5)."},
+                "equip": {"type": "boolean", "description": "If true when buying armor/shield, equips immediately and updates AC."}
+            },
+            "required": ["character_name", "item_name"]
+        },
+        handler=merchant_transaction
     )
 
     # Register modular system adjudication tools (PF2e, CoC, Cyberpunk RED)
@@ -972,9 +1266,9 @@ def register_enhanced_rest_tools(dispatcher, service: TTRPGService, notify_ui_ca
                     recover_amount = max(1, hd["max"] // 2)
                     hd["current"] = min(hd["max"], hd["current"] + recover_amount)
 
-                # 4. Reset All Long Rest & Short Rest Meters (Lay on Hands, Sorcery Points, etc.)
-                for m_v in meters.values():
-                    if isinstance(m_v, dict) and m_v.get("reset_on") in ("long_rest", "short_rest", "rest"):
+                # 4. Reset All Long Rest & Short Rest Meters (Lay on Hands, Sorcery Points, etc. — preserve hit_dice half-recovery)
+                for m_k, m_v in meters.items():
+                    if m_k != "hit_dice" and isinstance(m_v, dict) and m_v.get("reset_on") in ("long_rest", "short_rest", "rest"):
                         m_v["current"] = m_v["max"]
 
                 # 5. Clear Non-Attunement Conditions
@@ -982,11 +1276,18 @@ def register_enhanced_rest_tools(dispatcher, service: TTRPGService, notify_ui_ca
 
             else:
                 # --- SHORT REST EXECUTION ---
-                # 1. Recharge Warlock Pact Magic Slots
-                is_pact = native.get("is_pact_magic", False)
+                # 1. Recharge Warlock Pact Magic Slots (without refilling Long Rest Spellcasting slots on multiclass casters)
+                is_pact = bool(native.get("is_pact_magic", False))
+                has_long_slots = any(
+                    isinstance(sv, dict) and sv.get("reset_on") == "long_rest" and int(sv.get("max") or 0) > 0
+                    for sv in slots.values()
+                )
                 for s_key, s_data in slots.items():
-                    if isinstance(s_data, dict) and (is_pact or s_data.get("is_pact_magic") or s_data.get("reset_on") == "short_rest"):
-                        s_data["current"] = s_data["max"]
+                    if isinstance(s_data, dict):
+                        if s_data.get("pact_max") is not None:
+                            s_data["pact_current"] = s_data["pact_max"]
+                        if s_data.get("is_pact_magic") or s_data.get("reset_on") == "short_rest" or (is_pact and not has_long_slots and s_data.get("reset_on") != "long_rest"):
+                            s_data["current"] = s_data["max"]
 
                 # 2. Recharge Short Rest Consumables (Wild Shape, Channel Divinity, Ki, Second Wind)
                 for m_v in meters.values():
@@ -1077,6 +1378,26 @@ def register_enhanced_rest_tools(dispatcher, service: TTRPGService, notify_ui_ca
             "summary": f"{character_name} healed for {roll_total} HP ({old_hp} -> {hp_data['current']}/{hp_data['max']}). Hit dice remaining: {hd_entry['current']}."
         }
 
+    async def prompt_party_rest(
+        rest_type: str = "short",
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """Opens the interactive Rest modal popup for players to spend Hit Dice, drink potions, swap armor/attunement, and prepare spells."""
+        rt = "long" if str(rest_type or "").lower().strip() == "long" else "short"
+        ed = service._get_campaign_edition() if hasattr(service, "_get_campaign_edition") else "2024"
+        payload = {
+            "status": "success",
+            "rest_type": rt,
+            "reason": (reason or "").strip(),
+            "dice_mode": service.get_dice_mode() if hasattr(service, "get_dice_mode") else "digital",
+            "edition": ed,
+        }
+        _notify("rest_prompt_opened", payload)
+        return {
+            **payload,
+            "message": f"Opened the interactive {'Long Rest' if rt == 'long' else 'Short Rest'} window for the party so players can manage Hit Dice, consumables, equipment, attunement, and prepared spells.",
+        }
+
     dispatcher.register_tool(
         name="execute_rest",
         description="Executes short or long rest with digital/physical dice support.",
@@ -1088,6 +1409,19 @@ def register_enhanced_rest_tools(dispatcher, service: TTRPGService, notify_ui_ca
             }
         },
         handler=execute_rest
+    )
+    dispatcher.register_tool(
+        name="prompt_party_rest",
+        description="Opens the interactive Short/Long Rest popup UI for players to spend Hit Dice, consume potions/rations, swap armor/shield/attuned magic items (max 3), and re-prepare class spells.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "rest_type": {"type": "string", "enum": ["short", "long"], "description": "Whether the party is taking a Short Rest (1 hour) or Long Rest (8 hours)."},
+                "reason": {"type": "string", "description": "Optional narrative context (e.g. 'Making camp in the Feywild grove')."}
+            },
+            "required": ["rest_type"]
+        },
+        handler=prompt_party_rest
     )
     dispatcher.register_tool(
         name="apply_physical_hit_die_roll",
@@ -1145,6 +1479,39 @@ def register_progression_tools(dispatcher, service: TTRPGService, notify_ui_call
 
         return res
 
+    async def prompt_level_up_wizard(
+        character_name: str,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """Opens the interactive D&D 5e (2014 & 2024) Guided Level-Up & Multiclass Wizard popup for a character."""
+        char_id, char = service._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        preview = (
+            service.get_character_advancement_options(character_name)
+            if hasattr(service, "get_character_advancement_options")
+            else {"status": "error", "message": "Advancement options unavailable."}
+        )
+        ed = preview.get("edition") or (service._get_campaign_edition() if hasattr(service, "_get_campaign_edition") else "2024")
+        payload = {
+            "status": "success",
+            "source": "campaign",
+            "character_id": char_id,
+            "character_name": char.get("name", character_name),
+            "edition": ed,
+            "reason": (reason or "").strip(),
+            "preview": preview,
+        }
+        _notify("level_up_prompt_opened", payload)
+        return {
+            **payload,
+            "message": (
+                f"Opened the Guided Level-Up & Multiclass Wizard for {char.get('name', character_name)} ({ed} rules) "
+                f"so the player can choose class advancement or multiclassing, HP roll/average, ASI/Feat, Subclass, and new spells."
+            ),
+        }
+
     dispatcher.register_tool(
         name="level_up_character",
         description="Advances character level (1-20), updating HP, slots (1st-9th), save DC, and prepared spell cap.",
@@ -1157,6 +1524,19 @@ def register_progression_tools(dispatcher, service: TTRPGService, notify_ui_call
             "required": ["character_name", "target_level"]
         },
         handler=level_up_character
+    )
+    dispatcher.register_tool(
+        name="prompt_level_up_wizard",
+        description="Opens the interactive D&D 5e (2014 & 2024) Guided Level-Up & Multiclass Wizard UI popup when a character levels up by milestone or XP.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "character_name": {"type": "string", "description": "Character name to open the Level-Up Wizard for."},
+                "reason": {"type": "string", "description": "Optional narrative or milestone reason (e.g. 'Defeated the Baron and reached Milestone Level 4')."}
+            },
+            "required": ["character_name"]
+        },
+        handler=prompt_level_up_wizard
     )
 
 

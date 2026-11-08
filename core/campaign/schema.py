@@ -103,3 +103,4 @@ class CampaignManifest:
     quests: Dict[str, QuestRecord] = field(default_factory=dict)
     clues: Dict[str, ClueRecord] = field(default_factory=dict)
     world_rules: Dict[str, Any] = field(default_factory=dict)
+    module_adherence: str = "strict"

@@ -814,14 +814,56 @@ function renderPartyRoster() {
     const gridEl = document.getElementById("party-roster-grid");
     if (!gridEl) return;
 
+    // Preserve horizontal scroll and internal card scroll positions across re-renders
+    const prevGridScrollLeft = gridEl.scrollLeft;
+    const prevCardScrollTops = {};
+    gridEl.querySelectorAll('.character-card').forEach(c => {
+        const cid = c.getAttribute('data-char-id');
+        const scrollEl = c.querySelector('.card-stats-scroll');
+        if (cid && scrollEl) {
+            prevCardScrollTops[cid] = scrollEl.scrollTop;
+        }
+    });
+
     const state = ttrpgData.state || {};
     const charsObj = state.characters || {};
     const charIds = Object.keys(charsObj);
+    const storedItems = Array.isArray(state.stored_items) ? state.stored_items : [];
+
+    // Render Confiscated / Stored Party Items banner if any gear was disarmed or stored in the world
+    let bannerEl = document.getElementById("rp-roster-stored-items-banner");
+    if (!bannerEl) {
+        bannerEl = document.createElement("div");
+        bannerEl.id = "rp-roster-stored-items-banner";
+        const rosterHeader = document.querySelector("#rp-roster-pane .roster-header");
+        if (rosterHeader && rosterHeader.parentNode) {
+            rosterHeader.parentNode.insertBefore(bannerEl, gridEl);
+        }
+    }
+    if (bannerEl) {
+        if (storedItems.length > 0) {
+            bannerEl.style.display = "block";
+            bannerEl.innerHTML = `
+                <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 0.78rem;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <span style="font-weight: 700; color: #f87171;">⚠️ Confiscated / Stored Party Items (${storedItems.length}):</span>
+                        <span style="color: #cbd5e1;">
+                            ${storedItems.map(si => `<span style="background: rgba(15, 23, 42, 0.6); padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.3); margin-right: 4px; display: inline-block;"><strong>${escapeRpHtml(si.original_owner || 'Party')}</strong>: ${escapeRpHtml(si.name)} <em style="color: #94a3b8; font-size: 0.7rem;">[${escapeRpHtml(si.storage_location || 'Unknown')}]</em></span>`).join("")}
+                        </span>
+                    </div>
+                    <button type="button" class="cyber-btn-small" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 0.72rem; padding: 3px 10px; white-space: nowrap; cursor: pointer;" onclick="handleReclaimPartyGear()">Reclaim Gear</button>
+                </div>
+            `;
+        } else {
+            bannerEl.style.display = "none";
+            bannerEl.innerHTML = "";
+        }
+    }
 
     gridEl.innerHTML = "";
     if (charIds.length === 0) {
         gridEl.innerHTML = `
-            <div style="grid-column: 1 / -1; text-align: center; padding: 48px 20px; color: #64748b;">
+            <div style="flex: 1; text-align: center; padding: 48px 20px; color: #64748b;">
                 <div style="font-size: 2.2rem; margin-bottom: 10px;">🎲</div>
                 <div style="font-size: 0.95rem; color: #cbd5e1; font-weight: 600; margin-bottom: 4px;">No Characters in Party Roster</div>
                 <div style="font-size: 0.82rem;">Click <strong>+ Add Character</strong> above or upload a <strong>Character Sheet</strong> in the DM Library for Aether to import.</div>
@@ -891,7 +933,8 @@ function renderPartyRoster() {
 
         let attrsHtml = "";
         if (displayKeys.length > 0) {
-            attrsHtml = `<div class="attributes-strip">` + displayKeys.map(k => {
+            const cols = displayKeys.length <= 6 ? displayKeys.length : Math.ceil(displayKeys.length / 2);
+            attrsHtml = `<div class="attributes-strip" style="grid-template-columns: repeat(${cols}, 1fr);">` + displayKeys.map(k => {
                 const val = Number(attrs[k] ?? 10);
                 const mod = isDndChar ? Math.floor((val - 10) / 2) : null;
                 const modStr = mod !== null ? ` <span style="font-size: 8.5px; color: ${mod >= 0 ? '#38bdf8' : '#f87171'}; font-weight: 700;">(${mod >= 0 ? '+' + mod : mod})</span>` : "";
@@ -914,6 +957,17 @@ function renderPartyRoster() {
 
         // Build Weapons Shelf HTML
         const wpns = Array.isArray(ch.weapons) ? ch.weapons : [];
+        const charStored = storedItems.filter(si => (si.original_owner || "").toLowerCase() === (ch.name || "").toLowerCase() || si.original_owner_id === cid);
+        const storedConfiscatedHtml = charStored.length > 0 ? `
+            <div style="margin-top: 5px; padding: 4px 8px; background: rgba(239, 68, 68, 0.1); border: 1px dashed rgba(239, 68, 68, 0.35); border-radius: 4px; font-size: 10px; color: #fca5a5;">
+                <div style="font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🔒 Gear Confiscated (${charStored.length}):</span>
+                    <button type="button" class="cyber-btn-small" style="padding: 1px 5px; font-size: 9px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35);" onclick="handleReclaimPartyGear('${escapeRpJs(ch.name)}')">Reclaim</button>
+                </div>
+                <div style="color: #cbd5e1; margin-top: 2px;">${charStored.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">Held at: <em>${escapeRpHtml(charStored[0].storage_location || "Unknown Location")}</em></div>
+            </div>
+        ` : "";
         const wpnsHtml = `
             <div class="char-weapons-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
                 <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
@@ -934,6 +988,7 @@ function renderPartyRoster() {
                         </div>
                     </div>
                 `).join("") : `<div style="font-size: 10.5px; color: #64748b; font-style: italic; padding: 2px 0;">No weapons equipped.</div>`}
+                ${storedConfiscatedHtml}
             </div>
         `;
 
@@ -1041,62 +1096,80 @@ function renderPartyRoster() {
 
         card.innerHTML = `
             <div class="card-header char-card-top">
-                <div>
-                    <div class="card-identity" style="display: flex; align-items: center; gap: 6px;">
-                        <span class="mic-pulse-indicator" title="Active Single-Mic Speaker">🎙️</span>
-                        <h4 class="char-name char-name-title">${escapeRpHtml(ch.name)}</h4>
-                        <span class="caller-crown ${isCaller ? 'active' : ''}" title="Designated Party Caller">👑 CALLER</span>
-                        <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; font-size: 10px; padding: 1px 6px;">${rulesetBadge}</span>
-                        ${(charXp && !isCoc) ? `<span style="font-size: 10px; color: #94a3b8;">${charXp} XP</span>` : ""}
+                <div class="char-card-header-main">
+                    <div class="char-card-identity-row">
+                        <div class="card-identity" style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                            <span class="mic-pulse-indicator" title="Active Single-Mic Speaker">🎙️</span>
+                            <h4 class="char-name char-name-title" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeRpHtml(ch.name)}</h4>
+                            <span class="caller-crown ${isCaller ? 'active' : ''}" title="Designated Party Caller">👑 CALLER</span>
+                            <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; font-size: 10px; padding: 1px 6px; white-space: nowrap;">${rulesetBadge}</span>
+                            ${(charXp && !isCoc) ? `<span style="font-size: 10px; color: #94a3b8; white-space: nowrap;">${charXp} XP</span>` : ""}
+                        </div>
+                        <div class="card-controls" style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
+                            <button type="button" class="focus-speaker-btn cyber-btn-tiny" title="Set active single-mic focus">Focus</button>
+                            <button type="button" class="set-caller-btn cyber-btn-tiny" title="Set as Party Caller">Crown</button>
+                            <button type="button" class="vital-step-btn" title="Save this hero permanently to the Character Vault" onclick="handleExportRosterCharToVault('${escapeRpHtml(ch.name)}')">🏛️</button>
+                            <button type="button" class="vital-step-btn" title="Award XP or Level Up" onclick="handlePromptProgressCharacter('${escapeRpHtml(ch.name)}')">⭐</button>
+                            <button type="button" class="vital-step-btn" title="View character sheet" onclick="handleOpenViewCharacterModal('${escapeRpHtml(ch.id || cid)}')">👁️</button>
+                            <button type="button" class="vital-step-btn" title="Edit character details" onclick="handleOpenEditCharacterModal('${escapeRpHtml(ch.id || cid)}')">✏️</button>
+                            <button type="button" class="vital-step-btn" title="Remove character" onclick="handleDeleteCharacter('${escapeRpHtml(ch.id || cid)}')">🗑️</button>
+                        </div>
                     </div>
                     <div class="char-sub-archetype">${escapeRpHtml(ch.archetype || "Adventurer")} ${ch.player_name ? `• ${escapeRpHtml(ch.player_name)}` : ""}</div>
-                </div>
-                <div class="card-controls" style="display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end;">
-                    <button type="button" class="focus-speaker-btn cyber-btn-tiny" title="Set active single-mic focus">Focus</button>
-                    <button type="button" class="set-caller-btn cyber-btn-tiny" title="Set as Party Caller">Crown</button>
-                    <span class="char-guard-badge" title="${escapeRpHtml(guard.label || "Armor Defense")}">🛡️ ${acText}</span>
-                    ${initBadge}
-                    ${speedBadge}
-                    ${defensesBadge}
-                    ${sensesBadge}
-                    ${coinBadge}
-                    <button type="button" class="vital-step-btn" title="Save this hero permanently to the Character Vault" onclick="handleExportRosterCharToVault('${escapeRpHtml(ch.name)}')">🏛️</button>
-                    <button type="button" class="vital-step-btn" title="Award XP or Level Up" onclick="handlePromptProgressCharacter('${escapeRpHtml(ch.name)}')">⭐</button>
-                    <button type="button" class="vital-step-btn" title="View character sheet" onclick="handleOpenViewCharacterModal('${escapeRpHtml(ch.id || cid)}')">👁️</button>
-                    <button type="button" class="vital-step-btn" title="Edit character details" onclick="handleOpenEditCharacterModal('${escapeRpHtml(ch.id || cid)}')">✏️</button>
-                    <button type="button" class="vital-step-btn" title="Remove character" onclick="handleDeleteCharacter('${escapeRpHtml(ch.id || cid)}')">🗑️</button>
-                </div>
-            </div>
-
-            <!-- Health Vital Row -->
-            <div class="vital-row">
-                <div class="vital-labels">
-                    <span>${escapeRpHtml(hp.label || "Health")}</span>
-                    <div class="vital-controls-inline">
-                        <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', 'health', -1, false)">-</button>
-                        <span>${Number(hp.current)} / ${Number(hp.max)}</span>
-                        <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', 'health', 1, false)">+</button>
+                    <div class="char-badges-strip">
+                        <span class="char-guard-badge" title="${escapeRpHtml(guard.label || "Armor Defense")}">🛡️ ${acText}</span>
+                        ${initBadge}
+                        ${speedBadge}
+                        ${coinBadge}
+                        ${sensesBadge}
+                        ${defensesBadge}
                     </div>
                 </div>
-                <div class="vital-progress-bg">
-                    <div class="vital-fill-health" style="width: ${hpPct}%;"></div>
-                </div>
             </div>
 
-            ${customMetersHtml}
-            ${attrsHtml}
-            ${wpnsHtml}
-            ${invHtml}
-            ${spellsHtml}
-            ${featsHtml}
+            <div class="card-stats-scroll">
+                <!-- Health Vital Row -->
+                <div class="vital-row">
+                    <div class="vital-labels">
+                        <span>${escapeRpHtml(hp.label || "Health")}</span>
+                        <div class="vital-controls-inline">
+                            <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', 'health', -1, false)">-</button>
+                            <span>${Number(hp.current)} / ${Number(hp.max)}</span>
+                            <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', 'health', 1, false)">+</button>
+                        </div>
+                    </div>
+                    <div class="vital-progress-bg">
+                        <div class="vital-fill-health" style="width: ${hpPct}%;"></div>
+                    </div>
+                </div>
 
-            <!-- Conditions Row -->
-            <div class="conditions-wrap" style="margin-top: 8px;">
-                ${condBadges}
-                <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 10.5px;" onclick="handlePromptAddCondition('${escapeRpHtml(ch.name)}')">+ Condition</button>
+                ${customMetersHtml}
+                ${attrsHtml}
+                ${wpnsHtml}
+                ${invHtml}
+                ${spellsHtml}
+                ${featsHtml}
+
+                <!-- Conditions Row -->
+                <div class="conditions-wrap" style="margin-top: 8px;">
+                    ${condBadges}
+                    <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 10.5px;" onclick="handlePromptAddCondition('${escapeRpHtml(ch.name)}')">+ Condition</button>
+                </div>
             </div>
         `;
         gridEl.appendChild(card);
+    });
+
+    // Restore scroll positions
+    gridEl.scrollLeft = prevGridScrollLeft;
+    Object.keys(prevCardScrollTops).forEach(cid => {
+        const cardEl = document.getElementById(`card-${cid}`);
+        if (cardEl) {
+            const scrollEl = cardEl.querySelector('.card-stats-scroll');
+            if (scrollEl) {
+                scrollEl.scrollTop = prevCardScrollTops[cid];
+            }
+        }
     });
 }
 
@@ -1129,7 +1202,7 @@ function renderSessionJournal() {
         `;
     }
 
-    // 2. Meta Pills (Location, Quest, Discovered Clues)
+    // 2. Meta Pills (Location, Quest) & Dedicated Stacked Clues Section
     let metaHtml = "";
     if (loc) {
         metaHtml += `<div class="rp-meta-pill"><span>📍</span> <strong>Location:</strong> <span>${escapeRpHtml(loc)}</span></div>`;
@@ -1137,8 +1210,31 @@ function renderSessionJournal() {
     if (quest) {
         metaHtml += `<div class="rp-meta-pill"><span>🎯</span> <strong>Active Quest:</strong> <span>${escapeRpHtml(quest)}</span></div>`;
     }
-    if (clues.length > 0) {
-        metaHtml += `<div class="rp-meta-pill"><span>🔍</span> <strong>Clues:</strong> ${clues.map(c => `<span class="rp-clue-badge">${escapeRpHtml(c)}</span>`).join(" ")}</div>`;
+
+    // Clean and deduplicate discovered clues
+    const rawClues = Array.isArray(clues) ? clues : [];
+    const seenClues = new Set();
+    const cleanClues = [];
+    for (const c of rawClues) {
+        const text = (typeof c === 'string' ? c : (c.name || JSON.stringify(c))).trim();
+        const norm = text.toLowerCase();
+        if (text && !seenClues.has(norm)) {
+            seenClues.add(norm);
+            cleanClues.push(text);
+        }
+    }
+
+    if (cleanClues.length > 0) {
+        metaHtml += `
+            <div class="rp-journal-clues-box">
+                <div class="rp-clues-header">
+                    <span>🔍</span> <strong>Discovered Clues &amp; Evidence (${cleanClues.length}):</strong>
+                </div>
+                <div class="rp-clues-stack">
+                    ${cleanClues.map(c => `<span class="rp-clue-badge">${escapeRpHtml(c)}</span>`).join("")}
+                </div>
+            </div>
+        `;
     }
     metaRow.innerHTML = metaHtml;
 
@@ -1207,9 +1303,18 @@ function appendDiceAuditEntry(rollData) {
     const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     const purposeHtml = rollData.purpose ? `<div style="color: #38bdf8; font-weight: 600; font-size: 11px;">${escapeRpHtml(rollData.purpose)}</div>` : "";
 
+    const actorName = rollData.character_name || (rollData.purpose && rollData.purpose.match(/^([A-Za-z0-9_'\s]+?)\s+(?:makes|rolls|checks|saves|attacks|athletics|perception|investigation|stealth)/i)?.[1]) || "";
+    const isDm = actorName && (actorName.toLowerCase().includes("dm") || actorName.toLowerCase().includes("game master") || actorName.toLowerCase().includes("monster"));
+    const actorBadge = actorName 
+        ? `<span class="rp-badge" style="background: ${isDm ? 'rgba(239, 68, 68, 0.2)' : 'rgba(56, 189, 248, 0.2)'}; border: 1px solid ${isDm ? 'rgba(239, 68, 68, 0.4)' : 'rgba(56, 189, 248, 0.4)'}; color: ${isDm ? '#fca5a5' : '#38bdf8'}; font-weight: 700; font-size: 10px; padding: 1px 6px; border-radius: 4px; margin-right: 6px;">${escapeRpHtml(actorName.toUpperCase())}</span>`
+        : "";
+
     entry.innerHTML = `
         <div class="dice-audit-header">
-            <span>🎲 ${escapeRpHtml(rollData.formula || "Roll")} (${escapeRpHtml(rollData.roll_type || "normal")})</span>
+            <span style="display: flex; align-items: center; gap: 4px;">
+                ${actorBadge}
+                🎲 ${escapeRpHtml(rollData.formula || "Roll")} (${escapeRpHtml(rollData.roll_type || "normal")})
+            </span>
             <span>${nowStr}</span>
         </div>
         ${purposeHtml}
@@ -2597,6 +2702,31 @@ window.handleDeleteWeapon = async function(charName, weaponName) {
     }
 };
 
+window.handleReclaimPartyGear = async function(charName) {
+    const targetLabel = charName || "the entire party";
+    if (!(await showAetherConfirm(`Retrieve and restore confiscated gear for ${targetLabel}?`, "Reclaim Confiscated Gear", "Reclaim", false))) return;
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.manage_ttrpg_character_inventory) {
+            const res = await window.pywebview.api.manage_ttrpg_character_inventory(
+                charName || "all",
+                "retrieve",
+                null,
+                null,
+                null,
+                "Reclaimed by player/party"
+            );
+            if (res && res.status === "success") {
+                await loadRolePlayUI(true);
+            } else if (res && res.message) {
+                await showAetherAlert(res.message, "Reclaim Gear");
+            }
+        }
+    } catch (err) {
+        console.error("[RolePlay] Error reclaiming gear:", err);
+        await showAetherAlert(`Error reclaiming gear: ${err.message}`, "Error");
+    }
+};
+
 window.handleOpenAddInventoryModal = function(charName) {
     const modal = document.getElementById("modal-add-inventory");
     const titleEl = document.getElementById("modal-add-inventory-title");
@@ -2697,32 +2827,8 @@ window.handleDeleteInventoryItem = async function(charName, itemName) {
 };
 
 async function handlePromptProgressCharacter(charName) {
-    const input = prompt(`Level progression for ${charName}:\nEnter XP amount to award (e.g. 300) OR type 'level' to level up immediately:`);
-    if (!input) return;
-    const clean = input.trim().toLowerCase();
-    let action = "award_xp";
-    let amount = 0;
-    if (clean === "level" || clean === "lvl" || clean === "levelup") {
-        action = "level_up";
-    } else {
-        const num = parseInt(clean, 10);
-        if (isNaN(num) || num <= 0) {
-            alert("Please enter a valid positive XP number or 'level'.");
-            return;
-        }
-        amount = num;
-    }
-    try {
-        if (window.pywebview && window.pywebview.api && window.pywebview.api.manage_ttrpg_progression) {
-            const res = await window.pywebview.api.manage_ttrpg_progression(charName, action, amount, null);
-            if (res && res.message) {
-                alert(res.message);
-            }
-            await loadRolePlayUI();
-        }
-    } catch (e) {
-        console.error("Progression error:", e);
-    }
+    if (!charName) return;
+    await openLevelUpWizard(charName, "campaign");
 }
 
 // Canonical D&D 5E Skills Definition
@@ -4022,6 +4128,15 @@ async function handleDeleteActiveCampaign() {
 // Event hooks invoked by window.aetherUI.handleEvent
 window.handleRoleplayDiceEvent = function(rollData) {
     appendDiceAuditEntry(rollData);
+    if (typeof renderRolePlayStoryBubble === "function" && rollData && rollData.status === "success") {
+        const actor = rollData.character_name ? `[${rollData.character_name}] ` : "";
+        const purpose = rollData.purpose ? ` (${rollData.purpose})` : "";
+        renderRolePlayStoryBubble({
+            type: "tool",
+            name: "DICE ROLL",
+            content: `🎲 ${actor}${rollData.formula}: ${rollData.summary || rollData.total} -> Total: ${rollData.total}${purpose}`
+        });
+    }
 };
 
 window.handleRoleplayInitiativeEvent = function() {
@@ -4085,6 +4200,12 @@ function renderRolePlayStoryBubble(item) {
         senderLabel = 'ERROR';
     }
 
+    let cleanContent = item.content || '';
+    if (typeof cleanContent === 'string' && cleanContent.startsWith('[TABLETOP ROLEPLAY ACTION')) {
+        const m = cleanContent.match(/Player Action \/ Dialogue:\s*([\s\S]*?)(?:\n\[GAME MASTER DIRECTIVE|$)/);
+        if (m && m[1]) cleanContent = m[1].trim();
+    }
+
     const escape = (str) => {
         const div = document.createElement('div');
         div.innerText = str || '';
@@ -4096,7 +4217,7 @@ function renderRolePlayStoryBubble(item) {
             <span class="sender-tag ${safeType}">${escape(senderLabel)}</span>
             <span class="timestamp">${escape(timeStr)}</span>
         </div>
-        <div class="bubble-body">${escape(item.content)}</div>
+        <div class="bubble-body">${escape(cleanContent)}</div>
     `;
 
     container.appendChild(bubble);
@@ -4178,14 +4299,26 @@ function initRolePlayStoryChatUI() {
         storyForm.onsubmit = async (e) => {
             e.preventDefault();
             const text = storyInput.value.trim();
-            const cid = ttrpgData.active_campaign;
-            if (!text || !cid) return;
+            const cid = (ttrpgData && ttrpgData.active_campaign)
+                     || (window.ttrpgData && window.ttrpgData.active_campaign)
+                     || (window.ttrpgData && window.ttrpgData.manifest && window.ttrpgData.manifest.active_campaign);
+            if (!text) return;
+            if (!cid) {
+                renderRolePlayStoryBubble({
+                    type: 'error',
+                    content: '⚠️ No adventure campaign is currently selected. Please select or create a campaign first before taking actions.'
+                });
+                return;
+            }
             storyInput.value = '';
 
             try {
                 if (window.pywebview && window.pywebview.api) {
                     if (window.pywebview.api.send_workspace_message) {
-                        await window.pywebview.api.send_workspace_message('campaign', cid, text);
+                        const res = await window.pywebview.api.send_workspace_message('campaign', cid, text);
+                        if (res && res.error) {
+                            renderRolePlayStoryBubble({ type: 'error', content: `Failed to send action: ${res.error}` });
+                        }
                     } else if (window.pywebview.api.send_chat_message) {
                         await window.pywebview.api.send_chat_message(text);
                     }
@@ -4630,6 +4763,13 @@ document.addEventListener("DOMContentLoaded", () => {
             if (sliderIntrigue) sliderIntrigue.value = "5";
             if (labelIntrigue) labelIntrigue.textContent = "5/10";
 
+            // Reset Module Story Adherence Slider
+            const sliderAdherence = document.getElementById("campaign-module-adherence");
+            if (sliderAdherence) {
+                sliderAdherence.value = "3";
+                if (window._updateAdherenceDisplay) window._updateAdherenceDisplay("3");
+            }
+
             // Reset segmented source selector
             const btnSrcModule = document.getElementById("btn-src-module");
             const btnSrcByoc = document.getElementById("btn-src-byoc");
@@ -4679,6 +4819,13 @@ document.addEventListener("DOMContentLoaded", () => {
             if (toneInput) toneInput.value = meta.tone || "Gritty, tense, grounded, cinematic";
             if (diffSelect) diffSelect.value = meta.difficulty || "helpful";
 
+            const sliderAdherence = document.getElementById("campaign-module-adherence");
+            if (sliderAdherence) {
+                const adh = (meta.module_adherence || "strict").toLowerCase().trim();
+                sliderAdherence.value = (adh === "creative" || adh === "1") ? "1" : ((adh === "balanced" || adh === "2") ? "2" : "3");
+                if (window._updateAdherenceDisplay) window._updateAdherenceDisplay(sliderAdherence.value);
+            }
+
             campModal.classList.remove("hidden");
         });
     }
@@ -4708,6 +4855,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const overview = (document.getElementById("input-rp-camp-overview")?.value || "").trim();
             const tone = (document.getElementById("input-rp-camp-tone")?.value || "Gritty, tense, grounded, cinematic").trim();
             const difficulty = document.getElementById("select-rp-camp-difficulty")?.value || "helpful";
+            const sliderAdherence = document.getElementById("campaign-module-adherence");
+            const adherenceKey = sliderAdherence ? (
+                sliderAdherence.value === "1" ? "creative" : (sliderAdherence.value === "2" ? "balanced" : "strict")
+            ) : "strict";
 
             if (!title && stagedCampaignModalFiles.length > 0) {
                 let stem = stagedCampaignModalFiles[0].name.replace(/\.[^/.]+$/, "").replace(/[\d_\-]+$/, "").replace(/_/g, " ").trim();
@@ -4726,7 +4877,9 @@ document.addEventListener("DOMContentLoaded", () => {
                         overview,
                         tone,
                         difficulty,
-                        null
+                        null,
+                        null,
+                        adherenceKey
                     );
                     campModal.classList.add("hidden");
                     await loadRolePlayUI();
@@ -4752,7 +4905,8 @@ document.addEventListener("DOMContentLoaded", () => {
                             difficulty,
                             "",
                             initialFilesPayload,
-                            byocPayload
+                            byocPayload,
+                            adherenceKey
                         );
                         stagedCampaignModalFiles = [];
                         campModal.classList.add("hidden");
@@ -5778,7 +5932,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // Call backend to trigger adventure start or resume
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.start_or_resume_ttrpg_campaign) {
-                    await window.pywebview.api.start_or_resume_ttrpg_campaign();
+                    const res = await window.pywebview.api.start_or_resume_ttrpg_campaign();
+                    if (res && res.error) {
+                        console.error("[RolePlay] Error starting/resuming adventure:", res.error);
+                        renderRolePlayStoryBubble({ type: "error", content: `⚠️ Failed to resume adventure: ${res.error}` });
+                    }
                 }
             } catch (err) {
                 console.error("[RolePlay] Error starting/stopping adventure:", err);
@@ -6508,10 +6666,33 @@ window.handleExportRosterCharToVault = async function(charName) {
 };
 
 let pendingCrossover = null;
+let activeVaultTab = "dnd_5e";
+
+function getVaultCharacterBucket(charObj) {
+    const raw = String(charObj?.ruleset || charObj?.native_system || charObj?.native_genre || "dnd_5e")
+        .toLowerCase()
+        .trim()
+        .replace(/[\s-]/g, "_");
+    const fam = RULESET_FAMILY_MAP[raw] || raw;
+    if (fam === "dnd_5e" || fam === "pathfinder_2e" || fam === "call_of_cthulhu" || fam === "cyberpunk") {
+        return fam;
+    }
+    return "other";
+}
+
+function updateVaultTabButtonsUI() {
+    const bar = document.getElementById("vault-system-tabs-bar");
+    if (!bar) return;
+    bar.querySelectorAll(".vault-tab-btn").forEach(btn => {
+        const tabKey = btn.getAttribute("data-vault-tab");
+        btn.classList.toggle("active", tabKey === activeVaultTab);
+    });
+}
 
 async function refreshVaultModalUI() {
     const container = document.getElementById("vault-characters-container");
     const countBadge = document.getElementById("vault-count-badge");
+    const crossBanner = document.getElementById("vault-crossover-banner");
     if (!container) return;
 
     let chars = [];
@@ -6523,20 +6704,51 @@ async function refreshVaultModalUI() {
         }
     }
 
+    const counts = {
+        dnd_5e: 0,
+        pathfinder_2e: 0,
+        call_of_cthulhu: 0,
+        cyberpunk: 0,
+        all: chars.length
+    };
+    chars.forEach(c => {
+        const b = getVaultCharacterBucket(c);
+        if (counts[b] !== undefined) counts[b] += 1;
+    });
+    Object.entries(counts).forEach(([k, val]) => {
+        const el = document.getElementById(`vault-tab-count-${k}`);
+        if (el) el.textContent = String(val);
+    });
+
+    const filtered = activeVaultTab === "all"
+        ? chars
+        : chars.filter(c => getVaultCharacterBucket(c) === activeVaultTab);
+
     if (countBadge) {
-        countBadge.textContent = `${chars.length} CHARACTERS IN VAULT`;
+        const tabLabel = activeVaultTab === "all" ? "ALL SYSTEMS" : getRulesetDisplayLabel(activeVaultTab).toUpperCase();
+        countBadge.textContent = `${filtered.length} SHOWN IN ${tabLabel} (${chars.length} TOTAL IN VAULT)`;
     }
 
-    if (chars.length === 0) {
+    if (crossBanner) {
+        const activeMeta = ttrpgData.active_campaign_meta || {};
+        const activeCampRuleset = activeMeta.system_preset || activeMeta.ruleset || activeMeta.genre || "dnd_5e";
+        const showBanner = (activeVaultTab !== "all" && !areRulesetsCompatible(activeVaultTab, activeCampRuleset));
+        crossBanner.classList.toggle("hidden", !showBanner);
+    }
+
+    updateVaultTabButtonsUI();
+
+    if (filtered.length === 0) {
+        const label = activeVaultTab === "all" ? "Vault" : getRulesetDisplayLabel(activeVaultTab);
         container.innerHTML = `
             <div style="text-align: center; color: #64748b; font-size: 12px; padding: 24px 8px;">
-                No characters in the vault yet.<br>Click <strong>📄 Upload Sheet (PDF)</strong> or <strong>🏰 From Campaign</strong> to add your first character.
+                No ${escapeRpHtml(label)} characters in the vault yet.<br>Click <strong>➕ New Hero</strong>, <strong>📄 Upload Sheet</strong>, or switch tabs above.
             </div>
         `;
         return;
     }
 
-    container.innerHTML = chars.map(c => {
+    container.innerHTML = filtered.map(c => {
         const isRoot = Boolean(c.is_root);
         const badgeClass = isRoot ? "vault-char-badge-root" : "vault-char-badge-crossover";
         const badgeText = isRoot ? "CANONICAL ROOT" : (c.variant_label || "CROSSOVER VARIANT");
@@ -6742,17 +6954,8 @@ async function confirmCrossoverImport() {
 }
 
 async function handleVaultLevelUp(charId) {
-    if (!window.pywebview || !window.pywebview.api) return;
-    const boostAttr = prompt("Optional: Enter attribute to increase by +1 (e.g. Agility, Might, Vigor):", "Agility");
-    const statBoosts = boostAttr && boostAttr.trim() ? { [boostAttr.trim()]: 1 } : null;
-
-    try {
-        await window.pywebview.api.level_up_vault_character(charId, 1, statBoosts);
-        await refreshVaultModalUI();
-        await loadRolePlayUI(true);
-    } catch (e) {
-        console.error("[Vault] Error leveling up character:", e);
-    }
+    if (!window.pywebview || !window.pywebview.api || !charId) return;
+    await openLevelUpWizard(charId, "vault");
 }
 
 async function handleVaultDelete(charId) {
@@ -6770,6 +6973,16 @@ async function handleVaultDelete(charId) {
 function openVaultModal() {
     const modal = document.getElementById("vault-modal");
     if (modal) {
+        const activeMeta = ttrpgData.active_campaign_meta || {};
+        const rawCampRuleset = String(activeMeta.system_preset || activeMeta.ruleset || activeMeta.genre || "dnd_5e")
+            .toLowerCase()
+            .trim()
+            .replace(/[\s-]/g, "_");
+        const fam = RULESET_FAMILY_MAP[rawCampRuleset] || rawCampRuleset;
+        activeVaultTab = (fam === "dnd_5e" || fam === "pathfinder_2e" || fam === "call_of_cthulhu" || fam === "cyberpunk")
+            ? fam
+            : "all";
+        updateVaultTabButtonsUI();
         modal.style.display = "flex";
         refreshVaultModalUI();
     }
@@ -7140,6 +7353,42 @@ function initByocCreationModal() {
     if (sliderIntrigue && labelIntrigue) {
         sliderIntrigue.addEventListener("input", (e) => {
             labelIntrigue.textContent = `${e.target.value}/10`;
+        });
+    }
+
+    // 1b. Module Story Adherence & GM Pacing Slider (3 Steps)
+    const sliderAdherence = document.getElementById("campaign-module-adherence");
+    const labelAdherence = document.getElementById("val-module-adherence");
+    const descAdherence = document.getElementById("desc-module-adherence");
+
+    const adherenceDescriptions = {
+        1: {
+            label: "Creative Sandbox",
+            desc: "Treats module as an inspirational world guide and NPC bible. Aether is free to improvise encounters, remix scenes, and follow player-led side ventures.",
+            key: "creative"
+        },
+        2: {
+            label: "Guided / Balanced",
+            desc: "Preserves key act milestones, major story beats, and boss fights, while accommodating creative player detours and adapting scene order organically.",
+            key: "balanced"
+        },
+        3: {
+            label: "Strict Module (By the Book)",
+            desc: "Follows published acts, scenes, boxed text, and mandatory encounters sequentially by the book. High rolls grant immediate scene insight, never skipping intermediate encounters.",
+            key: "strict"
+        }
+    };
+
+    window._updateAdherenceDisplay = function(val) {
+        const num = parseInt(val, 10) || 3;
+        const info = adherenceDescriptions[num] || adherenceDescriptions[3];
+        if (labelAdherence) labelAdherence.textContent = info.label;
+        if (descAdherence) descAdherence.textContent = info.desc;
+    };
+
+    if (sliderAdherence) {
+        sliderAdherence.addEventListener("input", (e) => {
+            if (window._updateAdherenceDisplay) window._updateAdherenceDisplay(e.target.value);
         });
     }
 
@@ -7920,4 +8169,2729 @@ function initByocWorldModals() {
         });
     }
 }
+
+// =========================================================================
+// Phase 1: Vault Tabs Binding & D&D 5e SRD Compendium + Homebrew Lab UI
+// =========================================================================
+
+let activeCompendiumTab = "weapons";
+let compendiumItemsCache = [];
+let selectedCompendiumItem = null;
+let compendiumSearchTimer = null;
+
+function openCompendiumModal(initialTab = "weapons") {
+    const modal = document.getElementById("compendium-modal");
+    if (!modal) return;
+    modal.classList.remove("hidden");
+    setActiveCompendiumTab(initialTab || "weapons");
+}
+
+function closeCompendiumModal() {
+    const modal = document.getElementById("compendium-modal");
+    if (modal) modal.classList.add("hidden");
+}
+
+function setActiveCompendiumTab(tabName) {
+    activeCompendiumTab = tabName || "weapons";
+    const tabsBar = document.getElementById("compendium-tabs-bar");
+    if (tabsBar) {
+        tabsBar.querySelectorAll(".comp-tab-btn").forEach(btn => {
+            btn.classList.toggle("active", btn.getAttribute("data-comp-tab") === activeCompendiumTab);
+        });
+    }
+
+    const filterBar = document.getElementById("compendium-filter-bar");
+    const browsePane = document.getElementById("compendium-browse-pane");
+    const hbPane = document.getElementById("compendium-homebrew-pane");
+    const isHb = (activeCompendiumTab === "homebrew");
+
+    if (filterBar) filterBar.classList.toggle("hidden", isHb);
+    if (browsePane) browsePane.classList.toggle("hidden", isHb);
+    if (hbPane) hbPane.classList.toggle("hidden", !isHb);
+
+    // Toggle contextual subfilter wrappers
+    const wWrap = document.getElementById("comp-filter-weapon-wrap");
+    const aWrap = document.getElementById("comp-filter-armor-wrap");
+    const iWrap = document.getElementById("comp-filter-item-wrap");
+    const sWrap = document.getElementById("comp-filter-spell-wrap");
+    if (wWrap) wWrap.classList.toggle("hidden", activeCompendiumTab !== "weapons");
+    if (aWrap) aWrap.classList.toggle("hidden", activeCompendiumTab !== "armor");
+    if (iWrap) iWrap.classList.toggle("hidden", activeCompendiumTab !== "items");
+    if (sWrap) sWrap.classList.toggle("hidden", activeCompendiumTab !== "spells");
+
+    if (isHb) {
+        refreshHomebrewList();
+        syncHomebrewFormCategoryVisibility();
+    } else {
+        selectedCompendiumItem = null;
+        renderCompendiumDetail(null);
+        refreshCompendiumResults();
+    }
+}
+
+function buildCompendiumFilters() {
+    const filters = {};
+    if (activeCompendiumTab === "weapons") {
+        const wc = document.getElementById("select-comp-weapon-cat")?.value || "";
+        const wm = document.getElementById("select-comp-weapon-mastery")?.value || "";
+        if (wc) filters.weapon_category = wc;
+        if (wm) filters.mastery = wm;
+    } else if (activeCompendiumTab === "armor") {
+        const ac = document.getElementById("select-comp-armor-cat")?.value || "";
+        if (ac) filters.armor_category = ac;
+    } else if (activeCompendiumTab === "items") {
+        const ic = document.getElementById("select-comp-item-cat")?.value || "";
+        const ir = document.getElementById("select-comp-item-rarity")?.value || "";
+        if (ic) filters.item_category = ic;
+        if (ir) filters.rarity = ir;
+    } else if (activeCompendiumTab === "spells") {
+        const sc = document.getElementById("select-comp-spell-class")?.value || "";
+        const sl = document.getElementById("select-comp-spell-level")?.value || "";
+        if (sc) filters.class_name = sc;
+        if (sl !== "") filters.level = parseInt(sl, 10);
+    }
+    return filters;
+}
+
+async function refreshCompendiumResults() {
+    const listEl = document.getElementById("compendium-results-list");
+    const countEl = document.getElementById("compendium-results-count");
+    if (!listEl) return;
+
+    const query = (document.getElementById("input-compendium-search")?.value || "").trim();
+    const rawEd = document.getElementById("select-compendium-edition")?.value || "all";
+    const homebrewOnly = (rawEd === "homebrew");
+    const edition = homebrewOnly ? "all" : rawEd;
+    const filters = buildCompendiumFilters();
+
+    listEl.innerHTML = `<div style="padding: 18px; text-align: center; color: #64748b; font-size: 0.8rem;">Loading ${escapeRpHtml(activeCompendiumTab)}...</div>`;
+
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.search_dnd_compendium) {
+        listEl.innerHTML = `<div style="padding: 18px; color: #f87171; font-size: 0.8rem;">Compendium backend unavailable.</div>`;
+        return;
+    }
+
+    try {
+        const res = await window.pywebview.api.search_dnd_compendium(
+            activeCompendiumTab,
+            query,
+            edition,
+            filters,
+            homebrewOnly,
+            300
+        );
+        compendiumItemsCache = (res && Array.isArray(res.items)) ? res.items : [];
+        if (countEl) countEl.textContent = `${compendiumItemsCache.length} entries`;
+
+        if (compendiumItemsCache.length === 0) {
+            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #64748b; font-size: 0.82rem;">No matches found. Try clearing filters or creating it in Homebrew Lab!</div>`;
+            return;
+        }
+
+        listEl.innerHTML = compendiumItemsCache.map((item, idx) => {
+            const ctype = item.compendium_type || activeCompendiumTab;
+            const editions = Array.isArray(item.editions) ? item.editions : ["2014", "2024"];
+            const isSelected = selectedCompendiumItem && selectedCompendiumItem.index === item.index && selectedCompendiumItem.compendium_type === ctype;
+            let subtitle = "";
+            if (ctype === "weapons") {
+                subtitle = `${item.category || "Weapon"} • ${item.damage || "Special"} • ${item.cost_display || "0 gp"}`;
+            } else if (ctype === "armor") {
+                subtitle = `${item.category || "Armor"} • AC ${item.ac_base || 10}${item.dex_bonus ? "+DEX" : ""} • ${item.cost_display || "0 gp"}`;
+            } else if (ctype === "items") {
+                subtitle = `${item.subcategory || item.category || "Gear"} • ${item.cost_display || "Special"}${item.weight ? ` • ${item.weight} lb` : ""}`;
+            } else if (ctype === "spells") {
+                const lvlLbl = item.level_label || (item.level === 0 ? "Cantrip" : `Level ${item.level}`);
+                subtitle = `${lvlLbl} ${item.school || ""} • ${(item.classes || []).slice(0, 4).join(", ")}`;
+            }
+
+            const badges = [];
+            if (item.is_homebrew) badges.push(`<span class="comp-pill comp-pill-hb">HOMEBREW</span>`);
+            if (editions.includes("2024")) badges.push(`<span class="comp-pill comp-pill-ed">2024</span>`);
+            if (editions.includes("2014")) badges.push(`<span class="comp-pill comp-pill-ed">2014</span>`);
+            if (item.is_magic) badges.push(`<span class="comp-pill comp-pill-magic">${escapeRpHtml(item.rarity || "MAGIC")}</span>`);
+            if (item.mastery) badges.push(`<span class="comp-pill comp-pill-mastery">⚔️ ${escapeRpHtml(item.mastery)}</span>`);
+
+            return `
+                <div class="comp-list-item ${isSelected ? "selected" : ""}" data-comp-idx="${idx}">
+                    <div class="comp-list-top">
+                        <span class="comp-list-name">${escapeRpHtml(item.name)}</span>
+                    </div>
+                    <div class="comp-list-sub">${escapeRpHtml(subtitle)}</div>
+                    <div class="comp-badges-row">${badges.join("")}</div>
+                </div>
+            `;
+        }).join("");
+
+        listEl.querySelectorAll(".comp-list-item").forEach(row => {
+            row.addEventListener("click", () => {
+                const i = parseInt(row.getAttribute("data-comp-idx"), 10);
+                const item = compendiumItemsCache[i];
+                if (!item) return;
+                listEl.querySelectorAll(".comp-list-item").forEach(el => el.classList.remove("selected"));
+                row.classList.add("selected");
+                selectCompendiumItem(item);
+            });
+        });
+    } catch (e) {
+        console.error("[Compendium] Search error:", e);
+        listEl.innerHTML = `<div style="padding: 18px; color: #f87171; font-size: 0.8rem;">Search error: ${escapeRpHtml(e.message)}</div>`;
+    }
+}
+
+async function selectCompendiumItem(item) {
+    selectedCompendiumItem = item;
+    const cat = item.compendium_type || activeCompendiumTab;
+    const edSel = document.getElementById("select-compendium-edition")?.value || "2024";
+    const ed = (edSel === "2014" || edSel === "2024") ? edSel : "2024";
+
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_dnd_compendium_item) {
+        try {
+            const res = await window.pywebview.api.get_dnd_compendium_item(cat, item.index || item.name, ed);
+            if (res && res.status === "success" && res.item) {
+                selectedCompendiumItem = { ...item, ...res.item, compendium_type: cat };
+            }
+        } catch (e) {
+            console.warn("[Compendium] Detail lookup warning:", e);
+        }
+    }
+    renderCompendiumDetail(selectedCompendiumItem);
+}
+
+function getActivePartyCharsForSelect() {
+    const charsObj = (ttrpgData.state && ttrpgData.state.characters) ? ttrpgData.state.characters : {};
+    return Object.values(charsObj).filter(c => c && c.name);
+}
+
+function renderCompendiumDetail(item) {
+    const pane = document.getElementById("compendium-detail-pane");
+    if (!pane) return;
+    if (!item) {
+        pane.innerHTML = `
+            <div class="comp-detail-empty">
+                <span style="font-size: 2rem;">📖</span>
+                <p>Select any weapon, armor, item, pack, or spell on the left to inspect its 2014 &amp; 2024 rules, grant it to a party hero, or clone it as Homebrew.</p>
+            </div>
+        `;
+        return;
+    }
+
+    const cat = item.compendium_type || activeCompendiumTab;
+    const editions = Array.isArray(item.editions) ? item.editions : ["2014", "2024"];
+    const tags = [];
+    if (item.is_homebrew) tags.push(`<span class="comp-pill comp-pill-hb">CUSTOM HOMEBREW</span>`);
+    editions.forEach(e => tags.push(`<span class="comp-pill comp-pill-ed">${escapeRpHtml(e)} SRD</span>`));
+    if (item.is_magic) tags.push(`<span class="comp-pill comp-pill-magic">${escapeRpHtml(item.rarity || "Magic")}</span>`);
+    if (item.requires_attunement) tags.push(`<span class="comp-pill comp-pill-hb">Requires Attunement</span>`);
+    if (item.mastery) tags.push(`<span class="comp-pill comp-pill-mastery">Mastery: ${escapeRpHtml(item.mastery)}</span>`);
+    if (item.concentration) tags.push(`<span class="comp-pill comp-pill-ed">Concentration</span>`);
+    if (item.ritual) tags.push(`<span class="comp-pill comp-pill-ed">Ritual</span>`);
+
+    const stats = [];
+    if (cat === "weapons") {
+        stats.push(["Category", item.category || "Weapon"]);
+        stats.push(["Damage", item.damage || "Special"]);
+        if (item.two_handed_damage) stats.push(["Two-Handed", item.two_handed_damage]);
+        stats.push(["Range", item.range || "5 ft."]);
+        stats.push(["Cost", item.cost_display || "0 gp"]);
+        stats.push(["Weight", `${item.weight || 0} lb`]);
+        if (Array.isArray(item.properties) && item.properties.length) {
+            stats.push(["Properties", item.properties.join(", ")]);
+        }
+        if (item.mastery) {
+            stats.push(["2024 Mastery", item.mastery]);
+        }
+    } else if (cat === "armor") {
+        stats.push(["Category", item.category || "Armor"]);
+        let acDisp = `${item.ac_base ?? 10}`;
+        if (item.category === "Shield") acDisp = `+${2 + (item.ac_bonus || 0)}`;
+        else if (item.dex_bonus) acDisp += item.max_dex_bonus != null ? ` + DEX (max ${item.max_dex_bonus})` : " + DEX";
+        if (item.ac_bonus && item.category !== "Shield") acDisp += ` (+${item.ac_bonus})`;
+        stats.push(["Armor Class", acDisp]);
+        stats.push(["STR Minimum", item.str_minimum ? `STR ${item.str_minimum}` : "None"]);
+        stats.push(["Stealth", item.stealth_disadvantage ? "Disadvantage" : "Normal"]);
+        stats.push(["Cost", item.cost_display || "0 gp"]);
+        stats.push(["Weight", `${item.weight || 0} lb`]);
+    } else if (cat === "items") {
+        stats.push(["Category", item.subcategory || item.category || "Gear"]);
+        stats.push(["Cost", item.cost_display || "Varies"]);
+        stats.push(["Weight", `${item.weight || 0} lb`]);
+        stats.push(["Rarity", item.rarity || "Common"]);
+        if (item.quantity_bundle && item.quantity_bundle > 1) {
+            stats.push(["Bundle Qty", `${item.quantity_bundle} per purchase`]);
+        }
+    } else if (cat === "spells") {
+        stats.push(["Level", item.level_label || (item.level === 0 ? "Cantrip" : `Level ${item.level}`)]);
+        stats.push(["School", item.school || "Evocation"]);
+        stats.push(["Casting Time", item.casting_time || "1 action"]);
+        stats.push(["Range", item.range || "Self"]);
+        stats.push(["Duration", item.duration || "Instantaneous"]);
+        stats.push(["Components", (item.components || []).join(", ") + (item.material ? ` (${item.material})` : "")]);
+        if (item.damage) stats.push(["Damage / Effect", item.damage]);
+        if (item.dc_type) stats.push(["Saving Throw", item.dc_type]);
+        if (Array.isArray(item.classes) && item.classes.length) {
+            stats.push(["Classes", item.classes.join(", ")]);
+        }
+    }
+
+    const statGridHtml = stats.map(([lbl, val]) => `
+        <div class="comp-stat-cell">
+            <strong>${escapeRpHtml(lbl)}</strong>
+            <span>${escapeRpHtml(val)}</span>
+        </div>
+    `).join("");
+
+    let bodyHtml = "";
+    if (cat === "weapons" && item.mastery_desc) {
+        bodyHtml += `<div class="comp-desc-box" style="border-color: rgba(249,115,22,0.35);"><strong>2024 Mastery (${escapeRpHtml(item.mastery)}):</strong> ${escapeRpHtml(item.mastery_desc)}</div>`;
+    }
+    const edSel = document.getElementById("select-compendium-edition")?.value || "2024";
+    const mainDesc = item.active_description
+        || (edSel === "2014" ? (item.description_2014 || item.description) : (item.description_2024 || item.description))
+        || "";
+    if (mainDesc) {
+        bodyHtml += `<div class="comp-desc-box">${escapeRpHtml(mainDesc)}</div>`;
+    }
+    if (item.notes_2024) {
+        bodyHtml += `<div class="comp-desc-box" style="border-color: rgba(56,189,248,0.35);"><strong>📘 2014 vs 2024 Change Note:</strong> ${escapeRpHtml(item.notes_2024)}</div>`;
+    }
+    if (item.higher_level) {
+        bodyHtml += `<div class="comp-desc-box"><strong>At Higher Levels:</strong> ${escapeRpHtml(item.higher_level)}</div>`;
+    }
+
+    const packContents = item.expanded_contents || item.contents || [];
+    const hasPackContents = Array.isArray(packContents) && packContents.length > 0;
+    if (hasPackContents) {
+        const packList = packContents.map(p => `• ${p.quantity || p.qty || 1}x ${p.name}`).join("\n");
+        bodyHtml += `<div class="comp-desc-box"><strong>🎒 Pack Contents:</strong>\n${escapeRpHtml(packList)}</div>`;
+    }
+
+    const partyChars = getActivePartyCharsForSelect();
+    const charOptions = partyChars.length > 0
+        ? partyChars.map(c => `<option value="${escapeRpHtml(c.name)}">${escapeRpHtml(c.name)} (${escapeRpHtml(c.archetype || "Hero")})</option>`).join("")
+        : `<option value="">No active party characters loaded</option>`;
+
+    const extraControls = `
+        ${(cat === "items") ? `
+            <div style="display:flex; align-items:center; gap: 12px; flex-wrap:wrap; font-size:0.78rem; color:#cbd5e1;">
+                <label style="display:flex; align-items:center; gap:5px;">Qty: <input type="number" id="input-comp-grant-qty" class="modal-input" min="1" value="1" style="width:65px; padding:4px 6px;" /></label>
+                ${hasPackContents ? `<label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="chk-comp-expand-pack" checked /> Unpack bundle into inventory items</label>` : ""}
+            </div>
+        ` : ""}
+        ${(cat === "armor") ? `
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:#cbd5e1; cursor:pointer;">
+                <input type="checkbox" id="chk-comp-equip-armor" checked /> Equip immediately &amp; recalculate AC
+            </label>
+        ` : ""}
+        ${(cat === "spells") ? `
+            <div style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem;">
+                <div id="comp-spell-eligibility-note" style="font-size:0.75rem; color:#94a3b8; display:flex; align-items:center; gap:5px;"></div>
+                <div id="comp-spell-override-wrap" style="display:none;">
+                    <label style="display:flex; align-items:center; gap:6px; color:#fbbf24; cursor:pointer;">
+                        <input type="checkbox" id="chk-comp-bypass-spell-class" /> Allow Out-of-Class grant (Magical Secrets / DM Override)
+                    </label>
+                </div>
+            </div>
+        ` : ""}
+    `;
+
+    pane.innerHTML = `
+        <div class="comp-detail-card-head">
+            <h4>${escapeRpHtml(item.name)}</h4>
+            <div class="comp-badges-row">${tags.join("")}</div>
+        </div>
+        <div class="comp-stat-grid">${statGridHtml}</div>
+        ${bodyHtml || '<div class="comp-desc-box" style="color:#64748b; font-style:italic;">Standard equipment entry.</div>'}
+
+        <div class="comp-grant-box">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <select id="select-comp-grant-char" class="modal-input" style="flex:1; min-width:170px; padding:6px 8px; font-size:0.8rem;">
+                    ${charOptions}
+                </select>
+                <button type="button" id="btn-comp-grant-char" class="btn-primary-sm" style="padding: 7px 14px;" ${partyChars.length === 0 ? "disabled" : ""}>🎁 Grant to Hero</button>
+            </div>
+            ${extraControls}
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; border-top: 1px solid rgba(255,255,255,0.06); padding-top:8px;">
+                <div style="display:flex; gap:6px;">
+                    <button type="button" id="btn-comp-clone-hb" class="cyber-btn-small">🧬 Clone as Homebrew</button>
+                    ${item.is_homebrew ? `<button type="button" id="btn-comp-edit-hb" class="cyber-btn-small">✏️ Edit</button>` : ""}
+                    ${item.is_homebrew ? `<button type="button" id="btn-comp-del-hb" class="cyber-btn-small" style="color:#f87171; border-color:rgba(239,68,68,0.4);">🗑️</button>` : ""}
+                </div>
+                <span id="comp-grant-feedback" style="font-size:0.74rem; color:#4ade80;"></span>
+            </div>
+        </div>
+    `;
+
+    const grantBtn = document.getElementById("btn-comp-grant-char");
+    if (grantBtn) grantBtn.addEventListener("click", () => grantSelectedCompendiumItem());
+
+    const cloneBtn = document.getElementById("btn-comp-clone-hb");
+    if (cloneBtn) cloneBtn.addEventListener("click", () => cloneCompendiumItemToHomebrew(item));
+
+    const editHbBtn = document.getElementById("btn-comp-edit-hb");
+    if (editHbBtn) editHbBtn.addEventListener("click", () => editHomebrewEntry(cat, item));
+
+    const delHbBtn = document.getElementById("btn-comp-del-hb");
+    if (delHbBtn) delHbBtn.addEventListener("click", () => deleteHomebrewEntryFromUI(cat, item.index || item.id));
+
+    const charSelect = document.getElementById("select-comp-grant-char");
+    if (charSelect && cat === "spells") {
+        charSelect.addEventListener("change", () => updateCompendiumSpellEligibilityUI(item));
+        updateCompendiumSpellEligibilityUI(item);
+    }
+}
+
+async function updateCompendiumSpellEligibilityUI(item) {
+    if (!item) return;
+    const cat = item.compendium_type || activeCompendiumTab;
+    if (cat !== "spells") return;
+
+    const charName = document.getElementById("select-comp-grant-char")?.value || "";
+    const noteEl = document.getElementById("comp-spell-eligibility-note");
+    const overrideWrap = document.getElementById("comp-spell-override-wrap");
+    const chkOverride = document.getElementById("chk-comp-bypass-spell-class");
+    if (!noteEl || !overrideWrap) return;
+
+    if (!charName) {
+        noteEl.innerHTML = "";
+        overrideWrap.style.display = "none";
+        return;
+    }
+
+    const edSel = document.getElementById("select-compendium-edition")?.value || "2024";
+    const edition = (edSel === "2014" || edSel === "2024") ? edSel : "2024";
+
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.check_spell_class_eligibility) {
+        try {
+            const res = await window.pywebview.api.check_spell_class_eligibility(charName, item.index || item.name, edition);
+            if (res && res.status === "success") {
+                if (res.can_learn) {
+                    noteEl.innerHTML = `<span style="color:#4ade80;">✅ Eligible for ${escapeRpHtml(charName)}</span> <span style="color:#64748b; font-size:0.72rem;">(${escapeRpHtml(res.matched_via || "Class Spell List")})</span>`;
+                    overrideWrap.style.display = "none";
+                    if (chkOverride) chkOverride.checked = false;
+                } else {
+                    const classesStr = (res.allowed_spell_classes && res.allowed_spell_classes.length > 0)
+                        ? res.allowed_spell_classes.join(", ")
+                        : "Specific class";
+                    noteEl.innerHTML = `<span style="color:#f87171;">⚠️ Not on ${escapeRpHtml(charName)}'s list (${escapeRpHtml(classesStr)} spell)</span>`;
+                    overrideWrap.style.display = "block";
+                }
+            }
+        } catch (e) {
+            console.warn("[Compendium] Spell eligibility check error:", e);
+        }
+    }
+}
+
+async function grantSelectedCompendiumItem() {
+    if (!selectedCompendiumItem) return;
+    const charName = document.getElementById("select-comp-grant-char")?.value || "";
+    if (!charName) return;
+
+    const cat = selectedCompendiumItem.compendium_type || activeCompendiumTab;
+    const edSel = document.getElementById("select-compendium-edition")?.value || "2024";
+    const edition = (edSel === "2014" || edSel === "2024") ? edSel : "2024";
+    const expandPack = document.getElementById("chk-comp-expand-pack")?.checked ?? true;
+    const equip = document.getElementById("chk-comp-equip-armor")?.checked ?? false;
+    let bypassClass = document.getElementById("chk-comp-bypass-spell-class")?.checked ?? false;
+    const qty = Math.max(1, parseInt(document.getElementById("input-comp-grant-qty")?.value || "1", 10) || 1);
+    const feedback = document.getElementById("comp-grant-feedback");
+
+    if (cat === "spells" && !bypassClass && window.pywebview && window.pywebview.api && window.pywebview.api.check_spell_class_eligibility) {
+        try {
+            const check = await window.pywebview.api.check_spell_class_eligibility(charName, selectedCompendiumItem.index || selectedCompendiumItem.name, edition);
+            if (check && !check.can_learn) {
+                const classReq = (check.allowed_spell_classes && check.allowed_spell_classes.length > 0)
+                    ? check.allowed_spell_classes.join(", ")
+                    : "different classes";
+                const heroClasses = (check.character_classes && check.character_classes.length > 0)
+                    ? check.character_classes.join(", ")
+                    : "Non-Caster";
+                const proceed = await showAetherConfirm(
+                    `'${selectedCompendiumItem.name}' is a ${classReq} spell and not on ${charName}'s class spell list (${heroClasses}).\n\nDo you want to grant this spell anyway as an Out-of-Class grant / Magical Secrets / DM Boon?`,
+                    "Class Spell Restriction",
+                    "Grant Anyway",
+                    false
+                );
+                if (!proceed) {
+                    if (feedback) {
+                        feedback.style.color = "#f87171";
+                        feedback.textContent = `Grant canceled: requires ${classReq}.`;
+                    }
+                    return;
+                }
+                bypassClass = true;
+                const chkBox = document.getElementById("chk-comp-bypass-spell-class");
+                if (chkBox) chkBox.checked = true;
+            }
+        } catch (chkErr) {
+            console.warn("[Compendium] Check eligibility error:", chkErr);
+        }
+    }
+
+    try {
+        const res = await window.pywebview.api.add_compendium_entry_to_character(
+            charName,
+            cat,
+            selectedCompendiumItem.index || selectedCompendiumItem.name,
+            edition,
+            Boolean(expandPack),
+            qty,
+            Boolean(equip),
+            Boolean(bypassClass)
+        );
+        if (res && res.status === "success") {
+            if (feedback) {
+                feedback.style.color = "#4ade80";
+                feedback.textContent = res.message || `Granted ${selectedCompendiumItem.name}!`;
+            }
+            await loadRolePlayUI(true);
+        } else if (feedback) {
+            feedback.style.color = "#f87171";
+            feedback.textContent = res?.message || "Failed to grant entry.";
+        }
+    } catch (e) {
+        console.error("[Compendium] Grant error:", e);
+        if (feedback) {
+            feedback.style.color = "#f87171";
+            feedback.textContent = e.message;
+        }
+    }
+}
+
+// --- Homebrew Lab Logic ---
+function syncHomebrewFormCategoryVisibility() {
+    const cat = document.getElementById("hb-field-category")?.value || "weapons";
+    const gearMeta = document.getElementById("hb-group-gear-meta");
+    const grpWpn = document.getElementById("hb-group-weapons");
+    const grpArm = document.getElementById("hb-group-armor");
+    const grpItm = document.getElementById("hb-group-items");
+    const grpSpl = document.getElementById("hb-group-spells");
+
+    if (gearMeta) gearMeta.classList.toggle("hidden", cat === "spells");
+    if (grpWpn) grpWpn.classList.toggle("hidden", cat !== "weapons");
+    if (grpArm) grpArm.classList.toggle("hidden", cat !== "armor");
+    if (grpItm) grpItm.classList.toggle("hidden", cat !== "items");
+    if (grpSpl) grpSpl.classList.toggle("hidden", cat !== "spells");
+}
+
+function resetHomebrewForm(category = "weapons") {
+    const catSel = document.getElementById("hb-field-category");
+    if (catSel) catSel.value = category;
+    document.getElementById("hb-field-index").value = "";
+    document.getElementById("hb-field-name").value = "";
+    document.getElementById("hb-ed-2014").checked = true;
+    document.getElementById("hb-ed-2024").checked = true;
+    document.getElementById("hb-field-cost-qty").value = "50";
+    document.getElementById("hb-field-cost-unit").value = "gp";
+    document.getElementById("hb-field-weight").value = "2";
+    document.getElementById("hb-field-rarity").value = "Common";
+    document.getElementById("hb-field-is-magic").checked = false;
+    document.getElementById("hb-field-attunement").checked = false;
+    document.getElementById("hb-field-description").value = "";
+    document.getElementById("hb-save-status").textContent = "";
+
+    document.getElementById("hb-field-wpn-cat").value = "Martial Melee";
+    document.getElementById("hb-field-wpn-mastery").value = "";
+    document.getElementById("hb-field-wpn-dice").value = "1d8";
+    document.getElementById("hb-field-wpn-dmgtype").value = "Slashing";
+    document.getElementById("hb-field-wpn-bonus").value = "";
+    document.getElementById("hb-field-wpn-range").value = "5 ft.";
+    document.getElementById("hb-field-wpn-props").value = "";
+
+    document.getElementById("hb-field-arm-cat").value = "Medium Armor";
+    document.getElementById("hb-field-arm-ac").value = "14";
+    document.getElementById("hb-field-arm-bonus").value = "0";
+    document.getElementById("hb-field-arm-maxdex").value = "2";
+    document.getElementById("hb-field-arm-strmin").value = "0";
+    document.getElementById("hb-field-arm-dex").checked = true;
+    document.getElementById("hb-field-arm-stealth").checked = false;
+
+    document.getElementById("hb-field-item-subcat").value = "Adventuring Gear";
+    document.getElementById("hb-field-item-consumable").checked = false;
+
+    document.getElementById("hb-field-sp-level").value = "1";
+    document.getElementById("hb-field-sp-school").value = "Evocation";
+    document.getElementById("hb-field-sp-time").value = "1 action";
+    document.getElementById("hb-field-sp-range").value = "60 feet";
+    document.getElementById("hb-field-sp-duration").value = "Instantaneous";
+    document.getElementById("hb-field-sp-comps").value = "V, S";
+    document.getElementById("hb-field-sp-dmg").value = "";
+    document.getElementById("hb-field-sp-dc").value = "";
+    document.getElementById("hb-field-sp-atktype").value = "";
+    document.getElementById("hb-field-sp-conc").checked = false;
+    document.getElementById("hb-field-sp-ritual").checked = false;
+    document.querySelectorAll("#hb-spell-classes-checks input[type='checkbox']").forEach(chk => {
+        chk.checked = (chk.value === "Wizard");
+    });
+
+    syncHomebrewFormCategoryVisibility();
+}
+
+function populateHomebrewForm(cat, entry, isClone = false) {
+    resetHomebrewForm(cat);
+    const catSel = document.getElementById("hb-field-category");
+    if (catSel) catSel.value = cat;
+    syncHomebrewFormCategoryVisibility();
+
+    document.getElementById("hb-field-index").value = isClone ? "" : (entry.index || entry.id || "");
+    document.getElementById("hb-field-name").value = isClone ? `Custom ${entry.name || ""}`.trim() : (entry.name || "");
+    const eds = Array.isArray(entry.editions) ? entry.editions : ["2014", "2024"];
+    document.getElementById("hb-ed-2014").checked = eds.includes("2014");
+    document.getElementById("hb-ed-2024").checked = eds.includes("2024");
+    document.getElementById("hb-field-description").value = entry.description_2024 || entry.description || "";
+
+    if (cat !== "spells") {
+        const costObj = entry.cost || {};
+        document.getElementById("hb-field-cost-qty").value = costObj.quantity ?? 50;
+        document.getElementById("hb-field-cost-unit").value = costObj.unit || "gp";
+        document.getElementById("hb-field-weight").value = entry.weight ?? 1;
+        document.getElementById("hb-field-rarity").value = entry.rarity || "Common";
+        document.getElementById("hb-field-is-magic").checked = Boolean(entry.is_magic);
+        document.getElementById("hb-field-attunement").checked = Boolean(entry.requires_attunement);
+    }
+
+    if (cat === "weapons") {
+        document.getElementById("hb-field-wpn-cat").value = entry.category || "Martial Melee";
+        document.getElementById("hb-field-wpn-mastery").value = entry.mastery || "";
+        document.getElementById("hb-field-wpn-dice").value = entry.damage_dice || "1d8";
+        document.getElementById("hb-field-wpn-dmgtype").value = entry.damage_type || "Slashing";
+        document.getElementById("hb-field-wpn-bonus").value = entry.atk_bonus || "";
+        document.getElementById("hb-field-wpn-range").value = entry.range || "5 ft.";
+        document.getElementById("hb-field-wpn-props").value = Array.isArray(entry.properties) ? entry.properties.join(", ") : "";
+    } else if (cat === "armor") {
+        document.getElementById("hb-field-arm-cat").value = entry.category || "Medium Armor";
+        document.getElementById("hb-field-arm-ac").value = entry.ac_base ?? 14;
+        document.getElementById("hb-field-arm-bonus").value = entry.ac_bonus ?? 0;
+        document.getElementById("hb-field-arm-maxdex").value = entry.max_dex_bonus != null ? entry.max_dex_bonus : "";
+        document.getElementById("hb-field-arm-strmin").value = entry.str_minimum ?? 0;
+        document.getElementById("hb-field-arm-dex").checked = entry.dex_bonus !== false;
+        document.getElementById("hb-field-arm-stealth").checked = Boolean(entry.stealth_disadvantage);
+    } else if (cat === "items") {
+        document.getElementById("hb-field-item-subcat").value = entry.subcategory || entry.category || "Adventuring Gear";
+        document.getElementById("hb-field-item-consumable").checked = Boolean(entry.consumable);
+    } else if (cat === "spells") {
+        document.getElementById("hb-field-sp-level").value = String(entry.level ?? 1);
+        document.getElementById("hb-field-sp-school").value = entry.school || "Evocation";
+        document.getElementById("hb-field-sp-time").value = entry.casting_time || "1 action";
+        document.getElementById("hb-field-sp-range").value = entry.range || "60 feet";
+        document.getElementById("hb-field-sp-duration").value = entry.duration || "Instantaneous";
+        document.getElementById("hb-field-sp-comps").value = Array.isArray(entry.components) ? entry.components.join(", ") : (entry.components || "V, S");
+        document.getElementById("hb-field-sp-dmg").value = entry.damage || "";
+        document.getElementById("hb-field-sp-dc").value = entry.dc_type || "";
+        document.getElementById("hb-field-sp-atktype").value = entry.attack_type || "";
+        document.getElementById("hb-field-sp-conc").checked = Boolean(entry.concentration);
+        document.getElementById("hb-field-sp-ritual").checked = Boolean(entry.ritual);
+        const clsSet = new Set((entry.classes || []).map(c => c.toLowerCase()));
+        document.querySelectorAll("#hb-spell-classes-checks input[type='checkbox']").forEach(chk => {
+            chk.checked = clsSet.has(chk.value.toLowerCase());
+        });
+    }
+}
+
+function cloneCompendiumItemToHomebrew(item) {
+    const cat = item.compendium_type || activeCompendiumTab;
+    setActiveCompendiumTab("homebrew");
+    populateHomebrewForm(cat, item, true);
+}
+
+function editHomebrewEntry(cat, item) {
+    setActiveCompendiumTab("homebrew");
+    populateHomebrewForm(cat, item, false);
+}
+
+async function refreshHomebrewList() {
+    const listEl = document.getElementById("hb-entries-list");
+    if (!listEl || !window.pywebview || !window.pywebview.api || !window.pywebview.api.list_homebrew_entries) return;
+
+    const filterCat = document.getElementById("select-hb-list-filter")?.value || "all";
+    try {
+        const res = await window.pywebview.api.list_homebrew_entries(filterCat);
+        const entries = (res && Array.isArray(res.entries)) ? res.entries : [];
+        if (entries.length === 0) {
+            listEl.innerHTML = `<div style="padding: 16px; text-align:center; color:#64748b; font-size:0.78rem;">No custom homebrew created yet.<br>Fill out the form on the right or click "Clone as Homebrew" on any SRD item!</div>`;
+            return;
+        }
+        listEl.innerHTML = entries.map((e, i) => `
+            <div class="comp-list-item" data-hb-idx="${i}">
+                <div class="comp-list-top">
+                    <span class="comp-list-name">${escapeRpHtml(e.name)}</span>
+                    <div style="display:flex; gap:4px;">
+                        <button type="button" class="cyber-btn-tiny btn-hb-edit" data-hb-idx="${i}" title="Edit">✏️</button>
+                        <button type="button" class="cyber-btn-tiny btn-hb-del" data-hb-idx="${i}" style="color:#f87171;" title="Delete">🗑️</button>
+                    </div>
+                </div>
+                <div class="comp-list-sub">${escapeRpHtml((e.compendium_type || "").toUpperCase())} ${e.is_magic ? `• ${escapeRpHtml(e.rarity || "Magic")}` : ""}</div>
+            </div>
+        `).join("");
+
+        listEl.querySelectorAll(".btn-hb-edit").forEach(btn => {
+            btn.addEventListener("click", (ev) => {
+                ev.stopPropagation();
+                const ent = entries[parseInt(btn.getAttribute("data-hb-idx"), 10)];
+                if (ent) populateHomebrewForm(ent.compendium_type, ent, false);
+            });
+        });
+        listEl.querySelectorAll(".comp-list-item").forEach(row => {
+            row.addEventListener("click", () => {
+                const ent = entries[parseInt(row.getAttribute("data-hb-idx"), 10)];
+                if (ent) populateHomebrewForm(ent.compendium_type, ent, false);
+            });
+        });
+        listEl.querySelectorAll(".btn-hb-del").forEach(btn => {
+            btn.addEventListener("click", async (ev) => {
+                ev.stopPropagation();
+                const ent = entries[parseInt(btn.getAttribute("data-hb-idx"), 10)];
+                if (ent) await deleteHomebrewEntryFromUI(ent.compendium_type, ent.index || ent.id);
+            });
+        });
+    } catch (e) {
+        console.error("[Homebrew] List error:", e);
+    }
+}
+
+async function saveHomebrewForm() {
+    const cat = document.getElementById("hb-field-category")?.value || "weapons";
+    const name = (document.getElementById("hb-field-name")?.value || "").trim();
+    const statusEl = document.getElementById("hb-save-status");
+    if (!name) {
+        if (statusEl) { statusEl.style.color = "#f87171"; statusEl.textContent = "Please enter a name."; }
+        return;
+    }
+
+    const editions = [];
+    if (document.getElementById("hb-ed-2014")?.checked) editions.push("2014");
+    if (document.getElementById("hb-ed-2024")?.checked) editions.push("2024");
+    if (editions.length === 0) editions.push("2024");
+
+    const payload = {
+        index: (document.getElementById("hb-field-index")?.value || "").trim(),
+        name,
+        editions,
+        description: (document.getElementById("hb-field-description")?.value || "").trim(),
+    };
+
+    if (cat !== "spells") {
+        payload.cost = {
+            quantity: Math.max(0, parseFloat(document.getElementById("hb-field-cost-qty")?.value || "0") || 0),
+            unit: document.getElementById("hb-field-cost-unit")?.value || "gp",
+        };
+        payload.weight = Math.max(0, parseFloat(document.getElementById("hb-field-weight")?.value || "0") || 0);
+        payload.rarity = document.getElementById("hb-field-rarity")?.value || "Common";
+        payload.is_magic = Boolean(document.getElementById("hb-field-is-magic")?.checked);
+        payload.requires_attunement = Boolean(document.getElementById("hb-field-attunement")?.checked);
+    }
+
+    if (cat === "weapons") {
+        const dice = (document.getElementById("hb-field-wpn-dice")?.value || "1d6").trim();
+        const dmgType = document.getElementById("hb-field-wpn-dmgtype")?.value || "Slashing";
+        payload.category = document.getElementById("hb-field-wpn-cat")?.value || "Martial Melee";
+        payload.damage_dice = dice;
+        payload.damage_type = dmgType;
+        payload.damage = `${dice} ${dmgType}`.trim();
+        payload.atk_bonus = document.getElementById("hb-field-wpn-bonus")?.value || "";
+        payload.range = (document.getElementById("hb-field-wpn-range")?.value || "5 ft.").trim();
+        payload.properties = (document.getElementById("hb-field-wpn-props")?.value || "").trim();
+        payload.mastery = document.getElementById("hb-field-wpn-mastery")?.value || "";
+    } else if (cat === "armor") {
+        const maxDexRaw = (document.getElementById("hb-field-arm-maxdex")?.value || "").trim();
+        payload.category = document.getElementById("hb-field-arm-cat")?.value || "Medium Armor";
+        payload.ac_base = parseInt(document.getElementById("hb-field-arm-ac")?.value || "14", 10);
+        payload.ac_bonus = parseInt(document.getElementById("hb-field-arm-bonus")?.value || "0", 10);
+        payload.max_dex_bonus = maxDexRaw !== "" ? parseInt(maxDexRaw, 10) : null;
+        payload.str_minimum = parseInt(document.getElementById("hb-field-arm-strmin")?.value || "0", 10);
+        payload.dex_bonus = Boolean(document.getElementById("hb-field-arm-dex")?.checked);
+        payload.stealth_disadvantage = Boolean(document.getElementById("hb-field-arm-stealth")?.checked);
+    } else if (cat === "items") {
+        payload.subcategory = (document.getElementById("hb-field-item-subcat")?.value || "Adventuring Gear").trim();
+        payload.category = payload.is_magic ? "Magic Items" : payload.subcategory;
+        payload.consumable = Boolean(document.getElementById("hb-field-item-consumable")?.checked);
+    } else if (cat === "spells") {
+        const selectedClasses = [];
+        document.querySelectorAll("#hb-spell-classes-checks input[type='checkbox']:checked").forEach(chk => {
+            selectedClasses.push(chk.value);
+        });
+        payload.level = parseInt(document.getElementById("hb-field-sp-level")?.value || "1", 10);
+        payload.school = document.getElementById("hb-field-sp-school")?.value || "Evocation";
+        payload.casting_time = (document.getElementById("hb-field-sp-time")?.value || "1 action").trim();
+        payload.range = (document.getElementById("hb-field-sp-range")?.value || "60 feet").trim();
+        payload.duration = (document.getElementById("hb-field-sp-duration")?.value || "Instantaneous").trim();
+        payload.components = (document.getElementById("hb-field-sp-comps")?.value || "V, S").trim();
+        payload.damage = (document.getElementById("hb-field-sp-dmg")?.value || "").trim();
+        payload.dc_type = document.getElementById("hb-field-sp-dc")?.value || "";
+        payload.attack_type = document.getElementById("hb-field-sp-atktype")?.value || "";
+        payload.concentration = Boolean(document.getElementById("hb-field-sp-conc")?.checked);
+        payload.ritual = Boolean(document.getElementById("hb-field-sp-ritual")?.checked);
+        payload.classes = selectedClasses;
+    }
+
+    try {
+        const res = await window.pywebview.api.save_homebrew_entry(cat, payload);
+        if (res && res.status === "success") {
+            if (res.entry?.index) {
+                document.getElementById("hb-field-index").value = res.entry.index;
+            }
+            if (statusEl) {
+                statusEl.style.color = "#4ade80";
+                statusEl.textContent = `Saved custom ${cat.slice(0, -1)} '${name}'!`;
+            }
+            await refreshHomebrewList();
+        } else if (statusEl) {
+            statusEl.style.color = "#f87171";
+            statusEl.textContent = res?.message || "Save failed.";
+        }
+    } catch (e) {
+        console.error("[Homebrew] Save error:", e);
+        if (statusEl) {
+            statusEl.style.color = "#f87171";
+            statusEl.textContent = e.message;
+        }
+    }
+}
+
+async function deleteHomebrewEntryFromUI(cat, entryId) {
+    if (!entryId) return;
+    if (!(await showAetherConfirm(`Delete homebrew entry '${entryId}'?`, "Delete Homebrew", "Delete", true))) return;
+    try {
+        const res = await window.pywebview.api.delete_homebrew_entry(cat, entryId);
+        if (res && res.status === "success") {
+            if (activeCompendiumTab === "homebrew") {
+                resetHomebrewForm(cat);
+                await refreshHomebrewList();
+            } else {
+                selectedCompendiumItem = null;
+                renderCompendiumDetail(null);
+                await refreshCompendiumResults();
+            }
+        }
+    } catch (e) {
+        console.error("[Homebrew] Delete error:", e);
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    // 1. Vault System Tabs
+    const vaultTabsBar = document.getElementById("vault-system-tabs-bar");
+    if (vaultTabsBar) {
+        vaultTabsBar.querySelectorAll(".vault-tab-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                activeVaultTab = btn.getAttribute("data-vault-tab") || "all";
+                updateVaultTabButtonsUI();
+                refreshVaultModalUI();
+            });
+        });
+    }
+
+    // 2. Compendium Modal Controls
+    const openCompBtn = document.getElementById("open-compendium-btn");
+    const closeCompBtn = document.getElementById("btn-close-compendium-modal");
+    const closeCompFooter = document.getElementById("btn-close-compendium-footer");
+    if (openCompBtn) openCompBtn.addEventListener("click", () => openCompendiumModal("weapons"));
+    if (closeCompBtn) closeCompBtn.addEventListener("click", closeCompendiumModal);
+    if (closeCompFooter) closeCompFooter.addEventListener("click", closeCompendiumModal);
+
+    const compTabsBar = document.getElementById("compendium-tabs-bar");
+    if (compTabsBar) {
+        compTabsBar.querySelectorAll(".comp-tab-btn").forEach(btn => {
+            btn.addEventListener("click", () => setActiveCompendiumTab(btn.getAttribute("data-comp-tab")));
+        });
+    }
+
+    const searchInput = document.getElementById("input-compendium-search");
+    if (searchInput) {
+        searchInput.addEventListener("input", () => {
+            if (compendiumSearchTimer) clearTimeout(compendiumSearchTimer);
+            compendiumSearchTimer = setTimeout(() => refreshCompendiumResults(), 180);
+        });
+    }
+
+    [
+        "select-compendium-edition",
+        "select-comp-weapon-cat",
+        "select-comp-weapon-mastery",
+        "select-comp-armor-cat",
+        "select-comp-item-cat",
+        "select-comp-item-rarity",
+        "select-comp-spell-class",
+        "select-comp-spell-level"
+    ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", () => refreshCompendiumResults());
+    });
+
+    // 3. Homebrew Lab Controls
+    const hbCatSel = document.getElementById("hb-field-category");
+    if (hbCatSel) hbCatSel.addEventListener("change", () => syncHomebrewFormCategoryVisibility());
+    const hbListFilter = document.getElementById("select-hb-list-filter");
+    if (hbListFilter) hbListFilter.addEventListener("change", () => refreshHomebrewList());
+    const hbNewBtn = document.getElementById("btn-hb-new-entry");
+    if (hbNewBtn) hbNewBtn.addEventListener("click", () => resetHomebrewForm(document.getElementById("hb-field-category")?.value || "weapons"));
+    const hbResetBtn = document.getElementById("btn-hb-reset");
+    if (hbResetBtn) hbResetBtn.addEventListener("click", () => resetHomebrewForm(document.getElementById("hb-field-category")?.value || "weapons"));
+    const hbSaveBtn = document.getElementById("btn-hb-save");
+    if (hbSaveBtn) hbSaveBtn.addEventListener("click", () => saveHomebrewForm());
+});
+
+// =========================================================================
+// Phase 2: Location-Based Merchant Shop & Interactive Short / Long Rest UI
+// =========================================================================
+
+let shopMode = "buy";
+let shopCatalogCache = [];
+let shopSellCache = [];
+let selectedShopEntry = null;
+let shopSearchTimer = null;
+
+function formatPurseFromCharacter(ch) {
+    if (!ch) return "0 gp";
+    const c = ch.currency || ch.native_system_data?.currency || {};
+    const pp = parseInt(c.pp || 0, 10) || 0;
+    const gp = parseInt(c.gp !== undefined ? c.gp : (c.gold || 0), 10) || 0;
+    const ep = parseInt(c.ep || 0, 10) || 0;
+    const sp = parseInt(c.sp || 0, 10) || 0;
+    const cp = parseInt(c.cp || 0, 10) || 0;
+    const parts = [];
+    if (pp) parts.push(`${pp} pp`);
+    if (gp || parts.length === 0) parts.push(`${gp} gp`);
+    if (ep) parts.push(`${ep} ep`);
+    if (sp) parts.push(`${sp} sp`);
+    if (cp) parts.push(`${cp} cp`);
+    return parts.join(", ");
+}
+
+function updateShopMultiplierBadge() {
+    const slider = document.getElementById("input-shop-multiplier");
+    const lbl = document.getElementById("shop-multiplier-label");
+    if (!slider || !lbl) return;
+    const mult = parseFloat(slider.value || "1.0") || 1.0;
+    const pctDiff = Math.round((mult - 1.0) * 100);
+    const activeShop = ttrpgData.state?.active_shop;
+    const storyMult = activeShop?.price_multiplier ? parseFloat(activeShop.price_multiplier) : null;
+    const isStory = storyMult !== null && Math.abs(mult - storyMult) < 0.01;
+
+    let baseText = "";
+    if (pctDiff === 0) {
+        lbl.style.color = "#38bdf8";
+        baseText = "1.00x (Standard)";
+    } else if (pctDiff < 0) {
+        lbl.style.color = "#4ade80";
+        baseText = `${mult.toFixed(2)}x (${pctDiff}% Discount)`;
+    } else {
+        lbl.style.color = "#fb923c";
+        baseText = `${mult.toFixed(2)}x (+${pctDiff}% Markup)`;
+    }
+
+    if (isStory) {
+        lbl.innerHTML = `${baseText} <span class="comp-pill comp-pill-ed" style="font-size:0.65rem; margin-left:4px; vertical-align:middle;">🎭 Story Rate</span>`;
+    } else if (storyMult !== null) {
+        lbl.innerHTML = `${baseText} <button type="button" id="btn-reset-story-mult" class="cyber-btn-tiny" style="font-size:10px; margin-left:6px; padding:1px 6px;" title="Reset price multiplier to the rate set by the DM/story">↺ Story (${storyMult.toFixed(2)}x)</button>`;
+        document.getElementById("btn-reset-story-mult")?.addEventListener("click", () => {
+            slider.value = String(storyMult);
+            updateShopMultiplierBadge();
+            refreshShopList();
+        });
+    } else {
+        lbl.textContent = baseText;
+    }
+}
+
+function refreshShopHeroDropdown(preferredName = "") {
+    const sel = document.getElementById("select-shop-character");
+    const badge = document.getElementById("shop-char-wallet-badge");
+    if (!sel) return;
+    const chars = getActivePartyCharsForSelect();
+    const prevVal = preferredName || sel.value || "";
+    if (chars.length === 0) {
+        sel.innerHTML = `<option value="">No party heroes loaded</option>`;
+        if (badge) badge.textContent = "🪙 Purse: 0 gp";
+        return;
+    }
+    sel.innerHTML = chars.map(c => `<option value="${escapeRpHtml(c.name)}">${escapeRpHtml(c.name)} (${escapeRpHtml(c.archetype || "Hero")})</option>`).join("");
+    if (prevVal && chars.some(c => c.name === prevVal)) {
+        sel.value = prevVal;
+    }
+    const chosen = chars.find(c => c.name === sel.value) || chars[0];
+    if (badge) badge.textContent = `🪙 Purse: ${formatPurseFromCharacter(chosen)}`;
+}
+
+function openShopModal(shopData = null) {
+    const modal = document.getElementById("shop-modal");
+    if (!modal) return;
+
+    const activeShop = shopData || ttrpgData.state?.active_shop || null;
+    const titleEl = document.getElementById("shop-modal-title");
+    const subEl = document.getElementById("shop-modal-subtitle");
+    const flavorEl = document.getElementById("shop-banner-flavor");
+    const multEl = document.getElementById("input-shop-multiplier");
+    const specEl = document.getElementById("select-shop-specialty");
+    const magicEl = document.getElementById("chk-shop-include-magic");
+    const edEl = document.getElementById("select-shop-edition");
+    const feedbackEl = document.getElementById("shop-global-feedback");
+    if (feedbackEl) feedbackEl.textContent = "";
+
+    const activeEd = ttrpgData.active_campaign_meta?.ruleset_edition || ttrpgData.state?.ruleset_edition || "2024";
+    if (edEl && (activeEd === "2014" || activeEd === "2024")) edEl.value = activeEd;
+
+    if (activeShop && typeof activeShop === "object") {
+        if (titleEl && activeShop.shop_name) titleEl.textContent = activeShop.shop_name;
+        if (subEl && activeShop.location_name) subEl.textContent = `📍 ${activeShop.location_name} • Rate: ${Number(activeShop.price_multiplier || 1.0).toFixed(2)}x`;
+        if (multEl && activeShop.price_multiplier) multEl.value = String(activeShop.price_multiplier);
+        if (specEl && activeShop.specialty) {
+            const specAlias = { "smith": "weapons_armor", "alchemist": "potions", "outfitter": "gear" };
+            const mappedSpec = specAlias[activeShop.specialty] || activeShop.specialty;
+            const hasOpt = Array.from(specEl.options).some(o => o.value === mappedSpec);
+            if (hasOpt) specEl.value = mappedSpec;
+        }
+        if (magicEl && activeShop.include_magic !== undefined) magicEl.checked = Boolean(activeShop.include_magic);
+        if (flavorEl) {
+            if (activeShop.description) {
+                flavorEl.textContent = `💬 "${activeShop.description}"`;
+                flavorEl.classList.remove("hidden");
+            } else {
+                flavorEl.classList.add("hidden");
+            }
+        }
+    } else {
+        if (titleEl) titleEl.textContent = "Merchant Shop & Quartermaster";
+        if (subEl) subEl.textContent = "Regional Pricing (50%–200%) • Multi-Coin Settlement • Automatic Change";
+        if (flavorEl) flavorEl.classList.add("hidden");
+    }
+
+    updateShopMultiplierBadge();
+    refreshShopHeroDropdown();
+    modal.classList.remove("hidden");
+    setShopMode("buy");
+}
+
+function closeShopModal() {
+    const modal = document.getElementById("shop-modal");
+    if (modal) modal.classList.add("hidden");
+}
+
+function setShopMode(mode) {
+    shopMode = mode === "sell" ? "sell" : "buy";
+    const buyBtn = document.getElementById("btn-shop-mode-buy");
+    const sellBtn = document.getElementById("btn-shop-mode-sell");
+    if (buyBtn) buyBtn.classList.toggle("active", shopMode === "buy");
+    if (sellBtn) sellBtn.classList.toggle("active", shopMode === "sell");
+    selectedShopEntry = null;
+    renderShopDetail(null);
+    refreshShopList();
+}
+
+async function refreshShopList() {
+    const listEl = document.getElementById("shop-items-list");
+    const countEl = document.getElementById("shop-results-count");
+    if (!listEl) return;
+
+    if (shopMode === "sell") {
+        const heroName = document.getElementById("select-shop-character")?.value || "";
+        const hero = getActivePartyCharsForSelect().find(c => c.name === heroName);
+        if (!hero) {
+            listEl.innerHTML = `<div style="padding:18px; color:#64748b; text-align:center;">Select an active hero to sell items.</div>`;
+            if (countEl) countEl.textContent = "0 owned";
+            return;
+        }
+        const query = (document.getElementById("input-shop-search")?.value || "").trim().toLowerCase();
+        const sellEntries = [];
+        (hero.inventory || []).forEach(it => {
+            const nm = typeof it === "string" ? it : (it.name || "");
+            if (!nm) return;
+            const qVal = typeof it === "object" ? (parseInt(it.qty || "1", 10) || 1) : 1;
+            const cat = typeof it === "object" ? (it.category || "Gear") : "Gear";
+            if (!query || nm.toLowerCase().includes(query)) {
+                sellEntries.push({
+                    name: nm,
+                    qty: qVal,
+                    category: cat,
+                    source: "inventory",
+                    notes: typeof it === "object" ? (it.notes || "") : "",
+                    equipped: typeof it === "object" ? Boolean(it.equipped) : false,
+                });
+            }
+        });
+        (hero.weapons || []).forEach(w => {
+            const nm = typeof w === "string" ? w : (w.name || "");
+            if (!nm || nm.toLowerCase() === "unarmed strike" || nm.toLowerCase() === "fists") return;
+            if (!query || nm.toLowerCase().includes(query)) {
+                sellEntries.push({
+                    name: nm,
+                    qty: 1,
+                    category: "Weapon",
+                    source: "weapons",
+                    notes: typeof w === "object" ? `${w.atk_bonus || "+0"} • ${w.damage || ""}` : "",
+                    equipped: true,
+                });
+            }
+        });
+        shopSellCache = sellEntries;
+        if (countEl) countEl.textContent = `${sellEntries.length} owned`;
+        if (sellEntries.length === 0) {
+            listEl.innerHTML = `<div style="padding:20px; text-align:center; color:#64748b; font-size:0.82rem;">No matching gear or weapons to sell.</div>`;
+            return;
+        }
+        listEl.innerHTML = sellEntries.map((ent, i) => {
+            const isSel = selectedShopEntry && selectedShopEntry._sellIdx === i;
+            return `
+                <div class="comp-list-item ${isSel ? "selected" : ""}" data-shop-sell-idx="${i}">
+                    <div class="comp-list-top">
+                        <span class="comp-list-name">${escapeRpHtml(ent.name)}</span>
+                        <span class="shop-price-tag shop-price-standard">Owned: x${ent.qty}</span>
+                    </div>
+                    <div class="comp-list-sub">${escapeRpHtml(ent.category)}${ent.notes ? ` • ${escapeRpHtml(ent.notes)}` : ""}</div>
+                </div>
+            `;
+        }).join("");
+
+        listEl.querySelectorAll("[data-shop-sell-idx]").forEach(row => {
+            row.addEventListener("click", () => {
+                const i = parseInt(row.getAttribute("data-shop-sell-idx"), 10);
+                const ent = shopSellCache[i];
+                if (!ent) return;
+                listEl.querySelectorAll(".comp-list-item").forEach(el => el.classList.remove("selected"));
+                row.classList.add("selected");
+                selectedShopEntry = { ...ent, _sellIdx: i };
+                renderShopDetail(selectedShopEntry);
+            });
+        });
+        return;
+    }
+
+    // BUY MODE
+    const mult = parseFloat(document.getElementById("input-shop-multiplier")?.value || "1.0") || 1.0;
+    const spec = document.getElementById("select-shop-specialty")?.value || "all";
+    const query = (document.getElementById("input-shop-search")?.value || "").trim();
+    const edition = document.getElementById("select-shop-edition")?.value || "2024";
+    const includeMagic = Boolean(document.getElementById("chk-shop-include-magic")?.checked);
+
+    listEl.innerHTML = `<div style="padding:18px; text-align:center; color:#64748b; font-size:0.8rem;">Stocking merchant shelves...</div>`;
+    if (!window.pywebview?.api?.get_merchant_catalog) {
+        listEl.innerHTML = `<div style="padding:18px; color:#f87171;">Shop backend unavailable.</div>`;
+        return;
+    }
+    try {
+        const res = await window.pywebview.api.get_merchant_catalog(spec, query, edition, mult, includeMagic);
+        shopCatalogCache = (res && Array.isArray(res.items)) ? res.items : [];
+        if (countEl) countEl.textContent = `${shopCatalogCache.length} wares`;
+        if (shopCatalogCache.length === 0) {
+            listEl.innerHTML = `<div style="padding:20px; text-align:center; color:#64748b; font-size:0.82rem;">No matching merchant goods found. Try enabling Magic Items or changing Specialty.</div>`;
+            return;
+        }
+        listEl.innerHTML = shopCatalogCache.map((item, i) => {
+            const ctype = item.compendium_type || "items";
+            const isSel = selectedShopEntry && selectedShopEntry.index === item.index && selectedShopEntry.compendium_type === ctype;
+            const priceCls = mult < 0.99 ? "shop-price-discount" : (mult > 1.01 ? "shop-price-markup" : "shop-price-standard");
+            let sub = "";
+            if (ctype === "weapons") sub = `${item.category || "Weapon"} • ${item.damage || ""}`;
+            else if (ctype === "armor") sub = `${item.category || "Armor"} • AC ${item.ac_base ?? 10}${item.dex_bonus ? "+DEX" : ""}`;
+            else sub = `${item.subcategory || item.category || "Gear"}${item.weight ? ` • ${item.weight} lb` : ""}`;
+
+            return `
+                <div class="comp-list-item ${isSel ? "selected" : ""}" data-shop-buy-idx="${i}">
+                    <div class="comp-list-top">
+                        <span class="comp-list-name">${escapeRpHtml(item.name)}</span>
+                        <span class="shop-price-tag ${priceCls}">${escapeRpHtml(item.adjusted_cost_display || item.cost_display || "Free")}</span>
+                    </div>
+                    <div class="comp-list-sub">${escapeRpHtml(sub)}${item.is_magic ? ` • ✨ ${escapeRpHtml(item.rarity || "Magic")}` : ""}</div>
+                </div>
+            `;
+        }).join("");
+
+        listEl.querySelectorAll("[data-shop-buy-idx]").forEach(row => {
+            row.addEventListener("click", () => {
+                const i = parseInt(row.getAttribute("data-shop-buy-idx"), 10);
+                const item = shopCatalogCache[i];
+                if (!item) return;
+                listEl.querySelectorAll(".comp-list-item").forEach(el => el.classList.remove("selected"));
+                row.classList.add("selected");
+                selectedShopEntry = item;
+                renderShopDetail(item);
+            });
+        });
+
+        if (selectedShopEntry && shopMode === "buy") {
+            const refreshedSel = shopCatalogCache.find(it => it.index === selectedShopEntry.index && (it.compendium_type || "items") === (selectedShopEntry.compendium_type || "items"));
+            if (refreshedSel) {
+                selectedShopEntry = refreshedSel;
+                renderShopDetail(refreshedSel);
+            }
+        }
+    } catch (e) {
+        console.error("[Shop] Catalog error:", e);
+        listEl.innerHTML = `<div style="padding:18px; color:#f87171;">Error loading catalog: ${escapeRpHtml(e.message)}</div>`;
+    }
+}
+
+function renderShopDetail(item) {
+    const pane = document.getElementById("shop-detail-pane");
+    if (!pane) return;
+    if (!item) {
+        pane.innerHTML = `
+            <div class="comp-detail-empty">
+                <span style="font-size: 2rem;">🏪</span>
+                <p>Select any item, weapon, armor, or pack on the left to inspect its local price and complete a transaction.</p>
+            </div>
+        `;
+        return;
+    }
+
+    const heroName = document.getElementById("select-shop-character")?.value || "";
+    const mult = parseFloat(document.getElementById("input-shop-multiplier")?.value || "1.0") || 1.0;
+
+    if (shopMode === "sell") {
+        const maxQty = Math.max(1, item.qty || 1);
+        pane.innerHTML = `
+            <div class="comp-detail-card-head">
+                <h4>Sell: ${escapeRpHtml(item.name)}</h4>
+                <div class="comp-badges-row">
+                    <span class="comp-pill comp-pill-ed">${escapeRpHtml(item.category || "Gear")}</span>
+                    <span class="comp-pill comp-pill-magic">Owned: x${maxQty}</span>
+                </div>
+            </div>
+            <div class="comp-desc-box">Selling back to a merchant typically yields <strong>50% of base value</strong> (${escapeRpHtml(item.notes || "Standard equipment")}).</div>
+            <div class="comp-grant-box">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                    <label style="font-size:0.78rem; color:#cbd5e1;">Qty to Sell:
+                        <input type="number" id="input-shop-sell-qty" class="modal-input" min="1" max="${maxQty}" value="1" style="width:72px; padding:4px 6px;" />
+                    </label>
+                    <label style="font-size:0.78rem; color:#cbd5e1;">Sell Rate:
+                        <select id="select-shop-sell-rate" class="modal-input" style="width:130px; padding:4px 6px;">
+                            <option value="0.5" selected>50% (Standard)</option>
+                            <option value="0.25">25% (Desperate)</option>
+                            <option value="0.75">75% (High Haggling)</option>
+                            <option value="1.0">100% (Full Trade)</option>
+                        </select>
+                    </label>
+                </div>
+                <button type="button" id="btn-shop-execute-tx" class="btn-primary-sm" style="padding: 8px 16px;" ${!heroName ? "disabled" : ""}>🪙 Sell Selected Gear</button>
+                <span id="shop-tx-feedback" style="font-size:0.76rem; color:#4ade80;"></span>
+            </div>
+        `;
+        document.getElementById("btn-shop-execute-tx")?.addEventListener("click", () => executeShopSell(item));
+        return;
+    }
+
+    const ctype = item.compendium_type || "items";
+    const stats = [
+        ["Category", item.subcategory || item.category || ctype],
+        ["Local Price", item.adjusted_cost_display || "Free"],
+        ["Base Value", item.base_cost_display || "0 gp"],
+        ["Weight", `${item.weight || 0} lb`],
+    ];
+    if (ctype === "weapons") stats.push(["Damage", item.damage || "Special"]);
+    if (ctype === "armor") stats.push(["AC", `${item.ac_base ?? 10}${item.dex_bonus ? "+DEX" : ""}`]);
+
+    const packContents = item.contents || [];
+    const hasPack = Array.isArray(packContents) && packContents.length > 0;
+    const descParts = [];
+    if (item.description) descParts.push(item.description);
+    if (hasPack) descParts.push("Pack Contents:\n" + packContents.map(p => `• ${p.quantity || 1}x ${p.name}`).join("\n"));
+
+    pane.innerHTML = `
+        <div class="comp-detail-card-head">
+            <h4>${escapeRpHtml(item.name)}</h4>
+            <div class="comp-badges-row">
+                <span class="comp-pill comp-pill-ed">${escapeRpHtml(ctype.toUpperCase())}</span>
+                <span class="comp-pill comp-pill-magic">${escapeRpHtml(item.adjusted_cost_display || "Free")} (${mult.toFixed(2)}x)</span>
+                ${item.mastery ? `<span class="comp-pill comp-pill-mastery">Mastery: ${escapeRpHtml(item.mastery)}</span>` : ""}
+            </div>
+        </div>
+        <div class="comp-stat-grid">
+            ${stats.map(([l, v]) => `<div class="comp-stat-cell"><strong>${escapeRpHtml(l)}</strong><span>${escapeRpHtml(String(v))}</span></div>`).join("")}
+        </div>
+        <div class="comp-desc-box">${escapeRpHtml(descParts.join("\n\n") || "Standard PHB / SRD equipment.")}</div>
+        <div class="comp-grant-box">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:0.78rem; color:#cbd5e1;">
+                <label style="display:flex; align-items:center; gap:5px;">Qty:
+                    <input type="number" id="input-shop-buy-qty" class="modal-input" min="1" value="1" style="width:70px; padding:4px 6px;" />
+                </label>
+                ${hasPack ? `<label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="chk-shop-expand-pack" checked /> Unpack into inventory items</label>` : ""}
+                ${ctype === "armor" ? `<label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="chk-shop-equip-armor" checked /> Equip immediately &amp; update AC</label>` : ""}
+            </div>
+            <button type="button" id="btn-shop-execute-tx" class="btn-primary-sm" style="padding: 8px 16px;" ${!heroName ? "disabled" : ""}>
+                🛒 Purchase ${escapeRpHtml(item.name)} (${escapeRpHtml(item.adjusted_cost_display || "0 cp")})
+            </button>
+            <span id="shop-tx-feedback" style="font-size:0.76rem; color:#4ade80;"></span>
+        </div>
+    `;
+    document.getElementById("btn-shop-execute-tx")?.addEventListener("click", () => executeShopPurchase(item));
+}
+
+async function executeShopPurchase(item) {
+    const heroName = document.getElementById("select-shop-character")?.value || "";
+    if (!heroName || !window.pywebview?.api?.purchase_merchant_item) return;
+
+    const mult = parseFloat(document.getElementById("input-shop-multiplier")?.value || "1.0") || 1.0;
+    const ed = document.getElementById("select-shop-edition")?.value || "2024";
+    const qty = Math.max(1, parseInt(document.getElementById("input-shop-buy-qty")?.value || "1", 10) || 1);
+    const expandPack = document.getElementById("chk-shop-expand-pack")?.checked ?? true;
+    const equip = document.getElementById("chk-shop-equip-armor")?.checked ?? false;
+    const fb = document.getElementById("shop-tx-feedback");
+    const globalFb = document.getElementById("shop-global-feedback");
+
+    try {
+        const res = await window.pywebview.api.purchase_merchant_item(
+            heroName,
+            item.compendium_type || "items",
+            item.index || item.name,
+            qty,
+            mult,
+            Boolean(expandPack),
+            ed,
+            Boolean(equip)
+        );
+        if (res && res.status === "success") {
+            if (fb) { fb.style.color = "#4ade80"; fb.textContent = res.message; }
+            if (globalFb) { globalFb.style.color = "#4ade80"; globalFb.textContent = res.message; }
+            await loadRolePlayUI(true);
+            refreshShopHeroDropdown(heroName);
+        } else {
+            const msg = res?.message || "Purchase failed.";
+            if (fb) { fb.style.color = "#f87171"; fb.textContent = msg; }
+            if (globalFb) { globalFb.style.color = "#f87171"; globalFb.textContent = msg; }
+        }
+    } catch (e) {
+        if (fb) { fb.style.color = "#f87171"; fb.textContent = e.message; }
+    }
+}
+
+async function executeShopSell(item) {
+    const heroName = document.getElementById("select-shop-character")?.value || "";
+    if (!heroName || !window.pywebview?.api?.sell_merchant_item) return;
+
+    const qty = Math.max(1, parseInt(document.getElementById("input-shop-sell-qty")?.value || "1", 10) || 1);
+    const rate = parseFloat(document.getElementById("select-shop-sell-rate")?.value || "0.5") || 0.5;
+    const fb = document.getElementById("shop-tx-feedback");
+    const globalFb = document.getElementById("shop-global-feedback");
+
+    try {
+        const res = await window.pywebview.api.sell_merchant_item(
+            heroName,
+            item.name,
+            rate,
+            qty,
+            item.source || "auto",
+            null
+        );
+        if (res && res.status === "success") {
+            if (fb) { fb.style.color = "#4ade80"; fb.textContent = res.message; }
+            if (globalFb) { globalFb.style.color = "#4ade80"; globalFb.textContent = res.message; }
+            await loadRolePlayUI(true);
+            refreshShopHeroDropdown(heroName);
+            selectedShopEntry = null;
+            refreshShopList();
+        } else {
+            const msg = res?.message || "Sale failed.";
+            if (fb) { fb.style.color = "#f87171"; fb.textContent = msg; }
+            if (globalFb) { globalFb.style.color = "#f87171"; globalFb.textContent = msg; }
+        }
+    } catch (e) {
+        if (fb) { fb.style.color = "#f87171"; fb.textContent = e.message; }
+    }
+}
+
+window.handleRoleplayShopOpened = function(shopData) {
+    openShopModal(shopData || null);
+};
+
+// --- Interactive Short / Long Rest Modal Controller ---
+
+let restModalData = null;
+let restDraftByChar = {};
+let activeRestHeroId = null;
+let activeRestType = "short";
+let restSpellSearch = "";
+let restSpellLevelFilter = "";
+
+function getActiveRestHero() {
+    if (!restModalData || !Array.isArray(restModalData.characters) || restModalData.characters.length === 0) return null;
+    return restModalData.characters.find(c => c.id === activeRestHeroId) || restModalData.characters[0];
+}
+
+function initRestDraftState(data) {
+    restDraftByChar = {};
+    (data?.characters || []).forEach(ch => {
+        const prepNames = [];
+        (ch.spellcasting?.current_spells || []).forEach(sp => {
+            if (!sp.is_cantrip && sp.prepared) prepNames.push(sp.name);
+        });
+        restDraftByChar[ch.id] = {
+            hit_dice_to_spend: 0,
+            manual_hp_gain: 0,
+            consumables_used: {},
+            equipped_armor: ch.armor_equipped || "",
+            shield_equipped: Boolean(ch.shield_equipped),
+            attuned_items: Array.isArray(ch.attuned_items) ? [...ch.attuned_items] : [],
+            prepared_spell_names: prepNames,
+        };
+    });
+}
+
+function computeRestProjectedAC(ch, draft) {
+    const dexMod = Number(ch.dex_mod || 0);
+    const armName = (draft.equipped_armor || "").trim();
+    const shieldAdd = draft.shield_equipped ? 2 : 0;
+    if (!armName || armName.toLowerCase() === "unarmored") {
+        return { ac: 10 + dexMod + shieldAdd, warnings: [] };
+    }
+    const armRef = (ch.owned_armor || []).find(a => a.name.toLowerCase() === armName.toLowerCase());
+    if (!armRef) {
+        return { ac: Number(ch.armor_class || 10), warnings: [] };
+    }
+    const baseAc = Number(armRef.ac_base || 10) + Number(armRef.ac_bonus || 0);
+    let appliedDex = 0;
+    if (armRef.dex_bonus) {
+        appliedDex = armRef.max_dex_bonus != null ? Math.min(dexMod, Number(armRef.max_dex_bonus)) : dexMod;
+    }
+    const warnings = [];
+    if (armRef.str_minimum && Number(ch.str_score || 10) < Number(armRef.str_minimum)) {
+        warnings.push(`Requires STR ${armRef.str_minimum}`);
+    }
+    if (armRef.stealth_disadvantage) {
+        warnings.push("Stealth Disadvantage");
+    }
+    return { ac: baseAc + appliedDex + shieldAdd, warnings };
+}
+
+function updateRestTypeButtonsUI() {
+    const isLong = (activeRestType === "long");
+    document.getElementById("btn-rest-type-short")?.classList.toggle("active", !isLong);
+    document.getElementById("btn-rest-type-long")?.classList.toggle("active", isLong);
+    const commitBtn = document.getElementById("btn-commit-rest");
+    if (commitBtn) {
+        commitBtn.textContent = isLong ? "🌙 Complete Long Rest" : "⛺ Complete Short Rest";
+    }
+}
+
+async function openRestModal(options = {}) {
+    const modal = document.getElementById("rest-modal");
+    if (!modal) return;
+
+    activeRestType = (options.rest_type === "long") ? "long" : "short";
+    const edSel = document.getElementById("select-rest-edition");
+    const defaultEd = options.edition || ttrpgData.active_campaign_meta?.ruleset_edition || ttrpgData.state?.ruleset_edition || "2024";
+    if (edSel && (defaultEd === "2014" || defaultEd === "2024")) edSel.value = defaultEd;
+
+    const reasonEl = document.getElementById("rest-reason-banner");
+    if (reasonEl) {
+        if (options.reason) {
+            reasonEl.textContent = `🏕️ ${options.reason}`;
+            reasonEl.classList.remove("hidden");
+        } else {
+            reasonEl.classList.add("hidden");
+        }
+    }
+    const fb = document.getElementById("rest-feedback");
+    if (fb) fb.textContent = "";
+
+    updateRestTypeButtonsUI();
+    modal.classList.remove("hidden");
+    await reloadRestModalState();
+}
+
+function closeRestModal() {
+    const modal = document.getElementById("rest-modal");
+    if (modal) modal.classList.add("hidden");
+}
+
+async function reloadRestModalState() {
+    const bodyEl = document.getElementById("rest-hero-body");
+    const ed = document.getElementById("select-rest-edition")?.value || "2024";
+    if (!window.pywebview?.api?.get_rest_modal_state) {
+        if (bodyEl) bodyEl.innerHTML = `<div style="padding:20px; color:#f87171;">Rest backend unavailable.</div>`;
+        return;
+    }
+    try {
+        const res = await window.pywebview.api.get_rest_modal_state(activeRestType, ed);
+        if (!res || res.status !== "success") {
+            if (bodyEl) bodyEl.innerHTML = `<div style="padding:20px; color:#f87171;">${escapeRpHtml(res?.message || "Failed loading rest state.")}</div>`;
+            return;
+        }
+        restModalData = res;
+        initRestDraftState(res);
+        const pill = document.getElementById("rest-dice-mode-pill");
+        if (pill) {
+            pill.textContent = res.dice_mode === "physical" ? "🎲 Physical Tabletop Dice" : "⚡ Digital Dice Auto-Roll";
+        }
+        activeRestHeroId = res.characters[0]?.id || null;
+        renderRestHeroTabs();
+        renderRestHeroWorkspace();
+    } catch (e) {
+        if (bodyEl) bodyEl.innerHTML = `<div style="padding:20px; color:#f87171;">${escapeRpHtml(e.message)}</div>`;
+    }
+}
+
+function renderRestHeroTabs() {
+    const tabsEl = document.getElementById("rest-hero-tabs");
+    if (!tabsEl) return;
+    const chars = restModalData?.characters || [];
+    if (chars.length === 0) {
+        tabsEl.innerHTML = "";
+        return;
+    }
+    tabsEl.innerHTML = chars.map(ch => `
+        <button type="button" class="comp-tab-btn ${ch.id === activeRestHeroId ? "active" : ""}" data-rest-hero-id="${escapeRpHtml(ch.id)}">
+            ${escapeRpHtml(ch.name)} <span style="font-size:0.68rem; opacity:0.8;">(${ch.hp.current}/${ch.hp.max} HP)</span>
+        </button>
+    `).join("");
+    tabsEl.querySelectorAll("[data-rest-hero-id]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            activeRestHeroId = btn.getAttribute("data-rest-hero-id");
+            renderRestHeroTabs();
+            renderRestHeroWorkspace();
+        });
+    });
+}
+
+function renderRestHeroWorkspace() {
+    const bodyEl = document.getElementById("rest-hero-body");
+    if (!bodyEl) return;
+    const ch = getActiveRestHero();
+    if (!ch) {
+        bodyEl.innerHTML = `<div style="padding:24px; text-align:center; color:#64748b;">No characters in the active party roster.</div>`;
+        return;
+    }
+    const draft = restDraftByChar[ch.id] || {};
+    const isLong = (activeRestType === "long");
+    const isPhysical = (restModalData?.dice_mode === "physical");
+    const ed = document.getElementById("select-rest-edition")?.value || "2024";
+
+    const acInfo = computeRestProjectedAC(ch, draft);
+    const conSign = ch.hit_dice.con_mod >= 0 ? `+${ch.hit_dice.con_mod}` : `${ch.hit_dice.con_mod}`;
+
+    // 1. Hit Dice / HP Card
+    const hdHtml = isLong ? `
+        <div class="comp-desc-box" style="border-color:rgba(74,222,128,0.35);">
+            <strong>🌙 Long Rest Recovery:</strong> Restores HP to <strong>${ch.hp.max}/${ch.hp.max}</strong>, refills all spell slots, resets short &amp; long rest features, and recovers <strong>${ed === "2024" ? "all spent Hit Dice" : `up to ${Math.max(1, Math.floor(ch.hit_dice.max / 2))} Hit Dice`}</strong>.
+        </div>
+    ` : `
+        <div class="rest-item-row">
+            <div>
+                <strong>Spend Hit Dice</strong>
+                <div style="font-size:0.7rem; color:#94a3b8;">Available: ${ch.hit_dice.current}/${ch.hit_dice.max} (${escapeRpHtml(ch.hit_dice.die_str)} ${conSign} CON per die)</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px;">
+                <input type="number" id="rest-hd-spend-input" class="modal-input" min="0" max="${ch.hit_dice.current}" value="${draft.hit_dice_to_spend || 0}" style="width:68px; padding:4px 6px;" ${ch.hit_dice.current <= 0 ? "disabled" : ""} />
+            </div>
+        </div>
+        ${isPhysical ? `
+            <div class="rest-item-row">
+                <div><strong>Physical Dice HP Gained</strong><div style="font-size:0.7rem; color:#94a3b8;">Roll your physical dice + ${conSign} CON</div></div>
+                <input type="number" id="rest-manual-hp-input" class="modal-input" min="0" value="${draft.manual_hp_gain || 0}" style="width:82px; padding:4px 6px;" />
+            </div>
+        ` : `<div style="font-size:0.72rem; color:#94a3b8;">⚡ Digital dice will automatically roll ${escapeRpHtml(ch.hit_dice.die_str)} ${conSign} per Hit Die spent.</div>`}
+    `;
+
+    // 2. Consumables Card
+    const consList = ch.consumables || [];
+    const consHtml = consList.length > 0 ? consList.map((c, idx) => {
+        const useCnt = draft.consumables_used[c.name] || 0;
+        return `
+            <div class="rest-item-row">
+                <div>
+                    <strong>${escapeRpHtml(c.name)}</strong> <span style="color:#94a3b8;">(x${c.qty})</span>
+                    ${c.heal_formula ? `<span class="comp-pill comp-pill-ed" style="margin-left:4px;">+${escapeRpHtml(c.heal_formula)} HP</span>` : ""}
+                </div>
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <span style="font-size:0.7rem; color:#94a3b8;">Use:</span>
+                    <input type="number" class="modal-input rest-cons-qty-input" data-cons-idx="${idx}" min="0" max="${c.qty}" value="${useCnt}" style="width:60px; padding:3px 6px;" />
+                </div>
+            </div>
+        `;
+    }).join("") : `<div style="font-size:0.76rem; color:#64748b; font-style:italic;">No potions, rations, or consumables in inventory.</div>`;
+
+    // 3. Equipment & Attunement Card
+    const armorOptions = [`<option value="">Unarmored (10 + DEX)</option>`].concat(
+        (ch.owned_armor || []).map(a => `<option value="${escapeRpHtml(a.name)}" ${(draft.equipped_armor || "").toLowerCase() === a.name.toLowerCase() ? "selected" : ""}>${escapeRpHtml(a.name)} (AC ${a.ac_base}${a.dex_bonus ? "+DEX" : ""})</option>`)
+    ).join("");
+    const hasShieldInBag = (ch.owned_shields || []).length > 0 || ch.shield_equipped;
+
+    const attList = ch.attunable_items || [];
+    const attHtml = attList.length > 0 ? attList.map((att, idx) => {
+        const checked = (draft.attuned_items || []).some(n => n.toLowerCase() === att.name.toLowerCase());
+        return `
+            <label class="rest-item-row" style="cursor:pointer;">
+                <span style="display:flex; align-items:center; gap:7px;">
+                    <input type="checkbox" class="rest-attune-chk" data-att-idx="${idx}" ${checked ? "checked" : ""} />
+                    <strong>${escapeRpHtml(att.name)}</strong>
+                </span>
+                <span class="comp-pill comp-pill-magic">${escapeRpHtml(att.rarity || "Magic")}</span>
+            </label>
+        `;
+    }).join("") : `<div style="font-size:0.74rem; color:#64748b; font-style:italic;">No magic items requiring attunement in inventory.</div>`;
+
+    // 4. Spell Preparation Card
+    const sc = ch.spellcasting || {};
+    let spellsSectionHtml = "";
+    if (sc.is_caster) {
+        const prepSet = new Set((draft.prepared_spell_names || []).map(s => s.toLowerCase()));
+        const alwaysPreparedCountedOut = new Set(
+            (sc.current_spells || []).filter(s => s.is_cantrip || s.is_always_prepared).map(s => s.name.toLowerCase())
+        );
+
+        // Merge current_spells + eligible_class_spells seamlessly
+        const mergedSpellsMap = new Map();
+        (sc.current_spells || []).forEach(s => {
+            mergedSpellsMap.set(s.name.toLowerCase(), { ...s, on_sheet: true });
+        });
+        if (sc.can_swap_from_class_list && Array.isArray(sc.eligible_class_spells)) {
+            sc.eligible_class_spells.forEach(s => {
+                const k = s.name.toLowerCase();
+                if (!mergedSpellsMap.has(k)) {
+                    mergedSpellsMap.set(k, { ...s, is_cantrip: false, is_always_prepared: false, on_sheet: false });
+                }
+            });
+        }
+        const allCandidateSpells = Array.from(mergedSpellsMap.values()).sort((a, b) => (a.level - b.level) || a.name.localeCompare(b.name));
+        const filteredSpells = allCandidateSpells.filter(s => {
+            if (restSpellSearch && !s.name.toLowerCase().includes(restSpellSearch.toLowerCase())) return false;
+            if (restSpellLevelFilter !== "" && Number(s.level) !== parseInt(restSpellLevelFilter, 10)) return false;
+            return true;
+        });
+
+        const preparedLeveledCount = (draft.prepared_spell_names || []).filter(n => !alwaysPreparedCountedOut.has(n.toLowerCase())).length;
+        const maxPrep = Number(sc.max_prepared_leveled_spells || 1);
+        const capColor = preparedLeveledCount > maxPrep ? "#f87171" : "#4ade80";
+
+        const maxSlotLvl = Math.max(1, Number(sc.max_slot_level || 1));
+        const lvlOpts = [`<option value="">All Levels</option>`, `<option value="0" ${restSpellLevelFilter === "0" ? "selected" : ""}>Cantrips</option>`];
+        for (let l = 1; l <= maxSlotLvl; l++) {
+            lvlOpts.push(`<option value="${l}" ${restSpellLevelFilter === String(l) ? "selected" : ""}>Level ${l}</option>`);
+        }
+
+        spellsSectionHtml = `
+            <div class="rest-section-card">
+                <div class="rest-section-title">
+                    <span>✨ Spells &amp; Preparation (${escapeRpHtml(sc.primary_class || "Caster")} • ${escapeRpHtml(ed)} Rules)</span>
+                    <span id="rest-spell-cap-badge" style="color:${capColor};">${preparedLeveledCount} / ${maxPrep} Prepared</span>
+                </div>
+                <div style="font-size:0.74rem; color:#94a3b8;">
+                    ${isLong
+                        ? (sc.can_swap_from_class_list ? `Your ${escapeRpHtml(sc.primary_class)} knows their full class list—check up to ${maxPrep} leveled spells to prepare today.` : `Toggle prepared leveled spells from your spellbook/sheet.`)
+                        : `Short Rest: Pact slots recharge automatically. (Tip: Switch to Long Rest to re-prepare daily spells!)`}
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    <input type="text" id="input-rest-spell-search" class="modal-input comp-search-input" value="${escapeRpHtml(restSpellSearch)}" placeholder="Filter spells (e.g. Bless, Cure Wounds, Fireball)..." />
+                    <select id="select-rest-spell-level" class="modal-input comp-select">${lvlOpts.join("")}</select>
+                </div>
+                <div class="rest-spell-grid" id="rest-spell-grid">
+                    ${filteredSpells.map((sp) => {
+                        const isLocked = Boolean(sp.is_cantrip || sp.is_always_prepared);
+                        const isChecked = isLocked || prepSet.has(sp.name.toLowerCase());
+                        const lvlTxt = sp.is_cantrip ? "Cantrip" : `L${sp.level}`;
+                        return `
+                            <label class="rest-spell-card ${isChecked ? "prepared" : ""} ${isLocked ? "locked" : ""}">
+                                <input type="checkbox" class="rest-spell-chk" data-spell-name="${escapeRpHtml(sp.name)}" ${isChecked ? "checked" : ""} ${isLocked ? "disabled" : ""} />
+                                <div style="min-width:0;">
+                                    <div style="font-weight:700; color:#f1f5f9;">${escapeRpHtml(sp.name)}</div>
+                                    <div style="font-size:0.68rem; color:#94a3b8;">${lvlTxt} ${escapeRpHtml(sp.school || "")}${sp.is_cantrip ? " • At-Will" : (sp.is_always_prepared ? " • Always Prepared" : "")}</div>
+                                </div>
+                            </label>
+                        `;
+                    }).join("") || `<div style="color:#64748b; font-size:0.78rem; padding:10px;">No spells match filter.</div>`}
+                </div>
+            </div>
+        `;
+    }
+
+    bodyEl.innerHTML = `
+        <div class="rest-grid-2">
+            <div class="rest-section-card">
+                <div class="rest-section-title">
+                    <span>❤️ Vitals &amp; Hit Dice</span>
+                    <span style="color:#f1f5f9;">${ch.hp.current} / ${ch.hp.max} HP</span>
+                </div>
+                ${hdHtml}
+                ${(ch.expendable_meters || []).length > 0 ? `
+                    <div style="margin-top:4px; font-size:0.72rem; color:#94a3b8;">
+                        <strong>Class Pools:</strong>
+                        ${(ch.expendable_meters || []).map(m => `${escapeRpHtml(m.label)}: ${m.current}/${m.max} (${escapeRpHtml(m.reset_on)})`).join(" • ")}
+                    </div>
+                ` : ""}
+            </div>
+
+            <div class="rest-section-card">
+                <div class="rest-section-title"><span>🧪 Consumables &amp; Potions</span></div>
+                ${consHtml}
+            </div>
+        </div>
+
+        <div class="rest-grid-2">
+            <div class="rest-section-card">
+                <div class="rest-section-title">
+                    <span>🛡️ Armor &amp; Shield Swap</span>
+                    <span id="rest-projected-ac-badge" class="comp-pill comp-pill-ed">Projected AC: ${acInfo.ac}</span>
+                </div>
+                <div>
+                    <label class="modal-label">Body Armor</label>
+                    <select id="select-rest-armor" class="modal-input">${armorOptions}</select>
+                </div>
+                <label style="display:flex; align-items:center; gap:7px; font-size:0.78rem; color:#cbd5e1; cursor:pointer;">
+                    <input type="checkbox" id="chk-rest-shield" ${draft.shield_equipped ? "checked" : ""} ${!hasShieldInBag ? "disabled" : ""} />
+                    Equip Shield (+2 AC)${!hasShieldInBag ? " (none in inventory)" : ""}
+                </label>
+                ${acInfo.warnings.length ? `<div style="font-size:0.72rem; color:#fbbf24;">⚠️ ${escapeRpHtml(acInfo.warnings.join(" • "))}</div>` : ""}
+            </div>
+
+            <div class="rest-section-card">
+                <div class="rest-section-title">
+                    <span>🔗 Magic Item Attunement</span>
+                    <span id="rest-attune-count-badge" style="color:${(draft.attuned_items || []).length > 3 ? "#f87171" : "#38bdf8"};">${(draft.attuned_items || []).length} / 3 Attuned</span>
+                </div>
+                ${attHtml}
+            </div>
+        </div>
+
+        ${spellsSectionHtml}
+    `;
+
+    // Wire dynamic hero controls
+    document.getElementById("rest-hd-spend-input")?.addEventListener("input", (e) => {
+        const val = Math.max(0, Math.min(ch.hit_dice.current, parseInt(e.target.value || "0", 10) || 0));
+        draft.hit_dice_to_spend = val;
+    });
+    document.getElementById("rest-manual-hp-input")?.addEventListener("input", (e) => {
+        draft.manual_hp_gain = Math.max(0, parseInt(e.target.value || "0", 10) || 0);
+    });
+    bodyEl.querySelectorAll(".rest-cons-qty-input").forEach(inp => {
+        inp.addEventListener("input", () => {
+            const idx = parseInt(inp.getAttribute("data-cons-idx"), 10);
+            const consItem = (ch.consumables || [])[idx];
+            if (!consItem) return;
+            const qty = Math.max(0, Math.min(consItem.qty, parseInt(inp.value || "0", 10) || 0));
+            if (qty > 0) draft.consumables_used[consItem.name] = qty;
+            else delete draft.consumables_used[consItem.name];
+        });
+    });
+    document.getElementById("select-rest-armor")?.addEventListener("change", (e) => {
+        draft.equipped_armor = e.target.value || "";
+        renderRestHeroWorkspace();
+    });
+    document.getElementById("chk-rest-shield")?.addEventListener("change", (e) => {
+        draft.shield_equipped = Boolean(e.target.checked);
+        renderRestHeroWorkspace();
+    });
+    bodyEl.querySelectorAll(".rest-attune-chk").forEach(chk => {
+        chk.addEventListener("change", () => {
+            const idx = parseInt(chk.getAttribute("data-att-idx"), 10);
+            const attItem = (ch.attunable_items || [])[idx];
+            if (!attItem) return;
+            const cur = draft.attuned_items || [];
+            if (chk.checked) {
+                if (cur.length >= 3) {
+                    chk.checked = false;
+                    const fb = document.getElementById("rest-feedback");
+                    if (fb) { fb.style.color = "#f87171"; fb.textContent = `${ch.name} can only attune to 3 magic items! Uncheck one first.`; }
+                    return;
+                }
+                if (!cur.some(n => n.toLowerCase() === attItem.name.toLowerCase())) {
+                    cur.push(attItem.name);
+                }
+            } else {
+                draft.attuned_items = cur.filter(n => n.toLowerCase() !== attItem.name.toLowerCase());
+            }
+            renderRestHeroWorkspace();
+        });
+    });
+    document.getElementById("input-rest-spell-search")?.addEventListener("input", (e) => {
+        restSpellSearch = e.target.value || "";
+        renderRestHeroWorkspace();
+        const searchEl = document.getElementById("input-rest-spell-search");
+        if (searchEl) {
+            searchEl.focus();
+            searchEl.setSelectionRange(restSpellSearch.length, restSpellSearch.length);
+        }
+    });
+    document.getElementById("select-rest-spell-level")?.addEventListener("change", (e) => {
+        restSpellLevelFilter = e.target.value || "";
+        renderRestHeroWorkspace();
+    });
+    bodyEl.querySelectorAll(".rest-spell-chk").forEach(chk => {
+        chk.addEventListener("change", () => {
+            const spName = chk.getAttribute("data-spell-name");
+            if (!spName) return;
+            const list = draft.prepared_spell_names || [];
+            if (chk.checked) {
+                if (!list.some(n => n.toLowerCase() === spName.toLowerCase())) {
+                    list.push(spName);
+                }
+            } else {
+                draft.prepared_spell_names = list.filter(n => n.toLowerCase() !== spName.toLowerCase());
+            }
+            renderRestHeroWorkspace();
+        });
+    });
+}
+
+async function commitInteractiveRestFromModal() {
+    const fb = document.getElementById("rest-feedback");
+    if (!window.pywebview?.api?.commit_party_rest) {
+        if (fb) fb.textContent = "Rest backend unavailable.";
+        return;
+    }
+
+    const ed = document.getElementById("select-rest-edition")?.value || "2024";
+    const charactersPayload = {};
+    Object.entries(restDraftByChar).forEach(([cid, d]) => {
+        const consArr = Object.entries(d.consumables_used || {})
+            .filter(([, q]) => q > 0)
+            .map(([name, qty]) => ({ name, qty }));
+        charactersPayload[cid] = {
+            hit_dice_to_spend: d.hit_dice_to_spend || 0,
+            manual_hp_gain: d.manual_hp_gain || 0,
+            consumables_used: consArr,
+            equipped_armor: d.equipped_armor || "",
+            shield_equipped: Boolean(d.shield_equipped),
+            attuned_items: d.attuned_items || [],
+            prepared_spell_names: d.prepared_spell_names || [],
+        };
+    });
+
+    try {
+        const res = await window.pywebview.api.commit_party_rest({
+            rest_type: activeRestType,
+            dice_mode: restModalData?.dice_mode || "digital",
+            edition: ed,
+            characters: charactersPayload,
+        });
+        if (res && res.status === "success") {
+            closeRestModal();
+            await loadRolePlayUI(true);
+            if (typeof renderRolePlayStoryBubble === "function") {
+                renderRolePlayStoryBubble({ type: "system", content: `⛺ ${res.summary}` });
+            }
+        } else if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = res?.message || "Failed applying rest.";
+        }
+    } catch (e) {
+        if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = e.message;
+        }
+    }
+}
+
+window.handleRoleplayRestOpened = function(data) {
+    openRestModal(data || {});
+};
+
+// ============================================================================
+// Phase 3: Guided Level-Up & Multiclass Wizard (2014 & 2024 D&D 5e + Non-D&D)
+// ============================================================================
+const LEVELUP_ABIL_ORDER = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
+const LEVELUP_ABIL_LABELS = {
+    STR: "Strength",
+    DEX: "Dexterity",
+    CON: "Constitution",
+    INT: "Intelligence",
+    WIS: "Wisdom",
+    CHA: "Charisma",
+};
+
+let levelUpModalState = null;
+let levelUpPreviewData = null;
+
+function _formatModifier(score) {
+    const mod = Math.floor(((Number(score) || 10) - 10) / 2);
+    return mod >= 0 ? `+${mod}` : `${mod}`;
+}
+
+function _computeProjectedWizardStats(preview) {
+    const base = { ...(preview?.ability_scores || {}) };
+    LEVELUP_ABIL_ORDER.forEach(ab => {
+        if (base[ab] === undefined) base[ab] = 10;
+    });
+    const st = levelUpModalState || {};
+    const asiApplied = {};
+    let featObj = null;
+
+    if (preview?.is_asi_level) {
+        if (st.asiMode === "asi2") {
+            const ab = st.asiMain || "STR";
+            const capped = Math.min(20, (base[ab] || 10) + 2);
+            const delta = capped - (base[ab] || 10);
+            if (delta > 0) asiApplied[ab] = delta;
+            base[ab] = capped;
+        } else if (st.asiMode === "asi11") {
+            const a = st.asiA || "STR";
+            const b = st.asiB || "DEX";
+            if (a === b) {
+                const capped = Math.min(20, (base[a] || 10) + 2);
+                const delta = capped - (base[a] || 10);
+                if (delta > 0) asiApplied[a] = delta;
+                base[a] = capped;
+            } else {
+                const capA = Math.min(20, (base[a] || 10) + 1);
+                const capB = Math.min(20, (base[b] || 10) + 1);
+                if (capA > base[a]) asiApplied[a] = capA - base[a];
+                if (capB > base[b]) asiApplied[b] = capB - base[b];
+                base[a] = capA;
+                base[b] = capB;
+            }
+        } else if (st.asiMode === "feat") {
+            featObj = (preview.feats_available || []).find(f => f.name === st.selectedFeat) || null;
+            if (featObj) {
+                const isHalfIn2014Only2024 = (
+                    featObj.type === "half_feat"
+                    && preview.edition === "2014"
+                    && featObj.name !== "Resilient"
+                );
+                const bonusAmt = isHalfIn2014Only2024 ? 0 : (Number(featObj.ability_increase) || 0);
+                const choices = featObj.ability_choices || [];
+                const cap = (featObj.cap || (featObj.type === "epic_boon" ? 30 : 20));
+                if (bonusAmt > 0 && choices.length > 0) {
+                    const picked = choices.includes(st.featAbility) ? st.featAbility : choices[0];
+                    const nextVal = Math.min(cap, (base[picked] || 10) + bonusAmt);
+                    const delta = nextVal - (base[picked] || 10);
+                    if (delta > 0) asiApplied[picked] = delta;
+                    base[picked] = nextVal;
+                }
+            }
+        }
+    }
+
+    const oldConMod = Math.floor(((preview?.ability_scores?.CON || 10) - 10) / 2);
+    const newConMod = Math.floor(((base.CON || 10) - 10) / 2);
+    const retroConHp = (newConMod - oldConMod) * (preview?.current_total_level || 0);
+    const hitDie = preview?.selected_hit_die || 8;
+    const fixedDieGain = Math.floor(hitDie / 2) + 1;
+    let dieResult = fixedDieGain;
+    if (st.hpMode === "rolled") {
+        dieResult = Math.max(1, Math.min(hitDie, Number(st.rolledDieValue) || fixedDieGain));
+    } else if (st.hpMode === "manual") {
+        dieResult = Math.max(1, Math.min(hitDie, Number(st.manualDieValue) || fixedDieGain));
+    }
+    const levelHpGain = Math.max(1, dieResult + newConMod);
+
+    let featHp = 0;
+    if (featObj) {
+        featHp += Number(featObj.hp_bonus_flat || 0);
+        featHp += Number(featObj.hp_bonus_per_level || 0) * (preview?.next_total_level || 1);
+    }
+
+    return {
+        projectedScores: base,
+        asiApplied,
+        featObj,
+        oldConMod,
+        newConMod,
+        retroConHp,
+        hitDie,
+        dieResult,
+        levelHpGain,
+        featHp,
+        totalHpGain: Math.max(1, levelHpGain + featHp) + retroConHp,
+    };
+}
+
+async function openLevelUpWizard(charIdOrName, source = "campaign", opts = {}) {
+    const modal = document.getElementById("levelup-wizard-modal");
+    if (!modal || !charIdOrName) return;
+
+    const fb = document.getElementById("levelup-feedback");
+    if (fb) fb.textContent = "";
+
+    const activeEd = opts.edition || ttrpgData.active_campaign_meta?.ruleset_edition || ttrpgData.state?.ruleset_edition || "2024";
+    const edSel = document.getElementById("select-levelup-edition");
+    if (edSel && (activeEd === "2014" || activeEd === "2024")) edSel.value = activeEd;
+
+    const reasonEl = document.getElementById("levelup-reason-banner");
+    if (reasonEl) {
+        if (opts.reason) {
+            reasonEl.textContent = `📜 Milestone: ${opts.reason}`;
+            reasonEl.classList.remove("hidden");
+        } else {
+            reasonEl.classList.add("hidden");
+        }
+    }
+
+    const bypassChk = document.getElementById("chk-levelup-bypass-prereqs");
+    if (bypassChk) bypassChk.checked = false;
+
+    levelUpModalState = {
+        charIdOrName: String(charIdOrName),
+        source: source === "vault" ? "vault" : "campaign",
+        edition: edSel ? edSel.value : (activeEd === "2014" ? "2014" : "2024"),
+        targetClass: opts.target_class || null,
+        bypassPrereqs: false,
+        hpMode: "fixed",
+        rolledDieValue: null,
+        manualDieValue: 5,
+        subclassChoice: "",
+        subclassCustom: "",
+        asiMode: "asi2",
+        asiMain: "STR",
+        asiA: "STR",
+        asiB: "DEX",
+        selectedFeat: "Tough",
+        featAbility: "CON",
+        selectedSpells: [],
+        spellSearch: "",
+        spellLevelFilter: "",
+    };
+
+    modal.classList.remove("hidden");
+    await loadLevelUpWizardOptions();
+}
+
+function closeLevelUpWizard() {
+    const modal = document.getElementById("levelup-wizard-modal");
+    if (modal) modal.classList.add("hidden");
+    levelUpModalState = null;
+    levelUpPreviewData = null;
+}
+
+async function loadLevelUpWizardOptions() {
+    const fb = document.getElementById("levelup-feedback");
+    if (!levelUpModalState || !window.pywebview?.api?.get_character_advancement_options) {
+        if (fb) fb.textContent = "Advancement backend unavailable.";
+        return;
+    }
+
+    const st = levelUpModalState;
+    try {
+        const res = await window.pywebview.api.get_character_advancement_options(
+            st.charIdOrName,
+            st.edition,
+            st.targetClass,
+            st.source,
+            Boolean(st.bypassPrereqs)
+        );
+        if (!res || res.status !== "success") {
+            if (fb) {
+                fb.style.color = "#f87171";
+                fb.textContent = res?.message || "Failed loading level-up options.";
+            }
+            return;
+        }
+        levelUpPreviewData = res;
+        if (res.is_dnd !== false) {
+            st.edition = res.edition || st.edition;
+            st.targetClass = res.selected_class || st.targetClass;
+            if (!st.rolledDieValue) {
+                st.rolledDieValue = Math.floor((res.selected_hit_die || 8) / 2) + 1;
+                st.manualDieValue = st.rolledDieValue;
+            }
+            const firstOpt = (res.subclass_options || [])[0] || "";
+            if (res.needs_subclass && (!st.subclassChoice || !(res.subclass_options || []).includes(st.subclassChoice))) {
+                st.subclassChoice = firstOpt;
+            }
+            const feats = res.feats_available || [];
+            if (feats.length && !feats.some(f => f.name === st.selectedFeat)) {
+                const defaultFeat = feats.find(f => f.type !== "asi") || feats[0];
+                st.selectedFeat = defaultFeat.name;
+            }
+        }
+        renderLevelUpWizard();
+    } catch (e) {
+        console.error("[LevelUpWizard] Error loading options:", e);
+        if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = e.message || "Error loading advancement options.";
+        }
+    }
+}
+
+function renderLevelUpWizard() {
+    const p = levelUpPreviewData;
+    const st = levelUpModalState;
+    if (!p || !st) return;
+
+    const titleEl = document.getElementById("levelup-modal-title");
+    const subEl = document.getElementById("levelup-modal-subtitle");
+    const edSel = document.getElementById("select-levelup-edition");
+    const xpBadge = document.getElementById("levelup-xp-badge");
+    const xpAwardWrap = document.getElementById("levelup-xp-award-group");
+    const bypassWrap = document.getElementById("levelup-bypass-wrap");
+    const dndBody = document.getElementById("levelup-dnd-body");
+    const nonDndBody = document.getElementById("levelup-nondnd-body");
+    const commitBtn = document.getElementById("btn-commit-levelup");
+
+    if (titleEl) titleEl.textContent = `⭐ Advance ${p.character_name || "Adventurer"}`;
+    if (xpAwardWrap) xpAwardWrap.style.display = st.source === "campaign" ? "flex" : "none";
+
+    // Handle non-D&D rulesets cleanly
+    if (p.is_dnd === false) {
+        if (subEl) subEl.textContent = `${p.archetype || p.ruleset_label || "Hero"} • Level ${p.current_total_level} → Level ${p.next_total_level}`;
+        if (edSel) edSel.style.display = "none";
+        if (bypassWrap) bypassWrap.style.display = "none";
+        if (xpBadge) xpBadge.textContent = `XP: ${p.experience_points || 0}`;
+        dndBody?.classList.add("hidden");
+        nonDndBody?.classList.remove("hidden");
+
+        const rsTitle = document.getElementById("levelup-nondnd-ruleset-title");
+        const lvlBadge = document.getElementById("levelup-nondnd-level-badge");
+        const attrSel = document.getElementById("select-nondnd-attr");
+        if (rsTitle) rsTitle.textContent = `🎲 ${p.ruleset_label || p.ruleset || "TTRPG"} Progression`;
+        if (lvlBadge) lvlBadge.textContent = `Lv. ${p.current_total_level} → Lv. ${p.next_total_level}`;
+        if (attrSel) {
+            const keys = Object.keys(p.attributes || {});
+            attrSel.innerHTML = `<option value="">-- No Attribute Change --</option>` +
+                keys.map(k => `<option value="${escapeRpHtml(k)}">${escapeRpHtml(k)} (${p.attributes[k]})</option>`).join("");
+        }
+        if (commitBtn) {
+            commitBtn.disabled = false;
+            commitBtn.textContent = `⬆️ Advance to Level ${p.next_total_level}`;
+        }
+        return;
+    }
+
+    // D&D 5e Guided Wizard UI
+    if (edSel) edSel.style.display = "";
+    if (bypassWrap) bypassWrap.style.display = "flex";
+    dndBody?.classList.remove("hidden");
+    nonDndBody?.classList.add("hidden");
+
+    if (edSel && p.edition) edSel.value = p.edition;
+    if (subEl) {
+        subEl.textContent = p.can_advance
+            ? `${p.current_class_summary} → ${p.next_class_summary} (Total Level ${p.next_total_level} • ${p.edition} Rules)`
+            : `${p.current_class_summary} (Maximum Level 20 Reached)`;
+    }
+    if (xpBadge) {
+        const xpReady = p.xp_ready ? " • READY!" : "";
+        xpBadge.textContent = p.can_advance
+            ? `XP: ${Number(p.experience_points || 0).toLocaleString()} / ${Number(p.next_level_xp || 0).toLocaleString()}${xpReady}`
+            : `XP: ${Number(p.experience_points || 0).toLocaleString()} (MAX)`;
+        xpBadge.style.borderColor = p.xp_ready ? "rgba(74, 222, 128, 0.6)" : "rgba(56, 189, 248, 0.35)";
+        xpBadge.style.color = p.xp_ready ? "#4ade80" : "#38bdf8";
+    }
+
+    // Render Class Choice List (Left Pane)
+    const classListEl = document.getElementById("levelup-class-list");
+    if (classListEl) {
+        const allOpts = p.class_options || [];
+        const existingOpts = allOpts.filter(o => o.is_existing_class);
+        const multiOpts = allOpts.filter(o => !o.is_existing_class);
+
+        const renderCard = (opt) => {
+            const isSelected = opt.name === st.targetClass;
+            const locked = !opt.eligible;
+            const statusText = opt.is_existing_class
+                ? `Lv. ${opt.current_class_level} → Lv. ${opt.next_class_level}`
+                : `Multiclass → Lv. 1`;
+            const prereqHtml = opt.eligible
+                ? (opt.bypassed ? `<span style="color:#fbbf24; font-size:0.68rem;">🔓 Prereq Overridden</span>` : `<span style="color:#4ade80; font-size:0.68rem;">✅ Eligible • d${opt.hit_die} (+${opt.fixed_hp_gain} HP)</span>`)
+                : `<span style="color:#f87171; font-size:0.68rem;">🔒 ${escapeRpHtml((opt.missing_prereqs || []).join("; "))}</span>`;
+            const tags = [];
+            if (opt.needs_subclass) tags.push(`<span class="comp-pill" style="font-size:0.62rem;">Subclass</span>`);
+            if (opt.is_epic_boon_level) tags.push(`<span class="comp-pill comp-pill-ed" style="font-size:0.62rem;">Epic Boon</span>`);
+            else if (opt.is_asi_level) tags.push(`<span class="comp-pill" style="font-size:0.62rem;">ASI / Feat</span>`);
+            return `
+                <button type="button" class="levelup-class-card ${isSelected ? "selected" : ""} ${locked ? "locked" : ""}" data-lu-class="${escapeRpHtml(opt.name)}">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; width:100%;">
+                        <strong style="font-size:0.84rem; color:#f8fafc;">${escapeRpHtml(opt.name)}</strong>
+                        <span style="font-size:0.72rem; color:#38bdf8; font-weight:600;">${statusText}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; flex-wrap:wrap;">
+                        ${prereqHtml}
+                        <span style="display:inline-flex; gap:3px;">${tags.join("")}</span>
+                    </div>
+                </button>
+            `;
+        };
+
+        let clsHtml = `<div class="levelup-class-group-hdr">Advance Existing Class</div>`;
+        clsHtml += existingOpts.map(renderCard).join("") || `<div style="font-size:0.75rem; color:#64748b; padding:4px;">None</div>`;
+        clsHtml += `<div class="levelup-class-group-hdr" style="margin-top:10px;">Multiclass Into New Class</div>`;
+        clsHtml += multiOpts.map(renderCard).join("");
+        classListEl.innerHTML = clsHtml;
+
+        classListEl.querySelectorAll(".levelup-class-card").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                const chosen = btn.getAttribute("data-lu-class");
+                if (!chosen || chosen === st.targetClass) return;
+                st.targetClass = chosen;
+                st.rolledDieValue = null;
+                st.selectedSpells = [];
+                st.subclassChoice = "";
+                st.subclassCustom = "";
+                await loadLevelUpWizardOptions();
+            });
+        });
+    }
+
+    // Right Pane Details
+    const detailEl = document.getElementById("levelup-wizard-body");
+    if (!detailEl) return;
+
+    if (!p.can_advance) {
+        detailEl.innerHTML = `<div class="rest-section-card"><div class="rest-section-title">🏆 Maximum Level 20 Reached</div><p style="margin:0; font-size:0.84rem; color:#cbd5e1;">${escapeRpHtml(p.character_name)} is already at D&amp;D 5e Level 20.</p></div>`;
+        if (commitBtn) commitBtn.disabled = true;
+        return;
+    }
+
+    const proj = _computeProjectedWizardStats(p);
+    const prereqOk = p.selected_prereq?.eligible !== false;
+    if (commitBtn) {
+        commitBtn.disabled = !prereqOk;
+        commitBtn.textContent = `✨ Confirm ${p.selected_class} ${p.selected_class_next_level}`;
+    }
+
+    // Prereq warning banner if ineligible
+    const prereqWarningHtml = !prereqOk ? `
+        <div style="padding:10px 12px; border-radius:7px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; font-size:0.78rem;">
+            <strong>⚠️ Multiclass Prerequisites Not Met:</strong> ${escapeRpHtml((p.selected_prereq?.missing || []).join("; "))}.
+            Check <em>"Override Multiclass Prereqs"</em> above if your DM permits this multiclass.
+        </div>
+    ` : "";
+
+    // Hit Points section
+    const fixedAvg = Math.floor(proj.hitDie / 2) + 1;
+    let hpExtraHtml = "";
+    if (st.hpMode === "rolled") {
+        hpExtraHtml = `
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
+                <button type="button" id="btn-lu-roll-hp" class="btn-secondary-sm" style="padding:5px 12px;">🎲 Roll d${proj.hitDie}</button>
+                <span style="font-size:0.8rem; color:#e2e8f0;">Rolled Die: <strong style="color:#38bdf8;">${proj.dieResult}</strong> + CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong style="color:#4ade80;">+${proj.levelHpGain} HP</strong></span>
+            </div>
+        `;
+    } else if (st.hpMode === "manual") {
+        hpExtraHtml = `
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
+                <label class="modal-label" for="input-lu-manual-roll" style="margin:0;">Physical Die Roll (1–${proj.hitDie}):</label>
+                <input type="number" id="input-lu-manual-roll" class="modal-input" min="1" max="${proj.hitDie}" value="${proj.dieResult}" style="width:78px; padding:4px 8px;" />
+                <span style="font-size:0.78rem; color:#94a3b8;">+ CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong id="lu-hp-manual-gain" style="color:#4ade80;">+${proj.levelHpGain} HP</strong></span>
+            </div>
+        `;
+    } else {
+        hpExtraHtml = `
+            <div style="font-size:0.78rem; color:#94a3b8; margin-top:4px;">
+                Fixed Average (${fixedAvg} on d${proj.hitDie}) + CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong style="color:#4ade80;">+${proj.levelHpGain} HP</strong>
+            </div>
+        `;
+    }
+    const retroNotice = proj.retroConHp > 0
+        ? `<div style="font-size:0.74rem; color:#4ade80;">+${proj.retroConHp} Retroactive CON HP (+${proj.newConMod - proj.oldConMod} CON mod × ${p.current_total_level} prior levels)</div>`
+        : "";
+    const featHpNotice = proj.featHp > 0
+        ? `<div style="font-size:0.74rem; color:#4ade80;">+${proj.featHp} Bonus HP from Feat (${escapeRpHtml(proj.featObj?.name || "")})</div>`
+        : "";
+
+    // Subclass Section
+    let subclassHtml = "";
+    if (p.needs_subclass) {
+        const subOpts = (p.subclass_options || []).map(sc =>
+            `<option value="${escapeRpHtml(sc)}" ${st.subclassChoice === sc ? "selected" : ""}>${escapeRpHtml(sc)}</option>`
+        ).join("");
+        subclassHtml = `
+            <div class="rest-section-card">
+                <div class="rest-section-title">
+                    <span>🛡️ 2. Choose ${escapeRpHtml(p.subclass_title || "Subclass")}</span>
+                    <span class="comp-pill comp-pill-ed">${escapeRpHtml(p.selected_class)} Lv. ${p.selected_class_next_level}</span>
+                </div>
+                <select id="select-lu-subclass" class="modal-input">
+                    ${subOpts}
+                    <option value="__custom__" ${st.subclassChoice === "__custom__" ? "selected" : ""}>Custom / Homebrew Subclass...</option>
+                </select>
+                <input type="text" id="input-lu-subclass-custom" class="modal-input ${st.subclassChoice === "__custom__" ? "" : "hidden"}" value="${escapeRpHtml(st.subclassCustom || "")}" placeholder="Enter custom subclass name..." />
+            </div>
+        `;
+    }
+
+    // ASI / Feat / Epic Boon Section
+    let asiHtml = "";
+    if (p.is_asi_level) {
+        const abOpts = (selected, list = LEVELUP_ABIL_ORDER) => list.map(ab =>
+            `<option value="${ab}" ${selected === ab ? "selected" : ""}>${ab} (${LEVELUP_ABIL_LABELS[ab]}: ${p.ability_scores?.[ab] ?? 10})</option>`
+        ).join("");
+        const feats = (p.feats_available || []).filter(f => f.type !== "asi");
+        const featOpts = feats.map(f => {
+            const tag = f.type === "epic_boon" ? " [Epic Boon L19+]" : "";
+            return `<option value="${escapeRpHtml(f.name)}" ${st.selectedFeat === f.name ? "selected" : ""}>${escapeRpHtml(f.name)}${tag}</option>`;
+        }).join("");
+        const selFeatObj = feats.find(f => f.name === st.selectedFeat) || feats[0] || null;
+        const isHalfDisabledIn2014 = selFeatObj && selFeatObj.type === "half_feat" && p.edition === "2014" && selFeatObj.name !== "Resilient";
+        const featBonusAmt = selFeatObj ? (isHalfDisabledIn2014 ? 0 : (Number(selFeatObj.ability_increase) || 0)) : 0;
+        const featChoices = selFeatObj?.ability_choices || [];
+
+        let asiBodyHtml = "";
+        if (st.asiMode === "asi2") {
+            asiBodyHtml = `
+                <div>
+                    <label class="modal-label" for="select-lu-asi-main">Increase One Ability by +2 (max 20)</label>
+                    <select id="select-lu-asi-main" class="modal-input">${abOpts(st.asiMain)}</select>
+                </div>
+            `;
+        } else if (st.asiMode === "asi11") {
+            asiBodyHtml = `
+                <div class="rest-grid-2">
+                    <div>
+                        <label class="modal-label" for="select-lu-asi-a">First Ability (+1)</label>
+                        <select id="select-lu-asi-a" class="modal-input">${abOpts(st.asiA)}</select>
+                    </div>
+                    <div>
+                        <label class="modal-label" for="select-lu-asi-b">Second Ability (+1)</label>
+                        <select id="select-lu-asi-b" class="modal-input">${abOpts(st.asiB)}</select>
+                    </div>
+                </div>
+            `;
+        } else {
+            asiBodyHtml = `
+                <div>
+                    <label class="modal-label" for="select-lu-feat">Choose Feat${p.is_epic_boon_level ? " or Epic Boon (Stat Cap 30)" : ""}</label>
+                    <select id="select-lu-feat" class="modal-input">${featOpts}</select>
+                    ${selFeatObj ? `<div style="font-size:0.75rem; color:#94a3b8; margin-top:4px;">${escapeRpHtml(selFeatObj.description || "")}</div>` : ""}
+                </div>
+                ${(featBonusAmt > 0 && featChoices.length > 0) ? `
+                    <div>
+                        <label class="modal-label" for="select-lu-feat-ability">Bonus +${featBonusAmt} Ability${selFeatObj?.grants_save_prof ? " (+ Saving Throw Proficiency)" : ""}</label>
+                        <select id="select-lu-feat-ability" class="modal-input">${abOpts(featChoices.includes(st.featAbility) ? st.featAbility : featChoices[0], featChoices)}</select>
+                    </div>
+                ` : ""}
+            `;
+        }
+
+        const statPills = LEVELUP_ABIL_ORDER.map(ab => {
+            const oldV = p.ability_scores?.[ab] ?? 10;
+            const newV = proj.projectedScores[ab] ?? oldV;
+            const changed = newV !== oldV;
+            return `<span class="levelup-stat-pill ${changed ? "boosted" : ""}">${ab}: ${changed ? `${oldV} → <strong>${newV}</strong>` : newV} (${_formatModifier(newV)})</span>`;
+        }).join("");
+
+        asiHtml = `
+            <div class="rest-section-card">
+                <div class="rest-section-title">
+                    <span>⚡ ${p.is_epic_boon_level ? "Epic Boon / ASI / Feat (Level 19+)" : "Ability Score Improvement / Feat"}</span>
+                    <span class="comp-pill comp-pill-ed">${p.edition} Rules</span>
+                </div>
+                <div class="shop-mode-toggle" style="width:fit-content;">
+                    <button type="button" class="shop-mode-btn lu-asi-mode-btn ${st.asiMode === "asi2" ? "active" : ""}" data-asi-mode="asi2">+2 Ability</button>
+                    <button type="button" class="shop-mode-btn lu-asi-mode-btn ${st.asiMode === "asi11" ? "active" : ""}" data-asi-mode="asi11">+1 / +1 Abilities</button>
+                    <button type="button" class="shop-mode-btn lu-asi-mode-btn ${st.asiMode === "feat" ? "active" : ""}" data-asi-mode="feat">${p.is_epic_boon_level ? "Feat / Epic Boon" : "Choose Feat"}</button>
+                </div>
+                <div class="levelup-asi-box">
+                    ${asiBodyHtml}
+                    <div class="levelup-stat-preview-row">${statPills}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Class Features & Multiclass Proficiencies Section
+    const gainedFeats = p.gained_features || [];
+    const featuresHtml = `
+        <div class="rest-section-card">
+            <div class="rest-section-title">
+                <span>📜 Unlocked Features &amp; Proficiencies</span>
+                <span style="font-size:0.72rem; color:#94a3b8;">Prof Bonus: +${p.old_proficiency_bonus} → +${p.new_proficiency_bonus}</span>
+            </div>
+            ${p.selected_multiclass_proficiencies ? `<div style="font-size:0.76rem; color:#38bdf8;"><strong>Multiclass Proficiencies Gained:</strong> ${escapeRpHtml(p.selected_multiclass_proficiencies)}</div>` : ""}
+            ${gainedFeats.length ? `
+                <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                    ${gainedFeats.map(f => `<span class="comp-pill" style="color:#e2e8f0; border-color:rgba(56,189,248,0.35);">✨ ${escapeRpHtml(f)}</span>`).join("")}
+                </div>
+            ` : `<div style="font-size:0.76rem; color:#64748b;">Spellcasting / HP progression</div>`}
+        </div>
+    `;
+
+    // Spell Slots & Learnable Spells Picker Section
+    const nextSlots = p.next_spell_slots || {};
+    const curSlots = p.current_spell_slots || {};
+    const slotBadges = [];
+    for (let lvl = 1; lvl <= 9; lvl++) {
+        const key = `level_${lvl}`;
+        const nMax = Number(nextSlots[key]?.max || 0);
+        const cMax = Number(curSlots[key]?.max || 0);
+        const pMax = Number(nextSlots[key]?.pact_max || 0);
+        if (nMax > 0 || cMax > 0 || pMax > 0) {
+            const pactNote = pMax > 0 ? ` + ${pMax} Pact` : "";
+            const changed = nMax !== cMax;
+            slotBadges.push(`<span class="levelup-stat-pill ${changed ? "boosted" : ""}">Lv.${lvl}: ${changed ? `${cMax} → <strong>${nMax}</strong>` : nMax}${pactNote}</span>`);
+        }
+    }
+    if (p.next_pact_slots && !slotBadges.some(b => b.includes("Pact"))) {
+        slotBadges.push(`<span class="levelup-stat-pill boosted">Pact Magic: ${p.next_pact_slots.count} × Lv.${p.next_pact_slots.level} (Short Rest)</span>`);
+    }
+
+    let spellsSectionHtml = "";
+    const learnable = p.learnable_spells || [];
+    if (slotBadges.length > 0 || learnable.length > 0) {
+        const q = (st.spellSearch || "").trim().toLowerCase();
+        const lf = st.spellLevelFilter;
+        const filteredSpells = learnable.filter(sp => {
+            if (lf !== "" && String(sp.level) !== String(lf)) return false;
+            if (q && !sp.name.toLowerCase().includes(q) && !(sp.school || "").toLowerCase().includes(q)) return false;
+            return true;
+        });
+
+        let lvlOpts = `<option value="">All Levels (0–${p.max_learnable_spell_level || 0})</option>`;
+        for (let lv = 0; lv <= (p.max_learnable_spell_level || 0); lv++) {
+            const lbl = lv === 0 ? "Cantrips" : `Level ${lv}`;
+            lvlOpts += `<option value="${lv}" ${String(lf) === String(lv) ? "selected" : ""}>${lbl}</option>`;
+        }
+
+        spellsSectionHtml = `
+            <div class="rest-section-card">
+                <div class="rest-section-title">
+                    <span>🔮 Spell Slots &amp; Learn New Spells</span>
+                    <span style="color:#c084fc; font-size:0.74rem;">${(st.selectedSpells || []).length} selected to learn</span>
+                </div>
+                ${slotBadges.length ? `<div class="levelup-stat-preview-row">${slotBadges.join("")}</div>` : ""}
+                ${learnable.length ? `
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
+                        <input type="text" id="input-lu-spell-search" class="modal-input" value="${escapeRpHtml(st.spellSearch || "")}" placeholder="Search ${escapeRpHtml(p.selected_class)} spells (Ctrl+F)..." style="flex:1; min-width:160px; padding:5px 9px; font-size:0.78rem;" />
+                        <select id="select-lu-spell-level" class="modal-input comp-select" style="min-width:130px;">${lvlOpts}</select>
+                    </div>
+                    <div class="rest-spell-grid" style="max-height:210px;">
+                        ${filteredSpells.slice(0, 120).map(sp => {
+                            const checked = (st.selectedSpells || []).includes(sp.name);
+                            const already = Boolean(sp.already_on_sheet);
+                            return `
+                                <label class="rest-spell-card ${checked ? "prepared" : ""} ${already ? "locked" : ""}" title="${escapeRpHtml(sp.description || "")}">
+                                    <input type="checkbox" class="lu-spell-chk" data-spell-name="${escapeRpHtml(sp.name)}" ${checked ? "checked" : ""} ${already ? "disabled" : ""} />
+                                    <div style="min-width:0;">
+                                        <div style="font-weight:600; color:#f1f5f9;">${escapeRpHtml(sp.name)}${already ? " <span style='color:#38bdf8;font-size:0.65rem;'>(Known)</span>" : ""}</div>
+                                        <div style="font-size:0.68rem; color:#94a3b8;">${escapeRpHtml(sp.level_label)} • ${escapeRpHtml(sp.school)}</div>
+                                    </div>
+                                </label>
+                            `;
+                        }).join("") || `<div style="padding:10px; color:#64748b; font-size:0.78rem;">No matching spells found.</div>`}
+                    </div>
+                ` : ""}
+            </div>
+        `;
+    }
+
+    detailEl.innerHTML = `
+        <div class="levelup-summary-banner">
+            <div>
+                <div style="font-size:0.95rem; font-weight:700; color:#f8fafc;">${escapeRpHtml(p.current_class_summary)} → <span style="color:#38bdf8;">${escapeRpHtml(p.next_class_summary)}</span></div>
+                <div style="font-size:0.74rem; color:#cbd5e1;">Total Level ${p.current_total_level} → Level ${p.next_total_level} • Hit Die d${proj.hitDie} • Proficiency +${p.old_proficiency_bonus} → +${p.new_proficiency_bonus}</div>
+            </div>
+            <span id="lu-banner-hp-badge" class="comp-pill comp-pill-ed" style="font-size:0.8rem;">Total HP Gain: +${proj.totalHpGain}</span>
+        </div>
+
+        ${prereqWarningHtml}
+
+        <div class="rest-section-card">
+            <div class="rest-section-title">
+                <span>❤️ Hit Points Increase (d${proj.hitDie})</span>
+                <span id="lu-hp-total-badge" style="color:#4ade80;">+${proj.totalHpGain} Max HP</span>
+            </div>
+            <div class="shop-mode-toggle" style="width:fit-content;">
+                <button type="button" class="shop-mode-btn lu-hp-mode-btn ${st.hpMode === "fixed" ? "active" : ""}" data-hp-mode="fixed">📊 Fixed Avg (${fixedAvg})</button>
+                <button type="button" class="shop-mode-btn lu-hp-mode-btn ${st.hpMode === "rolled" ? "active" : ""}" data-hp-mode="rolled">🎲 Roll 1d${proj.hitDie}</button>
+                <button type="button" class="shop-mode-btn lu-hp-mode-btn ${st.hpMode === "manual" ? "active" : ""}" data-hp-mode="manual">✍️ Manual Die</button>
+            </div>
+            ${hpExtraHtml}
+            ${retroNotice}
+            ${featHpNotice}
+        </div>
+
+        ${subclassHtml}
+        ${asiHtml}
+        ${featuresHtml}
+        ${spellsSectionHtml}
+    `;
+
+    // Wire dynamic D&D wizard controls
+    detailEl.querySelectorAll(".lu-hp-mode-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            st.hpMode = btn.getAttribute("data-hp-mode") || "fixed";
+            if (st.hpMode === "rolled" && !st.rolledDieValue) {
+                st.rolledDieValue = Math.floor(Math.random() * proj.hitDie) + 1;
+            }
+            renderLevelUpWizard();
+        });
+    });
+    document.getElementById("btn-lu-roll-hp")?.addEventListener("click", () => {
+        st.rolledDieValue = Math.floor(Math.random() * proj.hitDie) + 1;
+        renderLevelUpWizard();
+    });
+    document.getElementById("input-lu-manual-roll")?.addEventListener("input", (e) => {
+        const val = parseInt(e.target.value || "1", 10);
+        if (!isNaN(val)) {
+            st.manualDieValue = Math.max(1, Math.min(proj.hitDie, val));
+            const nextProj = _computeProjectedWizardStats(p);
+            const banner = document.getElementById("lu-banner-hp-badge");
+            const cardBadge = document.getElementById("lu-hp-total-badge");
+            const gainEl = document.getElementById("lu-hp-manual-gain");
+            if (banner) banner.textContent = `Total HP Gain: +${nextProj.totalHpGain}`;
+            if (cardBadge) cardBadge.textContent = `+${nextProj.totalHpGain} Max HP`;
+            if (gainEl) gainEl.textContent = `+${nextProj.levelHpGain} HP`;
+        }
+    });
+    document.getElementById("select-lu-subclass")?.addEventListener("change", (e) => {
+        st.subclassChoice = e.target.value || "";
+        renderLevelUpWizard();
+    });
+    document.getElementById("input-lu-subclass-custom")?.addEventListener("input", (e) => {
+        st.subclassCustom = e.target.value || "";
+    });
+    detailEl.querySelectorAll(".lu-asi-mode-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            st.asiMode = btn.getAttribute("data-asi-mode") || "asi2";
+            renderLevelUpWizard();
+        });
+    });
+    document.getElementById("select-lu-asi-main")?.addEventListener("change", (e) => {
+        st.asiMain = e.target.value;
+        renderLevelUpWizard();
+    });
+    document.getElementById("select-lu-asi-a")?.addEventListener("change", (e) => {
+        st.asiA = e.target.value;
+        renderLevelUpWizard();
+    });
+    document.getElementById("select-lu-asi-b")?.addEventListener("change", (e) => {
+        st.asiB = e.target.value;
+        renderLevelUpWizard();
+    });
+    document.getElementById("select-lu-feat")?.addEventListener("change", (e) => {
+        st.selectedFeat = e.target.value;
+        const chosenF = (p.feats_available || []).find(f => f.name === st.selectedFeat);
+        if (chosenF?.ability_choices?.length && !chosenF.ability_choices.includes(st.featAbility)) {
+            st.featAbility = chosenF.ability_choices[0];
+        }
+        renderLevelUpWizard();
+    });
+    document.getElementById("select-lu-feat-ability")?.addEventListener("change", (e) => {
+        st.featAbility = e.target.value;
+        renderLevelUpWizard();
+    });
+    document.getElementById("input-lu-spell-search")?.addEventListener("input", (e) => {
+        st.spellSearch = e.target.value || "";
+        renderLevelUpWizard();
+        const inp = document.getElementById("input-lu-spell-search");
+        if (inp) {
+            inp.focus();
+            inp.setSelectionRange(st.spellSearch.length, st.spellSearch.length);
+        }
+    });
+    document.getElementById("select-lu-spell-level")?.addEventListener("change", (e) => {
+        st.spellLevelFilter = e.target.value || "";
+        renderLevelUpWizard();
+    });
+    detailEl.querySelectorAll(".lu-spell-chk").forEach(chk => {
+        chk.addEventListener("change", () => {
+            const spName = chk.getAttribute("data-spell-name");
+            if (!spName) return;
+            if (chk.checked) {
+                if (!st.selectedSpells.includes(spName)) st.selectedSpells.push(spName);
+            } else {
+                st.selectedSpells = st.selectedSpells.filter(n => n !== spName);
+            }
+            renderLevelUpWizard();
+        });
+    });
+}
+
+async function awardXpFromWizard() {
+    const p = levelUpPreviewData;
+    const st = levelUpModalState;
+    const fb = document.getElementById("levelup-feedback");
+    if (!p || !st || st.source !== "campaign") return;
+    if (!window.pywebview?.api?.manage_ttrpg_progression) return;
+
+    const amt = parseInt(document.getElementById("input-levelup-award-xp")?.value || "0", 10);
+    if (isNaN(amt) || amt <= 0) {
+        if (fb) { fb.style.color = "#f87171"; fb.textContent = "Enter a positive XP amount."; }
+        return;
+    }
+
+    try {
+        const res = await window.pywebview.api.manage_ttrpg_progression(p.character_name, "award_xp", amt, null);
+        if (res && res.status === "success") {
+            if (fb) {
+                fb.style.color = "#4ade80";
+                fb.textContent = res.message || `Awarded ${amt} XP.`;
+            }
+            await loadLevelUpWizardOptions();
+            await loadRolePlayUI(true);
+        } else if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = res?.message || "Failed awarding XP.";
+        }
+    } catch (e) {
+        if (fb) { fb.style.color = "#f87171"; fb.textContent = e.message; }
+    }
+}
+
+async function commitLevelUpWizard() {
+    const p = levelUpPreviewData;
+    const st = levelUpModalState;
+    const fb = document.getElementById("levelup-feedback");
+    if (!p || !st || !window.pywebview?.api) return;
+
+    // Non-D&D submission
+    if (p.is_dnd === false) {
+        const attrKey = document.getElementById("select-nondnd-attr")?.value || "";
+        const boostVal = parseInt(document.getElementById("input-nondnd-boost")?.value || "1", 10) || 0;
+        const traitName = (document.getElementById("input-nondnd-trait-name")?.value || "").trim();
+        const traitDesc = (document.getElementById("input-nondnd-trait-desc")?.value || "").trim();
+        const statBoosts = (attrKey && boostVal > 0) ? { [attrKey]: boostVal } : null;
+        const newTraits = traitName ? [{ name: traitName, description: traitDesc || "Granted on level up." }] : null;
+
+        try {
+            let res;
+            if (st.source === "vault") {
+                res = await window.pywebview.api.level_up_vault_character(p.character_id || st.charIdOrName, 1, statBoosts, newTraits);
+            } else {
+                res = await window.pywebview.api.manage_ttrpg_progression(p.character_name || st.charIdOrName, "level_up", 1, null);
+            }
+            if (res && res.status === "success") {
+                closeLevelUpWizard();
+                if (typeof refreshVaultModalUI === "function") await refreshVaultModalUI();
+                await loadRolePlayUI(true);
+                if (typeof renderRolePlayStoryBubble === "function" && res.message) {
+                    renderRolePlayStoryBubble({ type: "system", content: `⭐ ${res.message}` });
+                }
+            } else if (fb) {
+                fb.style.color = "#f87171";
+                fb.textContent = res?.message || "Failed advancing character.";
+            }
+        } catch (e) {
+            if (fb) { fb.style.color = "#f87171"; fb.textContent = e.message; }
+        }
+        return;
+    }
+
+    // D&D 5e Guided Wizard Payload
+    if (!window.pywebview.api.apply_character_dnd_level_up) {
+        if (fb) fb.textContent = "D&D advancement bridge unavailable.";
+        return;
+    }
+
+    const proj = _computeProjectedWizardStats(p);
+    const payload = {
+        edition: st.edition,
+        target_class: st.targetClass,
+        bypass_prereqs: Boolean(st.bypassPrereqs),
+        hp_mode: st.hpMode === "fixed" ? "fixed" : "rolled",
+        new_spells: st.selectedSpells || [],
+    };
+    if (st.hpMode === "rolled" || st.hpMode === "manual") {
+        payload.hp_roll = proj.dieResult;
+    }
+    if (p.needs_subclass) {
+        const subName = st.subclassChoice === "__custom__" ? (st.subclassCustom || "").trim() : (st.subclassChoice || "").trim();
+        if (subName) payload.subclass = subName;
+    }
+    if (p.is_asi_level) {
+        if (st.asiMode === "feat") {
+            payload.feat = st.selectedFeat;
+            if (Object.keys(proj.asiApplied).length > 0) {
+                payload.ability_increases = proj.asiApplied;
+            }
+            if (st.selectedFeat === "Resilient" && st.featAbility) {
+                payload.resilient_ability = st.featAbility;
+            }
+        } else {
+            payload.feat = "Ability Score Improvement";
+            payload.ability_increases = proj.asiApplied;
+        }
+    }
+
+    try {
+        const res = await window.pywebview.api.apply_character_dnd_level_up(
+            st.source === "vault" ? (p.character_id || st.charIdOrName) : (p.character_name || st.charIdOrName),
+            payload,
+            st.source
+        );
+        if (res && res.status === "success") {
+            closeLevelUpWizard();
+            if (st.source === "vault" && typeof refreshVaultModalUI === "function") {
+                await refreshVaultModalUI();
+            }
+            await loadRolePlayUI(true);
+            if (typeof renderRolePlayStoryBubble === "function" && res.message) {
+                renderRolePlayStoryBubble({ type: "system", content: `⭐ ${res.message}` });
+            }
+        } else if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = res?.message || "Failed applying level-up.";
+        }
+    } catch (e) {
+        if (fb) { fb.style.color = "#f87171"; fb.textContent = e.message; }
+    }
+}
+
+window.handleRoleplayLevelUpOpened = function(data) {
+    if (!data) return;
+    openLevelUpWizard(
+        data.character_name || data.character_id,
+        data.source || "campaign",
+        data
+    );
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+    // Merchant Shop Modal Bindings
+    document.getElementById("open-shop-btn")?.addEventListener("click", () => openShopModal());
+    document.getElementById("btn-close-shop-modal")?.addEventListener("click", closeShopModal);
+    document.getElementById("btn-close-shop-footer")?.addEventListener("click", closeShopModal);
+    document.getElementById("btn-shop-mode-buy")?.addEventListener("click", () => setShopMode("buy"));
+    document.getElementById("btn-shop-mode-sell")?.addEventListener("click", () => setShopMode("sell"));
+
+    const presetSel = document.getElementById("select-shop-location-preset");
+    const multSlider = document.getElementById("input-shop-multiplier");
+    const specSel = document.getElementById("select-shop-specialty");
+    if (presetSel && multSlider) {
+        presetSel.addEventListener("change", () => {
+            const opt = presetSel.options[presetSel.selectedIndex];
+            const m = opt?.getAttribute("data-mult");
+            const s = opt?.getAttribute("data-spec");
+            if (m) multSlider.value = m;
+            if (s && specSel) specSel.value = s;
+            updateShopMultiplierBadge();
+            refreshShopList();
+        });
+    }
+    if (multSlider) {
+        multSlider.addEventListener("input", () => updateShopMultiplierBadge());
+        multSlider.addEventListener("change", () => refreshShopList());
+    }
+    document.getElementById("select-shop-character")?.addEventListener("change", () => {
+        const name = document.getElementById("select-shop-character")?.value || "";
+        const badge = document.getElementById("shop-char-wallet-badge");
+        const hero = getActivePartyCharsForSelect().find(c => c.name === name);
+        if (badge) badge.textContent = `🪙 Purse: ${formatPurseFromCharacter(hero)}`;
+        if (shopMode === "sell") refreshShopList();
+        if (selectedShopEntry) renderShopDetail(selectedShopEntry);
+    });
+    document.getElementById("input-shop-search")?.addEventListener("input", () => {
+        if (shopSearchTimer) clearTimeout(shopSearchTimer);
+        shopSearchTimer = setTimeout(() => refreshShopList(), 180);
+    });
+    ["select-shop-specialty", "select-shop-edition", "chk-shop-include-magic"].forEach(id => {
+        document.getElementById(id)?.addEventListener("change", () => refreshShopList());
+    });
+
+    // Interactive Short / Long Rest Modal Bindings
+    document.getElementById("open-rest-btn")?.addEventListener("click", () => openRestModal({ rest_type: "short" }));
+    document.getElementById("btn-close-rest-modal")?.addEventListener("click", closeRestModal);
+    document.getElementById("btn-cancel-rest")?.addEventListener("click", closeRestModal);
+    document.getElementById("btn-rest-type-short")?.addEventListener("click", () => {
+        activeRestType = "short";
+        updateRestTypeButtonsUI();
+        renderRestHeroWorkspace();
+    });
+    document.getElementById("btn-rest-type-long")?.addEventListener("click", () => {
+        activeRestType = "long";
+        updateRestTypeButtonsUI();
+        renderRestHeroWorkspace();
+    });
+    document.getElementById("select-rest-edition")?.addEventListener("change", () => reloadRestModalState());
+    document.getElementById("btn-commit-rest")?.addEventListener("click", commitInteractiveRestFromModal);
+
+    // Phase 3: Guided Level-Up & Multiclass Wizard Bindings
+    document.getElementById("btn-close-levelup-modal")?.addEventListener("click", closeLevelUpWizard);
+    document.getElementById("btn-cancel-levelup")?.addEventListener("click", closeLevelUpWizard);
+    document.getElementById("select-levelup-edition")?.addEventListener("change", (e) => {
+        if (levelUpModalState) {
+            levelUpModalState.edition = e.target.value || "2024";
+            loadLevelUpWizardOptions();
+        }
+    });
+    document.getElementById("chk-levelup-bypass-prereqs")?.addEventListener("change", (e) => {
+        if (levelUpModalState) {
+            levelUpModalState.bypassPrereqs = Boolean(e.target.checked);
+            loadLevelUpWizardOptions();
+        }
+    });
+    document.getElementById("btn-levelup-award-xp")?.addEventListener("click", awardXpFromWizard);
+    document.getElementById("btn-commit-levelup")?.addEventListener("click", commitLevelUpWizard);
+});
+
+
 

@@ -2097,13 +2097,10 @@ window.aetherUI = {
         await window.pywebview.api.send_workspace_message("project", window.activeProjectId, text);
         return;
       }
-    } else if (activeTab === "roleplay" && window.ttrpgData && window.ttrpgData.active_campaign) {
-      if (window.pywebview.api.send_workspace_message) {
-        await window.pywebview.api.send_workspace_message("campaign", window.ttrpgData.active_campaign, text);
-        return;
-      }
     }
 
+    // The HUD/Projects/Chat window text entry box is all-purpose.
+    // The Role Play tab has its own dedicated in-panel chat box (#rpStoryChatInput) locked strictly to TTRPG.
     await window.pywebview.api.send_text_message(text);
   },
 
@@ -2223,6 +2220,21 @@ window.aetherUI = {
       window.dispatchEvent(new CustomEvent('aether_party_caller_updated', { detail: data }));
       if (typeof window.handleRoleplayStateEvent === "function") {
         window.handleRoleplayStateEvent(data);
+      }
+    } else if (type === "shop_opened") {
+      window.dispatchEvent(new CustomEvent('aether_shop_opened', { detail: data }));
+      if (typeof window.handleRoleplayShopOpened === "function") {
+        window.handleRoleplayShopOpened(data);
+      }
+    } else if (type === "rest_prompt_opened") {
+      window.dispatchEvent(new CustomEvent('aether_rest_prompt_opened', { detail: data }));
+      if (typeof window.handleRoleplayRestOpened === "function") {
+        window.handleRoleplayRestOpened(data);
+      }
+    } else if (type === "level_up_prompt_opened") {
+      window.dispatchEvent(new CustomEvent('aether_level_up_prompt_opened', { detail: data }));
+      if (typeof window.handleRoleplayLevelUpOpened === "function") {
+        window.handleRoleplayLevelUpOpened(data);
       }
     }
   },

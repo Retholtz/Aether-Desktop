@@ -407,6 +407,51 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         dice_events = [e for e in events if e[0] == "dice_roll_event"]
         self.assertEqual(len(dice_events), 1, "dice_roll_event must only be emitted once per roll!")
 
+    async def test_roll_dice_character_association(self):
+        """Verifies roll_dice associates rolls with explicit or inferred character name."""
+        from tools.ttrpg_tools import register_ttrpg_tools
+        events = []
+        class DualDispatcher(FakeDispatcher):
+            def __init__(self):
+                super().__init__()
+                self.on_event = lambda event_type, data: events.append((event_type, data))
+
+        dual_dispatcher = DualDispatcher()
+        self.service.active_state = {
+            "characters": {
+                "char_01": {"name": "Joe", "archetype": "Barbarian"},
+                "char_02": {"name": "Sam", "archetype": "Warlock"}
+            },
+            "party_caller": "Joe"
+        }
+        register_ttrpg_tools(dual_dispatcher, self.service)
+
+        # 1. Explicit character_name provided
+        res1 = await dual_dispatcher.tools["roll_dice"]["handler"](
+            formula="1d20+3",
+            roll_type="normal",
+            purpose="Investigation check for Elara",
+            character_name="Joe"
+        )
+        self.assertEqual(res1["character_name"], "Joe")
+        self.assertIn("[Joe]", res1["summary"])
+
+        # 2. Inferred character_name from purpose
+        res2 = await dual_dispatcher.tools["roll_dice"]["handler"](
+            formula="1d20+5",
+            roll_type="normal",
+            purpose="Sam Eldritch Blast attack"
+        )
+        self.assertEqual(res2["character_name"], "Sam")
+
+        # 3. Fallback to party caller when unnamed
+        res3 = await dual_dispatcher.tools["roll_dice"]["handler"](
+            formula="1d20+2",
+            roll_type="normal",
+            purpose="Perception check to search room"
+        )
+        self.assertEqual(res3["character_name"], "Joe")
+
     def test_record_and_get_campaign_notes_and_recap(self):
         rec_res = self.service.record_campaign_notes(
             summary="Eric and Sheila discovered a locked chest with an unusual military sigil.",
@@ -837,6 +882,21 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ring of Protection", result["inventory"])
         self.assertTrue(any(w["name"] == "Heavy Crossbow" for w in result["weapons"]))
 
+        # Test living entity / captive NPC exclusion
+        self.service.active_state["campaign_synopsis"] = {
+            "key_npcs": ["Imis Elvan (wood elf illusionist)", "Chief Filip"]
+        }
+        npc_result = await tool_handler(
+            character_name="Kaelen",
+            action="add",
+            items=["Imis Elvan", "Bound Captive", "Camp Highmore Defense Map"],
+            reason="Capturing the target"
+        )
+        self.assertEqual(npc_result["status"], "success")
+        self.assertIn("Camp Highmore Defense Map", npc_result["inventory"])
+        self.assertNotIn("Imis Elvan", npc_result["inventory"])
+        self.assertNotIn("Bound Captive", npc_result["inventory"])
+
     def test_full_character_sheet_data_in_system_instruction(self):
         # Update Kaelen with initiative, spells, features, skills
         _, char = self.service._find_character("Kaelen")
@@ -1153,6 +1213,134 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reloaded_char["vitals"]["health"]["current"], 32)
         self.assertIn("Blessed", reloaded_char["conditions"])
         self.assertNotIn("morgath_sheet.json", reloaded_state.get("documents", {}))
+
+    def test_module_adherence_levels_and_prompt(self):
+        # 1. Create campaign with creative sandbox
+        res_create = self.service.create_campaign(
+            title="Sandbox Odyssey",
+            module_adherence="creative"
+        )
+        self.assertEqual(res_create["status"], "success")
+        cid = res_create["campaign"]["id"]
+        self.assertEqual(res_create["campaign"]["module_adherence"], "creative")
+
+        # Mock a synopsis with acts and scenes
+        self.service.active_state["campaign_synopsis"] = {
+            "module_title": "Sandbox Odyssey",
+            "setting": "The Whispering Wilds",
+            "primary_hub": "Oakhaven",
+            "starting_scene": {"scene_name": "Scene 1: Departure", "location": "Oakhaven Gate"},
+            "acts_and_scenes": [
+                {
+                    "act": "Act 1: The Trail",
+                    "scenes": [{"scene_name": "Scene 1: Departure", "location": "Oakhaven Gate"}]
+                }
+            ]
+        }
+        self.service.save_active_campaign_state()
+
+        # Prompt should have Level 1 (Creative Sandbox)
+        prompt_creative = self.service.build_gm_context_prompt()
+        self.assertIn("Level 1 (Creative Sandbox / High GM Freedom)", prompt_creative)
+        self.assertIn("[MODULE ADHERENCE LEVEL: 1 / 3 — CREATIVE SANDBOX (HIGH GM FREEDOM)]", prompt_creative)
+        self.assertIn("CREATIVE GM FREEDOM", prompt_creative)
+
+        # 2. Update to step 2 (Guided / Balanced)
+        res_upd2 = self.service.update_campaign(campaign_id=cid, module_adherence="2")
+        self.assertEqual(res_upd2["status"], "success")
+        self.assertEqual(res_upd2["campaign"]["module_adherence"], "balanced")
+
+        prompt_balanced = self.service.build_gm_context_prompt()
+        self.assertIn("Level 2 (Guided / Balanced Narrative)", prompt_balanced)
+        self.assertIn("[MODULE ADHERENCE LEVEL: 2 / 3 — GUIDED & BALANCED NARRATIVE]", prompt_balanced)
+        self.assertIn("GUIDED / BALANCED MODULE PACING", prompt_balanced)
+
+        # 3. Update to step 3 (Strict Module)
+        res_upd3 = self.service.update_campaign(campaign_id=cid, module_adherence="strict")
+        self.assertEqual(res_upd3["status"], "success")
+        self.assertEqual(res_upd3["campaign"]["module_adherence"], "strict")
+
+        prompt_strict = self.service.build_gm_context_prompt()
+        self.assertIn("Level 3 (Strict Module Fidelity / By the Book)", prompt_strict)
+        self.assertIn("[MODULE ADHERENCE LEVEL: 3 / 3 — STRICT MODULE FIDELITY (BY THE BOOK)]", prompt_strict)
+        self.assertIn("STRICT MODULE FIDELITY", prompt_strict)
+        self.assertIn("SKILL CHECKS NEVER SKIP SCENES, ENCOUNTERS, OR TRAVEL", prompt_strict)
+
+    def test_party_disarm_persistence_and_retrieval(self):
+        # Setup characters with weapons
+        self.service.active_state["characters"] = {
+            "char_1": {
+                "name": "Shadow",
+                "weapons": [{"name": "Blackrazor", "atk_bonus": "+3", "damage": "2d6 Slashing", "notes": "Two-Handed"}],
+                "inventory": ["Lockpicks", "Rope"]
+            },
+            "char_2": {
+                "name": "Joe",
+                "weapons": [{"name": "Greatsword", "atk_bonus": "+3", "damage": "2d6", "notes": ""}],
+                "inventory": ["Torch"]
+            }
+        }
+        self.service.save_active_campaign_state()
+
+        # 1. Disarm the entire party upon arrest
+        disarm_res = self.service.manage_character_inventory(
+            character_name="all",
+            action="disarm",
+            storage_location="Camp Highmore Guard Barracks - Evidence Chest",
+            reason="Arrested by Filip and his guards"
+        )
+        self.assertEqual(disarm_res["status"], "success")
+        self.assertEqual(disarm_res["total_stored_items"], 2)
+
+        # Characters should only have Unarmed Strike
+        chars = self.service.active_state["characters"]
+        self.assertEqual(len(chars["char_1"]["weapons"]), 1)
+        self.assertEqual(chars["char_1"]["weapons"][0]["name"], "Unarmed Strike")
+        self.assertEqual(len(chars["char_2"]["weapons"]), 1)
+        self.assertEqual(chars["char_2"]["weapons"][0]["name"], "Unarmed Strike")
+
+        # Stored items should have 2 entries with location
+        stored = self.service.active_state.get("stored_items", [])
+        self.assertEqual(len(stored), 2)
+        self.assertEqual(stored[0]["storage_location"], "Camp Highmore Guard Barracks - Evidence Chest")
+        self.assertEqual(stored[0]["name"], "Blackrazor")
+        self.assertEqual(stored[1]["name"], "Greatsword")
+
+        # 2. GM Prompt injection should list confiscated items
+        prompt = self.service.build_gm_context_prompt()
+        self.assertIn("[CONFISCATED & STORED PARTY ITEMS / WORLD CACHES]", prompt)
+        self.assertIn("Camp Highmore Guard Barracks - Evidence Chest", prompt)
+        self.assertIn("Shadow's Blackrazor", prompt)
+        self.assertIn("Joe's Greatsword", prompt)
+
+        # 3. Retrieve weapons back from storage
+        reclaim_res = self.service.manage_character_inventory(
+            character_name="all",
+            action="retrieve",
+            storage_location="Camp Highmore Guard Barracks - Evidence Chest"
+        )
+        self.assertEqual(reclaim_res["status"], "success")
+        self.assertEqual(reclaim_res["remaining_stored_count"], 0)
+        self.assertTrue(any(w["name"] == "Blackrazor" for w in chars["char_1"]["weapons"]))
+        self.assertTrue(any(w["name"] == "Greatsword" for w in chars["char_2"]["weapons"]))
+
+    def test_auto_summarize_session_turns_jail_fallback(self):
+        # Simulate dialogue turns where party surrenders and is placed in cell
+        turns = [
+            {"role": "user", "parts": [{"text": "Head to the gate"}]},
+            {"role": "user", "parts": [{"text": "Go peacefully for now"}]},
+            {"role": "model", "parts": [{"text": "You raise your hands and surrender peacefully, deciding not to fight the overwhelming numbers. Filip nods smugly as the guards move in, roughly binding your hands behind your backs. You are marched through the camp, past the curious onlookers, to a squat wooden building serving as a jail. The heavy door closes behind you, and you find yourselves in a small, dimly lit cell, the smell of stale straw hanging in the air. What now?"}]}
+        ]
+
+        # Ensure active state exists
+        self.service.active_state["current_location"] = "Tane Here's hideout"
+        self.service.active_state["latest_recap"] = "Old recap"
+
+        res = self.service.auto_summarize_session_to_journal(turns, session_id="test_session")
+        self.assertIsNotNone(res)
+        self.assertEqual(res["status"], "success")
+        self.assertIn("Cell", self.service.active_state.get("current_location"))
+        self.assertIn("jail", self.service.active_state.get("latest_recap").lower())
 
 
 if __name__ == "__main__":

@@ -3,6 +3,8 @@ core/parsers/spell_registry.py - D&D 5e / 2024 Spell Knowledge Registry & Saniti
 Provides structured parsing, damage formulas, level resolution, and header filtering
 for TTRPG character sheet imports.
 """
+import os
+import json
 import re
 from typing import Dict, Any, List, Optional
 
@@ -307,6 +309,60 @@ DND_SPELL_REGISTRY: Dict[str, Dict[str, str]] = {
 }
 
 
+def _enrich_registry_from_srd() -> None:
+    """
+    Merges all 2014 + 2024 SRD spells and PHB aliases into DND_SPELL_REGISTRY at startup
+    without overwriting existing handcrafted entries (preserving exact damage/range formulas).
+    """
+    try:
+        srd_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "compendiums", "data", "srd_spells.json")
+        )
+        if os.path.exists(srd_path):
+            with open(srd_path, "r", encoding="utf-8") as f:
+                srd_spells = json.load(f)
+            for sp in srd_spells:
+                name = str(sp.get("name") or "").strip()
+                key = name.lower()
+                if not key:
+                    continue
+                lvl = int(sp.get("level", 0) or 0)
+                if lvl <= 0:
+                    lvl_label = "Cantrip"
+                else:
+                    suff = "th" if 11 <= (lvl % 100) <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(lvl % 10, "th")
+                    lvl_label = f"{lvl}{suff} Level"
+                if key not in DND_SPELL_REGISTRY:
+                    DND_SPELL_REGISTRY[key] = {
+                        "level": lvl_label,
+                        "damage": str(sp.get("damage") or ""),
+                        "range": str(sp.get("range") or "60 ft."),
+                        "school": str(sp.get("school") or ""),
+                        "classes": ", ".join(sp.get("classes") or []),
+                    }
+                else:
+                    existing = DND_SPELL_REGISTRY[key]
+                    if "school" not in existing and sp.get("school"):
+                        existing["school"] = str(sp.get("school"))
+                    if "classes" not in existing and sp.get("classes"):
+                        existing["classes"] = ", ".join(sp.get("classes") or [])
+
+        # Map PHB named-spell aliases (e.g. "bigby's hand" -> "arcane hand")
+        try:
+            from core.compendiums.dnd_spells import PHB_TO_SRD_ALIASES
+        except Exception:
+            PHB_TO_SRD_ALIASES = {}
+        for phb_alias, srd_key in PHB_TO_SRD_ALIASES.items():
+            if phb_alias not in DND_SPELL_REGISTRY and srd_key in DND_SPELL_REGISTRY:
+                DND_SPELL_REGISTRY[phb_alias] = dict(DND_SPELL_REGISTRY[srd_key])
+    except Exception:
+        # Fallback gracefully to the built-in canonical dictionary
+        pass
+
+
+_enrich_registry_from_srd()
+
+
 def normalize_spell_level(lvl_val: Any) -> int:
     """Converts a spell level token ('Cantrip', '1st Level', '2', 0) to a deterministic integer."""
     if isinstance(lvl_val, int):
@@ -541,7 +597,10 @@ def is_spell_name(name: str) -> bool:
     """Returns True if the given name matches a known canonical spell or cantrip."""
     if not name or not isinstance(name, str):
         return False
-    clean = re.sub(r"\s*\[.*?\]", "", name).strip().lower()
+    raw = name.strip().lower()
+    if raw in DND_SPELL_REGISTRY:
+        return True
+    clean = re.sub(r"\s*(?:\[.*?\]|<.*?>|\(.*?\))", "", name).strip().lower()
     return clean in DND_SPELL_REGISTRY
 
 
