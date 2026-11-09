@@ -125,6 +125,103 @@ class TestSpellPrepAndDMTools(unittest.IsolatedAsyncioTestCase):
         slots_1 = self.service.active_state["characters"]["char_spurt"]["native_system_data"]["spell_slots"]["level_1"]
         self.assertEqual(slots_1["current"], 4)
 
+    async def test_shadow_and_sam_cast_dimension_door(self):
+        """Verifies that Shadow (Paladin/Sorcerer) and Sam (Warlock) can both cast Dimension Door."""
+        # Add Shadow (Paladin 10 / Sorcerer 10) with initially None spell_slots
+        self.service.active_state["characters"]["char_shadow"] = {
+            "id": "char_shadow",
+            "name": "Shadow",
+            "archetype": "Paladin 10 / Sorcerer 10",
+            "level": 20,
+            "spells": ["Dimension Door", "Fireball", "Sorcerous Burst"],
+            "spell_slots": None
+        }
+        # Add Sam (Warlock 20) with initially None spell_slots
+        self.service.active_state["characters"]["char_sam"] = {
+            "id": "char_sam",
+            "name": "Sam",
+            "archetype": "Warlock 20",
+            "level": 20,
+            "spells": ["Dimension Door", "Eldritch Blast", "Hellish Rebuke"],
+            "spell_slots": None
+        }
+
+        tools = {call.kwargs["name"]: call.kwargs["handler"] for call in self.dispatcher.register_tool.call_args_list}
+        cast_fn = tools["cast_spell"]
+
+        # 1. Shadow casts Dimension Door (4th level spell)
+        res_shadow = await cast_fn("Shadow", "Dimension Door", 4)
+        self.assertEqual(res_shadow["status"], "success")
+        self.assertEqual(res_shadow["slot_level_expended"], 4)
+        self.assertEqual(res_shadow["slots_remaining"], 2) # Started with 3 Level 4 slots, 1 expended -> 2 remaining
+
+        # 2. Sam casts Dimension Door (4th level spell) using Level 5 Pact Magic slot!
+        res_sam = await cast_fn("Sam", "Dimension Door", 4)
+        self.assertEqual(res_sam["status"], "success")
+        self.assertEqual(res_sam["slot_level_expended"], 5)
+        self.assertTrue(res_sam["is_pact_magic"])
+        self.assertEqual(res_sam["slots_remaining"], 3) # Started with 4 Level 5 pact slots, 1 expended -> 3 remaining
+
+    async def test_upcast_when_exact_slot_depleted(self):
+        """Verifies that a spell automatically upcasts using the lowest available higher slot when exact slot is depleted."""
+        self.service.active_state["characters"]["char_spurt"]["spell_slots"] = {
+            "level_1": {"current": 0, "max": 4},
+            "level_2": {"current": 2, "max": 2}
+        }
+        self.service.active_state["characters"]["char_spurt"]["native_system_data"]["spell_slots"] = {
+            "level_1": {"current": 0, "max": 4},
+            "level_2": {"current": 2, "max": 2}
+        }
+
+        tools = {call.kwargs["name"]: call.kwargs["handler"] for call in self.dispatcher.register_tool.call_args_list}
+        cast_fn = tools["cast_spell"]
+
+        # Burning Hands is Level 1, but Level 1 slots are 0 -> should upcast using Level 2 slot
+        res = await cast_fn("Spurt", "Burning Hands", 1)
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["slot_level_expended"], 2)
+        self.assertEqual(res["slots_remaining"], 1)
+
+    def test_multiclass_and_vault_unprepped_spells_enforcement(self):
+        """Verifies that multiclass and prepared casters have leveled spells unprepped in vault and clamped to legal cap."""
+        from core.parsers.spell_registry import sanitize_parsed_spells
+
+        # 1. Test raw spells sanitization
+        raw_spells = [
+            {"name": "Thunderclap", "level": 0, "is_cantrip": True},
+            {"name": "Bless", "level": 1},
+            {"name": "Cure Wounds", "level": 1, "prepared": True},
+            {"name": "Dimension Door", "level": 4, "prepared": False},
+            "Fireball (8d6)"
+        ]
+        sanitized = sanitize_parsed_spells(raw_spells)
+        # Cantrip is always prepared
+        self.assertTrue(next(s for s in sanitized if s["name"] == "Thunderclap")["prepared"])
+        # Cure Wounds had explicit True
+        self.assertTrue(next(s for s in sanitized if s["name"] == "Cure Wounds")["prepared"])
+        # Dimension Door had explicit False
+        self.assertFalse(next(s for s in sanitized if s["name"] == "Dimension Door")["prepared"])
+
+        # 2. Test auto-clamp in ensure_character_spell_slots when over capacity
+        overprepped_char = {
+            "name": "Overprepped Wizard",
+            "archetype": "Wizard 5",
+            "level": 5,
+            "max_prepared_leveled_spells": 2,
+            "spells": [
+                {"name": "Fire Bolt", "level": 0, "is_cantrip": True, "prepared": True},
+                {"name": "Magic Missile", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Shield", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Misty Step", "level": 2, "is_cantrip": False, "prepared": True},
+                {"name": "Fireball", "level": 3, "is_cantrip": False, "prepared": True}
+            ]
+        }
+        self.service.ensure_character_spell_slots(overprepped_char)
+        prepared_leveled = [s for s in overprepped_char["spells"] if not s.get("is_cantrip") and s.get("prepared")]
+        # Exactly 2 prepared leveled spells remaining (clamped to max_prep=2)
+        self.assertEqual(len(prepared_leveled), 2)
+        # Cantrip is untouched
+        self.assertTrue(next(s for s in overprepped_char["spells"] if s["name"] == "Fire Bolt")["prepared"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1342,6 +1342,15 @@ class TestTTRPGService(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Cell", self.service.active_state.get("current_location"))
         self.assertIn("jail", self.service.active_state.get("latest_recap").lower())
 
+    def test_npc_psychology_and_social_interaction_directive(self):
+        """Verifies that build_gm_context_prompt injects NPC psychology, sensory context, and social check rules."""
+        prompt = self.service.build_gm_context_prompt()
+        self.assertIn("[NPC PSYCHOLOGY, SENSORY LOG AWARENESS & SOCIAL INTERACTION DIRECTIVE — MANDATORY]", prompt)
+        self.assertIn("SURMISE THROUGH THE NPC'S EYES", prompt)
+        self.assertIn("ANTI-GM METAGAMING", prompt)
+        self.assertIn("MANDATORY SOCIAL CHECKS (WORDS ALONE DO NOT PASS)", prompt)
+        self.assertIn("Wary / Hunted / Suspicious NPC", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

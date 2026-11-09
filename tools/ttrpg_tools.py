@@ -5,7 +5,7 @@ campaign document review (rulesets, modules, character sheets), and roster chara
 """
 import re
 from typing import Dict, Any, List, Optional
-from core.ttrpg_service import TTRPGService, level_up_dnd_character
+from core.ttrpg_service import TTRPGService, level_up_dnd_character, CONDITION_EFFECTS, LONG_RANGE_MAGIC_EXCEPTIONS
 
 
 def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=None):
@@ -34,13 +34,15 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         roll_type: str = "normal",
         purpose: Optional[str] = None,
         character_name: Optional[str] = None,
-        actor: Optional[str] = None
+        actor: Optional[str] = None,
+        target_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Executes a cryptographically fair dice roll.
         Formula must be in standard notation like '1d20+5', '2d6', or '8d6+2'.
         roll_type must be one of: 'normal', 'advantage', 'disadvantage'.
         character_name / actor: The name of the character from the party roster, or monster/NPC/DM name.
+        target_name: Optional target for proximity validation and target-based modifiers.
         """
         target_char = (character_name or actor or "").strip() or None
         state = getattr(service, "active_state", {}) or {}
@@ -76,12 +78,148 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
             if not target_char:
                 target_char = "DM"
 
-        res = service.parse_and_roll(formula, roll_type, character_name=target_char)
+        p_low = (purpose or "").lower()
+        is_death_save = "death save" in p_low or "death saving" in p_low or (formula.strip() == "1d20" and "death" in p_low)
+        char_id, cdata = service._find_character(target_char) if target_char and target_char != "DM" else (None, None)
+
+        # 1. Incapacitation check on actor (cannot take actions if incapacitated, unless rolling death save)
+        if cdata and not is_death_save:
+            conds = cdata.get("conditions", [])
+            for cond in conds:
+                c_base = cond.split("(")[0].strip()
+                eff = CONDITION_EFFECTS.get(c_base, {})
+                if eff.get("incapacitated"):
+                    is_forced_save = ("saving throw" in p_low or "save vs" in p_low) and not ("attack" in p_low or "check" in p_low)
+                    if not is_forced_save:
+                        return {
+                            "status": "error",
+                            "message": f"Action blocked: {target_char} is currently {cond} and incapacitated."
+                        }
+
+        # 2. Proximity check for attacks/actions vs target
+        if target_name and target_char and target_char != "DM":
+            prox = service.check_entity_proximity(target_char, target_name, action_or_spell=purpose or "attack")
+            if not prox.get("allowed", True):
+                return {
+                    "status": "error",
+                    "message": prox.get("reason", f"{target_char} cannot target {target_name} due to spatial separation.")
+                }
+
+        # 3. Dynamic Advantage / Disadvantage adjustments from active conditions
+        effective_roll_type = roll_type
+        condition_notes = []
+        if cdata:
+            conds = cdata.get("conditions", [])
+            is_attack = any(k in p_low for k in ("attack", "to hit", "strike", "slash", "shot", "swing", "fire"))
+            is_check = any(k in p_low for k in ("check", "skill", "ability", "stealth", "perception", "athletics", "acrobatics", "investigation", "insight", "survival"))
+
+            for cond in conds:
+                c_base = cond.split("(")[0].strip()
+                eff = CONDITION_EFFECTS.get(c_base, {})
+                dis_rolls = eff.get("disadvantage_rolls", [])
+                applies_dis = False
+                if is_attack and "attack" in dis_rolls:
+                    applies_dis = True
+                elif is_check and "check" in dis_rolls:
+                    dis_abils = eff.get("disadvantage_abilities", [])
+                    if not dis_abils or any(ab in p_low for ab in dis_abils):
+                        applies_dis = True
+                if applies_dis:
+                    condition_notes.append(f"{cond} (Disadvantage)")
+                    if effective_roll_type == "normal":
+                        effective_roll_type = "disadvantage"
+                    elif effective_roll_type == "advantage":
+                        effective_roll_type = "normal"
+
+        if target_name and any(k in p_low for k in ("attack", "to hit", "strike")):
+            _, t_data = service._find_character(target_name)
+            t_comb = service._find_combatant(target_name) if not t_data else None
+            t_conds = (t_data.get("conditions", []) if t_data else []) or (t_comb.get("conditions", []) if t_comb else [])
+            for tc in t_conds:
+                tc_base = tc.split("(")[0].strip()
+                if tc_base in ("Blinded", "Paralyzed", "Stunned", "Unconscious", "Petrified"):
+                    condition_notes.append(f"Target is {tc} (Advantage)")
+                    if effective_roll_type == "normal":
+                        effective_roll_type = "advantage"
+                    elif effective_roll_type == "disadvantage":
+                        effective_roll_type = "normal"
+
+        res = service.parse_and_roll(formula, effective_roll_type, character_name=target_char)
         if res.get("status") == "success":
+            if condition_notes:
+                res["condition_adjustments"] = condition_notes
+            if target_name:
+                res["target_name"] = target_name
             if purpose:
                 res["purpose"] = purpose
             if target_char:
                 res["character_name"] = target_char
+
+            # 4. Death Saving Throw Resolution
+            if is_death_save and cdata:
+                d20_roll = res.get("rolls", [10])[0] if res.get("rolls") else res.get("total", 10)
+                ds = cdata.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "dying"})
+                char_conds = cdata.setdefault("conditions", [])
+                msg = ""
+                if d20_roll == 20:
+                    service.modify_character_stat(target_char, "health", 1)
+                    msg = f"NATURAL 20! {target_char} regains 1 HP, revives, and is no longer unconscious!"
+                elif d20_roll == 1:
+                    ds["failures"] = ds.get("failures", 0) + 2
+                    if ds["failures"] >= 3:
+                        ds["status"] = "dead"
+                        if "Dead" not in char_conds:
+                            char_conds.append("Dead")
+                        msg = f"NATURAL 1! Critical failure! {target_char} suffers 2 death save failures ({ds['failures']}/3) and has DIED."
+                    else:
+                        msg = f"NATURAL 1! Critical failure! {target_char} suffers 2 death save failures ({ds['failures']}/3)."
+                elif d20_roll >= 10:
+                    ds["successes"] = ds.get("successes", 0) + 1
+                    if ds["successes"] >= 3:
+                        ds["status"] = "stable"
+                        if "Stable" not in char_conds:
+                            char_conds.append("Stable")
+                        msg = f"SUCCESS (Roll: {d20_roll})! {target_char} records a death save success ({ds['successes']}/3). STABLE at 0 HP!"
+                    else:
+                        msg = f"SUCCESS (Roll: {d20_roll})! {target_char} records a death save success ({ds['successes']}/3)."
+                else:
+                    ds["failures"] = ds.get("failures", 0) + 1
+                    if ds["failures"] >= 3:
+                        ds["status"] = "dead"
+                        if "Dead" not in char_conds:
+                            char_conds.append("Dead")
+                        msg = f"FAILURE (Roll: {d20_roll})! {target_char} suffers a death save failure ({ds['failures']}/3) and has DIED."
+                    else:
+                        msg = f"FAILURE (Roll: {d20_roll})! {target_char} suffers a death save failure ({ds['failures']}/3)."
+
+                service.save_active_campaign_state()
+                res["death_save_result"] = msg
+                res["death_saves"] = ds
+                res["dm_directive"] = f"DEATH SAVE RESOLUTION: {msg}"
+                emit_update("roster_updated", service.get_campaign_roster())
+                if service.active_state and service.active_state.get("initiative_order"):
+                    emit_update("initiative_updated", {"initiative_order": service.active_state.get("initiative_order", [])})
+
+            # Automatic Initiative Tracking Bridge:
+            if "initiative" in p_low:
+                total_val = res.get("total", 10)
+                actor_name = target_char or character_name or "Unknown"
+                service.clean_stale_combat_if_needed()
+                char_id_init, cdata_init = service._find_character(actor_name)
+                is_p = bool(cdata_init is not None)
+                service.add_to_initiative(name=actor_name, roll_val=total_val, is_player=is_p)
+                emit_update("initiative_updated", {"initiative_order": service.active_state.get("initiative_order", [])})
+                emit_update("ttrpg_state_updated", {"initiative_order": service.active_state.get("initiative_order", [])})
+
+            # Stored gear search check
+            stored_list = state.get("stored_items", []) if isinstance(state, dict) else []
+            if any(it.get("location_knowledge") in (None, "unknown") for it in stored_list):
+                if any(k in p_low for k in ("perception", "investigation", "search", "look", "spot", "find", "weapon", "gear", "chest", "evidence")):
+                    res["dm_directive"] = (
+                        f"NOTE FOR GM: If this check ({res.get('total')}) spots or perceives where the party's confiscated gear is kept, "
+                        "you MUST invoke `manage_party_inventory(action='discover_location', storage_location='<Location Seen>', discovery_clue='<Visual Clue>')` "
+                        "immediately so the party roster UI updates from 'Location Unknown' to 'Location Known'!"
+                    )
             emit_update("dice_roll_event", res)
         return res
 
@@ -94,6 +232,7 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         """
         Alters character vitals (e.g. 'health', 'guard') or custom meters (e.g. 'mana', 'sanity').
         Use negative integers for damage/cost, positive for healing/gain.
+        Supports party heroes as well as monsters on the initiative ladder.
         """
         res = service.modify_character_stat(
             character_name=character_name,
@@ -103,6 +242,9 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         )
         if res.get("status") == "success":
             emit_update("ttrpg_state_updated", res)
+            if service.active_state:
+                emit_update("initiative_updated", {"initiative_order": service.active_state.get("initiative_order", [])})
+            emit_update("roster_updated", service.get_campaign_roster())
         return res
 
     async def advance_combat_turn() -> Dict[str, Any]:
@@ -113,14 +255,96 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         res = service.advance_turn()
         if res.get("status") == "success":
             emit_update("initiative_updated", res)
+            emit_update("ttrpg_state_updated", res)
+        return res
+
+    async def start_combat(enemies: Optional[List[str]] = None, round_number: int = 1) -> Dict[str, Any]:
+        """
+        Begins a combat encounter: rolls initiative for all party heroes and enemies,
+        populates the Initiative Ladder in the UI, and starts Round 1.
+        """
+        res = service.start_combat(enemies=enemies, round_number=round_number)
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("initiative_updated", res)
+        return res
+
+    async def end_combat() -> Dict[str, Any]:
+        """Clears the initiative ladder and resets turn tracking when combat ends."""
+        res = service.end_combat()
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("initiative_updated", res)
+        return res
+
+    async def add_to_initiative(name: str, roll_val: int, is_player: bool = False) -> Dict[str, Any]:
+        """Adds or updates a single combatant on the initiative ladder."""
+        res = service.add_to_initiative(name=name, roll_val=roll_val, is_player=is_player)
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("initiative_updated", res)
+        return res
+
+    async def remove_from_initiative(name_or_id: str) -> Dict[str, Any]:
+        """Removes a combatant from the initiative ladder (e.g. killed, fled, surrendered)."""
+        res = service.remove_from_initiative(name_or_id=name_or_id)
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("initiative_updated", res)
+        return res
+
+    async def clear_defeated_combatants() -> Dict[str, Any]:
+        """Removes all dead/defeated enemies from the active initiative ladder."""
+        res = service.clear_defeated_combatants()
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("initiative_updated", res)
         return res
 
     async def set_character_condition(character_name: str, condition: str, is_active: bool) -> Dict[str, Any]:
-        """Applies or clears a status condition (e.g., Poisoned, Stunned, Fatigued) on a character."""
+        """Applies or clears a status condition (e.g., Poisoned, Stunned, Fatigued, Stable, Dead) on a character."""
         res = service.update_condition(character_name, condition, is_active)
         if res.get("status") == "success":
             emit_update("ttrpg_state_updated", res)
+            emit_update("roster_updated", service.get_campaign_roster())
+            if service.active_state and service.active_state.get("initiative_order"):
+                emit_update("initiative_updated", {"initiative_order": service.active_state.get("initiative_order", [])})
         return res
+
+    async def update_entity_location(
+        name: str,
+        location: str,
+        is_separated: Optional[bool] = None,
+        reunite_party: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Updates the spatial location of a character, NPC, or monster in the world.
+        If reunite_party is True, brings all party characters to 'location' and clears separation.
+        """
+        res = service.update_entity_location(
+            name=name,
+            location=location,
+            is_separated=is_separated,
+            reunite_party=reunite_party
+        )
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("roster_updated", service.get_campaign_roster())
+        return res
+
+    async def check_entity_proximity(
+        actor_name: str,
+        target_name: str,
+        action_or_spell: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Checks if actor and target are co-located or within reach for actions/spells.
+        """
+        return service.check_entity_proximity(
+            actor_name=actor_name,
+            target_name=target_name,
+            action_or_spell=action_or_spell
+        )
 
     async def list_campaign_documents() -> Dict[str, Any]:
         """
@@ -263,8 +487,9 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
             "properties": {
                 "formula": {"type": "string", "description": "Dice expression (e.g., '1d20+7', '3d6')."},
                 "roll_type": {"type": "string", "enum": ["normal", "advantage", "disadvantage"], "description": "Roll modifier."},
-                "purpose": {"type": "string", "description": "Context of roll (e.g., 'Joe Investigation Check', 'Goblin Scimitar Attack', 'Fireball Damage')."},
-                "character_name": {"type": "string", "description": "Name of the character from the Party Roster performing the action (e.g. 'Joe', 'Sam', 'Shadow'), or NPC/Monster/DM name (e.g. 'Chief Olaf', 'Goblin', 'Game Master')."}
+                "purpose": {"type": "string", "description": "Context of roll (e.g., 'Joe Investigation Check', 'Goblin Scimitar Attack', 'Fireball Damage', 'Death Saving Throw')."},
+                "character_name": {"type": "string", "description": "Name of the character from the Party Roster performing the action (e.g. 'Joe', 'Sam', 'Shadow'), or NPC/Monster/DM name (e.g. 'Chief Olaf', 'Goblin', 'Game Master')."},
+                "target_name": {"type": "string", "description": "Optional target creature, player, or NPC. Used to check spatial proximity and target-based modifiers."}
             },
             "required": ["formula"]
         },
@@ -288,6 +513,69 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
     )
 
     dispatcher.register_tool(
+        name="start_combat",
+        description="Begins a combat encounter. Automatically rolls initiative for all party heroes and listed enemies, populates the Initiative Ladder in the UI, and starts Round 1.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "enemies": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of enemy names in the encounter (e.g. ['Ape 1', 'Ape 2', 'Ape 3', 'Ape 4', 'Ape 5'])."
+                },
+                "round_number": {
+                    "type": "integer",
+                    "description": "Initial combat round number (defaults to 1)."
+                }
+            },
+            "required": ["enemies"]
+        },
+        handler=start_combat
+    )
+
+    dispatcher.register_tool(
+        name="end_combat",
+        description="Ends combat encounter and clears the initiative ladder.",
+        parameters={"type": "object", "properties": {}},
+        handler=end_combat
+    )
+
+    dispatcher.register_tool(
+        name="add_to_initiative",
+        description="Adds a reinforcement or individual combatant to the initiative ladder.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Combatant name."},
+                "roll_val": {"type": "integer", "description": "Initiative roll total."},
+                "is_player": {"type": "boolean", "description": "True if player character, False if monster/NPC."}
+            },
+            "required": ["name", "roll_val"]
+        },
+        handler=add_to_initiative
+    )
+
+    dispatcher.register_tool(
+        name="remove_from_initiative",
+        description="Removes a combatant from the initiative ladder when defeated, killed, or fled.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name_or_id": {"type": "string", "description": "Name or entity ID to remove."}
+            },
+            "required": ["name_or_id"]
+        },
+        handler=remove_from_initiative
+    )
+
+    dispatcher.register_tool(
+        name="clear_defeated_combatants",
+        description="Removes all dead/defeated enemies from the active initiative tracker when combat concludes.",
+        parameters={"type": "object", "properties": {}},
+        handler=clear_defeated_combatants
+    )
+
+    dispatcher.register_tool(
         name="advance_combat_turn",
         description="Advances initiative to the next character in turn order.",
         parameters={"type": "object", "properties": {}},
@@ -307,6 +595,37 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
             "required": ["character_name", "condition", "is_active"]
         },
         handler=set_character_condition
+    )
+
+    dispatcher.register_tool(
+        name="update_entity_location",
+        description="Updates the spatial location of a character, NPC, or monster in the active campaign. Use when party members separate into different areas or reunite.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Character or NPC/monster name, or 'all' to target the entire party."},
+                "location": {"type": "string", "description": "The specific area or location name (e.g. 'Hedge Maze - Overgrown Heart', 'Camp Jail Cell')."},
+                "is_separated": {"type": "boolean", "description": "Explicitly mark whether this character is separated from the main party."},
+                "reunite_party": {"type": "boolean", "description": "Set to True to bring all party members together at this location."}
+            },
+            "required": ["name", "location"]
+        },
+        handler=update_entity_location
+    )
+
+    dispatcher.register_tool(
+        name="check_entity_proximity",
+        description="Checks if an actor is close enough to target another character/creature with an action or spell, preventing actions across separated areas.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "actor_name": {"type": "string", "description": "The character or creature performing the action."},
+                "target_name": {"type": "string", "description": "The intended target of the action or spell."},
+                "action_or_spell": {"type": "string", "description": "The spell or action name (e.g. 'Command', 'Fireball', 'Sending')."}
+            },
+            "required": ["actor_name", "target_name"]
+        },
+        handler=check_entity_proximity
     )
 
     dispatcher.register_tool(
@@ -462,7 +781,12 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
         reason: Optional[str] = None,
-        storage_location: Optional[str] = None
+        storage_location: Optional[str] = None,
+        location_knowledge: Optional[str] = None,
+        status: Optional[str] = None,
+        holder_or_creature: Optional[str] = None,
+        salvageable: Optional[bool] = None,
+        discovery_clue: Optional[str] = None
     ) -> Dict[str, Any]:
         res = service.manage_character_inventory(
             character_name=character_name,
@@ -470,7 +794,12 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
             items=items,
             weapons=weapons,
             reason=reason,
-            storage_location=storage_location
+            storage_location=storage_location,
+            location_knowledge=location_knowledge,
+            status=status,
+            holder_or_creature=holder_or_creature,
+            salvageable=salvageable,
+            discovery_clue=discovery_clue
         )
         if res.get("status") == "success":
             emit_update("ttrpg_state_updated", res)
@@ -478,23 +807,23 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
 
     dispatcher.register_tool(
         name="manage_party_inventory",
-        description="Adds, removes, uses, disarms, or retrieves physical items and weapons for a party member or the entire party. Supports 'disarm' upon arrest/surrender (storing weapons in evidence) and 'retrieve' (reclaiming stored gear). Tracks item persistence in world storage caches. NOTE: Captives, prisoners, and living NPCs are NOT inventory!",
+        description="Adds, removes, uses, disarms, retrieves, discovers, or destroys physical items and weapons for a party member or the entire party. Supports 'disarm' upon arrest/surrender (storing weapons in evidence with unknown or known location), 'discover_location' (revealing storage location upon successful checks/clues), 'retrieve' (reclaiming stored gear or salvaging slayed beasts), and 'destroy' (permanent incineration in lava/acid where items are lost forever). NOTE: Captives, prisoners, and living NPCs are NOT inventory!",
         parameters={
             "type": "object",
             "properties": {
                 "character_name": {
                     "type": "string",
-                    "description": "Name of the character (e.g. 'Joe', 'Shadow'), or 'all'/'party' to disarm or retrieve gear for the entire party at once."
+                    "description": "Name of the character (e.g. 'Joe', 'Shadow'), or 'all'/'party' to disarm, discover, or retrieve gear for the entire party at once."
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["add", "remove", "use", "disarm", "retrieve"],
-                    "description": "Action type: 'add' (loot/receive), 'remove' (discard/drop), 'use' (potions/scrolls), 'disarm' (strip weapons upon arrest/surrender and store in evidence), or 'retrieve' (reclaim stored/confiscated weapons/items from evidence or storage cache)."
+                    "enum": ["add", "remove", "use", "disarm", "retrieve", "discover_location", "destroy"],
+                    "description": "Action type: 'add' (loot/receive), 'remove' (discard/swallowed by creature), 'use' (potions/scrolls), 'disarm' (strip weapons upon arrest/surrender and store in evidence), 'retrieve' (reclaim stored/confiscated weapons/items from evidence or salvage slayed beast), 'discover_location' (reveal where gear is kept after checks/clues), or 'destroy' (incinerate permanently in lava/acid)."
                 },
                 "items": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of item names to add, remove, or retrieve (e.g. ['Potion of Healing', '50 ft. Rope', 'Gold pouch'])."
+                    "description": "List of item names to add, remove, retrieve, or destroy (e.g. ['Potion of Healing', '50 ft. Rope', 'Gold pouch'])."
                 },
                 "weapons": {
                     "type": "array",
@@ -512,11 +841,33 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
                 },
                 "storage_location": {
                     "type": "string",
-                    "description": "Physical in-world location where removed/confiscated items are placed or retrieved from (e.g. 'Camp Highmore Guard Barracks - Evidence Chest', 'Jailor's Office Strongbox', 'Behind loose brick in cell'). Ensures item persistence so players can reclaim gear later."
+                    "description": "Physical in-world location where removed/confiscated items are placed, retrieved from, or destroyed in (e.g. 'Camp Highmore Guard Barracks - Evidence Chest', 'Jailor's Office Strongbox', 'Mount Doom Lava'). Ensures item persistence so players can reclaim gear later."
+                },
+                "location_knowledge": {
+                    "type": "string",
+                    "enum": ["unknown", "known", "discovered"],
+                    "description": "Information asymmetry flag. 'unknown': guards took gear away unseen by players (displayed as 'Confiscated Gear (Location Unknown)'); 'known': witnessed by players (e.g. dragon swallowed it in front of them); 'discovered': learned via Perception check, interrogation, or finding ledgers."
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["confiscated", "inside_creature", "destroyed", "stored", "lost"],
+                    "description": "Status of the stored items. 'confiscated' (by authorities), 'inside_creature' (swallowed by monster, salvageable upon slaying), 'destroyed' (incinerated/vaporized, permanent loss), 'stored' or 'lost'."
+                },
+                "holder_or_creature": {
+                    "type": "string",
+                    "description": "Name of the beast, monster, or NPC holding or having swallowed the item (e.g. 'Red Dragon', 'Beholder', 'Captain Valen')."
+                },
+                "salvageable": {
+                    "type": "boolean",
+                    "description": "Whether the item can be recovered. True for beasts (salvageable upon slaying), False for items incinerated in lava or vaporized."
+                },
+                "discovery_clue": {
+                    "type": "string",
+                    "description": "Narrative explanation or check result explaining how players learned where gear is kept (e.g. 'DC 13 Perception check overhearing guards in corridor', 'Found armory ledger on desk')."
                 },
                 "reason": {
                     "type": "string",
-                    "description": "In-world narrative reason for the inventory change (e.g. 'Arrested by Chief Filip', 'Found in dungeon chest', 'Consumed during battle')."
+                    "description": "In-world narrative reason for the inventory change (e.g. 'Arrested by Chief Filip', 'Swallowed by Red Dragon', 'Cast into Mount Doom lava', 'Found in dungeon chest')."
                 }
             },
             "required": ["character_name", "action"]
@@ -980,40 +1331,51 @@ def register_dm_adjudication_tools(dispatcher, service: TTRPGService, notify_ui_
         """
         Modifies character vitals: 'health' (HP), 'temp_hp', or 'guard'.
         Automatically clamps health between 0 and max.
+        Supports both party characters and active combatants on the initiative ladder.
         """
+        stat_key = (stat_name or "health").lower().strip()
+        if stat_key in ("health", "hp"):
+            res = service.modify_character_stat(
+                character_name=character_name,
+                stat_key="health",
+                delta=delta
+            )
+            if res.get("status") == "success":
+                _notify("ttrpg_state_updated", res)
+                if service.active_state:
+                    _notify("initiative_updated", {"initiative_order": service.active_state.get("initiative_order", [])})
+                _notify("roster_updated", service.get_campaign_roster())
+                return {
+                    "status": "success",
+                    "character": res.get("character_name", character_name),
+                    "stat": "Health",
+                    "old": res.get("old_value"),
+                    "current": res.get("new_value"),
+                    "max": res.get("max_value"),
+                    "health_status": res.get("health_status"),
+                    "summary": res.get("summary", f"{character_name} HP adjusted by {delta:+d}.")
+                }
+            return res
+
+        elif stat_key in ("guard", "ac", "defense", "armor_class"):
+            res = service.modify_character_stat(
+                character_name=character_name,
+                stat_key="guard",
+                delta=delta
+            )
+            if res.get("status") == "success":
+                _notify("ttrpg_state_updated", res)
+                if service.active_state:
+                    _notify("initiative_updated", {"initiative_order": service.active_state.get("initiative_order", [])})
+                return res
+            return res
+
         char_id, char = service._find_character(character_name)
         if not char:
             return {"status": "error", "message": f"Character '{character_name}' not found."}
 
         vitals = char.setdefault("vitals", {})
-        stat_key = stat_name.lower().strip()
-
-        if stat_key in ("health", "hp"):
-            hp_data = vitals.setdefault("health", {"current": 10, "max": 10})
-            old_val = hp_data["current"]
-            new_val = max(0, min(hp_data["max"], old_val + delta))
-            hp_data["current"] = new_val
-
-            # Auto-apply Unconscious condition at 0 HP
-            conds = char.setdefault("conditions", [])
-            if new_val == 0 and "Unconscious" not in conds:
-                conds.append("Unconscious")
-            elif new_val > 0 and "Unconscious" in conds:
-                conds.remove("Unconscious")
-
-            service.save_active_campaign_state()
-            _notify("roster_updated", service.get_campaign_roster())
-            return {
-                "status": "success",
-                "character": character_name,
-                "stat": "Health",
-                "old": old_val,
-                "current": new_val,
-                "max": hp_data["max"],
-                "summary": f"{character_name} HP adjusted by {delta:+d} ({old_val} -> {new_val}/{hp_data['max']})."
-            }
-
-        elif stat_key in ("temp_hp", "temphp", "temp"):
+        if stat_key in ("temp_hp", "temphp", "temp"):
             vitals["temp_hp"] = max(0, vitals.get("temp_hp", 0) + delta)
             service.save_active_campaign_state()
             _notify("roster_updated", service.get_campaign_roster())
@@ -1024,73 +1386,26 @@ def register_dm_adjudication_tools(dispatcher, service: TTRPGService, notify_ui_
     async def cast_spell(
         character_name: str,
         spell_name: str,
-        spell_level: int
+        spell_level: int,
+        slot_level: Optional[int] = None,
+        target_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Deducts an expendable spell slot when a spell is cast.
         Validates preparation state for leveled spells. Cantrips (Level 0) cost 0 slots.
+        Supports upcasting, Warlock Pact Magic, condition restrictions, and target proximity.
         """
-        char_id, char = service._find_character(character_name)
-        if not char:
-            return {"status": "error", "message": f"Character '{character_name}' not found."}
-
-        native = char.get("native_system_data", {})
-        spells = native.get("spells") or char.get("spells", [])
-        slots = native.get("spell_slots") or char.get("spell_slots", {})
-
-        # Find spell entry (matching with or without [R] tag)
-        import re as _re
-        clean_target = _re.sub(r'\s*\[r\]', '', spell_name, flags=_re.IGNORECASE).strip().lower()
-        spell_entry = next(
-            (
-                s for s in spells
-                if isinstance(s, dict) and (
-                    s.get("name", "").lower() == spell_name.lower()
-                    or _re.sub(r'\s*\[r\]', '', s.get("name", ""), flags=_re.IGNORECASE).strip().lower() == clean_target
-                )
-            ),
-            None
+        res = service.cast_character_spell(
+            character_name=character_name,
+            spell_name=spell_name,
+            spell_level=spell_level,
+            slot_level=slot_level,
+            target_name=target_name
         )
-
-        class_str = str(native.get("class_level") or char.get("archetype") or char.get("class") or "").lower()
-        is_wizard = "wizard" in class_str
-
-        # Leveled Spell Verification
-        if spell_level > 0:
-            if spell_entry:
-                is_ritual = bool(
-                    spell_entry.get("is_ritual", False)
-                    or "[r]" in str(spell_entry.get("name", "")).lower()
-                    or "[r]" in spell_name.lower()
-                )
-                is_wizard_ritual = is_wizard and is_ritual
-                if not spell_entry.get("prepared", False) and not is_wizard_ritual:
-                    return {
-                        "status": "error",
-                        "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."
-                    }
-
-            slot_key = f"level_{spell_level}"
-            if slot_key not in slots or slots[slot_key].get("current", 0) <= 0:
-                return {
-                    "status": "error",
-                    "message": f"No Level {spell_level} spell slots remaining for {character_name}!"
-                }
-
-            slots[slot_key]["current"] -= 1
-
-        service.save_active_campaign_state()
-        _notify("roster_updated", service.get_campaign_roster())
-
-        remaining = slots.get(f"level_{spell_level}", {}).get("current", "At-Will")
-        return {
-            "status": "success",
-            "character": character_name,
-            "spell": spell_name,
-            "level": spell_level,
-            "slots_remaining": remaining,
-            "summary": f"{character_name} cast '{spell_name}' (Level {spell_level}). Slots remaining: {remaining}."
-        }
+        if res.get("status") == "success":
+            _notify("ttrpg_state_updated", res)
+            _notify("roster_updated", service.get_campaign_roster())
+        return res
 
     async def modify_resource_meter(
         character_name: str,
@@ -1172,13 +1487,15 @@ def register_dm_adjudication_tools(dispatcher, service: TTRPGService, notify_ui_
     )
     dispatcher.register_tool(
         name="cast_spell",
-        description="Deducts a spell slot and verifies preparation.",
+        description="Deducts a spell slot and verifies preparation. Supports upcasting and Warlock Pact Magic (expending higher-level slots). Cantrips cost 0 slots.",
         parameters={
             "type": "object",
             "properties": {
-                "character_name": {"type": "string"},
-                "spell_name": {"type": "string"},
-                "spell_level": {"type": "integer"}
+                "character_name": {"type": "string", "description": "Name of the caster from the party roster (e.g. 'Shadow', 'Sam', 'Gale')."},
+                "spell_name": {"type": "string", "description": "Name of the spell to cast (e.g. 'Dimension Door', 'Misty Step', 'Fireball')."},
+                "spell_level": {"type": "integer", "description": "Base spell level (0 for Cantrips, 1-9 for leveled spells)."},
+                "slot_level": {"type": "integer", "description": "Optional slot level to expend when upcasting (e.g. 5 for Warlock Pact slot). Defaults to lowest available slot >= spell_level."},
+                "target_name": {"type": "string", "description": "Optional target creature, player, or NPC for the spell. Validates proximity and charm restrictions."}
             },
             "required": ["character_name", "spell_name", "spell_level"]
         },

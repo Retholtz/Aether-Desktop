@@ -137,8 +137,13 @@ function updatePreparedBadge() {
       badge.style.color = '#2ecc71';
     } else {
       if (labelSpan) labelSpan.innerText = 'Prepared Leveled Spells: ';
-      badge.innerText = `${count} / ${activeMaxPreparedSpells}`;
-      badge.style.color = (count === activeMaxPreparedSpells) ? '#2ecc71' : '#00F3FF';
+      if (count > activeMaxPreparedSpells) {
+        badge.innerText = `${count} / ${activeMaxPreparedSpells} (OVER LIMIT)`;
+        badge.style.color = '#f87171';
+      } else {
+        badge.innerText = `${count} / ${activeMaxPreparedSpells}`;
+        badge.style.color = (count === activeMaxPreparedSpells) ? '#2ecc71' : '#00F3FF';
+      }
     }
   }
 }

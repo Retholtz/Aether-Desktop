@@ -441,8 +441,11 @@
             <!-- Turn & Initiative Ladder -->
             <div class="initiative-container">
               <div class="initiative-header">
-                <h4>INITIATIVE (ROUND <span id="round-counter">1</span>)</h4>
-                <button type="button" id="next-turn-btn" class="cyber-btn-small">Next Turn ▶</button>
+                <h4>INITIATIVE <span id="rp-round-indicator">(ROUND <span id="round-counter">1</span>)</span></h4>
+                <div class="initiative-header-actions" style="display: flex; gap: 6px; align-items: center;">
+                  <button type="button" id="end-combat-btn" class="cyber-btn-small rp-btn-end-combat" title="End combat encounter and return to exploration mode" style="display: none;">End Combat ⏹</button>
+                  <button type="button" id="next-turn-btn" class="cyber-btn-small">Next Turn ▶</button>
+                </div>
               </div>
               <div id="initiative-ladder" class="ladder-list">
                 <!-- Populated dynamically -->
@@ -582,7 +585,29 @@
                 <span class="rp-gm-title">
                   <span>⚔️</span> LIVE GAME MASTER
                 </span>
-                <span id="rp-active-difficulty-badge" class="rp-badge diff-helpful">Helpful DM</span>
+                <div class="rp-difficulty-wrap" id="rp-difficulty-wrap">
+                  <button type="button" id="rp-active-difficulty-badge" class="rp-badge diff-helpful rp-diff-btn" title="Click to change DM difficulty and guidance style">
+                    <span id="rp-active-difficulty-text">Helpful DM</span> <span class="diff-arrow">▾</span>
+                  </button>
+                  <div id="rp-difficulty-dropdown" class="rp-difficulty-dropdown" style="display: none;">
+                    <div class="rp-diff-opt" data-diff="helpful">
+                      <div class="rp-diff-opt-title">🟢 Helpful DM (Mentor)</div>
+                      <div class="rp-diff-opt-desc">Beginner-friendly: recommends 2-3 specific actions, reminds of abilities &amp; items.</div>
+                    </div>
+                    <div class="rp-diff-opt" data-diff="easy">
+                      <div class="rp-diff-opt-title">🔵 Easy DM (Narrative)</div>
+                      <div class="rp-diff-opt-desc">Narrative first: lenient DCs (10-12), suboptimal enemies, generous recovery.</div>
+                    </div>
+                    <div class="rp-diff-opt" data-diff="medium">
+                      <div class="rp-diff-opt-title">🟡 Medium DM (Standard)</div>
+                      <div class="rp-diff-opt-desc">Balanced standard 5e rules with standard DCs (10/15/20).</div>
+                    </div>
+                    <div class="rp-diff-opt" data-diff="hard">
+                      <div class="rp-diff-opt-title">🔴 Hard DM (Gritty Tactical)</div>
+                      <div class="rp-diff-opt-desc">Ruthless tactical enemy AI, high DCs (15-20+), strict resource enforcement.</div>
+                    </div>
+                  </div>
+                </div>
               </div>
               <button type="button" id="btn-start-resume-campaign" class="rp-adventure-btn start">
                 <span class="adventure-btn-icon">▶</span>
@@ -3250,7 +3275,7 @@
 
   <!-- Modal: Add / Edit Party Character (Dynamic Multi-Ruleset Cannon Engine) -->
   <div id="modal-add-character" class="modal-overlay hidden">
-    <div class="modal-card" style="max-width: 840px; width: 96%; max-height: 92vh; display: flex; flex-direction: column;">
+    <div class="modal-card" style="max-width: 980px; width: 96%; max-height: 92vh; display: flex; flex-direction: column;">
       <div class="modal-header">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1.25rem;">🛡️</span>
@@ -3311,22 +3336,25 @@
         <!-- =================================================================== -->
         <div id="view-char-dnd5e" class="ruleset-view-panel">
           <!-- D&D Identity Sub-Row -->
-          <div style="display: grid; grid-template-columns: 2fr 1.5fr 1.5fr 1fr; gap: 8px; margin-bottom: 12px;">
+          <div style="display: grid; grid-template-columns: 1.8fr 1.4fr 1.4fr 1.3fr; gap: 10px; margin-bottom: 12px; align-items: start;">
             <div class="modal-field">
-              <label for="input-dnd-class-level" class="modal-label">Class &amp; Level</label>
+              <label for="input-dnd-class-level" class="modal-label" style="white-space: nowrap;">Class &amp; Level</label>
               <input type="text" id="input-dnd-class-level" class="modal-input" placeholder="e.g. Fighter 1, Rogue 3" value="Fighter 1" />
             </div>
             <div class="modal-field">
-              <label for="input-dnd-species" class="modal-label">Species / Race</label>
+              <label for="input-dnd-species" class="modal-label" style="white-space: nowrap;">Species / Race</label>
               <input type="text" id="input-dnd-species" class="modal-input" placeholder="e.g. Human, Elf, Dwarf" value="Human" />
             </div>
             <div class="modal-field">
-              <label for="input-dnd-background" class="modal-label">Background</label>
+              <label for="input-dnd-background" class="modal-label" style="white-space: nowrap;">Background</label>
               <input type="text" id="input-dnd-background" class="modal-input" placeholder="e.g. Noble, Criminal, Farmer" value="Noble" />
             </div>
             <div class="modal-field">
-              <label for="input-dnd-xp" class="modal-label">Experience Points</label>
-              <input type="number" id="input-dnd-xp" class="modal-input" value="0" min="0" />
+              <label for="input-dnd-xp" class="modal-label" style="white-space: nowrap;">Experience Points</label>
+              <div class="xp-input-group" style="display: flex; align-items: center; gap: 6px;">
+                <input type="number" id="input-dnd-xp" class="modal-input" value="0" min="0" style="flex: 1; min-width: 0;" />
+                <span id="label-dnd-xp-max" style="color: #94a3b8; font-size: 0.85rem; font-weight: 600; white-space: nowrap;">/ 300</span>
+              </div>
             </div>
           </div>
 
@@ -4167,18 +4195,21 @@
         <!-- VIEW 4: UNIVERSAL / AGNOSTIC / CUSTOM VIEW                         -->
         <!-- =================================================================== -->
         <div id="view-char-agnostic" class="ruleset-view-panel" style="display: none;">
-          <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+          <div style="display: grid; grid-template-columns: 2fr 1fr 1.3fr; gap: 10px; margin-bottom: 10px; align-items: start;">
             <div class="modal-field">
-              <label for="input-rp-char-archetype" class="modal-label">Archetype / Role</label>
+              <label for="input-rp-char-archetype" class="modal-label" style="white-space: nowrap;">Archetype / Role</label>
               <input type="text" id="input-rp-char-archetype" class="modal-input" placeholder="e.g. Frontline Warden, Arcane Scholar" />
             </div>
             <div class="modal-field">
-              <label for="input-rp-char-level" class="modal-label">Character Level</label>
+              <label for="input-rp-char-level" class="modal-label" style="white-space: nowrap;">Character Level</label>
               <input type="number" id="input-rp-char-level" class="modal-input" value="1" min="1" max="30" />
             </div>
             <div class="modal-field">
-              <label for="input-rp-char-xp" class="modal-label">Experience Points (XP)</label>
-              <input type="number" id="input-rp-char-xp" class="modal-input" value="0" min="0" />
+              <label for="input-rp-char-xp" class="modal-label" style="white-space: nowrap;">Experience Points (XP)</label>
+              <div class="xp-input-group" style="display: flex; align-items: center; gap: 6px;">
+                <input type="number" id="input-rp-char-xp" class="modal-input" value="0" min="0" style="flex: 1; min-width: 0;" />
+                <span id="label-rp-char-xp-max" style="color: #94a3b8; font-size: 0.85rem; font-weight: 600; white-space: nowrap;">/ 300</span>
+              </div>
             </div>
           </div>
 
@@ -5527,6 +5558,49 @@
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
         <button type="button" id="btn-cancel-rp-confirm" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
         <button type="button" id="btn-ok-rp-confirm" class="btn-primary-sm" style="padding: 7px 18px; background: #ef4444; border-color: #dc2626;">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Character Vault Export Choice (Overwrite Canonical Root vs Create Branch) -->
+  <div id="modal-vault-export-choice" class="modal-overlay hidden" style="z-index: 100065;">
+    <div class="modal-card" style="max-width: 520px; width: 92%;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.3rem;">🏛️</span>
+          <h3 style="margin: 0; font-size: 1.05rem; color: #f1f5f9;">Export Hero to Character Vault</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-vault-export-choice" title="Cancel">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <p style="color: #cbd5e1; font-size: 0.92rem; line-height: 1.5; margin-bottom: 14px;">
+          How would you like to save <strong id="vault-export-char-name" style="color: #38bdf8;">Hero</strong> to the Character Vault?
+        </p>
+
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <button type="button" id="btn-vault-choice-overwrite" class="vault-choice-card" style="display: flex; flex-direction: column; text-align: left; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: all 0.2s ease;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 700; color: #38bdf8; font-size: 0.95rem;">🔄 Overwrite Canonical Root</span>
+              <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 10px;">Primary Profile</span>
+            </div>
+            <span style="color: #94a3b8; font-size: 0.82rem; line-height: 1.4;">
+              Updates the permanent base hero in your vault with this campaign's evolved level, XP, ability scores, inventory, and spells.
+            </span>
+          </button>
+
+          <button type="button" id="btn-vault-choice-branch" class="vault-choice-card" style="display: flex; flex-direction: column; text-align: left; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: all 0.2s ease;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="font-weight: 700; color: #c084fc; font-size: 0.95rem;">🌿 Create a Branch Variant</span>
+              <span class="rp-badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; font-size: 10px;">New Lineage Branch</span>
+            </div>
+            <span style="color: #94a3b8; font-size: 0.82rem; line-height: 1.4;">
+              Preserves the original Canonical Root intact and creates an alternate veteran branch (<em id="vault-export-branch-preview">Veteran</em>) linked to the hero.
+            </span>
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px;">
+        <button type="button" id="btn-cancel-vault-export-choice" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
       </div>
     </div>
   </div>

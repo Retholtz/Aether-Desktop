@@ -269,5 +269,153 @@ class TestAetherShopStoryPricing(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1.10x", active_shop.get("description", ""))
 
 
+class TestSpellPreparationAndLegality(unittest.TestCase):
+    def setUp(self):
+        self.ttrpg = TTRPGService()
+        self.ttrpg.create_campaign("Test Spell Legality", system_preset="dnd_5e")
+        self.ttrpg.add_character({
+            "name": "Gale",
+            "archetype": "Wizard",
+            "class_levels": {"Wizard": 1},
+            "attributes": {"Intelligence": 16},
+            "spells": [
+                {"name": "Fire Bolt", "level": 0, "is_cantrip": True, "prepared": True},
+                {"name": "Mage Armor", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Magic Missile", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Shield", "level": 1, "is_cantrip": False, "prepared": True},
+            ]
+        })
+
+    def test_check_spell_legality_within_limit(self):
+        from core.compendiums.dnd_advancement import check_character_spell_legality
+        _, char = self.ttrpg._find_character("Gale")
+        leg = check_character_spell_legality(char, "2024")
+        self.assertTrue(leg["is_legal"])
+        self.assertFalse(leg["is_over_prepared"])
+        self.assertEqual(leg["prepared_count"], 3)
+        self.assertEqual(leg["max_prepared"], 4)
+        self.assertEqual(leg["excess_prepared"], 0)
+
+    def test_cantrips_and_domain_spells_exempt(self):
+        from core.compendiums.dnd_advancement import check_character_spell_legality
+        cleric = {
+            "name": "Shadowheart",
+            "archetype": "Cleric",
+            "class_levels": {"Cleric": 1},
+            "attributes": {"Wisdom": 16},
+            "spells": [
+                {"name": "Sacred Flame", "level": 0, "is_cantrip": True, "prepared": True},
+                {"name": "Thaumaturgy", "level": 0, "is_cantrip": True, "prepared": True},
+                {"name": "Bless", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Healing Word", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Cure Wounds", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Guiding Bolt", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Charm Person", "level": 1, "is_cantrip": False, "prepared": True, "is_always_prepared": True},
+                {"name": "Disguise Self", "level": 1, "is_cantrip": False, "prepared": True, "is_always_prepared": True},
+            ]
+        }
+        leg = check_character_spell_legality(cleric, "2024")
+        self.assertTrue(leg["is_legal"])
+        self.assertEqual(leg["prepared_count"], 4)
+        self.assertEqual(leg["max_prepared"], 4)
+        self.assertEqual(leg["always_prepared_count"], 2)
+        self.assertEqual(leg["cantrips_count"], 2)
+
+    def test_unprepared_spellbook_spells_exempt(self):
+        from core.compendiums.dnd_advancement import check_character_spell_legality
+        wizard = {
+            "name": "Elminster",
+            "archetype": "Wizard",
+            "class_levels": {"Wizard": 1},
+            "attributes": {"Intelligence": 16},
+            "spells": [
+                {"name": "Mage Armor", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Magic Missile", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Shield", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Sleep", "level": 1, "is_cantrip": False, "prepared": True},
+                {"name": "Detect Magic", "level": 1, "is_cantrip": False, "prepared": False},
+                {"name": "Identify", "level": 1, "is_cantrip": False, "prepared": False},
+                {"name": "Feather Fall", "level": 1, "is_cantrip": False, "prepared": False},
+            ]
+        }
+        leg = check_character_spell_legality(wizard, "2024")
+        self.assertTrue(leg["is_legal"])
+        self.assertEqual(leg["prepared_count"], 4)
+        self.assertEqual(leg["total_leveled_spells"], 7)
+
+    def test_compendium_grant_auto_prepares_when_under_capacity(self):
+        # Gale currently has 3 prepared leveled spells (cap is 4).
+        # Adding Sleep auto-prepares it since 3 < 4.
+        res = self.ttrpg.add_compendium_entry_to_character(
+            character_name="Gale",
+            category="spells",
+            index_or_name="sleep",
+            edition="2024"
+        )
+        self.assertEqual(res["status"], "success")
+        self.assertTrue(res["entry"]["prepared"])
+        self.assertTrue(res["legality"]["is_legal"])
+        self.assertEqual(res["legality"]["prepared_count"], 4)
+
+    def test_compendium_grant_adds_unprepared_when_at_capacity(self):
+        # First fill the 4th slot
+        self.ttrpg.add_compendium_entry_to_character(
+            character_name="Gale",
+            category="spells",
+            index_or_name="sleep",
+            edition="2024"
+        )
+
+        # Now Gale has 4/4 prepared spells.
+        # Adding a 5th spell (Thunderwave) without explicit prepare_spell defaults to unprepared in spellbook!
+        res5 = self.ttrpg.add_compendium_entry_to_character(
+            character_name="Gale",
+            category="spells",
+            index_or_name="thunderwave",
+            edition="2024"
+        )
+        self.assertEqual(res5["status"], "success")
+        self.assertFalse(res5["entry"]["prepared"])
+        self.assertTrue(res5["legality"]["is_legal"])
+        self.assertEqual(res5["legality"]["prepared_count"], 4)
+        self.assertIn("Unprepared in Spellbook", res5["message"])
+
+    def test_compendium_grant_explicit_prepare_flags_over_limit_for_ui(self):
+        # First fill the 4th slot
+        self.ttrpg.add_compendium_entry_to_character(
+            character_name="Gale",
+            category="spells",
+            index_or_name="sleep",
+            edition="2024"
+        )
+
+        # User leaves 'Prepare spell immediately' checked (prepare_spell=True)
+        res_over = self.ttrpg.add_compendium_entry_to_character(
+            character_name="Gale",
+            category="spells",
+            index_or_name="thunderwave",
+            edition="2024",
+            prepare_spell=True
+        )
+        self.assertEqual(res_over["status"], "success")
+        self.assertTrue(res_over["entry"]["prepared"])
+        # Legality check flags over-limit so the UI can pop open the Edit Character modal!
+        self.assertFalse(res_over["legality"]["is_legal"])
+        self.assertTrue(res_over["legality"]["is_over_prepared"])
+        self.assertEqual(res_over["legality"]["prepared_count"], 5)
+        self.assertEqual(res_over["legality"]["max_prepared"], 4)
+        self.assertEqual(res_over["legality"]["excess_prepared"], 1)
+        self.assertIn("Preparation limit exceeded (5/4)", res_over["message"])
+
+    def test_gui_bridge_check_character_spell_legality(self):
+        bridge = GuiBridge()
+        bridge.ttrpg_service = self.ttrpg
+
+        res = bridge.check_character_spell_legality("Gale", "2024")
+        self.assertEqual(res["status"], "success")
+        self.assertTrue(res["is_legal"])
+        self.assertEqual(res["max_prepared"], 4)
+
+
 if __name__ == "__main__":
     unittest.main()

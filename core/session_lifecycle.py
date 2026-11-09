@@ -20,7 +20,7 @@ from core.context_sanitizer import sanitize_turn_history
 logger = get_logger("SessionLifecycle")
 
 # Default rotation trigger thresholds
-DEFAULT_MAX_TURNS = 25
+DEFAULT_MAX_TURNS = 50                 # 50 turns (25 user / 25 assistant exchanges) to prevent mid-encounter rotations
 DEFAULT_MAX_DURATION_SECONDS = 450.0   # 7.5 minutes (preempts 9m / 540s Gemini Live server GoAway cutoff)
 DEFAULT_MAX_TOOL_CHARS = 50000         # 50k characters of tool stdout/tracebacks
 

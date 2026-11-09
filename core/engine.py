@@ -2708,12 +2708,15 @@ class AetherEngine:
                 if active_session is None:
                     if not self._text_queue.empty() and not getattr(self, "_connect_in_progress", False):
                         try:
-                            await self._ensure_live_connected(reason="Queued typed text")
+                            connected = await self._ensure_live_connected(reason="Queued typed text")
+                            if not connected:
+                                await asyncio.sleep(0.5)
                         except Exception as wake_err:
                             logger.debug(f"[SEND_LOOP] Auto-connect for queued text skipped: {wake_err}")
+                            await asyncio.sleep(0.5)
                         active_session = self.session or session
                     if active_session is None:
-                        await asyncio.sleep(0.01)
+                        await asyncio.sleep(0.05)
                         continue
 
                 current_cfg = self.config_getter()
@@ -4964,7 +4967,12 @@ class AetherEngine:
                 "roll_dice",
                 "modify_character_vitals",
                 "advance_combat_turn",
+                "start_combat",
+                "end_combat",
+                "clear_defeated_combatants",
                 "set_character_condition",
+                "update_entity_location",
+                "check_entity_proximity",
                 "list_campaign_documents",
                 "read_campaign_document",
                 "lookup_ruleset_rule",
@@ -5837,7 +5845,38 @@ class AetherEngine:
             new_cm = client.aio.live.connect(model=model_id, config=new_config)
             new_session = await new_cm.__aenter__()
 
-            # 5. Atomically swap active session references
+            # 5. Critical Safeguard: Ensure the old session has completely finished speaking,
+            # tool execution has settled, and the audio hardware buffer has drained before swapping or closing.
+            # (A user action or assistant speech may have started on the old session while the 5-8s summary was generating)
+            for _ in range(300):
+                if self._is_audio_idle_for_rotation():
+                    if self.audio and not self.audio.is_output_empty():
+                        await asyncio.sleep(0.05)
+                        continue
+                    break
+                await asyncio.sleep(0.1)
+
+            # If audio pipeline remains busy after 30s, abort swap rather than severing speech mid-sentence
+            if not self._is_audio_idle_for_rotation():
+                logger.warning(f"[ROTATION] Old session still busy after new connection ({reason}). Closing new connection and deferring rotation.")
+                try:
+                    await new_session.close()
+                except Exception:
+                    pass
+                try:
+                    await new_cm.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                return False
+
+            # Drain any trailing audio frames to ensure every syllable is played through speakers
+            if self.audio:
+                for _ in range(30):
+                    if self.audio.is_output_empty() and not getattr(self.audio, "is_speaking", False):
+                        break
+                    await asyncio.sleep(0.05)
+
+            # 6. Atomically swap active session references
             old_session = self.session
             old_cm = self._active_cm
             old_recv_task = self._active_recv_task
@@ -5858,12 +5897,12 @@ class AetherEngine:
             except Exception:
                 pass
 
-            # 6. Start new receive loop
+            # 7. Start new receive loop on the newly connected session
             self._active_recv_task = asyncio.create_task(
                 self._receive_loop(new_session, kill_phrase, agent_name, client, model_id, voice_name, temperature, voice_accent)
             )
 
-            # 7. Cancel previous receive loop and close old session
+            # 8. Cancel previous receive loop and close old session safely (now completely idle)
             if old_recv_task and not old_recv_task.done():
                 old_recv_task.cancel()
 
@@ -5878,7 +5917,7 @@ class AetherEngine:
                 except Exception:
                     pass
 
-            # 8. Flush raw session transcript and reset lifecycle metrics
+            # 9. Flush raw session transcript and reset lifecycle metrics
             self.session_lifecycle.flush_session_to_disk()
             self.session_lifecycle.reset_metrics()
             now_rot = time.time()

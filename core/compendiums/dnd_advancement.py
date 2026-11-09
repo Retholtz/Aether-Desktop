@@ -604,6 +604,146 @@ def _class_spellcasting_profile(
     }
 
 
+def check_character_spell_legality(
+    char_data: Dict[str, Any],
+    edition: str = "2024",
+) -> Dict[str, Any]:
+    """
+    Evaluates whether a character's prepared and known spells adhere to official
+    D&D 5e (2014 & 2024) limits for their class, level, and ability modifiers.
+
+    Returns:
+        {
+            "is_legal": bool,
+            "is_caster": bool,
+            "is_over_prepared": bool,
+            "prepared_count": int,
+            "max_prepared": int,
+            "excess_prepared": int,
+            "cantrips_count": int,
+            "always_prepared_count": int,
+            "total_leveled_spells": int,
+            "character_name": str,
+            "class_summary": str,
+            "reason": str,
+        }
+    """
+    char_name = str(char_data.get("name") or "Character").strip()
+    ruleset = str(
+        char_data.get("ruleset")
+        or char_data.get("native_system")
+        or char_data.get("native_genre")
+        or ""
+    ).lower()
+
+    # Non-D&D rulesets (Call of Cthulhu, Cyberpunk, Pathfinder) are exempt
+    if any(r in ruleset for r in ("coc", "cthulhu", "cyberpunk", "pf2e", "pathfinder")):
+        return {
+            "is_legal": True,
+            "is_caster": False,
+            "is_over_prepared": False,
+            "prepared_count": 0,
+            "max_prepared": 0,
+            "excess_prepared": 0,
+            "cantrips_count": 0,
+            "always_prepared_count": 0,
+            "total_leveled_spells": 0,
+            "character_name": char_name,
+            "class_summary": "Non-D&D Hero",
+            "reason": "",
+        }
+
+    scores = extract_ability_scores(char_data)
+    class_levels, subclasses = parse_character_classes(char_data)
+    class_summary = format_class_summary(class_levels)
+    ed = "2014" if str(edition).strip() == "2014" else "2024"
+
+    profile = _class_spellcasting_profile(class_levels, scores, ed, subclasses)
+    is_caster = profile["is_caster"]
+    max_prep = profile["max_prepared_leveled_spells"]
+
+    # Gather spells from root and native_system_data
+    raw_spells = char_data.get("spells") or []
+    if not raw_spells and isinstance(char_data.get("native_system_data"), dict):
+        raw_spells = char_data["native_system_data"].get("spells") or []
+
+    cantrips_count = 0
+    always_prepared_count = 0
+    prepared_leveled_count = 0
+    total_leveled = 0
+
+    seen_spells = set()
+    for s in raw_spells:
+        if isinstance(s, dict):
+            s_name = str(s.get("name") or "").strip().lower()
+            if not s_name or s_name in seen_spells:
+                continue
+            seen_spells.add(s_name)
+
+            s_lvl = s.get("level", 0)
+            is_cantrip = (s.get("is_cantrip") is True) or (str(s_lvl).strip().lower() in ("0", "cantrip"))
+            is_always = bool(s.get("is_always_prepared"))
+            is_prep = bool(s.get("prepared"))
+
+            if is_cantrip:
+                cantrips_count += 1
+            else:
+                total_leveled += 1
+                if is_always:
+                    always_prepared_count += 1
+                elif is_prep:
+                    prepared_leveled_count += 1
+        elif isinstance(s, str) and s.strip():
+            s_name = s.strip().lower()
+            if s_name in seen_spells:
+                continue
+            seen_spells.add(s_name)
+            if "cantrip" in s_name:
+                cantrips_count += 1
+            else:
+                total_leveled += 1
+                prepared_leveled_count += 1
+
+    # Check over-preparation
+    is_over_prepared = False
+    excess = 0
+    reason = ""
+
+    if is_caster:
+        if prepared_leveled_count > max_prep:
+            is_over_prepared = True
+            excess = prepared_leveled_count - max_prep
+            reason = (
+                f"{char_name} is currently preparing {prepared_leveled_count} leveled spells, "
+                f"but is only allotted {max_prep} for their {class_summary} (over by {excess}). "
+                f"Please unprepare or remove {excess} spell(s)."
+            )
+    else:
+        # Non-caster with prepared leveled spells
+        if prepared_leveled_count > 0:
+            is_over_prepared = True
+            excess = prepared_leveled_count
+            reason = (
+                f"{char_name} is a {class_summary} (non-spellcaster) and cannot prepare spells. "
+                f"Please remove {excess} spell(s)."
+            )
+
+    return {
+        "is_legal": not is_over_prepared,
+        "is_caster": is_caster,
+        "is_over_prepared": is_over_prepared,
+        "prepared_count": prepared_leveled_count,
+        "max_prepared": max_prep,
+        "excess_prepared": excess,
+        "cantrips_count": cantrips_count,
+        "always_prepared_count": always_prepared_count,
+        "total_leveled_spells": total_leveled,
+        "character_name": char_name,
+        "class_summary": class_summary,
+        "reason": reason,
+    }
+
+
 def _max_learnable_spell_level_for_class(
     cls_name: str,
     next_cls_lvl: int,
@@ -629,6 +769,103 @@ def _max_learnable_spell_level_for_class(
             return 0
         return min(5, max(1, (next_cls_lvl + 3) // 4))
     return 0
+
+
+def compute_spell_selection_limits(
+    cls_name: str,
+    old_cls_lvl: int,
+    next_cls_lvl: int,
+    edition: str = "2024",
+    subclass: str = "",
+) -> Dict[str, Any]:
+    """
+    Computes standard D&D 5e (2014 & 2024 SRD) limits for choosing new spells
+    upon advancing `cls_name` from `old_cls_lvl` to `next_cls_lvl`:
+    - max_new_cantrips: number of new cantrips the character can choose
+    - max_new_leveled_spells: number of new leveled spells the character can learn/add to spellbook
+    - reason_text: concise explanation of the D&D rule rationale
+    """
+    cdef = get_class_definition(cls_name)
+    if not cdef:
+        return {
+            "max_new_cantrips": 0,
+            "max_new_leveled_spells": 0,
+            "max_total_new_spells": 0,
+            "preparation_type": "none",
+            "reason_text": "Non-caster class",
+        }
+
+    sub_low = (subclass or "").lower()
+    prep_type = CLASS_PREPARATION_TYPE.get(cls_name.lower(), "none")
+    if (cls_name == "Fighter" and "eldritch knight" in sub_low) or (cls_name == "Rogue" and "arcane trickster" in sub_low):
+        prep_type = "known_third"
+
+    # 1. Cantrip Allotment
+    cantrips_list = cdef.get("cantrips_known") or []
+    if cls_name == "Fighter" and "eldritch knight" in sub_low:
+        cantrips_list = [0, 0, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+    elif cls_name == "Rogue" and "arcane trickster" in sub_low:
+        cantrips_list = [0, 0, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+
+    if cantrips_list and next_cls_lvl >= 1:
+        new_idx = min(len(cantrips_list) - 1, max(0, next_cls_lvl - 1))
+        new_c = cantrips_list[new_idx]
+        if old_cls_lvl == 0:
+            max_cantrips = new_c
+        else:
+            old_idx = min(len(cantrips_list) - 1, max(0, old_cls_lvl - 1))
+            old_c = cantrips_list[old_idx]
+            max_cantrips = max(0, new_c - old_c)
+    else:
+        max_cantrips = 0
+
+    # 2. Leveled Spells Allotment
+    if prep_type == "prepared_spellbook":  # Wizard
+        if old_cls_lvl == 0:
+            max_leveled = 6
+            reason = "A 1st-level Wizard begins with 6 1st-level spells in their spellbook."
+        else:
+            max_leveled = 2
+            reason = "Each time you gain a Wizard level, you can add 2 Wizard spells of your choice to your spellbook."
+
+    elif prep_type in ("known", "known_pact", "known_half", "known_third"):
+        cap_key = f"spells_cap_{edition}" if f"spells_cap_{edition}" in cdef else "spells_cap_2024"
+        if cap_key not in cdef and "spells_cap_2014" in cdef:
+            cap_key = "spells_cap_2014"
+        spells_cap = cdef.get(cap_key) or []
+        if prep_type == "known_third":
+            spells_cap = [0, 0, 3, 4, 4, 4, 5, 6, 6, 7, 8, 8, 9, 10, 10, 11, 11, 11, 12, 13]
+
+        if spells_cap and next_cls_lvl >= 1:
+            new_idx = min(len(spells_cap) - 1, max(0, next_cls_lvl - 1))
+            new_s = spells_cap[new_idx]
+            if old_cls_lvl == 0:
+                max_leveled = new_s
+            else:
+                old_idx = min(len(spells_cap) - 1, max(0, old_cls_lvl - 1))
+                old_s = spells_cap[old_idx]
+                max_leveled = max(0, new_s - old_s)
+            reason = f"{cls_name}s learn {max_leveled} new spell(s) at Level {next_cls_lvl} according to the {cls_name} Spells Known table."
+        else:
+            max_leveled = 1
+            reason = f"{cls_name} learns new spells upon level advancement."
+
+    elif prep_type == "prepared_full_list":
+        # Cleric, Druid, Paladin, Artificer prepare spells from their full class list; no learning required
+        max_leveled = 0
+        reason = f"{cls_name}s have access to their entire class spell list through daily preparation; they do not learn individual spells."
+
+    else:
+        max_leveled = 0
+        reason = f"{cls_name} does not cast spells."
+
+    return {
+        "max_new_cantrips": max_cantrips,
+        "max_new_leveled_spells": max_leveled,
+        "max_total_new_spells": max_cantrips + max_leveled,
+        "preparation_type": prep_type,
+        "reason_text": reason,
+    }
 
 
 def _compute_class_meters(
@@ -866,6 +1103,14 @@ def get_advancement_options(
 
     next_xp_req = XP_THRESHOLDS.get(min(20, total_level + 1), 355000)
 
+    spell_limits = compute_spell_selection_limits(
+        selected_cls,
+        old_class_lvl,
+        next_class_lvl,
+        edition=ed,
+        subclass=sel_subclass_name,
+    )
+
     return {
         "status": "success",
         "character_id": char_data.get("id", ""),
@@ -904,6 +1149,11 @@ def get_advancement_options(
         "next_pact_slots": preview_slots["pact_slots"],
         "max_learnable_spell_level": max_learn_lvl,
         "learnable_spells": learnable_spells,
+        "max_new_cantrips": spell_limits["max_new_cantrips"],
+        "max_new_leveled_spells": spell_limits["max_new_leveled_spells"],
+        "max_total_new_spells": spell_limits["max_total_new_spells"],
+        "spell_selection_reason": spell_limits["reason_text"],
+        "preparation_type": spell_limits["preparation_type"],
         "class_options": class_options,
     }
 
@@ -1007,10 +1257,47 @@ def apply_level_up(
     old_cls_lvl = class_levels.get(target_cls, 0)
     new_cls_lvl = old_cls_lvl + 1
     new_total_level = old_total_level + 1
-    class_levels[target_cls] = new_cls_lvl
 
     # Subclass update
     chosen_subclass = str(data.get("subclass") or "").strip()
+
+    # Enforce D&D spell selection constraints BEFORE mutating character state
+    spell_limits = compute_spell_selection_limits(
+        target_cls,
+        old_cls_lvl,
+        new_cls_lvl,
+        edition=ed,
+        subclass=chosen_subclass or subclasses.get(target_cls, ""),
+    )
+    max_cantrips = spell_limits["max_new_cantrips"]
+    max_leveled = spell_limits["max_new_leveled_spells"]
+
+    submitted_spells = data.get("new_spells") or []
+    sub_cantrips = []
+    sub_leveled = []
+    for sp_in in submitted_spells:
+        sp_name = (sp_in.get("name") if isinstance(sp_in, dict) else str(sp_in)).strip()
+        if not sp_name:
+            continue
+        sp_comp = get_spell(sp_name, edition=ed)
+        lvl = int(sp_comp.get("level", 0)) if sp_comp else 1
+        if lvl == 0:
+            sub_cantrips.append(sp_name)
+        else:
+            sub_leveled.append(sp_name)
+
+    if len(sub_cantrips) > max_cantrips:
+        return {
+            "status": "error",
+            "message": f"Too many cantrips selected! {target_cls} Level {new_cls_lvl} allows at most {max_cantrips} new cantrip(s), but {len(sub_cantrips)} were submitted."
+        }
+    if len(sub_leveled) > max_leveled:
+        return {
+            "status": "error",
+            "message": f"Too many leveled spells selected! {target_cls} Level {new_cls_lvl} allows at most {max_leveled} new spell(s), but {len(sub_leveled)} were submitted."
+        }
+
+    class_levels[target_cls] = new_cls_lvl
     if chosen_subclass:
         subclasses[target_cls] = chosen_subclass
 

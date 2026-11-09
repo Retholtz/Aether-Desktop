@@ -458,15 +458,31 @@ def parse_structured_spells(fields: Dict[str, Any]) -> List[Dict[str, Any]]:
                 note_parts.append(notes)
             full_notes = " | ".join(dict.fromkeys(note_parts))
 
-            spells.append({
+            # Explicit preparation detection from AcroForm fields
+            prep_raw = fields.get(f"spellPrepared{idx}") or fields.get(f"spellPrepared {idx}") or fields.get(f"spellPrep{idx}") or fields.get(f"spellPrep {idx}")
+            is_explicit_prep = None
+            if prep_raw is not None and str(prep_raw).strip():
+                p_str = str(prep_raw).strip().lower()
+                is_explicit_prep = p_str in ("yes", "on", "true", "1", "/1")
+
+            norm_lvl = normalize_spell_level(lvl)
+            is_cantrip = (norm_lvl == 0) or ("cantrip" in str(lvl).lower())
+
+            spell_entry = {
                 "name": name,
-                "level": normalize_spell_level(lvl),
+                "level": norm_lvl,
                 "atk_bonus": save_hit if save_hit != "--" else "",
                 "damage": dmg,
                 "range": rng,
                 "notes": full_notes,
-                "is_ritual": "[r]" in lower_name
-            })
+                "is_ritual": "[r]" in lower_name,
+                "is_cantrip": is_cantrip,
+                "prepared": True if is_cantrip else (is_explicit_prep if is_explicit_prep is not None else False)
+            }
+            if is_explicit_prep is not None:
+                spell_entry["is_explicitly_prepared"] = is_explicit_prep
+
+            spells.append(spell_entry)
 
     # 3. Fallback for non-D&D Beyond standard WotC AcroForms (e.g. Spells 1014, SpellName1, etc.)
     if not spells:
@@ -520,11 +536,11 @@ def sanitize_parsed_spells(
     for s in raw_spells:
         if isinstance(s, dict):
             name = str(s.get("name") or "").strip()
-            if is_junk_spell(name):
+            if is_junk_spell(name) or len(name) <= 1:
                 continue
             low_name = name.lower()
             clean_key = re.sub(r"\s*(?:\[.*?\]|<.*?>|\(.*?\))", "", name).strip().lower()
-            if not clean_key or clean_key in seen_names:
+            if not clean_key or clean_key in seen_names or len(clean_key) <= 1:
                 continue
             seen_names.add(clean_key)
 
@@ -544,29 +560,45 @@ def sanitize_parsed_spells(
 
             atk = s.get("atk_bonus") or s.get("save_dc") or ""
 
+            norm_lvl = normalize_spell_level(lvl)
+            is_cantrip = bool(s.get("is_cantrip")) or (norm_lvl == 0) or ("cantrip" in str(lvl).lower())
+            is_always = bool(s.get("is_always_prepared"))
+
+            # Determine prepared flag: cantrips and oath/domain spells are always prepared.
+            if is_cantrip or is_always:
+                prep_val = True
+            elif "prepared" in s and s["prepared"] is not None:
+                prep_val = bool(s["prepared"])
+            else:
+                prep_val = None
+
             entry = {
                 "name": name,
-                "level": normalize_spell_level(lvl),
+                "level": norm_lvl,
                 "atk_bonus": atk,
                 "damage": dmg,
                 "range": rng,
-                "notes": str(s.get("notes") or "")
+                "notes": str(s.get("notes") or ""),
+                "is_cantrip": is_cantrip,
+                "is_always_prepared": is_always
             }
-            for extra_k in ("is_cantrip", "is_ritual", "is_always_prepared", "prepared"):
-                if extra_k in s:
-                    entry[extra_k] = s[extra_k]
-            if "[r]" in low_name and "is_ritual" not in entry:
+            if prep_val is not None:
+                entry["prepared"] = prep_val
+            if "is_ritual" in s:
+                entry["is_ritual"] = bool(s["is_ritual"])
+            elif "[r]" in low_name:
                 entry["is_ritual"] = True
+
             sanitized.append(entry)
         elif isinstance(s, str):
             clean_str = s.strip().lstrip("-•* ")
-            if is_junk_spell(clean_str):
+            if is_junk_spell(clean_str) or len(clean_str) <= 1:
                 continue
 
             # Strip parenthetical annotations if they exist (e.g. "Fire Bolt (1d10)")
             dmg_match = re.search(r"\((\d+d\d+(?:\s*[-+]\s*\d+)?(?:\s+[A-Za-z]+)?)\)", clean_str, re.IGNORECASE)
             base_name = re.sub(r"\s*\([^)]*\)", "", clean_str).strip()
-            if is_junk_spell(base_name):
+            if is_junk_spell(base_name) or len(base_name) <= 1:
                 continue
 
             low_base = base_name.lower()
@@ -580,15 +612,22 @@ def sanitize_parsed_spells(
             dmg = (dmg_match.group(1) if dmg_match else "") or reg_info.get("damage", "")
             lvl = reg_info.get("level", "Cantrip/Spell")
             rng = reg_info.get("range", "60 ft.")
+            norm_lvl = normalize_spell_level(lvl)
+            is_cantrip = (norm_lvl == 0) or ("cantrip" in str(lvl).lower())
 
-            sanitized.append({
+            s_entry = {
                 "name": base_name,
-                "level": lvl,
+                "level": norm_lvl,
                 "atk_bonus": "",
                 "damage": dmg,
                 "range": rng,
-                "notes": ""
-            })
+                "notes": "",
+                "is_cantrip": is_cantrip,
+                "is_always_prepared": False
+            }
+            if is_cantrip:
+                s_entry["prepared"] = True
+            sanitized.append(s_entry)
 
     return sanitized
 

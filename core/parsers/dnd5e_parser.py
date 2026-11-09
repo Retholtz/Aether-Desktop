@@ -1063,7 +1063,10 @@ class DnD5eParser(BaseSheetParser):
         raw_feats_field = str(fields.get("FeaturesAndTraits") or fields.get("FeaturesTraits1") or "")
         subclass_context = f"{text}\n{class_str}\n{raw_class_field}\n{raw_feats_field}".lower()
         c_lower = f"{class_str} {raw_class_field}".lower()
-        is_known_caster = any(k in c_lower for k in ("warlock", "sorcerer", "bard"))
+        has_prep_class = any(k in c_lower for k in ("paladin", "wizard", "cleric", "druid", "artificer"))
+        has_known_class = any(k in c_lower for k in ("warlock", "sorcerer", "bard"))
+        is_multiclass = "/" in c_lower or bool(re.search(r'\b(and|multiclass)\b', c_lower))
+        is_pure_known_caster = has_known_class and not has_prep_class and not is_multiclass
 
         active_subclass = ""
         # 1. First look for explicit domain / oath / circle references (e.g. "Death Domain", "Oath of Vengeance", "Circle of the Land")
@@ -1120,7 +1123,13 @@ class DnD5eParser(BaseSheetParser):
                     is_cantrip = any(re.search(rf'\b{re.escape(c)}\b', low_n) for c in cantrip_keywords)
 
                 is_subclass_oath = low_n in always_prep_set
-                is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
+                explicit_prep = s.get("is_explicitly_prepared")
+                if explicit_prep is not None:
+                    is_prep = bool(explicit_prep) or is_cantrip or is_subclass_oath
+                elif "prepared" in s and s["prepared"] is not None:
+                    is_prep = bool(s["prepared"]) or is_cantrip or is_subclass_oath
+                else:
+                    is_prep = True if (is_cantrip or is_subclass_oath or is_pure_known_caster) else False
                 final_lvl = 0 if is_cantrip else (lvl_num if (lvl_num is not None and lvl_num > 0) else normalize_spell_level(self._infer_spell_level(clean_name, text, fields=fields)))
 
                 spells.append({
@@ -1159,7 +1168,8 @@ class DnD5eParser(BaseSheetParser):
                 re.search(rf'\b{re.escape(c)}\b', low_n) for c in cantrip_keywords
             )
             is_subclass_oath = low_n in always_prep_set
-            is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
+            explicit_prep = bool(prep_char and prep_char.strip().upper() in ("O", "P", "X", "•", "*"))
+            is_prep = True if (is_cantrip or is_subclass_oath or explicit_prep or is_pure_known_caster) else False
 
             cast_time = "1A"
             if mid_tokens and mid_tokens.strip():
@@ -1201,7 +1211,8 @@ class DnD5eParser(BaseSheetParser):
                     seen_spells.add(low_n)
                     is_cantrip = ("cantrip" in low_n) or any(re.search(rf'\b{re.escape(k)}\b', low_n) for k in cantrip_keywords)
                     is_subclass_oath = low_n in always_prep_set
-                    is_prep = True if (is_cantrip or is_subclass_oath or is_known_caster) else False
+                    explicit_prep = bool(prep_char and prep_char.strip().upper() in ("O", "P", "X", "•", "*"))
+                    is_prep = True if (is_cantrip or is_subclass_oath or explicit_prep or is_pure_known_caster) else False
                     spells.append({
                         "name": clean_name,
                         "level": 0 if is_cantrip else normalize_spell_level(self._infer_spell_level(clean_name, text, fields=fields)),

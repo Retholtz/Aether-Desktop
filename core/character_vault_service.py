@@ -443,6 +443,16 @@ class CharacterVaultService:
                 if not has_slots:
                     n_data["max_prepared_leveled_spells"] = 0
 
+            calculated_lvl = int(ch.get("level") or 1)
+            arch_check = str(clean_arch or ch.get("class_and_level") or "").strip()
+            if "/" in arch_check:
+                from core.parsers.dnd5e_parser import parse_multiclass_string
+                m_entries = parse_multiclass_string(arch_check)
+                if len(m_entries) > 1:
+                    m_tot = sum(int(c.get("level", 1)) for c in m_entries)
+                    if m_tot > 0:
+                        calculated_lvl = max(calculated_lvl, m_tot)
+
             char_record = {
                 "schema_version": ch.get("schema_version") or "2.1",
                 "id": char_id,
@@ -451,7 +461,7 @@ class CharacterVaultService:
                 "name": c_name,
                 "variant_label": "Canonical Root",
                 "player_name": ch.get("player_name") or "Player",
-                "level": int(ch.get("level") or 1),
+                "level": calculated_lvl,
                 "experience_points": int(ch.get("experience_points") or 0),
                 "archetype": clean_arch,
                 "species": ch.get("species") or ch.get("race") or "",
@@ -780,31 +790,85 @@ class CharacterVaultService:
     def import_from_campaign(
         self,
         character_data: Dict[str, Any],
-        campaign_meta: Optional[Dict[str, Any]] = None
+        campaign_meta: Optional[Dict[str, Any]] = None,
+        save_mode: str = "overwrite",
+        branch_label: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Exports a character from a campaign party roster into the Character Vault as a Canonical Root hero.
+        Exports a character from a campaign party roster into the Character Vault.
+        - If save_mode == 'overwrite': Updates/saves the Canonical Root hero (id: char_<name>_root).
+        - If save_mode == 'branch': Preserves the Canonical Root hero intact and creates an
+          evolved branch variant linked via parent_id to the root hero.
         """
         c_name = character_data.get("name") or "Adventurer"
         clean_id_name = re.sub(r'[^a-zA-Z0-9_]', '', c_name.lower().replace(" ", "_"))
-        char_id = f"char_{clean_id_name}_root"
+        root_id = f"char_{clean_id_name}_root"
 
         camp_meta = campaign_meta or {}
+        camp_id = camp_meta.get("campaign_id") or camp_meta.get("id") or "campaign"
+        clean_camp = re.sub(r'[^a-zA-Z0-9_]', '', str(camp_id).lower().replace(" ", "_"))
+        camp_title = (camp_meta.get("title") or camp_id or "Campaign").strip()
         ruleset = character_data.get("ruleset") or character_data.get("native_system") or camp_meta.get("system_preset") or camp_meta.get("ruleset") or "dnd_5e"
         genre = character_data.get("native_genre") or ("cybernetic_action" if "cyber" in ruleset.lower() else ("modern_horror" if "cthulhu" in ruleset.lower() else camp_meta.get("genre", "heroic_fantasy")))
 
-        char_record = json.loads(json.dumps(character_data))
-        char_record["schema_version"] = "2.0"
-        char_record["id"] = char_id
-        char_record["is_root"] = True
-        char_record["parent_id"] = None
-        char_record["variant_label"] = "Canonical Root"
+        mode = (save_mode or "overwrite").lower().strip()
+        existing_root = self.get_character(root_id)
+
+        if mode == "branch":
+            if not existing_root:
+                # First ensure canonical root baseline exists in vault
+                init_root = json.loads(json.dumps(character_data))
+                init_root["schema_version"] = "2.0"
+                init_root["id"] = root_id
+                init_root["is_root"] = True
+                init_root["parent_id"] = None
+                init_root["variant_label"] = "Canonical Root"
+                init_root["ruleset"] = ruleset
+                init_root["ruleset_label"] = get_ruleset_display_label(ruleset)
+                init_root["native_system"] = ruleset
+                init_root["native_genre"] = genre
+                init_root.setdefault("quarantined_stash", [])
+                init_root["updated_at"] = _utc_now_iso()
+                self._save_character(init_root)
+
+            base_branch_id = f"char_{clean_id_name}_{clean_camp}"
+            branch_id = base_branch_id
+            cnt = 2
+            while self.get_character(branch_id):
+                branch_id = f"{base_branch_id}_{cnt}"
+                cnt += 1
+
+            char_record = json.loads(json.dumps(character_data))
+            char_record["schema_version"] = "2.0"
+            char_record["id"] = branch_id
+            char_record["is_root"] = False
+            char_record["parent_id"] = root_id
+            char_record["variant_label"] = branch_label or f"{camp_title} Veteran"
+            char_record["name"] = f"{c_name} ({char_record['variant_label']})"
+        else:
+            char_record = json.loads(json.dumps(character_data))
+            char_record["schema_version"] = "2.0"
+            char_record["id"] = root_id
+            char_record["is_root"] = True
+            char_record["parent_id"] = None
+            char_record["variant_label"] = "Canonical Root"
+            char_record["name"] = c_name
+
         char_record["ruleset"] = ruleset
         char_record["ruleset_label"] = get_ruleset_display_label(ruleset)
         char_record["native_system"] = ruleset
         char_record["native_genre"] = genre
         char_record.setdefault("quarantined_stash", [])
         char_record["updated_at"] = _utc_now_iso()
+
+        arch_check = str(char_record.get("class_and_level") or char_record.get("archetype") or "").strip()
+        if "/" in arch_check:
+            from core.parsers.dnd5e_parser import parse_multiclass_string
+            m_entries = parse_multiclass_string(arch_check)
+            if len(m_entries) > 1:
+                m_tot = sum(int(c.get("level", 1)) for c in m_entries)
+                if m_tot > 0:
+                    char_record["level"] = max(int(char_record.get("level") or 1), m_tot)
 
         is_coc = "cthulhu" in ruleset.lower() or "coc" in ruleset.lower()
         max_hp = int(character_data.get("max_health") or character_data.get("max_hp") or character_data.get("health") or (13 if is_coc else 20))
@@ -837,6 +901,19 @@ class CharacterVaultService:
         if "spells" in char_record and isinstance(char_record["spells"], list):
             from core.parsers.spell_registry import sanitize_parsed_spells
             char_record["spells"] = sanitize_parsed_spells(char_record["spells"])
+            max_prep = char_record.get("max_prepared_leveled_spells")
+            if max_prep is None and isinstance(char_record.get("native_system_data"), dict):
+                max_prep = char_record["native_system_data"].get("max_prepared_leveled_spells")
+            if isinstance(max_prep, int) and max_prep >= 0:
+                prep_count = sum(1 for s in char_record["spells"] if isinstance(s, dict) and not s.get("is_cantrip") and not s.get("is_always_prepared") and s.get("prepared"))
+                if prep_count > max_prep:
+                    kept = 0
+                    for s in char_record["spells"]:
+                        if isinstance(s, dict) and not s.get("is_cantrip") and not s.get("is_always_prepared"):
+                            if kept < max_prep and s.get("prepared"):
+                                kept += 1
+                            else:
+                                s["prepared"] = False
         if "weapons" in char_record and isinstance(char_record["weapons"], list):
             char_record["weapons"] = sanitize_character_weapons(char_record["weapons"], char_record.get("spells"))
         if "defenses" in character_data or "resistances" in character_data:
@@ -850,12 +927,19 @@ class CharacterVaultService:
             char_record["native_system_data"] = self._build_native_system_data(char_record)
 
         self._save_character(char_record)
-        logger.info(f"[VAULT] Saved character '{c_name}' from campaign into Vault as Canonical Root (Ruleset: {char_record['ruleset_label']}).")
+        is_root = char_record.get("is_root", True)
+        if is_root:
+            logger.info(f"[VAULT] Saved character '{c_name}' from campaign into Vault as Canonical Root (Ruleset: {char_record['ruleset_label']}).")
+            msg = f"Saved '{c_name}' into the Character Vault as Canonical Root hero."
+        else:
+            logger.info(f"[VAULT] Saved character '{char_record['name']}' from campaign into Vault as branch '{char_record.get('variant_label')}' (parent: {char_record.get('parent_id')}).")
+            msg = f"Created new Vault branch '{char_record['name']}' (preserving original Canonical Root)."
 
         return {
             "status": "success",
+            "mode": mode,
             "character": char_record,
-            "message": f"Saved '{c_name}' into the Character Vault as a permanent hero."
+            "message": msg
         }
 
     # --- In-World Progression & Level-Up Engine ---
@@ -1062,6 +1146,14 @@ class CharacterVaultService:
 
         # Merge new incoming data
         merged.update(char_data)
+        arch_check = str(merged.get("class_and_level") or merged.get("archetype") or "").strip()
+        if "/" in arch_check:
+            from core.parsers.dnd5e_parser import parse_multiclass_string
+            m_entries = parse_multiclass_string(arch_check)
+            if len(m_entries) > 1:
+                m_tot = sum(int(c.get("level", 1)) for c in m_entries)
+                if m_tot > 0:
+                    merged["level"] = max(int(merged.get("level") or 1), m_tot)
         for rich_k in (
             "weight_carried", "encumbered", "push_drag_lift", "description",
             "gender", "age", "size", "height", "weight", "alignment", "faith", "skin", "eyes", "hair",
@@ -1089,6 +1181,19 @@ class CharacterVaultService:
         if "spells" in merged and isinstance(merged["spells"], list):
             from core.parsers.spell_registry import sanitize_parsed_spells
             merged["spells"] = sanitize_parsed_spells(merged["spells"])
+            max_prep = merged.get("max_prepared_leveled_spells")
+            if max_prep is None and isinstance(merged.get("native_system_data"), dict):
+                max_prep = merged["native_system_data"].get("max_prepared_leveled_spells")
+            if isinstance(max_prep, int) and max_prep >= 0:
+                prep_count = sum(1 for s in merged["spells"] if isinstance(s, dict) and not s.get("is_cantrip") and not s.get("is_always_prepared") and s.get("prepared"))
+                if prep_count > max_prep:
+                    kept = 0
+                    for s in merged["spells"]:
+                        if isinstance(s, dict) and not s.get("is_cantrip") and not s.get("is_always_prepared"):
+                            if kept < max_prep and s.get("prepared"):
+                                kept += 1
+                            else:
+                                s["prepared"] = False
         if "weapons" in merged and isinstance(merged["weapons"], list):
             merged["weapons"] = sanitize_character_weapons(merged["weapons"], merged.get("spells"))
         if "inventory" in merged and isinstance(merged["inventory"], list):

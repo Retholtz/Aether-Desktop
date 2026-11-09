@@ -32,6 +32,7 @@ from core.compendiums.dnd_advancement import (
     compute_multiclass_spell_slots,
     get_advancement_options,
     apply_level_up,
+    check_character_spell_legality,
 )
 
 

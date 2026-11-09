@@ -510,6 +510,98 @@ class TestDnDAdvancementEngine(unittest.TestCase):
         self.assertEqual(svc.active_state["characters"]["vault_fighter"]["attributes"]["Strength"], 18)
         self.assertEqual(svc.active_state["characters"]["vault_fighter"]["vitals"]["health"]["max"], 36)
 
+    def test_spell_selection_constraints_and_level_20_caps(self):
+        """Validates that Wizard spell learning is constrained to 2 spells per level, no cantrips at Lv 2, and Lv 20 hard cap."""
+        from core.compendiums.dnd_advancement import compute_spell_selection_limits, apply_level_up, get_advancement_options
+
+        # 1. Wizard Level 1 -> 2: 0 cantrips, 2 leveled spells
+        wiz_l2 = compute_spell_selection_limits("Wizard", old_cls_lvl=1, next_cls_lvl=2, edition="2024")
+        self.assertEqual(wiz_l2["max_new_cantrips"], 0)
+        self.assertEqual(wiz_l2["max_new_leveled_spells"], 2)
+        self.assertEqual(wiz_l2["max_total_new_spells"], 2)
+
+        # 2. Wizard Level 0 -> 1 (Creation / multiclass entry): 3 cantrips, 6 leveled spells
+        wiz_l1 = compute_spell_selection_limits("Wizard", old_cls_lvl=0, next_cls_lvl=1, edition="2024")
+        self.assertEqual(wiz_l1["max_new_cantrips"], 3)
+        self.assertEqual(wiz_l1["max_new_leveled_spells"], 6)
+
+        # 3. Wizard Level 3 -> 4: 1 cantrip unlocked, 2 leveled spells
+        wiz_l4 = compute_spell_selection_limits("Wizard", old_cls_lvl=3, next_cls_lvl=4, edition="2024")
+        self.assertEqual(wiz_l4["max_new_cantrips"], 1)
+        self.assertEqual(wiz_l4["max_new_leveled_spells"], 2)
+
+        # 4. Cleric Level 1 -> 2: 0 cantrips, 0 leveled spells (prepares full list)
+        cleric_l2 = compute_spell_selection_limits("Cleric", old_cls_lvl=1, next_cls_lvl=2, edition="2024")
+        self.assertEqual(cleric_l2["max_new_cantrips"], 0)
+        self.assertEqual(cleric_l2["max_new_leveled_spells"], 0)
+        self.assertEqual(cleric_l2["preparation_type"], "prepared_full_list")
+
+        # 5. Fighter (Eldritch Knight) Level 2 -> 3: 2 cantrips, 3 leveled spells
+        ek_l3 = compute_spell_selection_limits("Fighter", old_cls_lvl=2, next_cls_lvl=3, edition="2024", subclass="Eldritch Knight")
+        self.assertEqual(ek_l3["max_new_cantrips"], 2)
+        self.assertEqual(ek_l3["max_new_leveled_spells"], 3)
+
+        # 6. Apply Level Up for Wizard Gale (Level 1 -> 2):
+        gale = {
+            "id": "char_gale",
+            "name": "Gale",
+            "level": 1,
+            "ruleset": "dnd_5e",
+            "class_and_level": "Wizard 1",
+            "attributes": {"Intelligence": 17, "Constitution": 14, "Dexterity": 14, "Strength": 10, "Wisdom": 12, "Charisma": 10},
+            "vitals": {"health": {"current": 8, "max": 8}},
+            "spells": [{"name": "Fire Bolt", "level": "Cantrip", "is_cantrip": True}],
+        }
+
+        # Check options preview returns constraints
+        opts = get_advancement_options(gale, edition="2024")
+        self.assertEqual(opts["max_new_cantrips"], 0)
+        self.assertEqual(opts["max_new_leveled_spells"], 2)
+
+        # Attempt to submit 3 leveled spells (exceeding limit of 2) -> must fail!
+        res_fail_3 = apply_level_up(gale, {
+            "edition": "2024",
+            "target_class": "Wizard",
+            "new_spells": ["Magic Missile", "Shield", "Mage Armor"],
+        })
+        self.assertEqual(res_fail_3["status"], "error")
+        self.assertIn("Too many leveled spells selected", res_fail_3["message"])
+
+        # Attempt to submit a cantrip (exceeding limit of 0) -> must fail!
+        res_fail_cantrip = apply_level_up(gale, {
+            "edition": "2024",
+            "target_class": "Wizard",
+            "new_spells": ["Acid Splash", "Magic Missile"],
+        })
+        self.assertEqual(res_fail_cantrip["status"], "error")
+        self.assertIn("Too many cantrips selected", res_fail_cantrip["message"])
+
+        # Valid submission of exactly 2 leveled spells -> must succeed!
+        res_ok = apply_level_up(gale, {
+            "edition": "2024",
+            "target_class": "Wizard",
+            "new_spells": ["Magic Missile", "Shield"],
+        })
+        self.assertEqual(res_ok["status"], "success")
+        self.assertEqual(gale["level"], 2)
+        learned_names = [s.get("name") for s in gale["spells"]]
+        self.assertIn("Magic Missile", learned_names)
+        self.assertIn("Shield", learned_names)
+
+        # 7. Level 20 character hard cap: cannot advance to 21
+        l20_char = {
+            "id": "char_shadow",
+            "name": "Shadow",
+            "level": 20,
+            "ruleset": "dnd_5e",
+            "class_and_level": "Fighter 20",
+            "attributes": {"Strength": 20, "Constitution": 18, "Dexterity": 16, "Intelligence": 12, "Wisdom": 14, "Charisma": 12},
+            "vitals": {"health": {"current": 194, "max": 194}},
+        }
+        res_l20 = apply_level_up(l20_char, {"edition": "2024", "target_class": "Fighter"})
+        self.assertEqual(res_l20["status"], "error")
+        self.assertIn("already Level 20", res_l20["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

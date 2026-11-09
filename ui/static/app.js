@@ -2231,9 +2231,11 @@ window.aetherUI = {
       if (typeof window.handleRoleplayRestOpened === "function") {
         window.handleRoleplayRestOpened(data);
       }
-    } else if (type === "level_up_prompt_opened") {
+    } else if (type === "level_up_prompt_opened" || type === "level_up_ready") {
       window.dispatchEvent(new CustomEvent('aether_level_up_prompt_opened', { detail: data }));
-      if (typeof window.handleRoleplayLevelUpOpened === "function") {
+      if (typeof window.handleRoleplayLevelUpEvent === "function") {
+        window.handleRoleplayLevelUpEvent(data);
+      } else if (typeof window.handleRoleplayLevelUpOpened === "function") {
         window.handleRoleplayLevelUpOpened(data);
       }
     }

@@ -65,6 +65,105 @@ PRESET_RULES_DIRECTIVES: Dict[str, str] = {
     )
 }
 
+# Structured D&D 5e & Universal Roleplaying Conditions and Mechanical Impacts
+CONDITION_EFFECTS: Dict[str, Dict[str, Any]] = {
+    "Drunk": {
+        "disadvantage_rolls": ["attack", "check"],
+        "disadvantage_abilities": ["dexterity", "intelligence", "wisdom", "dex", "int", "wis"],
+        "icon": "🍺",
+        "description": "Disadvantage on attack rolls and ability checks (Dex/Int/Wis)."
+    },
+    "Intoxicated": {
+        "disadvantage_rolls": ["attack", "check"],
+        "disadvantage_abilities": ["dexterity", "intelligence", "wisdom", "dex", "int", "wis"],
+        "icon": "🍺",
+        "description": "Disadvantage on attack rolls and ability checks (Dex/Int/Wis)."
+    },
+    "Confused": {
+        "disadvantage_rolls": ["check"],
+        "disadvantage_abilities": ["intelligence", "wisdom", "int", "wis"],
+        "no_reactions": True,
+        "confusion_check": True,
+        "icon": "🌀",
+        "description": "Disadvantage on Int/Wis checks, cannot take reactions; rolls 1d10 confusion behavior."
+    },
+    "Poisoned": {
+        "disadvantage_rolls": ["attack", "check"],
+        "icon": "☠️",
+        "description": "Disadvantage on attack rolls and ability checks."
+    },
+    "Frightened": {
+        "disadvantage_rolls": ["attack", "check"],
+        "icon": "😨",
+        "description": "Disadvantage on ability checks and attack rolls while source of fear is in sight."
+    },
+    "Blinded": {
+        "disadvantage_rolls": ["attack"],
+        "icon": "🙈",
+        "description": "Disadvantage on attack rolls; attacks against have advantage."
+    },
+    "Restrained": {
+        "disadvantage_rolls": ["attack"],
+        "icon": "🕸️",
+        "description": "Speed 0; disadvantage on attack rolls and Dex saves."
+    },
+    "Prone": {
+        "disadvantage_rolls": ["attack"],
+        "icon": "🧎",
+        "description": "Disadvantage on attack rolls; melee attacks within 5ft have advantage."
+    },
+    "Charmed": {
+        "icon": "💖",
+        "description": "Cannot attack the charmer or target them with harmful abilities/spells."
+    },
+    "Stunned": {
+        "incapacitated": True,
+        "icon": "💫",
+        "description": "Incapacitated: cannot take actions/reactions, automatically fails Str/Dex saves."
+    },
+    "Paralyzed": {
+        "incapacitated": True,
+        "icon": "⚡",
+        "description": "Incapacitated: cannot move or speak, automatically fails Str/Dex saves."
+    },
+    "Unconscious": {
+        "incapacitated": True,
+        "icon": "💤",
+        "description": "Incapacitated: unaware, drops held items, falls prone, fails Str/Dex saves."
+    },
+    "Incapacitated": {
+        "incapacitated": True,
+        "icon": "🛑",
+        "description": "Cannot take actions, bonus actions, or reactions."
+    },
+    "Petrified": {
+        "incapacitated": True,
+        "icon": "🗿",
+        "description": "Transformed into solid stone; incapacitated, fails Str/Dex saves."
+    },
+    "Commanded: Halt": {
+        "incapacitated": True,
+        "icon": "🛑",
+        "description": "Commanded to halt: cannot take actions or move on its turn."
+    },
+    "Dead": {
+        "incapacitated": True,
+        "dead": True,
+        "icon": "💀",
+        "description": "Deceased. Cannot take turns, actions, or rolls until revived."
+    },
+    "Stable": {
+        "icon": "🩹",
+        "description": "Stable at 0 HP. Unconscious, but does not roll death saving throws."
+    }
+}
+
+LONG_RANGE_MAGIC_EXCEPTIONS = {
+    "sending", "scrying", "teleport", "teleportation circle", "dream",
+    "clairvoyance", "message", "telepathic bond", "astral projection", "gate",
+    "project image", "commune", "contact other plane", "animal messenger"
+}
+
 MERCHANT_LOCATION_PRESETS: List[Dict[str, Any]] = [
     {"id": "village_general", "label": "Village General Store (1.0x Standard)", "multiplier": 1.0, "specialty": "general"},
     {"id": "city_bazaar", "label": "City Bazaar / Guild Market (0.9x Discount)", "multiplier": 0.9, "specialty": "general"},
@@ -85,6 +184,9 @@ class TTRPGService:
     ):
         target_dir = storage_dir if storage_dir is not None else data_dir
         self.data_dir = os.path.abspath(target_dir)
+        prod_data_dir = os.path.abspath("data/campaigns")
+        if (storage_dir is not None or self.data_dir != prod_data_dir) and manifest_path == "data/campaigns.json":
+            manifest_path = os.path.join(self.data_dir, "campaigns.json")
         self.manifest_path = os.path.abspath(manifest_path)
         self.manifest: Dict[str, Any] = {"active_campaign": None, "campaigns": {}}
         self.active_state: Optional[Dict[str, Any]] = None
@@ -142,12 +244,21 @@ class TTRPGService:
                                     st_data = json.load(sf)
                             except Exception:
                                 pass
+                        st_diff = st_data.get("difficulty")
+                        if not st_diff:
+                            cjson_path = os.path.join(entry_path, "campaign.json")
+                            if os.path.exists(cjson_path):
+                                try:
+                                    with open(cjson_path, "r", encoding="utf-8") as cjf:
+                                        st_diff = json.load(cjf).get("difficulty")
+                                except Exception:
+                                    pass
                         campaigns[entry] = {
                             "id": entry,
                             "title": entry.replace("_", " ").title(),
                             "system_preset": "dnd_5e",
                             "gm_mode": "interactive_narrator",
-                            "difficulty": "helpful",
+                            "difficulty": (st_diff or "helpful").strip().lower(),
                             "party_count": len(st_data.get("characters", {})),
                             "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                         }
@@ -183,6 +294,15 @@ class TTRPGService:
                     self.active_state.setdefault("discovered_clues", [])
                     self.active_state.setdefault("campaign_synopsis", {})
                     self.active_state.setdefault("stored_items", [])
+                    self.active_state.setdefault("entity_locations", {})
+
+                    # Synchronize difficulty between manifest and active state
+                    meta_diff = self.manifest.get("campaigns", {}).get(active_id, {}).get("difficulty")
+                    state_diff = self.active_state.get("difficulty")
+                    if state_diff and not meta_diff:
+                        self.manifest.setdefault("campaigns", {}).setdefault(active_id, {})["difficulty"] = state_diff
+                    elif meta_diff and not state_diff:
+                        self.active_state["difficulty"] = meta_diff
 
                     # Ensure no lingering character sheets remain in documents map or files dir (one-and-done)
                     docs = self.active_state.get("documents", {})
@@ -199,13 +319,25 @@ class TTRPGService:
                                     pass
                         self.save_active_campaign_state()
 
-                    # Ensure all character vitals have valid clamped current health (current <= max)
+                    # Ensure character vitals, spell slots, spatial location, and death saves are initialized
                     chars = self.active_state.get("characters", {})
+                    entity_locs = self.active_state.setdefault("entity_locations", {})
                     for c in chars.values():
                         h = c.get("vitals", {}).get("health")
                         if h and isinstance(h, dict) and "max" in h and "current" in h:
                             h["max"] = max(1, int(h["max"]))
                             h["current"] = max(0, min(h["max"], int(h["current"])))
+                        self.ensure_character_spell_slots(c)
+
+                        # Spatial tracking and conditional defaults
+                        c.setdefault("location", self.active_state.get("current_location", ""))
+                        c.setdefault("is_separated", False)
+                        c.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "none"})
+                        c.setdefault("conditions", [])
+                        c_name = c.get("name")
+                        if c_name:
+                            entity_locs.setdefault(c_name, c.get("location") or self.active_state.get("current_location", ""))
+                    self.clean_stale_combat_if_needed()
             except Exception as e:
                 logger.error(f"[TTRPG] Error loading campaign state for '{active_id}': {e}")
                 self.active_state = self._generate_default_state(active_id)
@@ -213,18 +345,27 @@ class TTRPGService:
             self.active_state = self._generate_default_state(active_id)
             self.save_active_campaign_state()
 
+    @property
+    def active_campaign_id(self) -> Optional[str]:
+        return self.manifest.get("active_campaign")
+
+    @active_campaign_id.setter
+    def active_campaign_id(self, val: Optional[str]):
+        self.manifest["active_campaign"] = val
+
     def _ensure_active_state(self, campaign_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Guarantees active campaign state is loaded in memory, auto-loading from disk if needed."""
-        cid = campaign_id or getattr(self, "active_campaign_id", None) or self.manifest.get("active_campaign")
+        cid = campaign_id or self.manifest.get("active_campaign")
         if not cid and self.manifest.get("campaigns"):
             cid = next(iter(self.manifest["campaigns"].keys()))
             self.manifest["active_campaign"] = cid
-            self.active_campaign_id = cid
 
-        if not self.active_state or (cid and self.active_state.get("campaign_id") != cid):
+        if not self.active_state:
             if cid:
                 self.manifest["active_campaign"] = cid
-                self.active_campaign_id = cid
+            self.load_active_campaign_state()
+        elif campaign_id and self.active_state.get("campaign_id") != campaign_id:
+            self.manifest["active_campaign"] = campaign_id
             self.load_active_campaign_state()
 
         return self.active_state
@@ -247,8 +388,12 @@ class TTRPGService:
             logger.error(f"[TTRPG] Error saving campaign state: {e}")
 
     def _generate_default_state(self, campaign_id: str) -> Dict[str, Any]:
+        diff = "helpful"
+        if hasattr(self, "manifest") and isinstance(self.manifest, dict):
+            diff = self.manifest.get("campaigns", {}).get(campaign_id, {}).get("difficulty", "helpful")
         return {
             "campaign_id": campaign_id,
+            "difficulty": diff,
             "party_caller_id": None,
             "focused_speaker_id": None,
             "single_mic_settings": {
@@ -347,6 +492,7 @@ class TTRPGService:
         self.manifest["active_campaign"] = cid
         self.save_manifest()
         self.active_state = self._generate_default_state(cid)
+        self.active_state["difficulty"] = difficulty or "helpful"
         self.save_active_campaign_state()
 
         # Ingest and index any initial documents provided (rulesets, modules, character sheets)
@@ -447,7 +593,21 @@ class TTRPGService:
         if tone is not None:
             meta["tone"] = tone.strip() or "Cinematic, grounded"
         if difficulty is not None:
-            meta["difficulty"] = difficulty.strip() or "helpful"
+            clean_diff = difficulty.strip().lower() or "helpful"
+            meta["difficulty"] = clean_diff
+            if self.active_state and (self.active_state.get("campaign_id") == cid or self.manifest.get("active_campaign") == cid):
+                self.active_state["difficulty"] = clean_diff
+                self.save_active_campaign_state()
+            try:
+                cjson_path = os.path.join(self.data_dir, cid, "campaign.json")
+                if os.path.exists(cjson_path):
+                    with open(cjson_path, "r", encoding="utf-8") as cjf:
+                        cj_data = json.load(cjf)
+                    cj_data["difficulty"] = clean_diff
+                    with open(cjson_path, "w", encoding="utf-8") as cjf:
+                        json.dump(cj_data, cjf, indent=2)
+            except Exception as e:
+                logger.debug(f"[TTRPG] Could not sync difficulty to campaign.json: {e}")
         if linked_project_id is not None:
             meta["linked_project_id"] = linked_project_id.strip()
         if dice_mode is not None:
@@ -512,18 +672,32 @@ class TTRPGService:
         if self.manifest.get("active_campaign") == campaign_id:
             remaining = list(campaigns.keys())
             self.manifest["active_campaign"] = remaining[0] if remaining else None
+            self.active_state = None
         
         # Cleanly remove the campaign's isolated directory and all its files from disk
         c_dir = os.path.join(self.data_dir, campaign_id)
         if os.path.exists(c_dir):
             try:
                 import shutil
-                shutil.rmtree(c_dir, ignore_errors=True)
+                import stat
+
+                def _force_rm(action, name, exc):
+                    try:
+                        os.chmod(name, stat.S_IWRITE)
+                        os.remove(name)
+                    except Exception:
+                        pass
+
+                shutil.rmtree(c_dir, onerror=_force_rm)
             except Exception as e:
                 logger.warning(f"[TTRPG] Could not remove campaign directory '{c_dir}': {e}")
 
         self.save_manifest()
-        self.load_active_campaign_state()
+        if self.manifest.get("active_campaign"):
+            self.load_active_campaign_state()
+        else:
+            self.active_state = None
+
         return {
             "status": "success",
             "active_campaign": self.manifest.get("active_campaign"),
@@ -805,12 +979,17 @@ class TTRPGService:
 
         # Parse level and experience points
         char_level = 1
-        m_lvl = re.search(r'\b(?:level|lvl)?\s*(\d+)\b', cls_lvl, re.IGNORECASE)
-        if m_lvl:
-            try:
-                char_level = max(1, int(m_lvl.group(1)))
-            except ValueError:
-                char_level = 1
+        from core.parsers.dnd5e_parser import parse_multiclass_string
+        class_entries = parse_multiclass_string(cls_lvl)
+        if class_entries:
+            char_level = max(1, sum(int(c.get("level", 1)) for c in class_entries))
+        else:
+            m_lvl = re.search(r'\b(?:level|lvl)?\s*(\d+)\b', cls_lvl, re.IGNORECASE)
+            if m_lvl:
+                try:
+                    char_level = max(1, int(m_lvl.group(1)))
+                except ValueError:
+                    char_level = 1
 
         raw_xp = _clean(fields.get("EXPERIENCE POINTS") or fields.get("EXPERIENCE POINTS2"))
         xp_points = 0
@@ -1289,6 +1468,7 @@ class TTRPGService:
             "name": char_name,
             "player_name": player_name,
             "archetype": archetype,
+            "class_and_level": cls_lvl,
             "species": race,
             "background": bg,
             "ruleset": "dnd_5e",
@@ -1814,6 +1994,12 @@ Respond ONLY with valid JSON."""
             # Protect evolved character data: do not downgrade Level, XP, or Max HP
             cur_level = self._safe_int(existing.get("level"), 1)
             sheet_level = self._safe_int(ch_payload.get("level"), 1)
+            arch_str = str(ch_payload.get("class_and_level") or ch_payload.get("archetype") or "").strip()
+            if "/" in arch_str:
+                from core.parsers.dnd5e_parser import parse_multiclass_string
+                m_entries = parse_multiclass_string(arch_str)
+                if len(m_entries) > 1:
+                    sheet_level = max(sheet_level, sum(int(c.get("level", 1)) for c in m_entries))
             existing["level"] = max(cur_level, sheet_level)
 
             cur_xp = self._safe_int(existing.get("experience_points"), 0)
@@ -2666,6 +2852,41 @@ Respond ONLY with valid JSON."""
                 if not is_duplicate:
                     existing_clues.append(c_clean)
 
+        # Auto-reconcile confiscated items if clues/summary reveal their location
+        stored_list = self.active_state.get("stored_items", [])
+        if stored_list and any(it.get("location_knowledge") in (None, "unknown") for it in stored_list):
+            combined_texts = " ".join(clues_list + [clean_summary, last_action or ""])
+            is_gear_located = bool(
+                re.search(r'(?:confiscated|stored|party\'?s?)\s+(?:weapons?|gear|belongings?|items?|equipment|blade|swords?)[^.\n]*?(?:stored|held|located|spotted|inside|in|seen)\s+', combined_texts, re.IGNORECASE) or
+                re.search(r'(?:spotting|spotted|located|found|seeing|saw)\s+(?:their|the\s+party\'?s?)\s+(?:confiscated\s+)?(?:gear|weapons?|belongings?|blade|blackrazor)', combined_texts, re.IGNORECASE) or
+                re.search(r'(?:gear|weapons?|blackrazor).*(?:held|stored|kept)\s+(?:in|inside)\s+', combined_texts, re.IGNORECASE)
+            )
+            if is_gear_located:
+                loc_match = re.search(
+                    r'(?:stored|held|located|spotted|inside|in|kept\s+in)\s+([^,.;\n]+(?:chest|barracks|locker|room|station|cell|office|box))',
+                    combined_texts,
+                    re.IGNORECASE
+                )
+                revealed_loc = ""
+                if loc_match:
+                    revealed_loc = re.sub(r'^(?:inside\s+|in\s+)?(?:a|the|an)\s+', '', loc_match.group(1).strip(), flags=re.IGNORECASE).capitalize()
+
+                clue_excerpt = next(
+                    (c for c in clues_list if any(w in c.lower() for w in ("weapon", "gear", "chest", "blade", "corridor", "station", "barracks"))),
+                    (last_action if last_action and any(w in last_action.lower() for w in ("weapon", "gear", "perception", "locate")) else clean_summary[:120])
+                )
+                updated_count = 0
+                for it in stored_list:
+                    if it.get("location_knowledge") in (None, "unknown") and it.get("status") != "destroyed":
+                        it["location_knowledge"] = "discovered"
+                        if revealed_loc and len(revealed_loc) > 3:
+                            it["storage_location"] = revealed_loc
+                        if clue_excerpt:
+                            it["discovery_clue"] = clue_excerpt
+                        updated_count += 1
+                if updated_count > 0:
+                    logger.info(f"[TTRPG] Auto-reconciled {updated_count} stored item(s) to 'discovered' from campaign journal/clues: loc='{revealed_loc}'.")
+
         self.save_active_campaign_state()
         logger.info(f"[TTRPG] Recorded campaign journal entry {entry_id} for '{self.active_state.get('campaign_id')}'.")
         return {
@@ -3266,14 +3487,14 @@ Respond in JSON with schema:
                 "\n[DICE ROLLING MODE: DIGITAL DICE (AETHER ROLLS FOR PLAYERS)]\n"
                 "* DIGITAL DICE ACTIVE: When a dice roll IS required for an established actor, you (the Game Master) execute `roll_dice` automatically—you do not make human players roll physical dice at their table.\n"
                 "* MANDATORY PLAYER AGENCY — NEVER ARBITRARILY ASSIGN CHARACTERS:\n"
-                "  1. If the player specifies who acts (e.g. 'Have Shadow roll investigation', 'Joe attacks the orc'): resolve the action immediately with that character, applying their sheet modifiers.\n"
+                "  1. If the player specifies who acts or explicitly requests an ability/skill check (e.g. 'Have Shadow roll investigation', 'Have Shadow use Charisma to persuade Imis', 'Joe attacks the orc', 'Sam rolls Stealth'): ALWAYS honor the player's explicit request and execute `roll_dice` immediately for that specific character, applying their sheet modifiers.\n"
                 "  2. If the player states an action without naming a character (e.g. 'Press Sandra for information', 'Ask about Imis', 'Search the ruins', 'Head to the gate'):\n"
-                "     - If it is dialogue or conversation: DO NOT ROLL DICE! Simply answer in-character as the NPC!\n"
-                "     - If a skill check is genuinely needed: ASK THE TABLE: 'Who steps forward to attempt this? Joe, Sam, or Shadow?' DO NOT arbitrarily choose a character or execute `roll_dice` until the player answers!\n"
-                "* STRICT BAN ON UNSOLICITED ROLLS FOR CONVERSATION OR MOVEMENT:\n"
-                "  - Asking an NPC a question ('Press Sandra for information', 'Ask about Imis', 'Question the guards') is NORMAL ROLEPLAY DIALOGUE, NOT an automatic Persuasion check! Reply in-character as the NPC without calling `roll_dice`!\n"
-                "  - Walking to an area ('Head to the western gate', 'Move to the barracks') is NORMAL MOVEMENT, NOT a Survival check! Describe the movement without calling `roll_dice`!\n"
-                "  - ONLY call `roll_dice` when an action carries genuine uncertainty, high stakes, or active contested opposition (e.g. deceiving a hostile commander, picking a difficult lock, or tracking deep in the wilderness).\n"
+                "     - If it is casual chatter with friendly/indifferent NPCs: answer in-character as the NPC without rolling.\n"
+                "     - If it is a high-stakes social claim, persuasion of a wary/suspicious NPC, or a skill check is needed: ASK THE TABLE: 'Who steps forward to speak or attempt this? Joe, Sam, or Shadow?' DO NOT arbitrarily choose a character or execute `roll_dice` until the player designates who is acting!\n"
+                "* CASUAL DIALOGUE & MOVEMENT VS HIGH-STAKES SOCIAL ENCOUNTERS:\n"
+                "  - Low-stakes, casual questions with indifferent or friendly NPCs ('Ask the bartender for rumors', 'Ask the guard where the market is') is NORMAL ROLEPLAY DIALOGUE — DO NOT roll dice; reply naturally in-character.\n"
+                "  - Walking to an area ('Head to the western gate', 'Move to the barracks') is NORMAL MOVEMENT, NOT a Survival check!\n"
+                "  - HIGH-STAKES SOCIAL CHECKS REQUIRED: When attempting to persuade, calm, deceive, or negotiate with a suspicious, terrified, or hostile NPC (e.g. 'We come in peace', 'We were framed too', 'Drop your weapon'), or when stakes are high: WORDS ALONE NEVER AUTOMATICALLY SUCCEED. You MUST execute or call for a social check (Persuasion/Deception/Intimidation or NPC Insight) as detailed in the NPC Psychology Directive below.\n"
                 "* MANDATORY ACTOR ATTRIBUTION: Every dice roll MUST be explicitly attributed to a specific party character (e.g. 'Joe', 'Sam', 'Shadow') or monster/NPC/DM. Always pass `character_name` when calling `roll_dice`.\n"
                 "* NATURAL GM NARRATION & CLEAN OUTPUT:\n"
                 "  - Weave the character's name and final total naturally into the narrative (e.g., 'Joe rolled a 16 on his Athletics check', 'Shadow rolled an 11 on Investigation', or 'With a 22 Persuasion, Joe convinces the guard...').\n"
@@ -3286,6 +3507,99 @@ Respond in JSON with schema:
             "* NO REDUNDANT RECAP: Do not repeat back what the player just said. If Eric declares 'I attack the goblin', do not recite 'Eric decides to attack the goblin with his sword'. Jump directly into the swing and outcome.\n"
             "* NO ROBOTIC MENUS: Never list 'Option 1: ... Option 2: ... Option 3: ...' when a player has already declared an action. Only offer brief, organic suggestions if a player explicitly asks what they can do or is visibly stuck.\n"
             "* IMMERSIVE GM VOICE: Never mention system tools, JSON, meters, or 'Aether'. Speak as an evocative, living Dungeon Master."
+        )
+
+        lines.append(
+            "\n[COMBAT ENCOUNTERS & INITIATIVE LADDER DIRECTIVE — MANDATORY]\n"
+            "* INITIATIVE IS FOR COMBAT ONLY: Turn order, single-actor focus, and `advance_combat_turn()` ONLY apply during active combat encounters with hostile enemies!\n"
+            "* FREE EXPLORATION OUT OF COMBAT: When not fighting foes, the game is in Free Exploration mode. Do NOT enforce turn order or single-character lockouts out of combat!\n"
+            "* ORDER OF OPERATIONS ON COMBAT START:\n"
+            "  - Whenever enemies attack, ambush, or a player initiates combat: YOU MUST CALL `start_combat(enemies=['...'])` FIRST before applying any damage!\n"
+            "  - `start_combat` populates all combatants with their official HP and rolls initiative for everyone.\n"
+            "  - NEVER call `modify_character_vitals` on an enemy before `start_combat`, or the enemy will not exist on the ladder and damage will fail!\n"
+            "* CONTINUOUS COMBAT RESOLUTION & AUTOMATIC MONSTER TURNS:\n"
+            "  - Combat flows sequentially along the initiative ladder: 1 -> 2 -> 3 -> 4 -> 5 -> 6.\n"
+            "  - 1. RESOLVING A PLAYER'S TURN:\n"
+            "     * When a player declares their action (e.g. 'Sam casts Eldritch Blast'): execute attack/damage rolls using `roll_dice`, apply damage to the enemy using `modify_character_vitals`, and call `advance_combat_turn()`.\n"
+            "  - 2. AUTOMATIC MONSTER TURNS (NEVER HANG OR FREEZE ON ENEMY TURNS):\n"
+            "     * HUMAN PLAYERS DO NOT CONTROL MONSTERS! If the initiative ladder lands on or advances to an ENEMY (`is_player: False`), YOU (the Game Master) MUST TAKE AND RESOLVE THE MONSTER'S TURN IMMEDIATELY in that same response!\n"
+            "     * NEVER merely announce 'Minotaur attacks with greataxe' and stop without rolling! That completely freezes the game because players cannot take a monster's turn!\n"
+            "     * When an enemy is active:\n"
+            "       a) Execute attack roll: `roll_dice(formula='1d20+...', character_name='<Monster>', purpose='<Monster> Attack vs <Hero> AC')`.\n"
+            "       b) DIRECT AC COMPARISON (NEVER ASK PLAYERS 'Does that hit your AC?'): You (the DM) have the complete Party Roster with every hero's exact Armor Class (e.g. Joe AC 15, Shadow AC 15, Gale AC 14, Sam AC 12). Compare the attack roll directly to the target hero's AC:\n"
+            "          - If Attack Roll >= Target AC: It is a HIT. Roll damage immediately via `roll_dice(formula='...', character_name='<Monster>', purpose='<Monster> Damage')` and apply it immediately via `modify_character_vitals(character_name='<Hero>', stat_name='health', amount=-damage)`.\n"
+            "          - If Attack Roll < Target AC: It is a MISS. Describe the blow glancing off their shield or armor.\n"
+            "          - NEVER pause, hesitate, or ask the player 'Does that hit your AC, Joe?'. Adjudicate and apply hits and misses immediately!\n"
+            "       c) Call `advance_combat_turn()` to move the pointer to the next combatant.\n"
+            "     * If the NEXT combatant on the ladder is ALSO an enemy, resolve that enemy's turn immediately as well using the same steps!\n"
+            "  - 3. HANDING OFF TO HUMAN PLAYERS:\n"
+            "     * You ONLY stop and prompt when the initiative ladder reaches a HUMAN PLAYER (`is_player: True`)!\n"
+            "     * Address that specific hero: '<Hero Name>, it is your turn on initiative! What do you do?'\n"
+            "  - 4. NEVER SKIP PLAYERS: You must adhere strictly to turn order and never jump past a player to take a monster's turn out of sequence!\n"
+            "* ZERO HALLUCINATED ROLLS & MANDATORY TOOL CALLS:\n"
+            "  - Stating attack numbers or damage in text (e.g. 'That's a 19 to hit, dealing 13 piercing damage') WITHOUT calling `roll_dice` and `modify_character_vitals` is a FATAL ENGINE ERROR.\n"
+            "  - Merely typing damage in prose DOES NOT update HP bars or character sheets in the UI! You MUST call `modify_character_vitals` for EVERY hit!\n"
+            "* DEFEATED COMBATANTS & COMBAT END:\n"
+            "  - When all hostile foes reach 0 HP, combat automatically ends and dead foes are cleared from the tracker.\n"
+            "  - Once combat ends, immediately return to Free Exploration mode. Do NOT continue calling `advance_combat_turn()` or asking players to take individual turns out of combat!\n"
+            "* COMBAT EXPERIENCE (XP) & REWARDS:\n"
+            "  - When enemies are defeated or combat concludes, experience points (XP) are automatically calculated and awarded equally among all active party members (e.g. 5 Apes = 500 XP total, awarded 125 XP to each hero).\n"
+            "  - Explicitly announce the victory and the XP reward in your narration (e.g., 'With the apes defeated, the party earns 500 XP (125 XP each)!'). If any character qualifies to level up (e.g. Gale reaching 300 XP), congratulate them and mention their level-up readiness.\n"
+            "* BEHIND THE DM SCREEN — NEVER REVEAL NUMERICAL ENEMY HP TO PLAYERS:\n"
+            "  - You are the Dungeon Master. Exact numerical hit points and max HP of enemies or monsters (e.g., '43/76 HP' or 'The minotaur has 4 HP left') are STRICTLY CONFIDENTIAL behind the DM screen!\n"
+            "  - NEVER announce or recite numerical enemy hit points in your spoken narration or text dialogue! (e.g. NEVER say 'The minotaur takes 18 damage and is at 42 HP' or 'The minotaur's health is 4').\n"
+            "  - Instead, describe enemies' physical wounds and condition qualitatively using standard D&D 5e health status tiers:\n"
+            "    * Healthy (100%): Unscathed, ferocious, fresh, unfazed.\n"
+            "    * Injured (51%–99%): Nicked, lightly bleeding, superficial burns/cuts, scratched armor.\n"
+            "    * Bloodied (1%–50%): Bloodied, heavily battered, gasping for breath, visibly staggering under pain.\n"
+            "    * Critical (1%–15%): Mortally wounded, clinging to consciousness, teetering on the edge of collapse.\n"
+            "    * Defeated (0 HP): Slain, lifelessly crashing to the earth, destroyed."
+        )
+
+        lines.append(
+            "\n[SPELLCASTING, CANTRIPS & SPELL SLOT DIRECTIVE — MANDATORY]\n"
+            "* CALL `cast_spell` ON EVERY SPELL: Whenever ANY character casts a spell, YOU MUST CALL `cast_spell(character_name=..., spell_name=..., spell_level=...)` in that same turn!\n"
+            "* CANTRIPS (LEVEL 0 — AT-WILL SPELLS):\n"
+            "  - Spells like `Fire Bolt`, `Eldritch Blast`, `Sacred Flame`, `Prestidigitation`, and `Mage Hand` are CANTRIPS (Level 0).\n"
+            "  - CANTRIPS COST 0 SPELL SLOTS. Characters can cast cantrips at-will indefinitely, even when they have 0 spell slots remaining (0/2)!\n"
+            "  - In your narration, explicitly clarify this so players understand rules legality: e.g., 'Gale casts Fire Bolt (Cantrip — costs 0 spell slots)...'\n"
+            "* LEVELED SPELLS (LEVEL 1–9):\n"
+            "  - Spells like `Magic Missile`, `Shield`, `Misty Step`, `Fireball`, `Command` REQUIRE expending an available spell slot of that level or higher.\n"
+            "  - If a character has 0 slots of that level or higher, `cast_spell` returns an error. The spell FAILS: announce that their slots are exhausted and they must cast a cantrip or take a rest.\n"
+            "* SPELL SAVING THROWS:\n"
+            "  - When a spell forces a target to save, execute `roll_dice(formula='1d20+...', character_name='<Target Name>', purpose='<Target> Saving Throw vs <Spell> (DC <DC>)')`! Never auto-grant spell success on hostile targets without rolling."
+        )
+
+        lines.append(
+            "\n[STEALTH, SNEAKING & PRISON ESCAPES DIRECTIVE]\n"
+            "* STEALTH CHECKS REQUIRED: Moving through an active enemy outpost, sneaking past sentries, or escaping a prison is NOT free automatic movement.\n"
+            "* YOU MUST CALL FOR OR EXECUTE a Dexterity (Stealth) check (e.g. DC 12-14) against the guards' Passive Perception. If failed, sentries or patrols spot the heroes and raise the alarm."
+        )
+
+        lines.append(
+            "\n[NPC PSYCHOLOGY, SENSORY LOG AWARENESS & SOCIAL INTERACTION DIRECTIVE — MANDATORY]\n"
+            "* SURMISE THROUGH THE NPC'S EYES (SENSORY CONTEXT & LOG AWARENESS):\n"
+            "  - Before narrating an NPC's reaction, you (the Game Master) MUST examine the recent turn log and sensory circumstances:\n"
+            "    1. Did the party just fight or kill creatures/guards nearby (e.g. stepping out of a portal after slaying minotaurs or beasts)?\n"
+            "    2. Are weapons drawn, spells glowing, or armor and clothes spattered with blood?\n"
+            "    3. Did strangers enter an uninvited refuge, secret sanctuary, or private hideout without warning?\n"
+            "    4. What is the NPC's state of mind? Are they in hiding, hunted by authorities or assassins, paranoid, or defensive?\n"
+            "* ANTI-GM METAGAMING (NPCS DO NOT READ THE MODULE OR TRUTH):\n"
+            "  - The NPC DOES NOT know the players are the heroes! Even if the module states that the NPC is innocent or shares mutual enemies with the party (e.g. Imis Elvan being framed by Filip just like the party), THE NPC DOES NOT KNOW THAT!\n"
+            "  - To a hunted or defensive NPC, armed intruders covered in gore saying 'We come in peace' or 'Filip framed us too' looks and sounds like an assassination squad or bounty hunter ruse!\n"
+            "* MANDATORY SOCIAL CHECKS (WORDS ALONE DO NOT PASS):\n"
+            "  - When a party attempts to persuade, calm, deceive, or negotiate with a suspicious, terrified, or guarded NPC:\n"
+            "    1. IF THE PLAYER SPECIFIES WHO SPEAKS (e.g. 'Have Shadow use Charisma to tell Imis...', 'Joe says we come in peace'):\n"
+            "       YOU MUST IMMEDIATELY EXECUTE `roll_dice(formula='1d20+...', character_name='<Speaker>', purpose='<Speaker> Charisma (Persuasion/Deception) check vs <NPC>')`!\n"
+            "    2. Alternatively or in combination, roll the NPC's contested Wisdom (Insight) check (e.g. `roll_dice(formula='1d20+4', character_name='<NPC Name>', purpose='<NPC> Wisdom (Insight) check to gauge sincerity')`).\n"
+            "    3. DIFFICULTY CLASSES (D&D 5e DMG p. 244-245):\n"
+            "       - Friendly / Low Stakes: DC 10 (or automatic).\n"
+            "       - Indifferent Bystander: DC 12-14.\n"
+            "       - Wary / Hunted / Suspicious NPC (e.g. Imis in hiding after bloody battle): DC 15-18.\n"
+            "       - Hostile Enemy: DC 20+ (or immediate combat).\n"
+            "* GRADUATED ROLEPLAY OUTCOMES & DRAMATIC TENSION:\n"
+            "  - ON FAILURE: The NPC refuses to believe the party! They assume a trick, step back into a defensive stance, draw weapons or ready defensive spells (e.g. Imis readying `Misty Step` or `Cone of Cold`), and demand: 'Lies! Back away or I strike! Drop your weapons or leave!' If the party presses forward aggressively, call `start_combat(enemies=['<NPC Name>'])`.\n"
+            "  - ON SUCCESS: The NPC hesitates and tentatively lowers their weapon tip, but remains vigilant and cautious: 'You say Filip framed you...? How do I know this isn't his trick? If you truly mean no harm, prove it. Why did he frame you?' The dialogue continues with hard-won trust rather than a free pass."
         )
 
         lines.append(
@@ -3322,13 +3636,29 @@ Respond in JSON with schema:
             by_loc = {}
             for it in stored_items_list:
                 loc_name = it.get("storage_location", "Unknown Evidence Cache")
-                by_loc.setdefault(loc_name, []).append(f"{it.get('original_owner', 'Party')}'s {it.get('name', 'Item')} ({it.get('type', 'gear')})")
+                knowledge = it.get("location_knowledge", "unknown")
+                status = it.get("status", "confiscated")
+                salvageable = it.get("salvageable", True)
+                holder = it.get("holder_or_creature", "")
+                clue = it.get("discovery_clue", "")
+                desc = f"{it.get('original_owner', 'Party')}'s {it.get('name', 'Item')} ({it.get('type', 'gear')}) [Status: {status}, Knowledge to players: {knowledge}"
+                if holder:
+                    desc += f", Holder/Beast: {holder}"
+                if not salvageable:
+                    desc += ", UNSALVAGEABLE/DESTROYED"
+                if clue:
+                    desc += f", Clue: {clue}"
+                desc += "]"
+                by_loc.setdefault(loc_name, []).append(desc)
             for loc_name, items_str in by_loc.items():
-                lines.append(f"- Location: {loc_name}\n  * Held Gear: {', '.join(items_str)}")
+                lines.append(f"- Location: {loc_name}\n  * {chr(10).join('  * ' + s for s in items_str)}")
             lines.append(
-                "* RETRIEVAL DIRECTIVE: These belongings exist in the physical world at the locations above! "
-                "If characters pick the lock, defeat the guards, or search that room, describe finding their gear and call "
-                "`manage_party_inventory(character_name='all', action='retrieve', storage_location=...)` to restore their equipment to the party roster!"
+                "* INFORMATION ASYMMETRY & DYNAMIC KNOWLEDGE RULES:\n"
+                "  1. DISARM / ARREST: When arresting or confiscating party weapons/gear, set action='disarm', location_knowledge='unknown' unless the characters directly watched where it was locked away. In the player UI, unknown locations appear as 'Confiscated Gear (Location Unknown)'. DO NOT tell players the exact location in dialogue unless they find out in-character!\n"
+                "  2. DISCOVERING LOCATION (MANDATORY TOOL CALL): If players roll Perception or Investigation (e.g. DC 12-14) to look for their weapons, overhear guards, or find a ledger, as soon as the roll succeeds, you MUST call `manage_party_inventory(action='discover_location', storage_location='<Exact Location Seen/Heard>', discovery_clue='<Perception total / visual clue>')` in that turn! DO NOT ONLY NARRATE IT IN SPEECH! Calling `manage_party_inventory` is REQUIRED so the player's roster UI updates from 'Location Unknown' to 'Location Known'!\n"
+                "  3. BEAST SALVAGE: If an item/weapon is eaten or swallowed by a monster (e.g. helmet eaten by a dragon), record action='remove', status='inside_creature', holder_or_creature='<Beast Name>', salvageable=True, location_knowledge='known'. When the party defeats or slays the creature and cuts open the corpse, describe salvaging the gear and call `manage_party_inventory(action='retrieve', holder_or_creature=..., storage_location=...)` to return it to their roster!\n"
+                "  4. PERMANENT DESTRUCTION: If an item falls into lava, Mount Doom, or is dissolved in a sphere of annihilation/acid, call `manage_party_inventory(action='destroy', items=[...], storage_location='Lava Pit / Mount Doom', salvageable=False)`. Destroyed items can NEVER be reclaimed or retrieved.\n"
+                "  5. RETRIEVAL DIRECTIVE: Players have NO artificial one-click 'Reclaim' button in their UI; they rely on you as DM. When characters pick an armory lock, defeat guards, or find their chest, call `manage_party_inventory(character_name='all', action='retrieve', storage_location=...)` to restore their equipment!"
             )
 
         # 1. Grounded Adventure Module Details (Prevents shooting from the hip)
@@ -3392,6 +3722,8 @@ Respond in JSON with schema:
                 lines.append(f"- Key NPC Present & In-Character: {current_scene_obj['active_npc']}")
             if current_scene_obj.get("challenges"):
                 lines.append(f"- Scene Challenges / Encounters / Guardians: {current_scene_obj['challenges']}")
+                if any(k in current_scene_obj["challenges"].lower() for k in ("social", "negotiat", "boss")):
+                    lines.append("  * SOCIAL ENCOUNTER ADJUDICATION: Treat this NPC with realistic psychological stakes and skepticism! Do NOT auto-grant trust without successful Charisma (Persuasion/Deception) checks or proven evidence.")
             if current_scene_obj.get("quest_briefing"):
                 lines.append(f"- Quest Briefing: {current_scene_obj['quest_briefing']}")
             if current_scene_obj.get("immediate_choices"):
@@ -3515,8 +3847,19 @@ Respond in JSON with schema:
                 inv_str = f" | Key Items: {', '.join(inv_parts)}" if inv_parts else ""
 
                 spells = ch.get("spells", [])
-                spell_parts = [(s.get("name") if isinstance(s, dict) else str(s)).strip() for s in spells[:6] if s]
-                spell_str = f" | Spells/Cantrips: {', '.join(spell_parts)}" if spell_parts else ""
+                spell_names = [(s.get("name") if isinstance(s, dict) else str(s)).strip() for s in spells if s]
+                spell_str = f" | Spells/Cantrips: {', '.join(spell_names[:16])}" + (f" (+{len(spell_names)-16} more)" if len(spell_names) > 16 else "") if spell_names else ""
+
+                # Spell Slots summary (including Warlock Pact Magic)
+                slots_dict = ch.get("spell_slots") or {}
+                avail_slots = []
+                for r in range(1, 10):
+                    s = slots_dict.get(f"level_{r}")
+                    if s and isinstance(s, dict) and s.get("max", 0) > 0:
+                        is_pact = bool(s.get("is_pact_magic", False) or ch.get("is_pact_magic"))
+                        pact_tag = " Pact" if is_pact else ""
+                        avail_slots.append(f"L{r}:{s.get('current', 0)}/{s.get('max', 0)}{pact_tag}")
+                slot_str = f" | Spell Slots: [{', '.join(avail_slots)}]" if avail_slots else ""
 
                 feats = ch.get("features_and_traits", [])
                 feat_parts = [(f.get("name") if isinstance(f, dict) else str(f)).strip() for f in feats[:4] if f]
@@ -3527,7 +3870,7 @@ Respond in JSON with schema:
 
                 char_summaries.append(
                     f"{ch.get('name')}{lvl_xp} - {ch.get('archetype', 'Adventurer')} (Player: {ch.get('player_name', 'Player')} | "
-                    f"HP: {hp.get('current', 0)}/{hp.get('max', 0)}, AC/Guard: {guard.get('current', 10)}{init_str}{cond_str}{wpn_str}{inv_str}{spell_str}{feat_str})"
+                    f"HP: {hp.get('current', 0)}/{hp.get('max', 0)}, AC/Guard: {guard.get('current', 10)}{init_str}{cond_str}{slot_str}{wpn_str}{inv_str}{spell_str}{feat_str})"
                 )
             lines.append("\n- Active Party Roster: \n  * " + "\n  * ".join(char_summaries))
         else:
@@ -3537,11 +3880,61 @@ Respond in JSON with schema:
         caller_name = chars.get(caller_id, {}).get("name") if (caller_id and chars and isinstance(chars.get(caller_id), dict)) else "None (Group Decision - Ask players who acts if unspecified)"
         lines.append(f"- Designated Party Caller: {caller_name}")
 
-        # 4. Combat Initiative
-        if ladder:
-            active_turn_name = ladder[turn_idx]["name"] if 0 <= turn_idx < len(ladder) else ladder[0]["name"]
-            order_str = ", ".join(f"{e['name']} ({e['roll']})" for e in ladder)
-            lines.append(f"- Combat Initiative (Round {round_num}, Active Turn: {active_turn_name}): {order_str}")
+        # 4. Combat Initiative vs Free Exploration Mode
+        self.clean_stale_combat_if_needed()
+        ladder = state.get("initiative_order", [])
+        turn_idx = state.get("active_turn_index", 0)
+        round_num = state.get("current_round", 1)
+        combat_active = self.is_combat_active()
+        if combat_active:
+            safe_idx = turn_idx if 0 <= turn_idx < len(ladder) else 0
+            active_entity = ladder[safe_idx]
+            active_turn_name = active_entity.get("name", "Unknown")
+            is_player_turn = bool(active_entity.get("is_player", False))
+
+            lines.append(f"\n[ACTIVE COMBAT ENCOUNTER (ROUND {round_num})]")
+            lines.append(f"- CURRENT ACTIVE TURN: **{active_turn_name}** ({'PLAYER' if is_player_turn else 'HOSTILE ENEMY / MONSTER'})")
+
+            ladder_lines = []
+            for idx, e in enumerate(ladder):
+                status_str = e.get("status", "Healthy")
+                is_active_mark = "▶ CURRENT ACTIVE TURN" if idx == safe_idx else ""
+                cur_hp = e.get("current_hp")
+                max_hp = e.get("max_hp")
+                hp_str = f"(HP: {cur_hp}/{max_hp})" if cur_hp is not None and max_hp is not None else ""
+                type_str = "PLAYER" if e.get("is_player") else "MONSTER"
+                ladder_lines.append(
+                    f"  {idx + 1}. {e.get('name')} (Init: {e.get('roll')}) [{type_str}] [{status_str}] {hp_str} {is_active_mark}".strip()
+                )
+            lines.append("- Initiative Ladder & Status:\n" + "\n".join(ladder_lines))
+
+            if not is_player_turn:
+                lines.append(
+                    f"\n* MANDATORY INITIATIVE ACTION — IT IS {active_turn_name.upper()}'S TURN (HOSTILE MONSTER):\n"
+                    f"  - {active_turn_name} acts NOW under YOUR control as the Game Master.\n"
+                    f"  - DO NOT ask the players 'What do you do?' or 'Does that hit your AC?'! Execute {active_turn_name}'s action directly: pick a target hero (e.g. Joe or Shadow), roll `roll_dice` for the attack, directly compare the roll to that hero's AC from the Party Roster above (e.g. Joe AC 15), roll damage on hit and apply it immediately via `modify_character_vitals`.\n"
+                    f"  - NEVER reveal the monster's numerical HP! Describe damage and status qualitatively.\n"
+                    f"  - Immediately call `advance_combat_turn()` after {active_turn_name}'s attack finishes!"
+                )
+            else:
+                lines.append(
+                    f"\n* MANDATORY INITIATIVE ACTION — IT IS {active_turn_name.upper()}'S TURN (PLAYER):\n"
+                    f"  - Only {active_turn_name} takes their turn right now! Prompt {active_turn_name}: '{active_turn_name}, it is your turn on initiative! What do you do?'\n"
+                    f"  - Offer action options ONLY for {active_turn_name}. Do NOT prompt other party members out of turn.\n"
+                    f"  - After {active_turn_name}'s action resolves, call `advance_combat_turn()`."
+                )
+        else:
+            lines.append(
+                "\n[CURRENT GAMEPLAY MODE: FREE EXPLORATION & GROUP NARRATIVE (OUT OF COMBAT)]\n"
+                "* COMBAT IS NOT ACTIVE: The party is currently out of combat (exploring, traveling, investigating, or interacting with NPCs).\n"
+                "* INITIATIVE DOES NOT APPLY: The initiative ladder is STRICTLY for active combat encounters with hostile foes! When not in combat, initiative does NOT dictate the order of operations.\n"
+                "* DO NOT RESTRICT ACTIONS OR RECOMMENDATIONS BY INITIATIVE:\n"
+                "  - NEVER single out whoever was previously #1 on an initiative list or ask for individual turns in sequence when exploring!\n"
+                "  - Address the party as a whole or the designated Party Caller (e.g. 'What would the party like to do? Joe, Sam, Shadow, Gale, how do you proceed?').\n"
+                "  - Any player or character may speak, ask questions, inspect surroundings, or take action at any time in any natural order.\n"
+                "  - In Helpful mode, provide suggestions for the GROUP or respond to whoever declared an action.\n"
+                "* COMBAT INITIATION: Only when hostile enemies emerge and attack (e.g. Dryads ambushing at the Fey Portal) should you call `start_combat(enemies=['...'])` to activate combat initiative."
+            )
 
         # 5. Documents & Tools
         if docs:
@@ -3570,6 +3963,58 @@ Respond in JSON with schema:
             "  YOU MUST IMMEDIATELY CALL `record_campaign_notes(location='<New Exact Location>', summary='<2-3 sentence recap>', last_action='<action>')` in that turn!\n"
             "* NEVER narrate arriving in a cell or moving across the settlement without recording the new location. This keeps the party's current location and recap synchronized across reloads and restarts!"
         )
+
+        # Party Spatial & Separation Status
+        sep_chars = [c for c in chars.values() if c.get("is_separated")]
+        if sep_chars:
+            lines.append("\n[PARTY SPATIAL & SEPARATION STATUS — SPLIT PARTY ALERT]")
+            lines.append(f"- Primary Party Location: {loc or 'Unknown'}")
+            for sc in sep_chars:
+                lines.append(f"- ⚠️ SEPARATED: {sc.get('name')} is isolated at '{sc.get('location', 'Separated Area')}'!")
+            lines.append(
+                "* SPATIAL PROXIMITY & SEPARATION RULES:\n"
+                "  - When a character is separated in a different area (e.g. Joe ran off into the deep maze while Sam is at the entrance), "
+                "they CANNOT cast short-range spells (like Command, Fireball, Cure Wounds), attack, touch, or converse naturally with characters in other areas!\n"
+                "  - Only long-range/planar magic (Sending, Teleport, Scrying, Dream, Message) can cross between separate areas.\n"
+                "  - If a player tries to interact with a separated character or monster, enforce the proximity barrier and explain they are in different locations!\n"
+                "  - To move or reunite party members, use `update_entity_location(name='Joe', location='...', is_separated=False)` or `update_entity_location(name='all', location='...', reunite_party=True)`."
+            )
+
+        # Downed Characters & Death Saves Directive
+        downed_chars = [c for c in chars.values() if c.get("vitals", {}).get("health", {}).get("current", 0) <= 0]
+        if downed_chars:
+            lines.append("\n[DOWNED CHARACTERS & DEATH SAVING THROWS DIRECTIVE]")
+            for dc in downed_chars:
+                ds = dc.get("death_saves", {})
+                succs = ds.get("successes", 0)
+                fails = ds.get("failures", 0)
+                ds_stat = ds.get("status", "dying")
+                lines.append(f"- 💀 DOWNED HERO: {dc.get('name')} is at 0 HP [Status: {ds_stat.upper()}, Saves: {succs}/3 Successes, {fails}/3 Failures].")
+            lines.append(
+                "* D&D 5e DEATH SAVING THROW RULES:\n"
+                "  1. On a downed hero's turn, they roll a DC 10 Death Saving Throw: `roll_dice(formula='1d20', character_name='<Hero>', purpose='Death Saving Throw')`:\n"
+                "     - Nat 20: Immediately regains 1 HP and wakes up!\n"
+                "     - 10-19: 1 Success (3 successes = Stable at 0 HP).\n"
+                "     - 2-9: 1 Failure (3 failures = Dead).\n"
+                "     - Nat 1: 2 Failures!\n"
+                "  2. Downed heroes are UNCONSCIOUS and INCAPACITATED: they cannot take actions, attack, or cast spells!\n"
+                "  3. Taking damage at 0 HP inflicts 1 Death Save failure (or 2 if critical hit).\n"
+                "  4. Any healing restores HP above 0, immediately removing Unconscious and resetting death saves."
+            )
+
+        # Active Conditions Directive
+        cond_chars = [c for c in chars.values() if c.get("conditions")]
+        if cond_chars:
+            lines.append("\n[ACTIVE CONDITIONS & MECHANICAL PENALTIES]")
+            for cc in cond_chars:
+                lines.append(f"- {cc.get('name')}: {', '.join(cc.get('conditions', []))}")
+            lines.append(
+                "* CONDITION DIRECTIVE:\n"
+                "  - Drunk / Intoxicated / Poisoned / Frightened: Disadvantage on attack rolls and ability checks.\n"
+                "  - Confused: Disadvantage on Int/Wis checks, cannot take reactions.\n"
+                "  - Charmed: Cannot attack or target the charmer with harmful spells/abilities.\n"
+                "  - Unconscious / Stunned / Paralyzed / Petrified / Commanded: Halt: Incapacitated — cannot take actions or move."
+            )
 
         return "\n".join(lines) + "\n\n"
 
@@ -3852,13 +4297,22 @@ Respond in JSON with schema:
                     cleaned_inv.append(s)
             inv_resolved = cleaned_inv
 
+        char_arch_val = str(_get_val("archetype", "Adventurer")).strip()
+        calc_lvl = max(1, self._safe_int(_get_val("level", 1), 1))
+        cls_lvl_check = str(char_payload.get("class_and_level") or (prev.get("class_and_level") if prev else None) or char_arch_val).strip()
+        if "/" in cls_lvl_check:
+            from core.parsers.dnd5e_parser import parse_multiclass_string
+            m_entries = parse_multiclass_string(cls_lvl_check)
+            if len(m_entries) > 1:
+                calc_lvl = max(calc_lvl, sum(int(c.get("level", 1)) for c in m_entries))
+
         char_entry = {
             "id": char_id,
             "name": name,
             "player_name": str(_get_val("player_name", "Player")).strip(),
-            "archetype": str(_get_val("archetype", "Adventurer")).strip(),
+            "archetype": char_arch_val,
             "is_player": bool(_get_val("is_player", True)),
-            "level": max(1, self._safe_int(_get_val("level", 1), 1)),
+            "level": calc_lvl,
             "experience_points": max(0, self._safe_int(_get_val("experience_points", 0), 0)),
             "ruleset": ruleset,
             "species": str(_get_val("species", "") or _get_val("race", "")),
@@ -3873,6 +4327,9 @@ Respond in JSON with schema:
             "armor_class": ac_val,
             "temp_hp": max(0, self._safe_int(_get_val("temp_hp", 0), 0)),
             "conditions": list(_get_val("conditions", [])),
+            "location": str(_get_val("location", st.get("current_location", ""))),
+            "is_separated": bool(_get_val("is_separated", False)),
+            "death_saves": dict(_get_val("death_saves", {"successes": 0, "failures": 0, "status": "none"})),
             "weapons": list(_get_val("weapons", [])),
             "inventory": list(inv_resolved),
             "proficiencies": str(_get_val("proficiencies", "")),
@@ -3904,6 +4361,7 @@ Respond in JSON with schema:
                 char_entry[opt_key] = prev[opt_key]
 
         chars[char_id] = char_entry
+        st.setdefault("entity_locations", {})[name] = char_entry["location"]
         active_cid = st.get("campaign_id")
         if active_cid and active_cid in self.manifest.get("campaigns", {}):
             self.manifest["campaigns"][active_cid]["party_count"] = len(chars)
@@ -4033,7 +4491,96 @@ Respond in JSON with schema:
 
         char_id, char_data = self._find_character(character_name)
         if not char_data:
-            return {"status": "error", "message": f"Character '{character_name}' not found."}
+            # Check if this character is a combatant on the active initiative ladder
+            comb = self._find_combatant(character_name)
+            if not comb:
+                return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+            stat_normalized = stat_key.lower().strip()
+            if stat_normalized in ("health", "hp"):
+                max_hp = int(comb.get("max_hp", 20))
+                cur_hp = int(comb.get("current_hp", max_hp))
+                new_hp = max(0, min(max_hp, cur_hp + delta))
+                comb["current_hp"] = new_hp
+                comb["max_hp"] = max_hp
+                is_p = bool(comb.get("is_player", False))
+                conds = comb.setdefault("conditions", [])
+                ds = comb.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "none"}) if is_p else None
+
+                if is_p:
+                    if new_hp == 0:
+                        if cur_hp > 0:
+                            if "Unconscious" not in conds:
+                                conds.append("Unconscious")
+                            if "Prone" not in conds:
+                                conds.append("Prone")
+                            ds["status"] = "dying"
+                            ds["successes"] = 0
+                            ds["failures"] = 0
+                        elif delta < 0:
+                            ds["failures"] = ds.get("failures", 0) + 1
+                            if ds.get("status") == "stable":
+                                ds["status"] = "dying"
+                            if ds["failures"] >= 3:
+                                ds["status"] = "dead"
+                                if "Dead" not in conds:
+                                    conds.append("Dead")
+                    elif new_hp > 0 and cur_hp == 0:
+                        if "Unconscious" in conds:
+                            conds.remove("Unconscious")
+                        if "Dead" in conds:
+                            conds.remove("Dead")
+                        if "Stable" in conds:
+                            conds.remove("Stable")
+                        ds["status"] = "none"
+                        ds["successes"] = 0
+                        ds["failures"] = 0
+                    status = self.compute_health_status(new_hp, max_hp, is_player=True, death_saves=ds)
+                else:
+                    status = self.compute_health_status(new_hp, max_hp, is_player=False)
+                    if new_hp == 0 and "Defeated" not in conds:
+                        conds.append("Defeated")
+                    elif new_hp > 0 and "Defeated" in conds:
+                        conds.remove("Defeated")
+
+                comb["status"] = status
+
+                self.save_active_campaign_state()
+                return {
+                    "status": "success",
+                    "character_id": comb.get("entity_id"),
+                    "character_name": comb.get("name"),
+                    "stat": "health",
+                    "old_value": cur_hp,
+                    "new_value": new_hp,
+                    "max_value": max_hp,
+                    "delta": delta,
+                    "health_status": status,
+                    "is_combatant": True,
+                    "is_player": comb.get("is_player", False),
+                    "summary": f"{comb.get('name')} health adjusted by {delta:+d} ({cur_hp} -> {new_hp}/{max_hp}) [{status}]."
+                }
+            elif stat_normalized in ("guard", "ac", "defense", "armor_class"):
+                old_ac = int(comb.get("armor_class", 10))
+                new_ac = max(0, old_ac + delta)
+                comb["armor_class"] = new_ac
+                self.save_active_campaign_state()
+                return {
+                    "status": "success",
+                    "character_id": comb.get("entity_id"),
+                    "character_name": comb.get("name"),
+                    "stat": "armor_class",
+                    "old_value": old_ac,
+                    "new_value": new_ac,
+                    "max_value": new_ac,
+                    "delta": delta,
+                    "health_status": comb.get("status", "Healthy"),
+                    "is_combatant": True,
+                    "is_player": comb.get("is_player", False),
+                    "summary": f"{comb.get('name')} AC adjusted by {delta:+d} ({old_ac} -> {new_ac})."
+                }
+            else:
+                return {"status": "error", "message": f"Stat '{stat_key}' not supported on combatant {character_name}."}
 
         target_dict = char_data.get("custom_meters" if is_custom_meter else "vitals", {})
         if stat_key not in target_dict:
@@ -4045,6 +4592,46 @@ Respond in JSON with schema:
         new_val = max(0, min(max_val, old_val + delta))
         entry["current"] = new_val
 
+        # Auto-apply Unconscious / Prone condition at 0 HP for characters and manage death saves
+        if stat_key in ("health", "hp"):
+            conds = char_data.setdefault("conditions", [])
+            ds = char_data.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "none"})
+            if new_val == 0:
+                if old_val > 0:
+                    if "Unconscious" not in conds:
+                        conds.append("Unconscious")
+                    if "Prone" not in conds:
+                        conds.append("Prone")
+                    char_data["death_saves"] = {"successes": 0, "failures": 0, "status": "dying"}
+                elif delta < 0:
+                    # Damage at 0 HP adds 1 failure (RAW 5e)
+                    ds["failures"] = ds.get("failures", 0) + 1
+                    if ds.get("status") == "stable":
+                        ds["status"] = "dying"
+                    if ds["failures"] >= 3:
+                        ds["status"] = "dead"
+                        if "Dead" not in conds:
+                            conds.append("Dead")
+            elif new_val > 0 and old_val == 0:
+                if "Unconscious" in conds:
+                    conds.remove("Unconscious")
+                if "Dead" in conds:
+                    conds.remove("Dead")
+                if "Stable" in conds:
+                    conds.remove("Stable")
+                char_data["death_saves"] = {"successes": 0, "failures": 0, "status": "none"}
+
+        # Synchronize with initiative ladder if character is participating in combat
+        status = self.compute_health_status(new_val, max_val, is_player=True, death_saves=char_data.get("death_saves"))
+        for comb in self.active_state.get("initiative_order", []):
+            if comb.get("name", "").lower() == char_data["name"].lower() or comb.get("entity_id") == char_id:
+                comb["current_hp"] = new_val
+                comb["max_hp"] = max_val
+                comb["status"] = status
+                comb["death_saves"] = char_data.get("death_saves")
+                comb["conditions"] = list(char_data.get("conditions", []))
+                break
+
         self.save_active_campaign_state()
         return {
             "status": "success",
@@ -4054,29 +4641,277 @@ Respond in JSON with schema:
             "old_value": old_val,
             "new_value": new_val,
             "max_value": max_val,
-            "delta": delta
+            "delta": delta,
+            "health_status": status
         }
 
     def update_condition(self, character_name: str, condition: str, active: bool) -> Dict[str, Any]:
-        """Adds or removes conditions (e.g., Poisoned, Blinded, Stunned)."""
+        """Adds or removes conditions (e.g., Poisoned, Blinded, Stunned, Stable, Dead)."""
+        cond_raw = condition.strip()
+        cond_clean = cond_raw.capitalize() if cond_raw.isalpha() else cond_raw
+
         char_id, char_data = self._find_character(character_name)
         if not char_data:
-            return {"status": "error", "message": f"Character '{character_name}' not found."}
+            comb = self._find_combatant(character_name)
+            if not comb:
+                return {"status": "error", "message": f"Character '{character_name}' not found."}
+            conditions = set(comb.get("conditions", []))
+            if active:
+                conditions.add(cond_clean)
+            else:
+                conditions.discard(cond_clean)
+            comb["conditions"] = sorted(list(conditions))
+            self.save_active_campaign_state()
+            return {
+                "status": "success",
+                "character_name": comb["name"],
+                "active_conditions": comb["conditions"]
+            }
 
         conditions = set(char_data.get("conditions", []))
+        ds = char_data.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "none"})
+        hp_cur = char_data.get("vitals", {}).get("health", {}).get("current", 20)
+        hp_max = char_data.get("vitals", {}).get("health", {}).get("max", 20)
+
         if active:
-            conditions.add(condition.strip().capitalize())
+            conditions.add(cond_clean)
+            if cond_clean.lower() == "stable":
+                ds["status"] = "stable"
+                ds["successes"] = max(3, ds.get("successes", 0))
+            elif cond_clean.lower() == "dead":
+                ds["status"] = "dead"
+                ds["failures"] = max(3, ds.get("failures", 0))
         else:
-            conditions.discard(condition.strip().capitalize())
+            conditions.discard(cond_clean)
+            if cond_clean.lower() == "stable" and ds.get("status") == "stable":
+                ds["status"] = "dying" if hp_cur <= 0 else "none"
+            elif cond_clean.lower() == "dead" and ds.get("status") == "dead":
+                ds["status"] = "dying" if hp_cur <= 0 else "none"
 
         char_data["conditions"] = sorted(list(conditions))
+
+        # Synchronize with initiative ladder if present
+        for comb in self.active_state.get("initiative_order", []):
+            if comb.get("name", "").lower() == char_data["name"].lower() or comb.get("entity_id") == char_id:
+                comb["conditions"] = list(char_data["conditions"])
+                comb["death_saves"] = ds
+                comb["status"] = self.compute_health_status(hp_cur, hp_max, is_player=True, death_saves=ds)
+                break
+
         self.save_active_campaign_state()
 
         return {
             "status": "success",
             "character_name": char_data["name"],
-            "active_conditions": char_data["conditions"]
+            "active_conditions": char_data["conditions"],
+            "death_saves": ds
         }
+
+    def ensure_character_spell_slots(self, char_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Guarantees that a character has their official D&D 5e spell slots table populated
+        based on their class levels (including multiclassing and Warlock pact magic).
+        If spell_slots is None, empty, or all zeros, computes and populates them.
+        """
+        if not char_data or not isinstance(char_data, dict):
+            return {}
+
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else {}
+        slots = char_data.get("spell_slots") or native.get("spell_slots")
+        if slots and isinstance(slots, dict) and not char_data.get("spell_slots"):
+            char_data["spell_slots"] = slots
+
+        has_any_slots = False
+        if slots and isinstance(slots, dict):
+            has_any_slots = any(
+                isinstance(v, dict) and v.get("max", 0) > 0
+                for v in slots.values()
+            )
+
+        if not has_any_slots:
+            try:
+                from core.compendiums.dnd_advancement import parse_character_classes, compute_multiclass_spell_slots
+                cls_map, sub_map = parse_character_classes(char_data)
+                if cls_map:
+                    ed = "2014" if str(char_data.get("ruleset_edition", "2024")).strip() == "2014" else "2024"
+                    slot_res = compute_multiclass_spell_slots(cls_map, edition=ed, subclasses=sub_map)
+                    char_data["spell_slots"] = copy.deepcopy(slot_res.get("spell_slots", {}))
+                    if slot_res.get("has_pact_magic"):
+                        char_data["is_pact_magic"] = True
+                        char_data["pact_slots"] = slot_res.get("pact_slots")
+                    if "native_system_data" in char_data and isinstance(char_data["native_system_data"], dict):
+                        char_data["native_system_data"]["spell_slots"] = copy.deepcopy(char_data["spell_slots"])
+                    slots = char_data["spell_slots"]
+            except Exception as e:
+                logger.warning(f"[TTRPG] Auto spell slot calculation failed for '{char_data.get('name')}': {e}")
+
+        # Sanitize spell list and enforce preparation cap if over limit
+        sp_list = char_data.get("spells") or native.get("spells")
+        if sp_list and isinstance(sp_list, list):
+            try:
+                from core.parsers.spell_registry import sanitize_parsed_spells
+                clean_sp = sanitize_parsed_spells(sp_list)
+                max_prep = char_data.get("max_prepared_leveled_spells")
+                if max_prep is None and isinstance(native, dict):
+                    max_prep = native.get("max_prepared_leveled_spells")
+                if isinstance(max_prep, int) and max_prep >= 0:
+                    prep_count = sum(1 for s in clean_sp if isinstance(s, dict) and not s.get("is_cantrip") and not s.get("is_always_prepared") and s.get("prepared"))
+                    if prep_count > max_prep:
+                        kept = 0
+                        for s in clean_sp:
+                            if isinstance(s, dict) and not s.get("is_cantrip") and not s.get("is_always_prepared"):
+                                if kept < max_prep and s.get("prepared"):
+                                    kept += 1
+                                else:
+                                    s["prepared"] = False
+                char_data["spells"] = clean_sp
+                if "native_system_data" in char_data and isinstance(char_data["native_system_data"], dict):
+                    char_data["native_system_data"]["spells"] = copy.deepcopy(clean_sp)
+            except Exception as e:
+                logger.warning(f"[TTRPG] Spell list sanitization failed for '{char_data.get('name')}': {e}")
+
+        return slots or {}
+
+    def cast_character_spell(
+        self,
+        character_name: str,
+        spell_name: str,
+        spell_level: int = 0,
+        slot_level: Optional[int] = None,
+        target_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Casts a spell for a character, deducting an expendable spell slot.
+        Enforces condition restrictions (incapacitation, charm) and spatial proximity checks.
+        Supports:
+        - Cantrips (level 0): at-will, costs 0 slots.
+        - Exact-level slot deduction.
+        - Upcasting & Warlock Pact Magic.
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        char_id, char = self._find_character(character_name)
+        if not char:
+            return {"status": "error", "message": f"Character '{character_name}' not found."}
+
+        # 1. Incapacitation check on caster
+        conds = char.get("conditions", [])
+        for c in conds:
+            c_base = c.split("(")[0].strip()
+            eff = CONDITION_EFFECTS.get(c_base, {})
+            if eff.get("incapacitated"):
+                return {
+                    "status": "error",
+                    "message": f"Cannot cast '{spell_name}'! {char['name']} is currently {c} and incapacitated."
+                }
+
+        # 2. Charm check: cannot target charmer with harmful spells
+        if target_name:
+            t_clean = target_name.strip().lower()
+            for c in conds:
+                if "charm" in c.lower():
+                    if t_clean in c.lower() or c.strip().lower() == "charmed":
+                        return {
+                            "status": "error",
+                            "message": f"Cannot target {target_name} with '{spell_name}'! {char['name']} is Charmed by {target_name} and cannot target them with harmful abilities or spells."
+                        }
+
+        # 3. Spatial Proximity check
+        if target_name:
+            prox = self.check_entity_proximity(char["name"], target_name, action_or_spell=spell_name)
+            if not prox.get("allowed", True):
+                return {
+                    "status": "error",
+                    "message": prox.get("reason", f"{char['name']} is not near {target_name} to cast '{spell_name}'.")
+                }
+
+        slots = self.ensure_character_spell_slots(char)
+        native = char.get("native_system_data", {})
+        spells = native.get("spells") or char.get("spells", [])
+
+        # Check if spell is known
+        clean_target = re.sub(r'\s*\[r\]', '', spell_name, flags=re.IGNORECASE).strip().lower()
+        spell_entry = None
+        for s in spells:
+            s_name = (s.get("name") if isinstance(s, dict) else str(s)).strip()
+            s_clean = re.sub(r'\s*\[r\]', '', s_name, flags=re.IGNORECASE).strip().lower()
+            if s_name.lower() == spell_name.lower() or s_clean == clean_target:
+                spell_entry = s if isinstance(s, dict) else {"name": s_name}
+                break
+
+        # Verification for preparation
+        cls_str = str(native.get("class_level") or char.get("archetype") or char.get("class") or "").lower()
+        is_wizard = "wizard" in cls_str
+        if spell_level > 0 and spell_entry and isinstance(spell_entry, dict):
+            is_ritual = bool(
+                spell_entry.get("is_ritual", False)
+                or "[r]" in str(spell_entry.get("name", "")).lower()
+                or "[r]" in spell_name.lower()
+            )
+            if spell_entry.get("prepared") is False and not (is_wizard and is_ritual):
+                return {
+                    "status": "error",
+                    "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."
+                }
+
+        # Deduct spell slot for leveled spells
+        expended_lvl = spell_level
+        if spell_level > 0:
+            if slot_level and 1 <= slot_level <= 9:
+                slot_key = f"level_{slot_level}"
+                if slots.get(slot_key, {}).get("current", 0) <= 0:
+                    return {
+                        "status": "error",
+                        "message": f"No Level {slot_level} spell slots remaining for {char['name']}!"
+                    }
+                expended_lvl = slot_level
+            else:
+                # Check exact level first
+                exact_key = f"level_{spell_level}"
+                if slots.get(exact_key, {}).get("current", 0) > 0:
+                    expended_lvl = spell_level
+                else:
+                    # Check higher-level slots for upcasting or Warlock Pact Magic (which are L5 slots)
+                    available_ranks = [
+                        lvl for lvl in range(spell_level + 1, 10)
+                        if slots.get(f"level_{lvl}", {}).get("current", 0) > 0
+                    ]
+                    if not available_ranks:
+                        return {
+                            "status": "error",
+                            "message": f"No Level {spell_level}+ spell slots remaining for {char['name']}!"
+                        }
+                    # Pick lowest available slot >= spell_level (e.g. 5th-level pact slot)
+                    expended_lvl = available_ranks[0]
+
+            chosen_key = f"level_{expended_lvl}"
+            slots[chosen_key]["current"] -= 1
+
+            if "native_system_data" in char and isinstance(char["native_system_data"], dict):
+                char["native_system_data"]["spell_slots"] = copy.deepcopy(slots)
+
+        self.save_active_campaign_state()
+
+        rem = slots.get(f"level_{expended_lvl}", {}).get("current", "At-Will") if spell_level > 0 else "At-Will"
+        is_pact = slots.get(f"level_{expended_lvl}", {}).get("is_pact_magic", False)
+        pact_note = " (Pact Magic)" if is_pact else (" (Upcast)" if expended_lvl > spell_level else "")
+        summary_msg = f"{char['name']} cast '{spell_name}' (Level {spell_level}) using a Level {expended_lvl} slot{pact_note}. Slots remaining: {rem}."
+        logger.info(f"[TTRPG] {summary_msg}")
+
+        ret = {
+            "status": "success",
+            "character": char["name"],
+            "spell": spell_name,
+            "level": spell_level,
+            "slot_level_expended": expended_lvl,
+            "slots_remaining": rem,
+            "is_pact_magic": is_pact,
+            "summary": summary_msg
+        }
+        if target_name:
+            ret["target_name"] = target_name
+        return ret
 
     def manage_character_inventory(
         self,
@@ -4086,12 +4921,17 @@ Respond in JSON with schema:
         weapons: Optional[List[Dict[str, str]]] = None,
         spells: Optional[List[Any]] = None,
         reason: Optional[str] = None,
-        storage_location: Optional[str] = None
+        storage_location: Optional[str] = None,
+        location_knowledge: Optional[str] = None,
+        status: Optional[str] = None,
+        holder_or_creature: Optional[str] = None,
+        salvageable: Optional[bool] = None,
+        discovery_clue: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Adds, removes, disarms, or retrieves items, weapons, and spells from character(s) in the active campaign.
+        Adds, removes, disarms, discovers, destroys, or retrieves items, weapons, and spells from character(s) in the active campaign.
         Enables both the user and Aether DM to update gear when items are found, looted, bought, used, lost,
-        or confiscated/disarmed upon arrest (with item persistence tracking where confiscated weapons are stored).
+        swallowed by beasts, destroyed in lava, or confiscated/disarmed upon arrest (with knowledge tracking: unknown vs discovered).
         """
         if not self._ensure_active_state():
             return {"status": "error", "message": "No active campaign loaded."}
@@ -4116,9 +4956,10 @@ Respond in JSON with schema:
         action_norm = (action or "add").lower().strip()
 
         # Handle Retrieve / Reclaim from storage location
-        if action_norm in ("retrieve", "reclaim", "recover"):
+        if action_norm in ("retrieve", "reclaim", "recover", "salvage"):
             reclaimed_items: List[str] = []
             reclaimed_weapons: List[str] = []
+            rejected_destroyed: List[str] = []
             target_char_ids = {c[0]: c[1] for c in target_chars}
 
             # Filter items from stored_items
@@ -4129,16 +4970,31 @@ Respond in JSON with schema:
                 matches_owner = is_party_wide or (owner_id in target_char_ids) or any(c[1].get("name", "").lower() == owner_name for c in target_chars)
                 matches_loc = True
                 if storage_location:
-                    matches_loc = (storage_location.lower() in entry.get("storage_location", "").lower()) or (entry.get("storage_location", "").lower() in storage_location.lower())
+                    loc_low = storage_location.lower().strip()
+                    ent_loc = (entry.get("storage_location") or "").lower()
+                    ent_holder = (entry.get("holder_or_creature") or "").lower()
+                    matches_loc = (loc_low in ent_loc) or (ent_loc in loc_low) or (loc_low in ent_holder) or (ent_holder in loc_low)
+
+                if holder_or_creature:
+                    hold_low = holder_or_creature.lower().strip()
+                    ent_holder = (entry.get("holder_or_creature") or "").lower()
+                    matches_holder = (hold_low in ent_holder) or (ent_holder in hold_low)
+                    matches_loc = matches_loc and matches_holder
 
                 # If specific item/weapon names requested
                 matches_item = True
                 entry_name = entry.get("name", "").lower()
                 if items or weapons:
-                    req_names = [str(x.get("name") if isinstance(x, dict) else x).lower() for x in (items or []) + (weapons or [])]
+                    req_names = [str(x.get("name") if isinstance(x, dict) else x).lower().strip() for x in (items or []) + (weapons or [])]
                     matches_item = any(rn in entry_name or entry_name in rn for rn in req_names)
 
                 if matches_owner and matches_loc and matches_item:
+                    # Check if item is destroyed or unsalvageable
+                    if entry.get("status") == "destroyed" or entry.get("salvageable") is False:
+                        rejected_destroyed.append(entry.get("name", "Unknown item"))
+                        remaining_stored.append(entry)
+                        continue
+
                     # Restore item to target character
                     dest_char = target_char_ids.get(owner_id)
                     if not dest_char:
@@ -4157,20 +5013,30 @@ Respond in JSON with schema:
 
             self.active_state["stored_items"] = remaining_stored
             self.save_active_campaign_state()
-            logger.info(f"[TTRPG] Retrieved stored gear: Weapons={reclaimed_weapons}, Items={reclaimed_items}. Remaining stored: {len(remaining_stored)}")
+            msg = f"Successfully retrieved {len(reclaimed_weapons)} weapon(s) and {len(reclaimed_items)} item(s) from storage."
+            if rejected_destroyed:
+                msg += f" Note: {len(rejected_destroyed)} item(s) could not be retrieved because they are destroyed or unsalvageable ({', '.join(rejected_destroyed)})."
+            logger.info(f"[TTRPG] Retrieved stored gear: Weapons={reclaimed_weapons}, Items={reclaimed_items}, RejectedDestroyed={rejected_destroyed}. Remaining stored: {len(remaining_stored)}")
 
             return {
                 "status": "success",
                 "action": "retrieve",
                 "reclaimed_weapons": reclaimed_weapons,
                 "reclaimed_items": reclaimed_items,
+                "rejected_destroyed": rejected_destroyed,
                 "remaining_stored_count": len(remaining_stored),
-                "message": f"Successfully retrieved {len(reclaimed_weapons)} weapon(s) and {len(reclaimed_items)} item(s) from storage."
+                "message": msg
             }
 
-        # Handle Disarm / Confiscate (Strips weapons, records storage location)
+        # Handle Disarm / Confiscate (Strips weapons, records storage location & knowledge)
         if action_norm in ("disarm", "confiscate"):
             default_loc = storage_location or (self.active_state.get("current_location") and f"{self.active_state['current_location']} - Evidence Locker") or "Camp Highmore Guard Barracks - Evidence Chest"
+            effective_knowledge = (location_knowledge or "unknown").strip().lower()
+            effective_status = (status or "confiscated").strip().lower()
+            effective_salvageable = True if salvageable is None else bool(salvageable)
+            effective_holder = holder_or_creature or ""
+            effective_clue = discovery_clue or ""
+
             disarmed_weapons: List[str] = []
             disarmed_items: List[str] = []
 
@@ -4194,7 +5060,11 @@ Respond in JSON with schema:
                             "original_owner_id": char_id,
                             "data": copy.deepcopy(w) if isinstance(w, dict) else {"name": w_name, "atk_bonus": "+0", "damage": "1d4"},
                             "storage_location": default_loc,
-                            "status": "confiscated",
+                            "status": effective_status,
+                            "location_knowledge": effective_knowledge,
+                            "holder_or_creature": effective_holder,
+                            "salvageable": effective_salvageable,
+                            "discovery_clue": effective_clue,
                             "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "reason": reason or "Disarmed upon arrest / surrender"
                         }
@@ -4223,7 +5093,11 @@ Respond in JSON with schema:
                                     "original_owner_id": char_id,
                                     "data": copy.deepcopy(removed),
                                     "storage_location": default_loc,
-                                    "status": "confiscated",
+                                    "status": effective_status,
+                                    "location_knowledge": effective_knowledge,
+                                    "holder_or_creature": effective_holder,
+                                    "salvageable": effective_salvageable,
+                                    "discovery_clue": effective_clue,
                                     "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                                     "reason": reason or "Confiscated upon arrest"
                                 }
@@ -4232,16 +5106,157 @@ Respond in JSON with schema:
                                 break
 
             self.save_active_campaign_state()
-            logger.info(f"[TTRPG] Disarmed party/character(s) at '{default_loc}': Weapons={disarmed_weapons}, Items={disarmed_items}. Total stored in world cache: {len(stored_items_list)}")
+            logger.info(f"[TTRPG] Disarmed party/character(s) at '{default_loc}' [knowledge={effective_knowledge}]: Weapons={disarmed_weapons}, Items={disarmed_items}. Total stored in world cache: {len(stored_items_list)}")
 
             return {
                 "status": "success",
                 "action": "disarm",
                 "storage_location": default_loc,
+                "location_knowledge": effective_knowledge,
                 "disarmed_weapons": disarmed_weapons,
                 "disarmed_items": disarmed_items,
                 "total_stored_items": len(stored_items_list),
-                "message": f"Successfully disarmed character(s). Confiscated {len(disarmed_weapons)} weapon(s) and secured them at '{default_loc}'."
+                "message": f"Successfully disarmed character(s). Confiscated {len(disarmed_weapons)} weapon(s) and secured them at '{default_loc}' (Knowledge: {effective_knowledge})."
+            }
+
+        # Handle Discover / Reveal Location (e.g. overheard guards, perception check, barracks ledger)
+        if action_norm in ("discover_location", "reveal_location", "locate"):
+            discovered_items: List[str] = []
+            target_char_ids = {c[0]: c[1] for c in target_chars}
+
+            for entry in stored_items_list:
+                owner_id = entry.get("original_owner_id")
+                owner_name = entry.get("original_owner", "").lower()
+                matches_owner = is_party_wide or (owner_id in target_char_ids) or any(c[1].get("name", "").lower() == owner_name for c in target_chars)
+
+                matches_item = True
+                entry_name = entry.get("name", "").lower()
+                if items or weapons:
+                    req_names = [str(x.get("name") if isinstance(x, dict) else x).lower().strip() for x in (items or []) + (weapons or [])]
+                    matches_item = any(rn in entry_name or entry_name in rn for rn in req_names)
+
+                if matches_owner and matches_item:
+                    entry["location_knowledge"] = (location_knowledge or "discovered").strip().lower()
+                    if storage_location:
+                        entry["storage_location"] = storage_location
+                    if discovery_clue:
+                        entry["discovery_clue"] = discovery_clue
+                    if holder_or_creature:
+                        entry["holder_or_creature"] = holder_or_creature
+                    if status:
+                        entry["status"] = status
+                    discovered_items.append(f"{entry.get('original_owner', 'Party')}'s {entry.get('name')}")
+
+            self.save_active_campaign_state()
+            logger.info(f"[TTRPG] Discovered item location(s): {discovered_items} -> {storage_location} (Clue: {discovery_clue})")
+            return {
+                "status": "success",
+                "action": "discover_location",
+                "discovered_items": discovered_items,
+                "storage_location": storage_location,
+                "discovery_clue": discovery_clue,
+                "location_knowledge": location_knowledge or "discovered",
+                "message": f"Discovered location for {len(discovered_items)} item(s): {storage_location or 'Revealed'} ({discovery_clue or 'Investigation/Perception'})."
+            }
+
+        # Handle Destroy / Vaporize / Melt (e.g. dropped in Mount Doom lava, dissolved in acid)
+        if action_norm in ("destroy", "vaporize", "melt"):
+            destroyed_items: List[str] = []
+            loc = storage_location or "Destroyed (Incinerated in Lava / Dissolved in Acid)"
+            reas = reason or "Permanent destruction (incinerated/melted/vaporized)"
+
+            # Check if matching items are currently on character(s)
+            for char_id, char_data in target_chars:
+                current_inv = char_data.setdefault("inventory", [])
+                current_wpns = char_data.setdefault("weapons", [])
+
+                if items:
+                    for it in items:
+                        target_name = (it.get("name") if isinstance(it, dict) else str(it)).strip().lower()
+                        for idx, cur_it in enumerate(list(current_inv)):
+                            cur_name = (cur_it.get("name") if isinstance(cur_it, dict) else str(cur_it)).strip().lower()
+                            if cur_name == target_name or target_name in cur_name:
+                                removed = current_inv.pop(idx)
+                                rem_name = removed.get("name", target_name) if isinstance(removed, dict) else str(removed)
+                                stored_entry = {
+                                    "id": f"stored_{uuid.uuid4().hex[:8]}",
+                                    "name": rem_name,
+                                    "type": "item",
+                                    "original_owner": char_data["name"],
+                                    "original_owner_id": char_id,
+                                    "data": copy.deepcopy(removed),
+                                    "storage_location": loc,
+                                    "status": "destroyed",
+                                    "location_knowledge": location_knowledge or "known",
+                                    "holder_or_creature": holder_or_creature or "",
+                                    "salvageable": False,
+                                    "discovery_clue": discovery_clue or "Item permanently destroyed",
+                                    "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    "reason": reas
+                                }
+                                stored_items_list.append(stored_entry)
+                                destroyed_items.append(f"{char_data['name']}: {rem_name}")
+                                break
+
+                if weapons:
+                    for w in weapons:
+                        w_name = (w.get("name") if isinstance(w, dict) else str(w)).strip().lower()
+                        for idx, cur_w in enumerate(list(current_wpns)):
+                            cur_w_name = (cur_w.get("name") if isinstance(cur_w, dict) else str(cur_w)).lower()
+                            if cur_w_name == w_name or w_name in cur_w_name:
+                                removed = current_wpns.pop(idx)
+                                rem_name = removed.get("name", w_name) if isinstance(removed, dict) else str(removed)
+                                stored_entry = {
+                                    "id": f"stored_{uuid.uuid4().hex[:8]}",
+                                    "name": rem_name,
+                                    "type": "weapon",
+                                    "original_owner": char_data["name"],
+                                    "original_owner_id": char_id,
+                                    "data": copy.deepcopy(removed),
+                                    "storage_location": loc,
+                                    "status": "destroyed",
+                                    "location_knowledge": location_knowledge or "known",
+                                    "holder_or_creature": holder_or_creature or "",
+                                    "salvageable": False,
+                                    "discovery_clue": discovery_clue or "Item permanently destroyed",
+                                    "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                    "reason": reas
+                                }
+                                stored_items_list.append(stored_entry)
+                                destroyed_items.append(f"{char_data['name']}: {rem_name}")
+                                break
+
+            # Also check if matching items are already in stored_items and mark them destroyed
+            target_char_ids = {c[0]: c[1] for c in target_chars}
+            for entry in stored_items_list:
+                owner_id = entry.get("original_owner_id")
+                owner_name = entry.get("original_owner", "").lower()
+                matches_owner = is_party_wide or (owner_id in target_char_ids) or any(c[1].get("name", "").lower() == owner_name for c in target_chars)
+
+                entry_name = entry.get("name", "").lower()
+                matches_item = False
+                if items or weapons:
+                    req_names = [str(x.get("name") if isinstance(x, dict) else x).lower().strip() for x in (items or []) + (weapons or [])]
+                    matches_item = any(rn in entry_name or entry_name in rn for rn in req_names)
+
+                if matches_owner and matches_item and entry.get("status") != "destroyed":
+                    entry["status"] = "destroyed"
+                    entry["salvageable"] = False
+                    entry["storage_location"] = loc
+                    entry["reason"] = reas
+                    entry["location_knowledge"] = location_knowledge or "known"
+                    entry["discovery_clue"] = discovery_clue or "Permanently destroyed"
+                    destroyed_items.append(f"{entry.get('original_owner', 'Party')}'s {entry.get('name')}")
+
+            self.save_active_campaign_state()
+            logger.info(f"[TTRPG] Destroyed items: {destroyed_items} at '{loc}'. Salvageable: False")
+            return {
+                "status": "success",
+                "action": "destroy",
+                "destroyed_items": destroyed_items,
+                "salvageable": False,
+                "storage_location": loc,
+                "message": f"Permanently destroyed {len(destroyed_items)} item(s) at {loc}. Cannot be recovered."
             }
 
         # Living beings, NPCs, and captives are not inventory items
@@ -4352,6 +5367,13 @@ Respond in JSON with schema:
                             total_modified_spells.append(clean_s)
 
             elif action_norm in ("remove", "delete", "use", "consume", "drop", "lose", "unlearn"):
+                eff_status = (status or ("inside_creature" if holder_or_creature else ("destroyed" if (salvageable is False) else "stored"))).strip().lower()
+                eff_salvageable = False if eff_status == "destroyed" or salvageable is False else (True if salvageable is None else bool(salvageable))
+                eff_knowledge = (location_knowledge or ("known" if (holder_or_creature or eff_status == "destroyed") else "unknown")).strip().lower()
+                eff_loc = storage_location or (f"Inside {holder_or_creature}" if holder_or_creature else "Lost / Dropped")
+                eff_holder = holder_or_creature or ""
+                eff_clue = discovery_clue or ""
+
                 if items:
                     for it in items:
                         target_name = (it.get("name") if isinstance(it, dict) else str(it)).strip().lower()
@@ -4361,8 +5383,8 @@ Respond in JSON with schema:
                                 removed = current_inv.pop(idx)
                                 rem_name = removed.get("name", target_name) if isinstance(removed, dict) else str(removed)
                                 total_modified_items.append(rem_name)
-                                # If storage_location is provided, preserve in stored_items
-                                if storage_location and action_norm not in ("use", "consume"):
+                                # If storage_location, holder_or_creature, or special status is provided, preserve in stored_items
+                                if (storage_location or holder_or_creature or status or salvageable is False) and action_norm not in ("use", "consume"):
                                     stored_items_list.append({
                                         "id": f"stored_{uuid.uuid4().hex[:8]}",
                                         "name": rem_name,
@@ -4370,10 +5392,14 @@ Respond in JSON with schema:
                                         "original_owner": char_data["name"],
                                         "original_owner_id": char_id,
                                         "data": copy.deepcopy(removed),
-                                        "storage_location": storage_location,
-                                        "status": "stored",
+                                        "storage_location": eff_loc,
+                                        "status": eff_status,
+                                        "location_knowledge": eff_knowledge,
+                                        "holder_or_creature": eff_holder,
+                                        "salvageable": eff_salvageable,
+                                        "discovery_clue": eff_clue,
                                         "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                        "reason": reason or "Stored / Dropped"
+                                        "reason": reason or ("Swallowed / Carried away" if eff_holder else "Stored / Dropped")
                                     })
                                 break
                 if weapons:
@@ -4385,7 +5411,7 @@ Respond in JSON with schema:
                                 removed = current_wpns.pop(idx)
                                 rem_name = removed.get("name", w_name) if isinstance(removed, dict) else str(removed)
                                 total_modified_weapons.append(rem_name)
-                                if storage_location and action_norm not in ("use", "consume"):
+                                if (storage_location or holder_or_creature or status or salvageable is False) and action_norm not in ("use", "consume"):
                                     stored_items_list.append({
                                         "id": f"stored_{uuid.uuid4().hex[:8]}",
                                         "name": rem_name,
@@ -4393,10 +5419,14 @@ Respond in JSON with schema:
                                         "original_owner": char_data["name"],
                                         "original_owner_id": char_id,
                                         "data": copy.deepcopy(removed),
-                                        "storage_location": storage_location,
-                                        "status": "stored",
+                                        "storage_location": eff_loc,
+                                        "status": eff_status,
+                                        "location_knowledge": eff_knowledge,
+                                        "holder_or_creature": eff_holder,
+                                        "salvageable": eff_salvageable,
+                                        "discovery_clue": eff_clue,
                                         "stored_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                        "reason": reason or "Stored / Dropped"
+                                        "reason": reason or ("Swallowed / Carried away" if eff_holder else "Stored / Dropped")
                                     })
                                 break
                 if spells:
@@ -4605,6 +5635,171 @@ Return ONLY valid JSON.
         }
 
     # --- Initiative Ladder Management ---
+    MONSTER_STAT_PRESETS = {
+        "ape": (19, 12),
+        "baboon": (3, 12),
+        "bandit": (11, 12),
+        "bandit captain": (65, 15),
+        "berserker": (67, 13),
+        "bugbear": (27, 16),
+        "cultist": (9, 12),
+        "dire wolf": (37, 14),
+        "giant ape": (157, 12),
+        "giant spider": (26, 14),
+        "gnoll": (22, 15),
+        "goblin": (7, 15),
+        "guard": (11, 16),
+        "hobgoblin": (11, 18),
+        "kobold": (5, 12),
+        "minotaur": (76, 14),
+        "ogre": (59, 11),
+        "orc": (15, 13),
+        "pixie": (1, 15),
+        "skeleton": (13, 13),
+        "specter": (22, 12),
+        "sprite": (2, 15),
+        "sprite pack": (10, 15),
+        "sprites": (10, 15),
+        "spy": (27, 12),
+        "thug": (32, 11),
+        "wight": (45, 14),
+        "wolf": (11, 13),
+        "zombie": (22, 8),
+        "young red dragon": (178, 18),
+        "adult red dragon": (256, 19),
+    }
+
+    MONSTER_XP_PRESETS = {
+        "ape": 100,
+        "baboon": 10,
+        "bandit": 25,
+        "bandit captain": 450,
+        "berserker": 450,
+        "bugbear": 200,
+        "cultist": 25,
+        "dire wolf": 200,
+        "dryad": 200,
+        "giant ape": 2900,
+        "giant spider": 450,
+        "gnoll": 100,
+        "goblin": 50,
+        "guard": 25,
+        "guardian naga": 5900,
+        "hobgoblin": 100,
+        "imis": 3900,
+        "kobold": 25,
+        "minotaur": 700,
+        "ogre": 450,
+        "orc": 100,
+        "pixie": 50,
+        "skeleton": 50,
+        "specter": 200,
+        "sprite": 50,
+        "sprite pack": 100,
+        "sprites": 100,
+        "spy": 200,
+        "thug": 100,
+        "treant": 5000,
+        "wight": 700,
+        "wolf": 50,
+        "zombie": 50,
+        "young red dragon": 5900,
+        "adult red dragon": 18000,
+    }
+
+    def calculate_monster_xp(self, name: str, max_hp: Optional[int] = None) -> int:
+        """Calculates standard D&D 5e XP for a monster by preset match or CR / HP estimate."""
+        n = (name or "").lower().strip()
+        for key in sorted(self.MONSTER_XP_PRESETS.keys(), key=len, reverse=True):
+            if key in n:
+                return self.MONSTER_XP_PRESETS[key]
+
+        hp = max_hp or 20
+        if hp <= 7:
+            return 25
+        elif hp <= 18:
+            return 50
+        elif hp <= 35:
+            return 100
+        elif hp <= 65:
+            return 450
+        elif hp <= 100:
+            return 700
+        elif hp <= 150:
+            return 1800
+        elif hp <= 220:
+            return 3900
+        else:
+            return 5000
+
+    @staticmethod
+    def compute_health_status(current_hp: int, max_hp: int, is_player: bool = False, death_saves: Optional[Dict[str, Any]] = None) -> str:
+        """
+        D&D 5e qualitative health status thresholds:
+        - <= 0 HP:
+          - Player: "Dying (0 HP)", "Stable (0 HP)", or "Dead" (based on death_saves)
+          - Non-player / Monster: "Defeated"
+        - <= 15% HP: "Critical"
+        - <= 50% HP: "Bloodied"
+        - < 100% HP: "Injured"
+        - >= 100% HP: "Healthy"
+        """
+        if current_hp <= 0:
+            if is_player:
+                if death_saves:
+                    st = str(death_saves.get("status", "")).lower()
+                    fails = int(death_saves.get("failures", 0))
+                    succs = int(death_saves.get("successes", 0))
+                    if st in ("dead", "deceased") or fails >= 3:
+                        return "Dead"
+                    if st in ("stable", "stable (0 hp)") or succs >= 3:
+                        return "Stable (0 HP)"
+                return "Dying (0 HP)"
+            return "Defeated"
+        if max_hp <= 0:
+            return "Healthy"
+        ratio = float(current_hp) / float(max_hp)
+        if ratio <= 0.15:
+            return "Critical"
+        if ratio <= 0.50:
+            return "Bloodied"
+        if ratio < 1.0:
+            return "Injured"
+        return "Healthy"
+
+    def _resolve_monster_stats(self, name: str, hp: Optional[int] = None, ac: Optional[int] = None) -> Tuple[int, int]:
+        """Resolves HP and AC for monsters/NPCs using compendium presets or defaults."""
+        final_hp = None
+        final_ac = None
+        if hp is not None:
+            try:
+                final_hp = int(hp)
+            except Exception:
+                pass
+        if ac is not None:
+            try:
+                final_ac = int(ac)
+            except Exception:
+                pass
+
+        if final_hp is not None and final_ac is not None:
+            return final_hp, final_ac
+
+        n = (name or "").lower().strip()
+        matched_preset = None
+        # Sort presets longest key first to match "giant ape" before "ape"
+        for key in sorted(self.MONSTER_STAT_PRESETS.keys(), key=len, reverse=True):
+            if key in n:
+                matched_preset = self.MONSTER_STAT_PRESETS[key]
+                break
+
+        preset_hp, preset_ac = matched_preset if matched_preset else (20, 12)
+        if final_hp is None:
+            final_hp = preset_hp
+        if final_ac is None:
+            final_ac = preset_ac
+        return final_hp, final_ac
+
     def add_to_initiative(self, name: str, roll_val: int, is_player: bool = True) -> Dict[str, Any]:
         if not self.active_state:
             return {"status": "error", "message": "No active campaign."}
@@ -4612,12 +5807,42 @@ Return ONLY valid JSON.
         ladder = self.active_state.setdefault("initiative_order", [])
         # Remove existing entity if already on the ladder
         ladder = [item for item in ladder if item["name"].lower() != name.lower()]
-        ladder.append({
-            "entity_id": f"ent_{len(ladder) + 1}",
-            "name": name,
-            "roll": int(roll_val),
-            "is_player": is_player
-        })
+
+        char_id, char_data = self._find_character(name)
+        if char_data:
+            vitals = char_data.get("vitals", {})
+            hp_info = vitals.get("health", {})
+            cur_hp = int(hp_info.get("current", 20))
+            max_hp = int(hp_info.get("max", 20))
+            status = self.compute_health_status(cur_hp, max_hp)
+            ladder.append({
+                "entity_id": char_id,
+                "name": char_data.get("name", name),
+                "roll": int(roll_val),
+                "is_player": True,
+                "current_hp": cur_hp,
+                "max_hp": max_hp,
+                "armor_class": int(vitals.get("guard", {}).get("current", 10)),
+                "status": status,
+                "conditions": list(char_data.get("conditions", []))
+            })
+        else:
+            resolved_hp, resolved_ac = self._resolve_monster_stats(name)
+            status = self.compute_health_status(resolved_hp, resolved_hp)
+            e_xp = self.calculate_monster_xp(name, resolved_hp)
+            ladder.append({
+                "entity_id": f"ent_{len(ladder) + 1}",
+                "name": name,
+                "roll": int(roll_val),
+                "is_player": is_player,
+                "current_hp": int(resolved_hp),
+                "max_hp": int(resolved_hp),
+                "armor_class": int(resolved_ac),
+                "status": status,
+                "conditions": [],
+                "xp": int(e_xp),
+                "xp_awarded": False
+            })
 
         # Sort descending by initiative roll
         ladder.sort(key=lambda x: x["roll"], reverse=True)
@@ -4641,8 +5866,294 @@ Return ONLY valid JSON.
         self.save_active_campaign_state()
         return {"status": "success", "initiative_order": ladder}
 
+    def is_combat_active(self) -> bool:
+        """Returns True only if an active combat encounter with living hostile enemies is ongoing."""
+        if not self._ensure_active_state():
+            return False
+        ladder = self.active_state.get("initiative_order", [])
+        if not ladder:
+            return False
+        return any(
+            not c.get("is_player") and c.get("status") != "Defeated" and (c.get("current_hp") is None or c.get("current_hp") > 0)
+            for c in ladder
+        )
+
+    def _award_combat_xp_for_enemies(self, defeated_enemies: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Calculates and evenly distributes XP from defeated enemies to active party characters.
+        Marks xp_awarded = True on those combatants.
+        Returns summary of XP awarded and any characters ready for level-up.
+        """
+        if not defeated_enemies:
+            return {"total_xp": 0, "xp_per_character": 0, "level_up_ready": [], "message": ""}
+
+        unawarded = [e for e in defeated_enemies if not e.get("is_player") and not e.get("xp_awarded")]
+        if not unawarded:
+            return {"total_xp": 0, "xp_per_character": 0, "level_up_ready": [], "message": ""}
+
+        total_xp = sum(int(e.get("xp") or self.calculate_monster_xp(e.get("name", ""), e.get("max_hp", 20))) for e in unawarded)
+        if total_xp <= 0:
+            for e in unawarded:
+                e["xp_awarded"] = True
+            return {"total_xp": 0, "xp_per_character": 0, "level_up_ready": [], "message": ""}
+
+        chars = self.active_state.get("characters", {})
+        party_chars = [c for c in chars.values() if c.get("is_player", True)]
+        if not party_chars:
+            for e in unawarded:
+                e["xp_awarded"] = True
+            return {"total_xp": total_xp, "xp_per_character": 0, "level_up_ready": [], "message": f"Defeated enemies were worth {total_xp} XP, but no active party characters were found."}
+
+        xp_share = total_xp // len(party_chars)
+        level_up_ready_chars = []
+        for c in party_chars:
+            prog_res = self.manage_character_progression(c.get("name", ""), action="award_xp", amount_or_level=xp_share)
+            if prog_res.get("level_up_ready"):
+                level_up_ready_chars.append({
+                    "name": c.get("name", ""),
+                    "level": prog_res.get("level"),
+                    "experience_points": prog_res.get("experience_points")
+                })
+
+        for e in unawarded:
+            e["xp_awarded"] = True
+
+        msg = f"Awarded {total_xp} total XP ({xp_share} XP each) to {len(party_chars)} party members for defeating {len(unawarded)} hostile enemies."
+        logger.info(f"[TTRPG] {msg}")
+        return {
+            "total_xp": total_xp,
+            "xp_per_character": xp_share,
+            "level_up_ready": level_up_ready_chars,
+            "message": msg
+        }
+
+    def clean_stale_combat_if_needed(self) -> bool:
+        """
+        If the active initiative ladder only contains defeated enemies or finished combat,
+        clears the ladder so a fresh combat encounter can begin cleanly.
+        """
+        if not self._ensure_active_state():
+            return False
+        ladder = self.active_state.get("initiative_order", [])
+        if not ladder:
+            return False
+
+        enemies = [c for c in ladder if not c.get("is_player")]
+        alive_enemies = [
+            c for c in enemies
+            if c.get("status") != "Defeated" and (c.get("current_hp") is None or c.get("current_hp") > 0)
+        ]
+        # If enemies were present on the ladder and ALL of them are defeated, combat is finished
+        if enemies and not alive_enemies:
+            self._award_combat_xp_for_enemies([e for e in enemies if not e.get("xp_awarded")])
+            self.active_state["initiative_order"] = []
+            self.active_state["active_turn_index"] = 0
+            self.active_state["current_round"] = 1
+            self.save_active_campaign_state()
+            return True
+
+        # If every combatant on the ladder is marked defeated
+        if all(c.get("status") == "Defeated" or (c.get("current_hp") is not None and c.get("current_hp") <= 0) for c in ladder):
+            self._award_combat_xp_for_enemies([e for e in enemies if not e.get("xp_awarded")])
+            self.active_state["initiative_order"] = []
+            self.active_state["active_turn_index"] = 0
+            self.active_state["current_round"] = 1
+            self.save_active_campaign_state()
+            return True
+
+        return False
+
+    def clear_defeated_combatants(self, only_non_players: bool = True) -> Dict[str, Any]:
+        """
+        Removes defeated combatants from the active initiative ladder.
+        Awards XP for defeated enemies to the party.
+        If all enemies are defeated, completely clears and ends the combat encounter.
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign."}
+
+        ladder = self.active_state.get("initiative_order", [])
+        if not ladder:
+            return {"status": "success", "initiative_order": [], "removed": [], "xp_awarded": 0, "xp_per_character": 0, "level_up_ready_characters": [], "xp_message": ""}
+
+        defeated_enemies_to_award = []
+        remaining = []
+        removed = []
+        for c in ladder:
+            is_defeated = c.get("status") == "Defeated" or (c.get("current_hp") is not None and c.get("current_hp") <= 0)
+            if is_defeated and (not only_non_players or not c.get("is_player")):
+                removed.append(c.get("name"))
+                if not c.get("is_player") and not c.get("xp_awarded"):
+                    defeated_enemies_to_award.append(c)
+            else:
+                remaining.append(c)
+
+        xp_info = self._award_combat_xp_for_enemies(defeated_enemies_to_award) if defeated_enemies_to_award else {"total_xp": 0, "xp_per_character": 0, "level_up_ready": [], "message": ""}
+
+        remaining_enemies = [c for c in remaining if not c.get("is_player")]
+        if not remaining_enemies:
+            self.active_state["initiative_order"] = []
+            self.active_state["active_turn_index"] = 0
+            self.active_state["current_round"] = 1
+        else:
+            self.active_state["initiative_order"] = remaining
+            if self.active_state.get("active_turn_index", 0) >= len(remaining):
+                self.active_state["active_turn_index"] = 0
+
+        self.save_active_campaign_state()
+        return {
+            "status": "success",
+            "removed": removed,
+            "initiative_order": self.active_state["initiative_order"],
+            "combat_cleared": not remaining_enemies,
+            "xp_awarded": xp_info["total_xp"],
+            "xp_per_character": xp_info["xp_per_character"],
+            "level_up_ready_characters": xp_info["level_up_ready"],
+            "xp_message": xp_info["message"]
+        }
+
+    def start_combat(
+        self,
+        enemies: Optional[List[Any]] = None,
+        round_number: int = 1
+    ) -> Dict[str, Any]:
+        """
+        Initializes combat encounter:
+        - Automatically rolls initiative for all active party characters (1d20 + DEX mod).
+        - Automatically rolls initiative for each enemy (1d20 + enemy DEX mod or +0).
+        - Populates the initiative ladder in descending order with vitals & D&D 5e health status.
+        - Sets active_turn_index = 0, current_round = round_number.
+        - Persists state and returns the ladder.
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign."}
+
+        chars = self.active_state.get("characters", {})
+        ladder = []
+
+        # 1. Roll for player characters
+        for cid, c in chars.items():
+            c_name = c.get("name", "Hero")
+            attrs = c.get("attributes", {})
+            dex = attrs.get("Agility") or attrs.get("Dexterity") or attrs.get("DEX") or 10
+            try:
+                dex_val = int(dex)
+            except Exception:
+                dex_val = 10
+            dex_mod = (dex_val - 10) // 2
+
+            init_bonus = c.get("initiative") or c.get("initiative_bonus")
+            bonus = dex_mod
+            if init_bonus is not None:
+                try:
+                    bonus = int(str(init_bonus).replace("+", "").strip())
+                except Exception:
+                    pass
+
+            roll_res = self.parse_and_roll(f"1d20{bonus:+d}", character_name=c_name)
+            roll_val = roll_res.get("total", 10 + bonus)
+            vitals = c.get("vitals", {})
+            hp_info = vitals.get("health", {})
+            cur_hp = int(hp_info.get("current", 20))
+            max_hp = int(hp_info.get("max", 20))
+            status = self.compute_health_status(cur_hp, max_hp)
+            ladder.append({
+                "entity_id": cid,
+                "name": c_name,
+                "roll": int(roll_val),
+                "is_player": True,
+                "current_hp": cur_hp,
+                "max_hp": max_hp,
+                "armor_class": int(vitals.get("guard", {}).get("current", 10)),
+                "status": status,
+                "conditions": list(c.get("conditions", []))
+            })
+
+        # 2. Roll for enemies
+        for idx, enemy in enumerate(enemies or []):
+            if isinstance(enemy, dict):
+                e_name = enemy.get("name", f"Enemy {idx + 1}")
+                e_mod = int(enemy.get("dex_mod", enemy.get("initiative_mod", 0)))
+                e_hp = enemy.get("hp") or enemy.get("health") or enemy.get("max_hp")
+                e_ac = enemy.get("ac") or enemy.get("armor_class")
+            else:
+                e_name = str(enemy).strip()
+                e_mod = 0
+                e_hp = None
+                e_ac = None
+            if not e_name:
+                e_name = f"Enemy {idx + 1}"
+
+            resolved_hp, resolved_ac = self._resolve_monster_stats(e_name, e_hp, e_ac)
+            roll_res = self.parse_and_roll(f"1d20{e_mod:+d}", character_name=e_name)
+            roll_val = roll_res.get("total", 10 + e_mod)
+            status = self.compute_health_status(resolved_hp, resolved_hp)
+            e_xp = enemy.get("xp") if isinstance(enemy, dict) and enemy.get("xp") is not None else self.calculate_monster_xp(e_name, resolved_hp)
+            ladder.append({
+                "entity_id": f"enemy_{idx + 1}",
+                "name": e_name,
+                "roll": int(roll_val),
+                "is_player": False,
+                "current_hp": int(resolved_hp),
+                "max_hp": int(resolved_hp),
+                "armor_class": int(resolved_ac),
+                "status": status,
+                "conditions": [],
+                "xp": int(e_xp),
+                "xp_awarded": False
+            })
+
+        # Sort descending by initiative roll
+        ladder.sort(key=lambda x: x["roll"], reverse=True)
+        self.active_state["initiative_order"] = ladder
+        self.active_state["active_turn_index"] = 0
+        self.active_state["current_round"] = int(round_number)
+        self.save_active_campaign_state()
+
+        return {
+            "status": "success",
+            "message": f"Combat encounter started with {len(ladder)} combatants.",
+            "current_round": round_number,
+            "initiative_order": ladder,
+            "active_entity": ladder[0]["name"] if ladder else None
+        }
+
+    def end_combat(self) -> Dict[str, Any]:
+        """Clears the initiative ladder, awards XP for any remaining defeated enemies, and resets turn tracking."""
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign."}
+
+        ladder = self.active_state.get("initiative_order", [])
+        # Find enemies that were defeated or whose combat is concluding with victory
+        defeated_enemies = [
+            c for c in ladder
+            if not c.get("is_player") and not c.get("xp_awarded") and (
+                c.get("status") == "Defeated" or (c.get("current_hp") is not None and c.get("current_hp") <= 0)
+            )
+        ]
+        # If user explicitly ended combat and all enemies are defeated or this was a victory, award their XP
+        xp_info = self._award_combat_xp_for_enemies(defeated_enemies) if defeated_enemies else {"total_xp": 0, "xp_per_character": 0, "level_up_ready": [], "message": ""}
+
+        self.active_state["initiative_order"] = []
+        self.active_state["active_turn_index"] = 0
+        self.active_state["current_round"] = 1
+        self.save_active_campaign_state()
+
+        msg = "Combat ended. Initiative ladder cleared."
+        if xp_info.get("message"):
+            msg += f" {xp_info['message']}"
+
+        return {
+            "status": "success",
+            "message": msg,
+            "xp_awarded": xp_info["total_xp"],
+            "xp_per_character": xp_info["xp_per_character"],
+            "level_up_ready_characters": xp_info["level_up_ready"],
+            "xp_message": xp_info.get("message", "")
+        }
+
     def advance_turn(self) -> Dict[str, Any]:
-        """Advances combat to the next turn, automatically incrementing rounds."""
+        """Advances combat to the next turn, automatically skipping defeated combatants and incrementing rounds."""
         if not self._ensure_active_state():
             return {"status": "error", "message": "No active campaign."}
 
@@ -4650,24 +6161,89 @@ Return ONLY valid JSON.
         if not ladder:
             return {"status": "error", "message": "Initiative ladder is empty."}
 
-        idx = self.active_state.get("active_turn_index", 0) + 1
+        start_idx = self.active_state.get("active_turn_index", 0)
         round_num = self.active_state.get("current_round", 1)
+        total_combatants = len(ladder)
 
-        if idx >= len(ladder):
-            idx = 0
-            round_num += 1
+        # Check if any hostile enemies are still alive
+        alive_enemies = [
+            c for c in ladder
+            if not c.get("is_player") and c.get("status") != "Defeated" and (c.get("current_hp") is None or c.get("current_hp") > 0)
+        ]
+        if not alive_enemies and any(not c.get("is_player") for c in ladder):
+            # All enemies defeated! Automatically end combat and clear ladder
+            end_res = self.end_combat()
+            msg = "All hostile enemies have been defeated! The initiative ladder has been cleared. The party is victorious!"
+            if end_res.get("xp_message"):
+                msg += f" {end_res['xp_message']}"
+            return {
+                "status": "success",
+                "round": round_num,
+                "combat_ended": True,
+                "message": msg,
+                "active_entity": None,
+                "is_player": True,
+                "xp_awarded": end_res.get("xp_awarded", 0),
+                "xp_per_character": end_res.get("xp_per_character", 0),
+                "level_up_ready_characters": end_res.get("level_up_ready_characters", [])
+            }
 
-        self.active_state["active_turn_index"] = idx
+        # Find the next non-defeated combatant
+        next_idx = start_idx
+        found = False
+        for _ in range(total_combatants):
+            next_idx += 1
+            if next_idx >= total_combatants:
+                next_idx = 0
+                round_num += 1
+
+            candidate = ladder[next_idx]
+            cur_hp = candidate.get("current_hp")
+            status = candidate.get("status", "")
+            is_player = bool(candidate.get("is_player", False))
+
+            # Skip defeated enemies
+            if not is_player and (status == "Defeated" or (cur_hp is not None and cur_hp <= 0)):
+                continue
+
+            # Skip dead or stabilized unconscious players
+            if is_player and cur_hp is not None and cur_hp <= 0:
+                ds = candidate.get("death_saves")
+                if not ds:
+                    _, c_data = self._find_character(candidate.get("name", ""))
+                    if c_data:
+                        ds = c_data.get("death_saves")
+                ds_status = (ds.get("status") if ds else "") or status
+                if str(ds_status).lower() in ("dead", "deceased") or (ds and ds.get("failures", 0) >= 3):
+                    continue
+                if str(ds_status).lower() in ("stable", "stable (0 hp)") or (ds and ds.get("successes", 0) >= 3):
+                    continue
+                # Dying player at 0 HP is kept in initiative to roll their death save!
+
+            found = True
+            break
+
+        if not found:
+            next_idx = 0
+
+        self.active_state["active_turn_index"] = next_idx
         self.active_state["current_round"] = round_num
         self.save_active_campaign_state()
 
-        active_entity = ladder[idx]
+        active_entity = ladder[next_idx]
+        is_player = bool(active_entity.get("is_player", False))
+        is_dying = False
+        if is_player and active_entity.get("current_hp") is not None and active_entity.get("current_hp") <= 0:
+            is_dying = True
+
         return {
             "status": "success",
             "round": round_num,
             "active_entity": active_entity["name"],
-            "is_player": active_entity["is_player"],
-            "turn_index": idx
+            "is_player": is_player,
+            "is_dying": is_dying,
+            "death_save_required": is_dying,
+            "turn_index": next_idx
         }
 
     # --- Single-Mic Tabletop Coordination & Clarification Engine ---
@@ -4767,6 +6343,170 @@ Return ONLY valid JSON.
         hud.append("################################")
         return "\n".join(hud)
 
+    def update_entity_location(
+        self,
+        name: str,
+        location: str,
+        is_separated: Optional[bool] = None,
+        reunite_party: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Updates the spatial location of a character, NPC, or monster.
+        If reunite_party is True, brings all party characters to 'location' and clears separation.
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign state."}
+
+        entity_locs = self.active_state.setdefault("entity_locations", {})
+        chars = self.active_state.get("characters", {})
+
+        if reunite_party:
+            target_loc = location or self.active_state.get("current_location", "Main Party")
+            for c_id, c_data in chars.items():
+                c_data["location"] = target_loc
+                c_data["is_separated"] = False
+                c_name = c_data.get("name", c_id)
+                entity_locs[c_name] = target_loc
+            self.active_state["current_location"] = target_loc
+            self.save_active_campaign_state()
+            return {
+                "status": "success",
+                "message": f"Party reunited at '{target_loc}'.",
+                "location": target_loc,
+                "party_reunited": True
+            }
+
+        # Check if character in party
+        char_id, char_data = self._find_character(name)
+        if char_data:
+            char_data["location"] = location
+            if is_separated is not None:
+                char_data["is_separated"] = bool(is_separated)
+            else:
+                main_loc = self.active_state.get("current_location", "")
+                if main_loc and location.lower().strip() != main_loc.lower().strip():
+                    char_data["is_separated"] = True
+                else:
+                    char_data["is_separated"] = False
+            entity_locs[char_data["name"]] = location
+            self.save_active_campaign_state()
+            return {
+                "status": "success",
+                "entity_name": char_data["name"],
+                "location": location,
+                "is_separated": char_data["is_separated"],
+                "message": f"{char_data['name']} location updated to '{location}' (Separated: {char_data['is_separated']})."
+            }
+
+        # Check if combatant on ladder
+        comb = self._find_combatant(name)
+        if comb:
+            comb["location"] = location
+            entity_locs[comb["name"]] = location
+            self.save_active_campaign_state()
+            return {
+                "status": "success",
+                "entity_name": comb["name"],
+                "location": location,
+                "message": f"Combatant '{comb['name']}' location set to '{location}'."
+            }
+
+        # Generic NPC / Entity
+        clean_name = name.strip()
+        entity_locs[clean_name] = location
+        self.save_active_campaign_state()
+        return {
+            "status": "success",
+            "entity_name": clean_name,
+            "location": location,
+            "message": f"Entity '{clean_name}' location tracked at '{location}'."
+        }
+
+    def check_entity_proximity(
+        self,
+        actor_name: str,
+        target_name: str,
+        action_or_spell: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Verifies if actor and target are co-located or within range to interact/attack/cast spells.
+        Checks long-range magic exceptions (Sending, Scrying, Teleport, etc.).
+        """
+        if not self._ensure_active_state():
+            return {"allowed": True, "reason": "No active campaign state."}
+
+        # If action_or_spell is a long-range magic exception, allow it across any distance
+        if action_or_spell:
+            act_clean = re.sub(r'[^a-zA-Z0-9\s]', '', action_or_spell).strip().lower()
+            if any(exc in act_clean for exc in LONG_RANGE_MAGIC_EXCEPTIONS):
+                return {
+                    "allowed": True,
+                    "reason": f"'{action_or_spell}' is a long-range/planar spell permitted across areas."
+                }
+
+        entity_locs = self.active_state.get("entity_locations", {})
+        main_loc = self.active_state.get("current_location", "Unknown Location")
+
+        # Resolve actor location
+        actor_loc = None
+        char_id, char_data = self._find_character(actor_name)
+        if char_data:
+            actor_loc = char_data.get("location") or (main_loc if not char_data.get("is_separated") else f"{main_loc} (Separated)")
+        if not actor_loc:
+            comb = self._find_combatant(actor_name)
+            if comb:
+                actor_loc = comb.get("location")
+        if not actor_loc:
+            actor_loc = entity_locs.get(actor_name)
+        if not actor_loc:
+            actor_loc = main_loc
+
+        # Resolve target location
+        target_loc = None
+        t_id, t_data = self._find_character(target_name)
+        if t_data:
+            target_loc = t_data.get("location") or (main_loc if not t_data.get("is_separated") else f"{main_loc} (Separated)")
+        if not target_loc:
+            comb = self._find_combatant(target_name)
+            if comb:
+                target_loc = comb.get("location")
+        if not target_loc:
+            target_loc = entity_locs.get(target_name)
+        if not target_loc:
+            target_loc = main_loc
+
+        # If actor targets themselves, always allowed
+        if actor_name.lower().strip() == target_name.lower().strip():
+            return {
+                "allowed": True,
+                "actor_location": actor_loc,
+                "target_location": target_loc,
+                "reason": f"Self-targeted action: {actor_loc}"
+            }
+
+        # Normalize locations for comparison
+        clean_actor_loc = re.sub(r'\s+', ' ', actor_loc).strip().lower()
+        clean_target_loc = re.sub(r'\s+', ' ', target_loc).strip().lower()
+
+        if clean_actor_loc == clean_target_loc:
+            return {
+                "allowed": True,
+                "actor_location": actor_loc,
+                "target_location": target_loc,
+                "reason": f"Both are co-located at: {actor_loc}"
+            }
+
+        reason = (
+            f"Proximity Check Failed: {actor_name} is at '{actor_loc}', while {target_name} is at '{target_loc}'. "
+            f"They are separated and cannot target each other with '{action_or_spell or 'this action'}'."
+        )
+        return {
+            "allowed": False,
+            "actor_location": actor_loc,
+            "target_location": target_loc,
+            "reason": reason
+        }
+
     # --- Internal Helpers ---
     def _find_character(self, name: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
         if not self._ensure_active_state():
@@ -4780,6 +6520,22 @@ Return ONLY valid JSON.
             if clean in c_data.get("name", "").lower() or clean in c_id.lower():
                 return c_id, c_data
         return None, None
+
+    def _find_combatant(self, name: str) -> Optional[Dict[str, Any]]:
+        """Finds a combatant entity on the active initiative ladder."""
+        if not self._ensure_active_state():
+            return None
+        ladder = self.active_state.get("initiative_order", [])
+        clean = (name or "").lower().strip()
+        # 1. Exact match
+        for item in ladder:
+            if item.get("name", "").lower() == clean or item.get("entity_id", "").lower() == clean:
+                return item
+        # 2. Substring match
+        for item in ladder:
+            if clean in item.get("name", "").lower() or clean in item.get("entity_id", "").lower():
+                return item
+        return None
 
     def level_up_character(self, character_name: str, target_level: int) -> Dict[str, Any]:
         """Advances a character to target_level and persists campaign state."""
@@ -4904,6 +6660,7 @@ Return ONLY valid JSON.
         qty: int = 1,
         equip: bool = False,
         bypass_class_check: bool = False,
+        prepare_spell: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """
         Grants a weapon, armor/shield, gear/magic item, or spell from the offline 5e SRD / Homebrew
@@ -5166,11 +6923,31 @@ Return ONLY valid JSON.
                     "character_classes": val.get("character_classes", []),
                 }
 
+            from core.compendiums.dnd_advancement import check_character_spell_legality
+
+            lvl_val = int(sp.get("level", 0))
+            is_cantrip_val = (lvl_val == 0)
+            is_subclass_bonus = (val.get("matched_via") == "subclass_bonus")
+
+            # Determine preparation status
+            if prepare_spell is not None:
+                prep_flag = bool(prepare_spell)
+            elif is_cantrip_val or is_subclass_bonus:
+                prep_flag = True
+            else:
+                # Default: auto-prepare if under max prep capacity, else add to spellbook unprepared
+                leg_before = check_character_spell_legality(char_data, edition)
+                if leg_before.get("is_caster") and leg_before.get("prepared_count", 0) >= leg_before.get("max_prepared", 0):
+                    prep_flag = False
+                else:
+                    prep_flag = True
+
             sheet_spell = format_spell_for_sheet(
                 sp,
                 spell_atk=spell_atk_str,
                 spell_dc=str(spell_dc_val),
-                prepared=True,
+                prepared=prep_flag,
+                is_always_prepared=is_subclass_bonus,
             )
 
             def _upsert_spell(spell_list: List[Any], sp_entry: Dict[str, Any]):
@@ -5192,14 +6969,21 @@ Return ONLY valid JSON.
 
             self.save_active_campaign_state()
 
+            # Check character spell preparation / roster legality after grant
+            legality = check_character_spell_legality(char_data, edition)
+
+            prep_status_str = " (Prepared)" if sheet_spell.get("prepared") else " (Unprepared in Spellbook)"
             if val.get("matched_via") == "magical_secrets":
-                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']} via Bard Magical Secrets."
+                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}){prep_status_str} to {char_data['name']} via Bard Magical Secrets."
             elif val.get("matched_via") == "bypass":
-                success_msg = f"Added out-of-class spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']} (DM Override)."
+                success_msg = f"Added out-of-class spell '{sheet_spell['name']}' ({sheet_spell['level']}){prep_status_str} to {char_data['name']} (DM Override)."
             elif val.get("matched_via") == "subclass_bonus":
-                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']} ({val.get('reason')})."
+                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}){prep_status_str} to {char_data['name']} ({val.get('reason')})."
             else:
-                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}) to {char_data['name']}."
+                success_msg = f"Added spell '{sheet_spell['name']}' ({sheet_spell['level']}){prep_status_str} to {char_data['name']}."
+
+            if not legality.get("is_legal"):
+                success_msg += f" ⚠️ Preparation limit exceeded ({legality['prepared_count']}/{legality['max_prepared']})."
 
             return {
                 "status": "success",
@@ -5209,10 +6993,21 @@ Return ONLY valid JSON.
                 "granted": [sheet_spell["name"]],
                 "entry": sheet_spell,
                 "validation": val,
+                "legality": legality,
                 "message": success_msg,
             }
 
         return {"status": "error", "message": f"Unknown compendium category '{category}'. Use weapons, armor, items, or spells."}
+
+    def check_character_spell_legality(self, character_name: str, edition: str = "2024") -> Dict[str, Any]:
+        """Checks if a character's prepared and known spells adhere to D&D 5e limits."""
+        if not self._ensure_active_state():
+            return {"is_legal": True, "reason": "No active campaign"}
+        cid, char_data = self._find_character(character_name)
+        if not char_data:
+            return {"is_legal": True, "reason": f"Character '{character_name}' not found"}
+        from core.compendiums.dnd_advancement import check_character_spell_legality
+        return check_character_spell_legality(char_data, edition=edition)
 
     # =========================================================================
     # Phase 2: Location-Based Merchant Shop & Interactive Short / Long Rest

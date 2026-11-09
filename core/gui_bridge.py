@@ -7001,11 +7001,46 @@ class GuiBridge:
         )
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready"):
+                self._on_engine_event("level_up_ready", res)
+        return res
+
+    def set_ttrpg_difficulty(self, difficulty: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:
+        """Sets the DM difficulty/guidance level ('helpful', 'easy', 'medium', 'hard') for a campaign."""
+        cid = campaign_id or self.ttrpg_service.manifest.get("active_campaign")
+        clean_diff = (difficulty or "helpful").strip().lower()
+        if clean_diff not in ("helpful", "easy", "medium", "hard"):
+            clean_diff = "helpful"
+        res = self.ttrpg_service.update_campaign(campaign_id=cid, difficulty=clean_diff)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("campaign_updated", res.get("campaign", {}))
+            try:
+                eng = getattr(self, "_engine", getattr(self, "engine", None))
+                if eng and getattr(eng, "active_workspace_type", None) == "campaign" and getattr(eng, "active_context_id", None) == cid:
+                    eng.active_system_prompt = self.ttrpg_service.build_gm_context_prompt()
+                    logger.info(f"[TTRPG] Refreshed active engine system prompt with difficulty: {clean_diff}")
+            except Exception as e:
+                logger.warning(f"[TTRPG] Could not refresh engine prompt on difficulty change: {e}")
         return res
 
     def delete_ttrpg_campaign(self, campaign_id: str) -> Dict[str, Any]:
         res = self.ttrpg_service.delete_campaign(campaign_id)
         if res.get("status") == "success":
+            new_active = res.get("active_campaign")
+            try:
+                eng = getattr(self, "_engine", getattr(self, "engine", None))
+                if eng and getattr(eng, "active_workspace_type", None) == "campaign" and getattr(eng, "active_context_id", None) == campaign_id:
+                    if new_active:
+                        camp_title = (self.ttrpg_service.manifest.get("campaigns", {}).get(new_active) or {}).get("title", new_active)
+                        eng.set_active_workspace("campaign", new_active, camp_title)
+                    else:
+                        eng.set_active_workspace("general", "default", "General")
+            except Exception as e:
+                logger.warning(f"[TTRPG] Error switching engine workspace after deleting campaign: {e}")
+
+            self._on_engine_event("active_campaign_changed", {"campaign_id": new_active, "campaign": self.ttrpg_service.manifest.get("campaigns", {}).get(new_active)})
+            self._on_engine_event("campaign_updated", {"deleted": campaign_id, "active_campaign": new_active})
             self._on_engine_event("ttrpg_state_updated", res)
         return res
 
@@ -7254,6 +7289,8 @@ class GuiBridge:
         res = self.ttrpg_service.delete_campaign_document(filename=filename, campaign_id=campaign_id)
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def refresh_ttrpg_roster_and_files(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
@@ -7264,6 +7301,8 @@ class GuiBridge:
         res = self.ttrpg_service.refresh_campaign_files_and_characters(campaign_id=campaign_id)
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def record_ttrpg_notes(
@@ -7286,6 +7325,8 @@ class GuiBridge:
         )
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def get_ttrpg_notes(self, campaign_id: Optional[str] = None) -> Dict[str, Any]:
@@ -7469,6 +7510,8 @@ class GuiBridge:
         )
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def roll_ttrpg_dice(
@@ -7484,6 +7527,54 @@ class GuiBridge:
                 res["purpose"] = purpose
             if character_name:
                 res["character_name"] = character_name
+
+            p_low = (purpose or "").lower()
+            is_death_save = "death save" in p_low or "death saving" in p_low or (formula.strip() == "1d20" and "death" in p_low)
+            char_id, cdata = self.ttrpg_service._find_character(character_name) if character_name else (None, None)
+
+            if is_death_save and cdata:
+                d20_roll = res.get("rolls", [10])[0] if res.get("rolls") else res.get("total", 10)
+                ds = cdata.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "dying"})
+                char_conds = cdata.setdefault("conditions", [])
+                msg = ""
+                if d20_roll == 20:
+                    self.ttrpg_service.modify_character_stat(character_name, "health", 1)
+                    msg = f"NATURAL 20! {character_name} regains 1 HP, revives, and is no longer unconscious!"
+                elif d20_roll == 1:
+                    ds["failures"] = ds.get("failures", 0) + 2
+                    if ds["failures"] >= 3:
+                        ds["status"] = "dead"
+                        if "Dead" not in char_conds:
+                            char_conds.append("Dead")
+                        msg = f"NATURAL 1! Critical failure! {character_name} suffers 2 death save failures ({ds['failures']}/3) and has DIED."
+                    else:
+                        msg = f"NATURAL 1! Critical failure! {character_name} suffers 2 death save failures ({ds['failures']}/3)."
+                elif d20_roll >= 10:
+                    ds["successes"] = ds.get("successes", 0) + 1
+                    if ds["successes"] >= 3:
+                        ds["status"] = "stable"
+                        if "Stable" not in char_conds:
+                            char_conds.append("Stable")
+                        msg = f"SUCCESS (Roll: {d20_roll})! {character_name} records a death save success ({ds['successes']}/3). STABLE at 0 HP!"
+                    else:
+                        msg = f"SUCCESS (Roll: {d20_roll})! {character_name} records a death save success ({ds['successes']}/3)."
+                else:
+                    ds["failures"] = ds.get("failures", 0) + 1
+                    if ds["failures"] >= 3:
+                        ds["status"] = "dead"
+                        if "Dead" not in char_conds:
+                            char_conds.append("Dead")
+                        msg = f"FAILURE (Roll: {d20_roll})! {character_name} suffers a death save failure ({ds['failures']}/3) and has DIED."
+                    else:
+                        msg = f"FAILURE (Roll: {d20_roll})! {character_name} suffers a death save failure ({ds['failures']}/3)."
+
+                self.ttrpg_service.save_active_campaign_state()
+                res["death_save_result"] = msg
+                res["death_saves"] = ds
+                self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+                if self.ttrpg_service.active_state and self.ttrpg_service.active_state.get("initiative_order"):
+                    self._on_engine_event("initiative_updated", {"initiative_order": self.ttrpg_service.active_state.get("initiative_order", [])})
+
             self._on_engine_event("dice_roll_event", res)
         return res
 
@@ -7508,18 +7599,48 @@ class GuiBridge:
         res = self.ttrpg_service.advance_turn()
         if res.get("status") == "success":
             self._on_engine_event("initiative_updated", res)
+            self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready_characters"):
+                self._on_engine_event("level_up_ready", res)
+        return res
+
+    def start_ttrpg_combat(self, enemies: Optional[List[Any]] = None, round_number: int = 1) -> Dict[str, Any]:
+        res = self.ttrpg_service.start_combat(enemies=enemies, round_number=round_number)
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("initiative_updated", res)
+        return res
+
+    def end_ttrpg_combat(self) -> Dict[str, Any]:
+        res = self.ttrpg_service.end_combat()
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("initiative_updated", res)
+            if res.get("level_up_ready_characters"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def add_ttrpg_initiative(self, name: str, roll_val: int, is_player: bool = True) -> Dict[str, Any]:
         res = self.ttrpg_service.add_to_initiative(name, int(roll_val), bool(is_player))
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("initiative_updated", res)
         return res
 
     def remove_ttrpg_initiative(self, name_or_id: str) -> Dict[str, Any]:
         res = self.ttrpg_service.remove_from_initiative(name_or_id)
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("initiative_updated", res)
+        return res
+
+    def clear_ttrpg_defeated_combatants(self) -> Dict[str, Any]:
+        res = self.ttrpg_service.clear_defeated_combatants()
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("initiative_updated", res)
+            if res.get("level_up_ready_characters"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def add_ttrpg_character(self, char_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -7552,6 +7673,8 @@ class GuiBridge:
         res = self.ttrpg_service.delete_character(character_id_or_name)
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def modify_ttrpg_character_stat(
@@ -7569,12 +7692,35 @@ class GuiBridge:
         )
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if self.ttrpg_service.active_state and self.ttrpg_service.active_state.get("initiative_order"):
+                self._on_engine_event("initiative_updated", {"initiative_order": self.ttrpg_service.active_state.get("initiative_order", [])})
         return res
 
     def update_ttrpg_condition(self, character_name: str, condition: str, active: bool) -> Dict[str, Any]:
         res = self.ttrpg_service.update_condition(character_name, condition, bool(active))
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+            if self.ttrpg_service.active_state and self.ttrpg_service.active_state.get("initiative_order"):
+                self._on_engine_event("initiative_updated", {"initiative_order": self.ttrpg_service.active_state.get("initiative_order", [])})
+        return res
+
+    def update_ttrpg_entity_location(
+        self,
+        name: str,
+        location: str,
+        is_separated: Optional[bool] = None,
+        reunite_party: bool = False
+    ) -> Dict[str, Any]:
+        res = self.ttrpg_service.update_entity_location(
+            name=name,
+            location=location,
+            is_separated=is_separated,
+            reunite_party=reunite_party
+        )
+        if res.get("status") == "success":
+            self._on_engine_event("ttrpg_state_updated", res)
+            self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
         return res
 
     def manage_ttrpg_character_inventory(
@@ -7585,9 +7731,14 @@ class GuiBridge:
         weapons: Optional[List[Dict[str, str]]] = None,
         spells: Optional[List[Any]] = None,
         reason: Optional[str] = None,
-        storage_location: Optional[str] = None
+        storage_location: Optional[str] = None,
+        location_knowledge: Optional[str] = None,
+        status: Optional[str] = None,
+        holder_or_creature: Optional[str] = None,
+        salvageable: Optional[bool] = None,
+        discovery_clue: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Adds, removes, disarms, or retrieves weapons, items, and spells for a character or party in the active campaign."""
+        """Adds, removes, disarms, discovers, destroys, or retrieves weapons, items, and spells for a character or party in the active campaign."""
         res = self.ttrpg_service.manage_character_inventory(
             character_name=character_name,
             action=action,
@@ -7595,10 +7746,17 @@ class GuiBridge:
             weapons=weapons,
             spells=spells,
             reason=reason,
-            storage_location=storage_location
+            storage_location=storage_location,
+            location_knowledge=location_knowledge,
+            status=status,
+            holder_or_creature=holder_or_creature,
+            salvageable=salvageable,
+            discovery_clue=discovery_clue
         )
         if res.get("status") == "success":
             self._on_engine_event("ttrpg_state_updated", res)
+            if res.get("level_up_ready"):
+                self._on_engine_event("level_up_ready", res)
         return res
 
     def manage_ttrpg_inventory(
@@ -7609,7 +7767,12 @@ class GuiBridge:
         weapons: Optional[List[Dict[str, str]]] = None,
         spells: Optional[List[Any]] = None,
         reason: Optional[str] = None,
-        storage_location: Optional[str] = None
+        storage_location: Optional[str] = None,
+        location_knowledge: Optional[str] = None,
+        status: Optional[str] = None,
+        holder_or_creature: Optional[str] = None,
+        salvageable: Optional[bool] = None,
+        discovery_clue: Optional[str] = None
     ) -> Dict[str, Any]:
         """Convenience alias for manage_ttrpg_character_inventory supporting party-wide disarm/retrieve."""
         return self.manage_ttrpg_character_inventory(
@@ -7619,7 +7782,12 @@ class GuiBridge:
             weapons=weapons,
             spells=spells,
             reason=reason,
-            storage_location=storage_location
+            storage_location=storage_location,
+            location_knowledge=location_knowledge,
+            status=status,
+            holder_or_creature=holder_or_creature,
+            salvageable=salvageable,
+            discovery_clue=discovery_clue
         )
 
     def reformat_ttrpg_weapons_or_items(self, raw_text: str, ruleset: str = "dnd_5e") -> Dict[str, Any]:
@@ -7669,44 +7837,16 @@ class GuiBridge:
 
         # Direct fallback for cast_spell if dispatcher is not ready
         if tool_name == "cast_spell":
-            char_id, char = self.ttrpg_service._find_character(params.get("character_name", ""))
-            if not char:
-                return {"status": "error", "message": f"Character '{params.get('character_name')}' not found."}
-            spell_name = params.get("spell_name", "")
-            spell_level = int(params.get("spell_level", 0))
-            native = char.get("native_system_data", {})
-            slots = native.get("spell_slots") or char.get("spell_slots", {})
-            spells = native.get("spells") or char.get("spells", [])
-            clean_target = re.sub(r'\s*\[r\]', '', spell_name, flags=re.IGNORECASE).strip().lower()
-            spell_entry = next(
-                (
-                    s for s in spells
-                    if isinstance(s, dict) and (
-                        s.get("name", "").lower() == spell_name.lower()
-                        or re.sub(r'\s*\[r\]', '', s.get("name", ""), flags=re.IGNORECASE).strip().lower() == clean_target
-                    )
-                ),
-                None
+            res = self.ttrpg_service.cast_character_spell(
+                character_name=params.get("character_name", ""),
+                spell_name=params.get("spell_name", ""),
+                spell_level=int(params.get("spell_level", 0)),
+                slot_level=int(params.get("slot_level")) if params.get("slot_level") is not None else None
             )
-            class_str = str(native.get("class_level") or char.get("archetype") or char.get("class") or "").lower()
-            is_wizard = "wizard" in class_str
-            if spell_level > 0:
-                if spell_entry:
-                    is_ritual = bool(
-                        spell_entry.get("is_ritual", False)
-                        or "[r]" in str(spell_entry.get("name", "")).lower()
-                        or "[r]" in spell_name.lower()
-                    )
-                    if not spell_entry.get("prepared", False) and not (is_wizard and is_ritual):
-                        return {"status": "error", "message": f"Cannot cast '{spell_name}'! It is not currently prepared for today."}
-                slot_key = f"level_{spell_level}"
-                if slot_key not in slots or slots[slot_key].get("current", 0) <= 0:
-                    return {"status": "error", "message": f"No Level {spell_level} spell slots remaining for {params.get('character_name')}!"}
-                slots[slot_key]["current"] -= 1
-            self.ttrpg_service.save_active_campaign_state()
-            self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
-            self._on_engine_event("ttrpg_state_updated", {"status": "success", "cast_spell": spell_name})
-            return {"status": "success", "character": params.get("character_name"), "spell": spell_name, "level": spell_level}
+            if res.get("status") == "success":
+                self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
+                self._on_engine_event("ttrpg_state_updated", res)
+            return res
 
         return {"status": "error", "message": f"Tool '{tool_name}' could not be dispatched."}
 
@@ -7786,14 +7926,34 @@ class GuiBridge:
             self._on_engine_event("vault_character_updated", res)
         return res
 
+    def check_vault_character_exists(self, character_name_or_id: str) -> Dict[str, Any]:
+        """Checks if a character with the given name or id already exists in the Character Vault."""
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        svc = getattr(eng, "vault_service", None)
+        if not svc:
+            from core.character_vault_service import CharacterVaultService
+            svc = CharacterVaultService()
+
+        clean_id_name = re.sub(r'[^a-zA-Z0-9_]', '', (character_name_or_id or "").lower().replace(" ", "_"))
+        root_id = f"char_{clean_id_name}_root"
+        existing = svc.get_character(root_id)
+        if not existing and character_name_or_id:
+            for c in svc.list_characters():
+                if (c.get("name") or "").lower() == character_name_or_id.lower() or c.get("id") == character_name_or_id:
+                    return {"exists": True, "root_id": c.get("id"), "character": c}
+            return {"exists": False, "root_id": root_id, "character": None}
+        return {"exists": True, "root_id": root_id, "character": existing}
+
     def save_campaign_character_to_vault(
         self,
         character_name_or_id: str,
-        campaign_id: Optional[str] = None
+        campaign_id: Optional[str] = None,
+        save_mode: str = "overwrite",
+        branch_label: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Exports a character from the active or specified campaign party roster
-        into the Character Vault as a permanent Canonical Root hero.
+        into the Character Vault as a permanent Canonical Root hero or a Branch variant.
         """
         eng = getattr(self, "_engine", getattr(self, "engine", None))
         svc = getattr(eng, "vault_service", None)
@@ -7817,7 +7977,7 @@ class GuiBridge:
         if not target_char:
             return {"status": "error", "message": f"Character '{character_name_or_id}' not found in active campaign roster."}
 
-        res = svc.import_from_campaign(target_char, campaign_meta=camp)
+        res = svc.import_from_campaign(target_char, campaign_meta=camp, save_mode=save_mode, branch_label=branch_label)
         if res.get("status") == "success":
             self._on_engine_event("vault_character_updated", res)
         return res
@@ -8221,6 +8381,7 @@ class GuiBridge:
         qty: int = 1,
         equip: bool = False,
         bypass_class_check: bool = False,
+        prepare_spell: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Grants a compendium item/weapon/armor/spell directly to a character in the active campaign."""
         try:
@@ -8233,6 +8394,7 @@ class GuiBridge:
                 qty=max(1, int(qty or 1)),
                 equip=bool(equip),
                 bypass_class_check=bool(bypass_class_check),
+                prepare_spell=prepare_spell,
             )
             if res.get("status") == "success":
                 self._on_engine_event("ttrpg_state_updated", res)
@@ -8241,6 +8403,20 @@ class GuiBridge:
         except Exception as e:
             logger.error(f"[GUI_BRIDGE] add_compendium_entry_to_character error: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
+
+    def check_character_spell_legality(
+        self,
+        character_name: str,
+        edition: str = "2024",
+    ) -> Dict[str, Any]:
+        """Checks if a campaign character's prepared and known spells adhere to D&D 5e limits."""
+        try:
+            res = self.ttrpg_service.check_character_spell_legality(character_name, edition=edition)
+            res["status"] = "success"
+            return res
+        except Exception as e:
+            logger.error(f"[GUI_BRIDGE] check_character_spell_legality error: {e}", exc_info=True)
+            return {"status": "error", "message": str(e), "is_legal": True}
 
     def check_spell_class_eligibility(
         self,

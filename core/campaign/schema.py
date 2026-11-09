@@ -97,6 +97,7 @@ class CampaignManifest:
         "political_intrigue": 5 # 1 (dungeon crawl) to 10 (heavy roleplay/scheming)
     })
     premise: str = ""
+    difficulty: str = "helpful"
     active_location_id: Optional[str] = None
     factions: Dict[str, FactionRecord] = field(default_factory=dict)
     locations: Dict[str, LocationNode] = field(default_factory=dict)

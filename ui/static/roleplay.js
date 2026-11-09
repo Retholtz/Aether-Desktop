@@ -53,6 +53,83 @@ const RULESET_FAMILY_MAP = {
     "sandbox_custom": "sandbox_custom"
 };
 
+const CONDITION_ICONS = {
+    "drunk": { icon: "🍺", desc: "Disadvantage on attack rolls & ability checks (Dex/Int/Wis)." },
+    "intoxicated": { icon: "🍺", desc: "Disadvantage on attack rolls & ability checks." },
+    "confused": { icon: "🌀", desc: "Disadvantage on Int/Wis checks, no reactions, rolls 1d10 behavior." },
+    "poisoned": { icon: "☠️", desc: "Disadvantage on attack rolls and ability checks." },
+    "frightened": { icon: "😨", desc: "Disadvantage on checks and attacks while source in sight." },
+    "blinded": { icon: "🙈", desc: "Disadvantage on attacks; attacks against have advantage." },
+    "restrained": { icon: "🕸️", desc: "Speed 0; disadvantage on attacks and Dex saves." },
+    "prone": { icon: "🧎", desc: "Disadvantage on attacks; melee attacks within 5ft have advantage." },
+    "charmed": { icon: "💖", desc: "Cannot attack the charmer or target them with harmful spells." },
+    "stunned": { icon: "💫", desc: "Incapacitated: cannot take actions/reactions, auto-fails Str/Dex saves." },
+    "paralyzed": { icon: "⚡", desc: "Incapacitated: cannot move/speak, auto-fails Str/Dex saves." },
+    "unconscious": { icon: "💤", desc: "Incapacitated: unaware, drops items, prone, fails Str/Dex saves." },
+    "incapacitated": { icon: "🛑", desc: "Cannot take actions, bonus actions, or reactions." },
+    "petrified": { icon: "🗿", desc: "Turned to stone: incapacitated, fails Str/Dex saves." },
+    "commanded: halt": { icon: "🛑", desc: "Commanded to halt: cannot take actions or move on turn." },
+    "dead": { icon: "💀", desc: "Deceased. Cannot take turns, actions, or rolls until revived." },
+    "stable": { icon: "🩹", desc: "Stable at 0 HP. Unconscious, but does not roll death saves." }
+};
+
+function getConditionMeta(condStr) {
+    const raw = String(condStr || "").trim();
+    const clean = raw.split("(")[0].trim().toLowerCase();
+    return CONDITION_ICONS[clean] || { icon: "⚠️", desc: raw };
+}
+
+const DND_XP_THRESHOLDS = {
+    1: 0, 2: 300, 3: 900, 4: 2700, 5: 6500,
+    6: 14000, 7: 23000, 8: 34000, 9: 48000, 10: 64000,
+    11: 85000, 12: 100000, 13: 120000, 14: 140000, 15: 165000,
+    16: 195000, 17: 225000, 18: 265000, 19: 305000, 20: 355000
+};
+window.DND_XP_THRESHOLDS = DND_XP_THRESHOLDS;
+
+function parseTotalLevelFromClass(str, fallbackLevel = 1) {
+    if (!str || typeof str !== "string") return Math.max(1, parseInt(fallbackLevel, 10) || 1);
+    const clean = str.replace(/[\(\[].*?[\)\]]/g, "").trim();
+    const segments = clean.split(/[/,|]+/).map(s => s.trim()).filter(Boolean);
+    let total = 0;
+    for (const seg of segments) {
+        const m = seg.match(/\d+/);
+        if (m) {
+            total += parseInt(m[0], 10) || 0;
+        }
+    }
+    return total > 0 ? total : Math.max(1, parseInt(fallbackLevel, 10) || 1);
+}
+window.parseTotalLevelFromClass = parseTotalLevelFromClass;
+
+function getDndNextLevelXp(level) {
+    const lvl = Math.max(1, Math.min(20, parseInt(level, 10) || 1));
+    return DND_XP_THRESHOLDS[Math.min(20, lvl + 1)] || 355000;
+}
+window.getDndNextLevelXp = getDndNextLevelXp;
+
+async function checkAndPromptLevelUp(charName, currentXp, currentLevel) {
+    const curLvl = parseInt(currentLevel, 10) || 1;
+    if (!charName || curLvl >= 20) return;
+    const curXp = parseInt(currentXp, 10) || 0;
+    const nextReq = getDndNextLevelXp(curLvl);
+    if (curXp >= nextReq) {
+        const wizardModal = document.getElementById("levelup-wizard-modal");
+        if (wizardModal && !wizardModal.classList.contains("hidden") && wizardModal.style.display !== "none") return;
+
+        const proceed = await showAetherConfirm(
+            `🎉 Level Up Ready!\n\n${charName} has reached ${curXp.toLocaleString()} / ${nextReq.toLocaleString()} XP and qualifies for Level ${curLvl + 1}!\n\nWould you like to open the Guided Level-Up Wizard now?`,
+            "Level Up Ready!",
+            "Level Up Now ⭐",
+            false
+        );
+        if (proceed) {
+            await openLevelUpWizard(charName, "campaign", { reason: `Reached ${curXp.toLocaleString()} XP milestone` });
+        }
+    }
+}
+window.checkAndPromptLevelUp = checkAndPromptLevelUp;
+
 function areRulesetsCompatible(r1, r2) {
     if (!r1 || !r2) return true;
     const s1 = String(r1).toLowerCase().trim().replace(/[\s-]/g, "_");
@@ -341,8 +418,21 @@ function renderCampaignHeader() {
             "medium": "Medium DM",
             "hard": "Hard DM"
         };
-        diffBadge.textContent = diffMap[diff] || (diff.charAt(0).toUpperCase() + diff.slice(1) + " DM");
-        diffBadge.className = `rp-badge diff-${diff}`;
+        const label = diffMap[diff] || (diff.charAt(0).toUpperCase() + diff.slice(1) + " DM");
+        const diffText = document.getElementById("rp-active-difficulty-text");
+        if (diffText) {
+            diffText.textContent = label;
+        } else {
+            diffBadge.textContent = label;
+        }
+        diffBadge.className = `rp-badge rp-diff-btn diff-${diff}`;
+
+        const dropdown = document.getElementById("rp-difficulty-dropdown");
+        if (dropdown) {
+            dropdown.querySelectorAll(".rp-diff-opt").forEach(opt => {
+                opt.classList.toggle("selected", opt.getAttribute("data-diff") === diff);
+            });
+        }
     }
 
     if (!isTogglingAdventure) {
@@ -431,6 +521,9 @@ function renderCampaignDocuments() {
 
 function renderInitiativeLadder() {
     const roundEl = document.getElementById("round-counter");
+    const roundInd = document.getElementById("rp-round-indicator");
+    const endCombatBtn = document.getElementById("end-combat-btn");
+    const nextTurnBtn = document.getElementById("next-turn-btn");
     const ladderEl = document.getElementById("initiative-ladder");
     if (!ladderEl) return;
 
@@ -442,11 +535,27 @@ function renderInitiativeLadder() {
     const order = Array.isArray(state.initiative_order) ? state.initiative_order : [];
     const activeIdx = Number(state.active_turn_index || 0);
 
+    // Living hostile enemies determine active combat mode
+    const hasLivingEnemies = order.some(item => !item.is_player && item.status !== "Defeated" && (item.current_hp === undefined || item.current_hp > 0));
+    const isCombatActive = order.length > 0 && hasLivingEnemies;
+
+    if (endCombatBtn) {
+        endCombatBtn.style.display = isCombatActive ? "inline-block" : "none";
+    }
+    if (nextTurnBtn) {
+        nextTurnBtn.style.display = isCombatActive ? "inline-block" : "none";
+    }
+    if (roundInd) {
+        roundInd.textContent = isCombatActive ? `(ROUND ${state.current_round || 1})` : `(Out of Combat)`;
+    }
+
     ladderEl.innerHTML = "";
-    if (order.length === 0) {
+    if (!isCombatActive) {
         ladderEl.innerHTML = `
-            <div style="padding: 14px 8px; text-align: center; color: #64748b; font-size: 12px;">
-                No combatants on the ladder.<br>Add combatants below to track turn order.
+            <div class="ladder-exploration-mode">
+                <div class="ladder-exp-icon">🍃</div>
+                <div class="ladder-exp-title">Exploration Mode (Out of Combat)</div>
+                <div class="ladder-exp-sub">Active combat is off. The party acts freely in open narrative. Turn order resumes automatically when combat begins.</div>
             </div>
         `;
         return;
@@ -455,14 +564,80 @@ function renderInitiativeLadder() {
     order.forEach((item, idx) => {
         const row = document.createElement("div");
         const isActive = idx === activeIdx;
-        row.className = `ladder-item${isActive ? " active" : ""}`;
+        const curHp = Number(item.current_hp ?? 20);
+        const maxHp = Number(item.max_hp ?? 20);
+        const isDefeated = item.status === "Defeated" || curHp <= 0;
+
+        row.className = `ladder-item${isActive ? " active" : ""}${isDefeated ? " defeated" : ""}`;
         const badgeIcon = item.is_player ? "🛡️" : "⚔️";
+
+        let hpDisplay = "";
+        if (item.is_player) {
+            const char = (ttrpgData.state?.characters && (ttrpgData.state.characters[item.entity_id] || Object.values(ttrpgData.state.characters).find(c => c.name?.toLowerCase() === item.name?.toLowerCase())));
+            const hp = char?.vitals?.health?.current ?? item.current_hp;
+            const max = char?.vitals?.health?.max ?? item.max_hp;
+            const ds = char?.death_saves || item.death_saves;
+            const dsStatus = String(ds?.status || "").toLowerCase();
+
+            if (hp !== undefined && hp <= 0) {
+                if (dsStatus === "dead" || ds?.failures >= 3 || item.status === "Dead") {
+                    hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(100, 116, 139, 0.35); color: #94a3b8; border: 1px solid #64748b;" title="Player is Dead">💀 Dead</span>`;
+                } else if (dsStatus === "stable" || ds?.successes >= 3 || item.status?.includes("Stable")) {
+                    hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(14, 165, 233, 0.3); color: #38bdf8; border: 1px solid #0284c7;" title="Player is Stable at 0 HP">🩹 Stable (0 HP)</span>`;
+                } else {
+                    hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(239, 68, 68, 0.35); color: #f87171; border: 1px solid #ef4444;" title="Player is Dying: Death Saves: ${ds?.successes || 0}S / ${ds?.failures || 0}F">💀 Dying (0 HP)</span>`;
+                }
+            } else if (hp !== undefined && max !== undefined) {
+                hpDisplay = `<span class="ladder-hp-pill player-hp" title="Player Health: ${hp}/${max}">${hp}/${max} HP</span>`;
+            }
+        } else {
+            // Enemy Combatant: Option A - D&D 5e Qualitative Health Status (DM-Only raw numbers)
+            let status = item.status;
+            if (!status) {
+                if (curHp <= 0) status = "Defeated";
+                else if (maxHp > 0 && curHp / maxHp <= 0.15) status = "Critical";
+                else if (maxHp > 0 && curHp / maxHp <= 0.50) status = "Bloodied";
+                else if (maxHp > 0 && curHp < maxHp) status = "Injured";
+                else status = "Healthy";
+            }
+
+            let badgeClass = "status-healthy";
+            let badgeLabel = "🟢 Healthy";
+            if (status === "Defeated" || curHp <= 0) {
+                badgeClass = "status-defeated";
+                badgeLabel = "💀 Defeated";
+            } else if (status === "Critical" || (maxHp > 0 && curHp / maxHp <= 0.15)) {
+                badgeClass = "status-critical";
+                badgeLabel = "🔴 Critical";
+            } else if (status === "Bloodied" || (maxHp > 0 && curHp / maxHp <= 0.50)) {
+                badgeClass = "status-bloodied";
+                badgeLabel = "🟠 Bloodied";
+            } else if (status === "Injured" || (maxHp > 0 && curHp < maxHp)) {
+                badgeClass = "status-injured";
+                badgeLabel = "🟡 Injured";
+            }
+
+            if (state.show_exact_enemy_hp) {
+                hpDisplay = `<span class="ladder-hp-pill enemy-status ${badgeClass}" title="${status}: ${curHp}/${maxHp} HP">${curHp}/${maxHp} HP</span>`;
+            } else {
+                hpDisplay = `<span class="ladder-hp-pill enemy-status ${badgeClass}" title="D&D Status: ${status}">${badgeLabel}</span>`;
+            }
+        }
+
+        const itemConds = Array.isArray(item.conditions) ? item.conditions : [];
+        const ladderCondIcons = itemConds.map(c => {
+            const meta = getConditionMeta(c);
+            return `<span title="${escapeRpHtml(c)}: ${escapeRpHtml(meta.desc)}" style="font-size: 11px; margin-left: 2px;">${meta.icon}</span>`;
+        }).join("");
+
         row.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 6px; overflow: hidden;">
-                <span>${isActive ? "▶" : badgeIcon}</span>
-                <span style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeRpHtml(item.name)}</span>
+            <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; flex: 1; min-width: 0;">
+                <span style="flex-shrink: 0;">${isActive ? "▶" : badgeIcon}</span>
+                <span class="ladder-name" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeRpHtml(item.name)}</span>
+                ${ladderCondIcons}
             </div>
-            <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                ${hpDisplay}
                 <span class="ladder-roll-pill">${Number(item.roll || 0)}</span>
                 <button type="button" class="vital-step-btn" title="Remove from initiative" onclick="handleRemoveInitiative('${escapeRpHtml(item.name)}')">✕</button>
             </div>
@@ -653,12 +828,27 @@ function renderCardSpellsSection(char) {
   }
 
   const charNameSafe = escapeRpJs(String(char.name || charId));
+  const prepLeveledCount = allSpells.filter(s => {
+    if (!s || typeof s === "string") return false;
+    const isCantrip = (s.is_cantrip !== undefined) ? Boolean(s.is_cantrip) : (String(s.level || "").toLowerCase().includes("cantrip") || s.level === 0 || s.level === "0");
+    const isAlwaysPrep = Boolean(s.is_always_prepared);
+    return !isCantrip && !isAlwaysPrep && Boolean(s.prepared);
+  }).length;
+  const maxPrepAllowed = (typeof char.max_prepared_leveled_spells === "number")
+    ? char.max_prepared_leveled_spells
+    : (native.max_prepared_leveled_spells || 0);
+
+  const isOverPrepared = (maxPrepAllowed > 0 && prepLeveledCount > maxPrepAllowed);
+  const statusBadgeHtml = isOverPrepared
+    ? `<span class="badge-count" style="color: #f87171; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); padding: 1px 6px; border-radius: 4px; font-size: 9.5px; font-weight: 700; cursor: pointer;" title="Character is over spell preparation limit! Click to edit character and unprepare spells." onclick="handleOpenEditCharacterModal('${escapeRpJs(String(charId))}')">⚠️ OVER LIMIT: ${prepLeveledCount}/${maxPrepAllowed}</span>`
+    : `<span class="badge-count" style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${activeSpells.length} ACTIVE</span>`;
+
   return `
     <div class="card-section spells-section char-spells-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 6px 8px;">
       <div class="section-header" style="font-size: 10px; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
         <span class="section-title">✨ SPELLS &amp; CANTRIPS</span>
         <div style="display: flex; gap: 6px; align-items: center;">
-          <span class="badge-count" style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${activeSpells.length} ACTIVE</span>
+          ${statusBadgeHtml}
           <button type="button" class="add-sub-item-btn cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35);" onclick="handleOpenAddSpellModal('${charNameSafe}')">+ Add Spell</button>
         </div>
       </div>
@@ -846,12 +1036,40 @@ function renderPartyRoster() {
             bannerEl.innerHTML = `
                 <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 0.78rem;">
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                        <span style="font-weight: 700; color: #f87171;">⚠️ Confiscated / Stored Party Items (${storedItems.length}):</span>
-                        <span style="color: #cbd5e1;">
-                            ${storedItems.map(si => `<span style="background: rgba(15, 23, 42, 0.6); padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.3); margin-right: 4px; display: inline-block;"><strong>${escapeRpHtml(si.original_owner || 'Party')}</strong>: ${escapeRpHtml(si.name)} <em style="color: #94a3b8; font-size: 0.7rem;">[${escapeRpHtml(si.storage_location || 'Unknown')}]</em></span>`).join("")}
+                        <span style="font-weight: 700; color: #f87171;">⚠️ Confiscated Gear &amp; World Items (${storedItems.length}):</span>
+                        <span style="color: #cbd5e1; display: inline-flex; flex-wrap: wrap; gap: 4px;">
+                            ${storedItems.map(si => {
+                                const isDestroyed = (si.status === 'destroyed' || si.salvageable === false);
+                                const isInside = (si.status === 'inside_creature');
+                                const isUnknown = (!isDestroyed && !isInside && (si.location_knowledge === 'unknown' || !si.location_knowledge));
+
+                                let badgeColor = 'rgba(239, 68, 68, 0.3)';
+                                let badgeIcon = '🔒';
+                                let locLabel = 'Location Unknown';
+                                let extraStyle = '';
+
+                                if (isDestroyed) {
+                                    badgeIcon = '🔥';
+                                    badgeColor = 'rgba(100, 116, 139, 0.5)';
+                                    locLabel = `Destroyed${si.storage_location ? ' in ' + si.storage_location : ''} (Lost forever)`;
+                                    extraStyle = 'text-decoration: line-through; opacity: 0.85;';
+                                } else if (isInside) {
+                                    badgeIcon = '🐉';
+                                    badgeColor = 'rgba(245, 158, 11, 0.4)';
+                                    locLabel = `Inside ${si.holder_or_creature || 'Creature'} (Salvageable)`;
+                                } else if (!isUnknown) {
+                                    badgeIcon = '📍';
+                                    badgeColor = 'rgba(56, 189, 248, 0.4)';
+                                    locLabel = `Held at: ${si.storage_location || 'Evidence Cache'}${si.discovery_clue ? ' • ' + si.discovery_clue : ''}`;
+                                }
+
+                                return `<span style="background: rgba(15, 23, 42, 0.65); padding: 3px 8px; border-radius: 4px; border: 1px solid ${badgeColor}; display: inline-block;">
+                                    <span>${badgeIcon} <strong>${escapeRpHtml(si.original_owner || 'Party')}</strong>: <span style="${extraStyle}">${escapeRpHtml(si.name)}</span></span>
+                                    <em style="color: ${isDestroyed ? '#f87171' : (isInside ? '#fbbf24' : (isUnknown ? '#94a3b8' : '#38bdf8'))}; font-size: 0.7rem; margin-left: 4px;">[${escapeRpHtml(locLabel)}]</em>
+                                </span>`;
+                            }).join("")}
                         </span>
                     </div>
-                    <button type="button" class="cyber-btn-small" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; font-size: 0.72rem; padding: 3px 10px; white-space: nowrap; cursor: pointer;" onclick="handleReclaimPartyGear()">Reclaim Gear</button>
                 </div>
             `;
         } else {
@@ -947,27 +1165,74 @@ function renderPartyRoster() {
             }).join("") + `</div>`;
         }
 
-        // Build conditions HTML
+        // Build conditions HTML with icons and tooltips
         const conditions = Array.isArray(ch.conditions) ? ch.conditions : [];
-        const condBadges = conditions.map(cond => `
-            <span class="condition-badge" title="Click to clear condition" onclick="handleToggleCondition('${escapeRpHtml(ch.name)}', '${escapeRpHtml(cond)}', false)">
-                ${escapeRpHtml(cond)} ✕
-            </span>
-        `).join("");
+        const condBadges = conditions.map(cond => {
+            const meta = getConditionMeta(cond);
+            return `
+                <span class="condition-badge" title="${escapeRpHtml(meta.desc)} (Click to clear)" onclick="handleToggleCondition('${escapeRpHtml(ch.name)}', '${escapeRpHtml(cond)}', false)">
+                    <span>${meta.icon}</span> <span>${escapeRpHtml(cond)}</span> <span style="font-weight: 700; margin-left: 2px; opacity: 0.7;">✕</span>
+                </span>
+            `;
+        }).join("");
 
         // Build Weapons Shelf HTML
         const wpns = Array.isArray(ch.weapons) ? ch.weapons : [];
         const charStored = storedItems.filter(si => (si.original_owner || "").toLowerCase() === (ch.name || "").toLowerCase() || si.original_owner_id === cid);
-        const storedConfiscatedHtml = charStored.length > 0 ? `
-            <div style="margin-top: 5px; padding: 4px 8px; background: rgba(239, 68, 68, 0.1); border: 1px dashed rgba(239, 68, 68, 0.35); border-radius: 4px; font-size: 10px; color: #fca5a5;">
-                <div style="font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
-                    <span>🔒 Gear Confiscated (${charStored.length}):</span>
-                    <button type="button" class="cyber-btn-small" style="padding: 1px 5px; font-size: 9px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35);" onclick="handleReclaimPartyGear('${escapeRpJs(ch.name)}')">Reclaim</button>
-                </div>
-                <div style="color: #cbd5e1; margin-top: 2px;">${charStored.map(s => escapeRpHtml(s.name)).join(", ")}</div>
-                <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">Held at: <em>${escapeRpHtml(charStored[0].storage_location || "Unknown Location")}</em></div>
-            </div>
-        ` : "";
+        let storedConfiscatedHtml = "";
+        if (charStored.length > 0) {
+            const sections = [];
+            const destroyed = charStored.filter(si => si.status === 'destroyed' || si.salvageable === false);
+            const inside = charStored.filter(si => !(si.status === 'destroyed' || si.salvageable === false) && si.status === 'inside_creature');
+            const unknown = charStored.filter(si => !(si.status === 'destroyed' || si.salvageable === false) && si.status !== 'inside_creature' && (si.location_knowledge === 'unknown' || !si.location_knowledge));
+            const known = charStored.filter(si => !(si.status === 'destroyed' || si.salvageable === false) && si.status !== 'inside_creature' && (si.location_knowledge === 'known' || si.location_knowledge === 'discovered'));
+
+            if (unknown.length > 0) {
+                sections.push(`
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(239, 68, 68, 0.08); border: 1px dashed rgba(239, 68, 68, 0.35); border-radius: 4px; font-size: 9.5px; color: #fca5a5;">
+                        <div style="font-weight: 600;">🔒 Confiscated Gear (Location Unknown):</div>
+                        <div style="color: #cbd5e1; margin-top: 2px;">${unknown.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px; font-style: italic;">Taken upon arrest • Location not yet discovered</div>
+                    </div>
+                `);
+            }
+
+            if (known.length > 0) {
+                const locSummary = known[0].storage_location || "Guard Barracks";
+                const clueSummary = known[0].discovery_clue ? ` • ${known[0].discovery_clue}` : "";
+                sections.push(`
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 4px; font-size: 9.5px; color: #38bdf8;">
+                        <div style="font-weight: 600;">📍 Confiscated Gear (Location Known):</div>
+                        <div style="color: #cbd5e1; margin-top: 2px;">${known.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px;">Held at: <strong style="color: #e2e8f0;">${escapeRpHtml(locSummary)}</strong>${escapeRpHtml(clueSummary)}</div>
+                    </div>
+                `);
+            }
+
+            if (inside.length > 0) {
+                const beastName = inside[0].holder_or_creature || "Creature";
+                sections.push(`
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(245, 158, 11, 0.08); border: 1px dashed rgba(245, 158, 11, 0.35); border-radius: 4px; font-size: 9.5px; color: #fbbf24;">
+                        <div style="font-weight: 600;">🐉 Swallowed Gear (Inside ${escapeRpHtml(beastName)}):</div>
+                        <div style="color: #cbd5e1; margin-top: 2px;">${inside.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="font-size: 8.5px; color: #d97706; margin-top: 2px; font-style: italic;">Can be salvaged upon slaying the creature</div>
+                    </div>
+                `);
+            }
+
+            if (destroyed.length > 0) {
+                const destLoc = destroyed[0].storage_location || "Lava / Acid";
+                sections.push(`
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(71, 85, 105, 0.15); border: 1px dashed rgba(100, 116, 139, 0.4); border-radius: 4px; font-size: 9.5px; color: #94a3b8;">
+                        <div style="font-weight: 600; color: #f87171;">🔥 Destroyed Gear (Lost Forever):</div>
+                        <div style="color: #cbd5e1; margin-top: 2px; text-decoration: line-through;">${destroyed.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="font-size: 8.5px; color: #ef4444; margin-top: 2px; font-style: italic;">Destroyed in ${escapeRpHtml(destLoc)} • Cannot be recovered</div>
+                    </div>
+                `);
+            }
+
+            storedConfiscatedHtml = sections.join("");
+        }
         const wpnsHtml = `
             <div class="char-weapons-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
                 <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
@@ -1094,6 +1359,63 @@ function renderPartyRoster() {
         else if (isCyber) rulesetBadge = '⚡ Cyberpunk';
         else if (isPf) rulesetBadge = '🗡️ Pathfinder';
 
+        let xpBadgeHtml = "";
+        if (!isCoc) {
+            const nextLvlXp = getDndNextLevelXp(charLevel);
+            if (charLevel >= 20) {
+                xpBadgeHtml = `<span class="rp-badge" style="background: rgba(250, 204, 21, 0.12); border: 1px solid rgba(250, 204, 21, 0.35); color: #facc15; font-size: 10px; padding: 1px 6px; white-space: nowrap;" title="Maximum Level (Level 20)">XP: ${Number(charXp).toLocaleString()} (Max)</span>`;
+            } else if (charXp >= nextLvlXp) {
+                xpBadgeHtml = `<button type="button" class="rp-badge diff-easy" style="cursor: pointer; font-size: 10px; font-weight: bold; background: rgba(34, 197, 94, 0.22); border: 1px solid #22c55e; color: #4ade80; padding: 1px 7px; white-space: nowrap;" onclick="openLevelUpWizard('${escapeRpHtml(ch.name)}', 'campaign', { reason: 'Reached ${Number(charXp).toLocaleString()} XP milestone' })" title="Level Up Ready! Click to open Guided Level-Up Wizard">⭐ LEVEL UP READY (${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()})</button>`;
+            } else {
+                xpBadgeHtml = `<span class="rp-badge" style="background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.3); color: #cbd5e1; font-size: 10px; padding: 1px 6px; white-space: nowrap;" title="XP: Current / Next Level">XP: ${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()}</span>`;
+            }
+        }
+
+        const locBadge = ch.location ? `
+            <span class="char-location-badge ${ch.is_separated ? 'is-separated' : ''}" style="background: ${ch.is_separated ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.1)'}; border: 1px solid ${ch.is_separated ? 'rgba(239, 68, 68, 0.4)' : 'rgba(56, 189, 248, 0.3)'}; color: ${ch.is_separated ? '#fca5a5' : '#7dd3fc'}; font-size: 10px; padding: 1px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px;" title="${ch.is_separated ? 'Separated from main party!' : 'Current Location'}">
+                📍 ${escapeRpHtml(ch.location)}${ch.is_separated ? ' <strong style="color: #ef4444;">⚠️ Separated</strong>' : ''}
+            </span>
+        ` : "";
+
+        let deathSavesHtml = "";
+        if (Number(hp.current) <= 0) {
+            const ds = ch.death_saves || { successes: 0, failures: 0, status: "dying" };
+            const succCount = Math.max(0, Math.min(3, Number(ds.successes || 0)));
+            const failCount = Math.max(0, Math.min(3, Number(ds.failures || 0)));
+            const dsStatus = String(ds.status || "dying").toLowerCase();
+
+            let statusPill = "";
+            if (dsStatus === "dead" || failCount >= 3) {
+                statusPill = `<span style="background: rgba(100, 116, 139, 0.4); color: #cbd5e1; border: 1px solid #64748b; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">💀 DEAD</span>`;
+            } else if (dsStatus === "stable" || succCount >= 3) {
+                statusPill = `<span style="background: rgba(14, 165, 233, 0.25); color: #38bdf8; border: 1px solid #0284c7; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">🩹 STABLE (0 HP)</span>`;
+            } else {
+                statusPill = `<span style="background: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid #ef4444; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">💀 DYING (0 HP)</span>`;
+            }
+
+            const succPips = [1, 2, 3].map(i => `<span style="color: ${i <= succCount ? '#22c55e' : '#475569'}; font-size: 12px;">${i <= succCount ? '●' : '○'}</span>`).join(" ");
+            const failPips = [1, 2, 3].map(i => `<span style="color: ${i <= failCount ? '#ef4444' : '#475569'}; font-size: 12px;">${i <= failCount ? '●' : '○'}</span>`).join(" ");
+
+            deathSavesHtml = `
+                <div class="death-saves-panel" style="margin-top: 6px; padding: 5px 8px; background: rgba(15, 23, 42, 0.75); border: 1px solid ${dsStatus === 'dead' ? '#64748b' : (dsStatus === 'stable' ? '#0284c7' : '#ef4444')}; border-radius: 5px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                        <span style="font-size: 10.5px; font-weight: 700; color: #cbd5e1;">💀 Death Saves (DC 10):</span>
+                        ${statusPill}
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10px;">
+                        <div>
+                            <span style="color: #4ade80; font-weight: 600;">Succ:</span> ${succPips}
+                            <span style="color: #64748b; margin: 0 4px;">|</span>
+                            <span style="color: #f87171; font-weight: 600;">Fail:</span> ${failPips}
+                        </div>
+                        ${(dsStatus === 'dying' && failCount < 3 && succCount < 3) ? `
+                            <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px; background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5;" onclick="handleRollDeathSave('${escapeRpHtml(ch.name)}')">🎲 Roll Save</button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
         card.innerHTML = `
             <div class="card-header char-card-top">
                 <div class="char-card-header-main">
@@ -1103,7 +1425,7 @@ function renderPartyRoster() {
                             <h4 class="char-name char-name-title" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeRpHtml(ch.name)}</h4>
                             <span class="caller-crown ${isCaller ? 'active' : ''}" title="Designated Party Caller">👑 CALLER</span>
                             <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; font-size: 10px; padding: 1px 6px; white-space: nowrap;">${rulesetBadge}</span>
-                            ${(charXp && !isCoc) ? `<span style="font-size: 10px; color: #94a3b8; white-space: nowrap;">${charXp} XP</span>` : ""}
+                            ${xpBadgeHtml}
                         </div>
                         <div class="card-controls" style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
                             <button type="button" class="focus-speaker-btn cyber-btn-tiny" title="Set active single-mic focus">Focus</button>
@@ -1118,6 +1440,7 @@ function renderPartyRoster() {
                     <div class="char-sub-archetype">${escapeRpHtml(ch.archetype || "Adventurer")} ${ch.player_name ? `• ${escapeRpHtml(ch.player_name)}` : ""}</div>
                     <div class="char-badges-strip">
                         <span class="char-guard-badge" title="${escapeRpHtml(guard.label || "Armor Defense")}">🛡️ ${acText}</span>
+                        ${locBadge}
                         ${initBadge}
                         ${speedBadge}
                         ${coinBadge}
@@ -1141,6 +1464,7 @@ function renderPartyRoster() {
                     <div class="vital-progress-bg">
                         <div class="vital-fill-health" style="width: ${hpPct}%;"></div>
                     </div>
+                    ${deathSavesHtml}
                 </div>
 
                 ${customMetersHtml}
@@ -1341,13 +1665,50 @@ async function handleRollDiceFormula(formula) {
 async function handleAdvanceTurn() {
     try {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.advance_ttrpg_turn) {
-            await window.pywebview.api.advance_ttrpg_turn();
+            const res = await window.pywebview.api.advance_ttrpg_turn();
             await loadRolePlayUI();
+            if (res && res.level_up_ready_characters && res.level_up_ready_characters.length > 0) {
+                for (const ch of res.level_up_ready_characters) {
+                    await checkAndPromptLevelUp(ch.name, ch.experience_points, ch.level);
+                }
+            }
         }
     } catch (e) {
         console.error("[RolePlay] Advance turn error:", e);
     }
 }
+
+async function handleEndCombat() {
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.end_ttrpg_combat) {
+            const res = await window.pywebview.api.end_ttrpg_combat();
+            await loadRolePlayUI();
+            if (res && res.level_up_ready_characters && res.level_up_ready_characters.length > 0) {
+                for (const ch of res.level_up_ready_characters) {
+                    await checkAndPromptLevelUp(ch.name, ch.experience_points, ch.level);
+                }
+            }
+        }
+    } catch (e) {
+        console.error("[RolePlay] End combat error:", e);
+    }
+}
+
+async function handleSelectDifficulty(diff) {
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.set_ttrpg_difficulty) {
+            await window.pywebview.api.set_ttrpg_difficulty(diff);
+            await loadRolePlayUI();
+        } else if (window.pywebview && window.pywebview.api && window.pywebview.api.update_ttrpg_campaign) {
+            await window.pywebview.api.update_ttrpg_campaign(null, null, null, null, null, null, diff);
+            await loadRolePlayUI();
+        }
+    } catch (e) {
+        console.error("[RolePlay] Select difficulty error:", e);
+    }
+}
+window.handleEndCombat = handleEndCombat;
+window.handleSelectDifficulty = handleSelectDifficulty;
 
 async function handleAddInitiativeItem() {
     const nameInput = document.getElementById("rp-init-name-input");
@@ -1407,6 +1768,17 @@ async function handlePromptAddCondition(characterName) {
     const cond = prompt(`Enter status condition for ${characterName} (e.g., Bleeding, Poisoned, Stunned, Inspired):`);
     if (!cond || !cond.trim()) return;
     await handleToggleCondition(characterName, cond.trim(), true);
+}
+
+async function handleRollDeathSave(characterName) {
+    try {
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.roll_ttrpg_dice) {
+            await window.pywebview.api.roll_ttrpg_dice("1d20", "normal", `${characterName} Death Saving Throw (DC 10)`, characterName);
+            await loadRolePlayUI();
+        }
+    } catch (e) {
+        console.error("[RolePlay] Death save roll error:", e);
+    }
 }
 
 async function handleDeleteCharacter(charId) {
@@ -1632,8 +2004,13 @@ function updatePreparedSpellsTally() {
     });
     const prepCount = leveled.filter(s => s && s.prepared === true).length;
     const maxAllowed = (typeof activeMaxPreparedSpells === "number" && activeMaxPreparedSpells >= 0) ? activeMaxPreparedSpells : 3;
-    tallyEl.textContent = `${prepCount} / ${maxAllowed}`;
-    tallyEl.style.color = (prepCount === maxAllowed) ? '#2ecc71' : '#00F3FF';
+    if (prepCount > maxAllowed) {
+        tallyEl.textContent = `${prepCount} / ${maxAllowed} (OVER LIMIT)`;
+        tallyEl.style.color = '#f87171';
+    } else {
+        tallyEl.textContent = `${prepCount} / ${maxAllowed}`;
+        tallyEl.style.color = (prepCount === maxAllowed) ? '#2ecc71' : '#00F3FF';
+    }
 }
 
 window.handleToggleStagedSpellPrepared = function(idx, isPrep) {
@@ -3370,6 +3747,43 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
     if (dndBgEl) dndBgEl.value = parsedBg;
     if (dndXpEl) dndXpEl.value = ch.experience_points ?? 0;
 
+    const curLvlVal = parseTotalLevelFromClass(rawClsLvl, ch.level || 1);
+    function syncModalXpProgress(xpVal, lvlVal) {
+        const xp = parseInt(xpVal, 10) || 0;
+        const lvl = parseInt(lvlVal, 10) || 1;
+        const nextReq = getDndNextLevelXp(lvl);
+        const isMax = lvl >= 20;
+        const maxText = isMax ? "/ MAX" : `/ ${nextReq.toLocaleString()}`;
+        const isReady = !isMax && xp >= nextReq;
+
+        const dndMax = document.getElementById("label-dnd-xp-max");
+        const rpMax = document.getElementById("label-rp-char-xp-max");
+        if (dndMax) {
+            dndMax.textContent = maxText;
+            dndMax.style.color = isReady ? "#4ade80" : "#94a3b8";
+            dndMax.style.fontWeight = isReady ? "700" : "600";
+            dndMax.title = isReady ? `Level Up Ready for Level ${lvl + 1}!` : `Next Level at ${nextReq.toLocaleString()} XP`;
+        }
+        if (rpMax) {
+            rpMax.textContent = maxText;
+            rpMax.style.color = isReady ? "#4ade80" : "#94a3b8";
+            rpMax.style.fontWeight = isReady ? "700" : "600";
+            rpMax.title = isReady ? `Level Up Ready for Level ${lvl + 1}!` : `Next Level at ${nextReq.toLocaleString()} XP`;
+        }
+    }
+    const getActiveDndLevel = () => {
+        return parseTotalLevelFromClass(dndClassEl?.value, curLvlVal);
+    };
+    if (dndClassEl) {
+        dndClassEl.addEventListener("input", () => {
+            syncModalXpProgress(dndXpEl ? dndXpEl.value : 0, getActiveDndLevel());
+        });
+    }
+    if (dndXpEl) {
+        dndXpEl.oninput = () => syncModalXpProgress(dndXpEl.value, getActiveDndLevel());
+    }
+    syncModalXpProgress(dndXpEl ? dndXpEl.value : 0, getActiveDndLevel());
+
     const strEl = document.getElementById("input-dnd-str");
     const dexEl = document.getElementById("input-dnd-dex");
     const conEl = document.getElementById("input-dnd-con");
@@ -3521,7 +3935,38 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
     // Staged spells array for structured editing
     const clsLvlStrForSpells = ch.class_and_level || ch.archetype || ch.native_system_data?.class_level || "Fighter 1";
     window.activeCharacterClass = clsLvlStrForSpells;
-    const isKnownCaster = /warlock|sorcerer|bard/i.test(clsLvlStrForSpells);
+
+    // Authoritative calculation of max prepared leveled spells
+    let maxPrep = 3;
+    const clsLower = clsLvlStrForSpells.toLowerCase();
+    const mLvl = clsLvlStrForSpells.match(/\d+/);
+    const lvlNum = mLvl ? parseInt(mLvl[0], 10) : (parseInt(ch.level, 10) || 1);
+    const prepIntMod = calcDndMod(attrs.Intelligence ?? attrs.INT ?? 10);
+    const prepWisMod = calcDndMod(attrs.Wisdom ?? attrs.WIS ?? 10);
+    const prepChaMod = calcDndMod(attrs.Charisma ?? attrs.CHA ?? 10);
+
+    if (typeof ch.max_prepared_leveled_spells === "number" && ch.max_prepared_leveled_spells >= 0) {
+        maxPrep = ch.max_prepared_leveled_spells;
+    } else if (ch.native_system_data && typeof ch.native_system_data.max_prepared_leveled_spells === "number" && ch.native_system_data.max_prepared_leveled_spells >= 0) {
+        maxPrep = ch.native_system_data.max_prepared_leveled_spells;
+    } else if (clsLower.includes("druid") || clsLower.includes("cleric")) {
+        maxPrep = Math.max(1, prepWisMod + lvlNum);
+    } else if (clsLower.includes("wizard")) {
+        maxPrep = Math.max(1, prepIntMod + lvlNum);
+    } else if (clsLower.includes("paladin")) {
+        maxPrep = Math.max(1, prepChaMod + Math.floor(lvlNum / 2));
+    } else if (clsLower.includes("artificer")) {
+        maxPrep = Math.max(1, prepIntMod + Math.floor(lvlNum / 2));
+    } else if (clsLower.includes("ranger")) {
+        maxPrep = Math.max(1, prepWisMod + Math.floor(lvlNum / 2));
+    } else {
+        maxPrep = Math.max(1, prepIntMod + lvlNum);
+    }
+
+    const hasPreparedClass = /paladin|wizard|cleric|druid|artificer/i.test(clsLvlStrForSpells);
+    const hasKnownClass = /warlock|sorcerer|bard/i.test(clsLvlStrForSpells);
+    const isMulticlass = clsLvlStrForSpells.includes("/");
+    const isPureKnownCaster = hasKnownClass && !hasPreparedClass && !isMulticlass;
 
     const rawSpells = Array.isArray(ch.spells) ? ch.spells : (ch.native_system_data?.spells || []);
     const seenModalSpells = new Set();
@@ -3533,12 +3978,14 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
                 ? Boolean(clone.is_cantrip)
                 : (String(sLvl).toLowerCase().includes("cantrip") || sLvl === "0" || sLvl === 0);
             clone.is_cantrip = isCantrip;
-            if (isCantrip || isKnownCaster || clone.is_always_prepared) {
+            if (isCantrip || clone.is_always_prepared) {
                 clone.prepared = true;
-            } else if (clone.prepared === undefined || clone.prepared === null) {
-                clone.prepared = false;
-            } else {
+            } else if (clone.prepared !== undefined && clone.prepared !== null) {
                 clone.prepared = Boolean(clone.prepared);
+            } else if (isPureKnownCaster) {
+                clone.prepared = true;
+            } else {
+                clone.prepared = false;
             }
             return clone;
         }
@@ -3550,7 +3997,7 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
             name: sStr.replace(/\s*\([^)]*\)/g, "").trim() || sStr,
             level: isCantrip ? "Cantrip" : "1st Level",
             is_cantrip: isCantrip,
-            prepared: (isCantrip || isKnownCaster) ? true : false,
+            prepared: isCantrip ? true : (isPureKnownCaster ? true : false),
             atk_bonus: dcM ? dcM[0] : "",
             damage: dmgM ? dmgM[0] : "",
             range: "60 ft.",
@@ -3559,36 +4006,29 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
     }).filter(sp => {
         const key = String(sp.name || "").replace(/\s*(?:\[.*?\]|<.*?>|\(.*?\))/g, "").trim().toLowerCase();
         if (!key || seenModalSpells.has(key)) return false;
+        if (key.length <= 1) return false;
         seenModalSpells.add(key);
         return true;
     });
+
+    // If total prepared leveled spells exceeds maxPrep on load (e.g. from previously over-prepped save data),
+    // clamp or unprepare leveled non-subclass spells so the character starts in a legal state
+    let currentlyPreparedLeveled = stagedCharacterSpells.filter(s => !s.is_cantrip && !s.is_always_prepared && s.prepared).length;
+    if (currentlyPreparedLeveled > maxPrep) {
+        let kept = 0;
+        stagedCharacterSpells.forEach(s => {
+            if (!s.is_cantrip && !s.is_always_prepared) {
+                if (kept < maxPrep && s.prepared) {
+                    kept++;
+                } else {
+                    s.prepared = false;
+                }
+            }
+        });
+    }
+
     window.stagedCharacterSpells = stagedCharacterSpells;
 
-    let maxPrep = 3;
-    const clsLower = clsLvlStrForSpells.toLowerCase();
-    const mLvl = clsLvlStrForSpells.match(/\d+/);
-    const lvlNum = mLvl ? parseInt(mLvl[0], 10) : (parseInt(ch.level, 10) || 1);
-    const prepIntMod = calcDndMod(attrs.Intelligence ?? attrs.INT ?? 10);
-    const prepWisMod = calcDndMod(attrs.Wisdom ?? attrs.WIS ?? 10);
-    const prepChaMod = calcDndMod(attrs.Charisma ?? attrs.CHA ?? 10);
-
-    if (clsLower.includes("druid") || clsLower.includes("cleric")) {
-        maxPrep = Math.max(1, prepWisMod + lvlNum);
-    } else if (clsLower.includes("wizard")) {
-        maxPrep = Math.max(1, prepIntMod + lvlNum);
-    } else if (clsLower.includes("paladin")) {
-        maxPrep = Math.max(1, prepChaMod + Math.floor(lvlNum / 2));
-    } else if (clsLower.includes("artificer")) {
-        maxPrep = Math.max(1, prepIntMod + Math.floor(lvlNum / 2));
-    } else if (clsLower.includes("ranger")) {
-        maxPrep = Math.max(1, prepWisMod + Math.floor(lvlNum / 2));
-    } else if (ch.native_system_data && typeof ch.native_system_data.max_prepared_leveled_spells === "number") {
-        maxPrep = ch.native_system_data.max_prepared_leveled_spells;
-    } else if (typeof ch.max_prepared_leveled_spells === "number") {
-        maxPrep = ch.max_prepared_leveled_spells;
-    } else {
-        maxPrep = Math.max(1, prepIntMod + lvlNum);
-    }
     if (typeof setupSpellPreparationHandlers === "function") {
         setupSpellPreparationHandlers(maxPrep, clsLvlStrForSpells);
     }
@@ -3884,8 +4324,15 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
     if (vigEl) vigEl.value = attrs.Constitution ?? attrs.Vigor ?? 10;
     if (intElAgn) intElAgn.value = attrs.Intelligence ?? attrs.Intellect ?? 10;
     if (preEl) preEl.value = attrs.Charisma ?? attrs.Presence ?? 10;
-    if (lvlEl) lvlEl.value = ch.level ?? 1;
-    if (xpEl) xpEl.value = ch.experience_points ?? 0;
+    if (lvlEl) {
+        lvlEl.value = curLvlVal;
+        lvlEl.oninput = () => syncModalXpProgress(xpEl ? xpEl.value : (dndXpEl?.value || 0), lvlEl.value);
+    }
+    if (xpEl) {
+        xpEl.value = ch.experience_points ?? 0;
+        syncModalXpProgress(xpEl.value, lvlEl ? lvlEl.value : curLvlVal);
+        xpEl.oninput = () => syncModalXpProgress(xpEl.value, lvlEl ? lvlEl.value : curLvlVal);
+    }
     if (wpnsElAgn) wpnsElAgn.value = wpnsFormatted;
     if (invElAgn) invElAgn.value = invFormatted;
     if (spellsElAgn) spellsElAgn.value = spellsFormatted;
@@ -4109,7 +4556,8 @@ async function handleRefreshRosterAndFiles() {
 }
 
 async function handleDeleteActiveCampaign() {
-    const activeId = ttrpgData.active_campaign;
+    const selEl = document.getElementById("rp-campaign-select");
+    const activeId = (selEl && selEl.value) ? selEl.value : ttrpgData.active_campaign;
     if (!activeId) return;
     const campaigns = ttrpgData.campaigns || {};
     const meta = campaigns[activeId] || ttrpgData.active_campaign_meta || {};
@@ -4124,6 +4572,7 @@ async function handleDeleteActiveCampaign() {
         console.error("[RolePlay] Delete campaign error:", e);
     }
 }
+window.handleDeleteActiveCampaign = handleDeleteActiveCampaign;
 
 // Event hooks invoked by window.aetherUI.handleEvent
 window.handleRoleplayDiceEvent = function(rollData) {
@@ -4481,10 +4930,42 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Next Turn Button
+    // Next Turn & End Combat Buttons
     const nextTurnBtn = document.getElementById("next-turn-btn");
     if (nextTurnBtn) {
         nextTurnBtn.addEventListener("click", handleAdvanceTurn);
+    }
+    const endCombatBtn = document.getElementById("end-combat-btn");
+    if (endCombatBtn) {
+        endCombatBtn.addEventListener("click", handleEndCombat);
+    }
+
+    // Difficulty Selector Dropdown Toggle & Selection
+    const diffBadge = document.getElementById("rp-active-difficulty-badge");
+    const diffDropdown = document.getElementById("rp-difficulty-dropdown");
+    if (diffBadge && diffDropdown) {
+        diffBadge.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const isHidden = diffDropdown.style.display === "none";
+            diffDropdown.style.display = isHidden ? "flex" : "none";
+        });
+
+        diffDropdown.querySelectorAll(".rp-diff-opt").forEach(opt => {
+            opt.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                const chosenDiff = opt.getAttribute("data-diff");
+                diffDropdown.style.display = "none";
+                if (chosenDiff) {
+                    await handleSelectDifficulty(chosenDiff);
+                }
+            });
+        });
+
+        document.addEventListener("click", (e) => {
+            if (diffDropdown.style.display !== "none" && !diffDropdown.contains(e.target) && e.target !== diffBadge) {
+                diffDropdown.style.display = "none";
+            }
+        });
     }
 
     // Add Initiative Combatant Button
@@ -4838,12 +5319,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (deleteCampModalBtn && campModal) {
         deleteCampModalBtn.addEventListener("click", async () => {
-            const activeId = ttrpgData.active_campaign;
+            const selEl = document.getElementById("rp-campaign-select");
+            const activeId = (selEl && selEl.value) ? selEl.value : ttrpgData.active_campaign;
             if (!activeId) return;
-            if (window.pywebview && window.pywebview.api && window.pywebview.api.delete_ttrpg_campaign) {
-                await window.pywebview.api.delete_ttrpg_campaign(activeId);
-                campModal.classList.add("hidden");
-                await loadRolePlayUI();
+            const campaigns = ttrpgData.campaigns || {};
+            const meta = campaigns[activeId] || ttrpgData.active_campaign_meta || {};
+            const title = meta.title || activeId;
+            if (!(await showAetherConfirm(`Delete campaign "${title}"? This cannot be undone.`, "Delete Campaign", "Delete", true))) return;
+            try {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.delete_ttrpg_campaign) {
+                    await window.pywebview.api.delete_ttrpg_campaign(activeId);
+                    campModal.classList.add("hidden");
+                    await loadRolePlayUI();
+                }
+            } catch (e) {
+                console.error("[RolePlay] Delete campaign modal error:", e);
             }
         });
     }
@@ -5293,8 +5783,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     const species = (document.getElementById("input-dnd-species")?.value || "").trim();
                     const bg = (document.getElementById("input-dnd-background")?.value || "").trim();
                     const xp = safeInt(document.getElementById("input-dnd-xp")?.value, 0);
-                    const mLvl = clsLvl.match(/\d+/);
-                    const lvl = mLvl ? safeInt(mLvl[0], 1) : 1;
+                    const lvl = parseTotalLevelFromClass(clsLvl, existingChar?.level || 1);
 
                     const str = safeInt(document.getElementById("input-dnd-str")?.value, 10);
                     const dex = safeInt(document.getElementById("input-dnd-dex")?.value, 10);
@@ -5477,7 +5966,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         archetype: `${clsLvl}${ancestry || bg ? ' (' + [ancestry, bg].filter(Boolean).join(', ') + ')' : ''}`,
                         species: ancestry,
                         background: bg,
-                        level: Math.max(1, safeInt(clsLvl.match(/\d+/)?.[0], 1)),
+                        level: parseTotalLevelFromClass(clsLvl, existingChar?.level || 1),
                         experience_points: xp,
                         max_health: hp,
                         current_health: hp,
@@ -5772,6 +6261,16 @@ document.addEventListener("DOMContentLoaded", () => {
                         features_and_traits: featsRaw ? featsRaw.split(/[\n,;]+/).map(f => f.trim().replace(/^[-•*]\s*/, "")).filter(Boolean) : [],
                         proficiencies: skillsRaw
                     };
+                }
+
+                // Check spell preparation legality before saving:
+                const checkedLeveled = (typeof getCheckedLeveledCount === "function") ? getCheckedLeveledCount() : 0;
+                if (typeof activeMaxPreparedSpells === "number" && activeMaxPreparedSpells > 0 && checkedLeveled > activeMaxPreparedSpells) {
+                    await showAetherAlert(
+                        `Cannot save character: ${payload.name || "Hero"} is preparing ${checkedLeveled} leveled spells, which exceeds their allotted preparation limit of ${activeMaxPreparedSpells}.\n\nPlease uncheck (unprepare) ${checkedLeveled - activeMaxPreparedSpells} leveled spell(s) before saving.`,
+                        "Spell Preparation Limit Exceeded"
+                    );
+                    return;
                 }
 
                 confirmCharBtn.disabled = true;
@@ -6623,20 +7122,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 const names = rosterChars.map(c => c.name).join(", ");
                 const chosenName = prompt(
-                    `Enter character name to preserve in the Vault as a Canonical Root hero:\n\nActive Heroes: ${names}`,
+                    `Select hero from party roster to save to the Character Vault:\n\nActive Heroes: ${names}`,
                     rosterChars[0].name
                 );
                 if (!chosenName || !chosenName.trim()) return;
-
-                if (window.pywebview && window.pywebview.api && window.pywebview.api.save_campaign_character_to_vault) {
-                    const res = await window.pywebview.api.save_campaign_character_to_vault(chosenName.trim());
-                    if (res && res.status === "success") {
-                        alert(`Hero '${chosenName.trim()}' preserved in Character Vault as a Canonical Root!`);
-                        await refreshVaultModalUI();
-                    } else {
-                        alert(`Could not save character: ${res?.message || 'Unknown error'}`);
-                    }
-                }
+                await promptVaultExportChoice(chosenName.trim());
             } catch (err) {
                 console.error("[Vault] Error saving from campaign:", err);
                 alert(`Error saving hero to vault: ${err.message}`);
@@ -6648,21 +7138,90 @@ document.addEventListener("DOMContentLoaded", () => {
     setupRoleplayAutoRefresh();
 });
 
-// Standalone function for Party Roster card "Save to Vault" button
-window.handleExportRosterCharToVault = async function(charName) {
-    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_campaign_character_to_vault) return;
-    if (!(await showAetherConfirm(`Save '${charName}' permanently into the Character Vault as a Canonical Root hero?`, "Save to Vault", "Save Hero", false))) return;
+// Prompt user for Character Vault Export: Overwrite Root vs Create Branch
+async function promptVaultExportChoice(charName) {
+    if (!window.pywebview || !window.pywebview.api || !charName) return;
+
+    let exists = false;
     try {
-        const res = await window.pywebview.api.save_campaign_character_to_vault(charName);
+        if (window.pywebview.api.check_vault_character_exists) {
+            const check = await window.pywebview.api.check_vault_character_exists(charName);
+            exists = Boolean(check && check.exists);
+        }
+    } catch (e) {
+        console.warn("[Vault] check_vault_character_exists check failed:", e);
+    }
+
+    const modal = document.getElementById("modal-vault-export-choice");
+    const nameEl = document.getElementById("vault-export-char-name");
+    const previewEl = document.getElementById("vault-export-branch-preview");
+    const btnOverwrite = document.getElementById("btn-vault-choice-overwrite");
+    const btnBranch = document.getElementById("btn-vault-choice-branch");
+    const btnCancel = document.getElementById("btn-cancel-vault-export-choice");
+    const btnClose = document.getElementById("btn-close-vault-export-choice");
+
+    const campTitle = ttrpgData.active_campaign_meta?.title || ttrpgData.active_campaign || "Campaign";
+
+    if (!modal || !btnOverwrite || !btnBranch) {
+        const proceed = await showAetherConfirm(
+            `Save '${charName}' permanently into the Character Vault as a Canonical Root hero?`,
+            "Save to Vault",
+            "Save Hero",
+            false
+        );
+        if (!proceed) return;
+        const res = await window.pywebview.api.save_campaign_character_to_vault(charName, null, "overwrite");
         if (res && res.status === "success") {
             await showAetherAlert(`Hero '${charName}' has been successfully preserved in the Character Vault!`, "Character Saved");
             await refreshVaultModalUI();
         } else {
             await showAetherAlert(res?.message || "Failed saving character to vault.", "Vault Notice");
         }
-    } catch (e) {
-        console.error("[Vault] Error saving roster character to vault:", e);
+        return;
     }
+
+    if (nameEl) nameEl.textContent = charName;
+    if (previewEl) previewEl.textContent = `${campTitle} Veteran`;
+
+    modal.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+        const cleanup = () => {
+            modal.classList.add("hidden");
+            btnOverwrite.onclick = null;
+            btnBranch.onclick = null;
+            if (btnCancel) btnCancel.onclick = null;
+            if (btnClose) btnClose.onclick = null;
+        };
+
+        const doSave = async (mode) => {
+            cleanup();
+            try {
+                const res = await window.pywebview.api.save_campaign_character_to_vault(charName, null, mode);
+                if (res && res.status === "success") {
+                    await showAetherAlert(res.message || `Hero '${charName}' saved to Character Vault!`, "Character Saved");
+                    await refreshVaultModalUI();
+                } else {
+                    await showAetherAlert(res?.message || "Failed saving character to vault.", "Vault Notice");
+                }
+            } catch (err) {
+                console.error("[Vault] Error saving character:", err);
+                await showAetherAlert(`Error saving character: ${err.message}`, "Vault Error");
+            }
+            resolve();
+        };
+
+        btnOverwrite.onclick = () => doSave("overwrite");
+        btnBranch.onclick = () => doSave("branch");
+        if (btnCancel) btnCancel.onclick = () => { cleanup(); resolve(); };
+        if (btnClose) btnClose.onclick = () => { cleanup(); resolve(); };
+    });
+}
+window.promptVaultExportChoice = promptVaultExportChoice;
+
+// Standalone function for Party Roster card "Save to Vault" button
+window.handleExportRosterCharToVault = async function(charName) {
+    await promptVaultExportChoice(charName);
 };
 
 let pendingCrossover = null;
@@ -8484,7 +9043,12 @@ function renderCompendiumDetail(item) {
         ` : ""}
         ${(cat === "spells") ? `
             <div style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem;">
-                <div id="comp-spell-eligibility-note" style="font-size:0.75rem; color:#94a3b8; display:flex; align-items:center; gap:5px;"></div>
+                <div id="comp-spell-eligibility-note" style="font-size:0.75rem; color:#94a3b8; display:flex; flex-direction:column; gap:2px;"></div>
+                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; color:#cbd5e1; cursor:pointer;" title="If checked, marks the spell as prepared for today. If unchecked, adds to spellbook/list as unprepared.">
+                        <input type="checkbox" id="chk-comp-prep-spell" checked /> Prepare spell immediately
+                    </label>
+                </div>
                 <div id="comp-spell-override-wrap" style="display:none;">
                     <label style="display:flex; align-items:center; gap:6px; color:#fbbf24; cursor:pointer;">
                         <input type="checkbox" id="chk-comp-bypass-spell-class" /> Allow Out-of-Class grant (Magical Secrets / DM Override)
@@ -8549,6 +9113,7 @@ async function updateCompendiumSpellEligibilityUI(item) {
     const noteEl = document.getElementById("comp-spell-eligibility-note");
     const overrideWrap = document.getElementById("comp-spell-override-wrap");
     const chkOverride = document.getElementById("chk-comp-bypass-spell-class");
+    const chkPrep = document.getElementById("chk-comp-prep-spell");
     if (!noteEl || !overrideWrap) return;
 
     if (!charName) {
@@ -8563,19 +9128,38 @@ async function updateCompendiumSpellEligibilityUI(item) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.check_spell_class_eligibility) {
         try {
             const res = await window.pywebview.api.check_spell_class_eligibility(charName, item.index || item.name, edition);
+            let noteHtml = "";
             if (res && res.status === "success") {
                 if (res.can_learn) {
-                    noteEl.innerHTML = `<span style="color:#4ade80;">✅ Eligible for ${escapeRpHtml(charName)}</span> <span style="color:#64748b; font-size:0.72rem;">(${escapeRpHtml(res.matched_via || "Class Spell List")})</span>`;
+                    noteHtml = `<span style="color:#4ade80;">✅ Eligible for ${escapeRpHtml(charName)}</span> <span style="color:#64748b; font-size:0.72rem;">(${escapeRpHtml(res.matched_via || "Class Spell List")})</span>`;
                     overrideWrap.style.display = "none";
                     if (chkOverride) chkOverride.checked = false;
                 } else {
                     const classesStr = (res.allowed_spell_classes && res.allowed_spell_classes.length > 0)
                         ? res.allowed_spell_classes.join(", ")
                         : "Specific class";
-                    noteEl.innerHTML = `<span style="color:#f87171;">⚠️ Not on ${escapeRpHtml(charName)}'s list (${escapeRpHtml(classesStr)} spell)</span>`;
+                    noteHtml = `<span style="color:#f87171;">⚠️ Not on ${escapeRpHtml(charName)}'s list (${escapeRpHtml(classesStr)} spell)</span>`;
                     overrideWrap.style.display = "block";
                 }
             }
+
+            // Also check character's current preparation capacity
+            if (window.pywebview.api.check_character_spell_legality) {
+                const leg = await window.pywebview.api.check_character_spell_legality(charName, edition);
+                if (leg && leg.is_caster && leg.max_prepared > 0) {
+                    const isCantrip = (item.is_cantrip !== undefined) ? Boolean(item.is_cantrip) : (item.level === 0 || String(item.level).toLowerCase().includes("cantrip"));
+                    if (!isCantrip) {
+                        if (leg.prepared_count >= leg.max_prepared) {
+                            if (chkPrep) chkPrep.checked = false;
+                            noteHtml += `<span style="color:#fbbf24; font-size:0.72rem;">⚠️ ${escapeRpHtml(charName)} is at max prepared capacity (${leg.prepared_count}/${leg.max_prepared}). Added to spellbook unprepared unless checked.</span>`;
+                        } else {
+                            if (chkPrep) chkPrep.checked = true;
+                            noteHtml += `<span style="color:#94a3b8; font-size:0.72rem;">Capacity: ${leg.prepared_count} / ${leg.max_prepared} prepared.</span>`;
+                        }
+                    }
+                }
+            }
+            noteEl.innerHTML = noteHtml;
         } catch (e) {
             console.warn("[Compendium] Spell eligibility check error:", e);
         }
@@ -8593,6 +9177,7 @@ async function grantSelectedCompendiumItem() {
     const expandPack = document.getElementById("chk-comp-expand-pack")?.checked ?? true;
     const equip = document.getElementById("chk-comp-equip-armor")?.checked ?? false;
     let bypassClass = document.getElementById("chk-comp-bypass-spell-class")?.checked ?? false;
+    const prepSpell = document.getElementById("chk-comp-prep-spell")?.checked ?? true;
     const qty = Math.max(1, parseInt(document.getElementById("input-comp-grant-qty")?.value || "1", 10) || 1);
     const feedback = document.getElementById("comp-grant-feedback");
 
@@ -8637,7 +9222,8 @@ async function grantSelectedCompendiumItem() {
             Boolean(expandPack),
             qty,
             Boolean(equip),
-            Boolean(bypassClass)
+            Boolean(bypassClass),
+            Boolean(prepSpell)
         );
         if (res && res.status === "success") {
             if (feedback) {
@@ -8645,6 +9231,24 @@ async function grantSelectedCompendiumItem() {
                 feedback.textContent = res.message || `Granted ${selectedCompendiumItem.name}!`;
             }
             await loadRolePlayUI(true);
+
+            // ROSTER LEGALITY CHECK: If character is over their prepared/known spell limit,
+            // immediately open the Edit Character modal and show an alert explaining the required fix.
+            if (cat === "spells" && res.legality && !res.legality.is_legal) {
+                const compModal = document.getElementById("compendium-modal");
+                if (compModal) compModal.classList.add("hidden");
+
+                const targetCharId = res.character_id || charName;
+                await handleOpenEditCharacterModal(targetCharId, "campaign");
+
+                const curPrep = res.legality.prepared_count;
+                const maxPrep = res.legality.max_prepared;
+                const excess = res.legality.excess_prepared || (curPrep - maxPrep);
+                await showAetherAlert(
+                    `⚠️ Spell Preparation Limit Exceeded!\n\n${charName} is currently preparing ${curPrep} leveled spells, but is only allotted ${maxPrep} based on their class and level (over by ${excess}).\n\nPlease uncheck (unprepare) ${excess} leveled spell(s) or remove a spell below to make your roster legal.`,
+                    "Action Required: Spell Preparation Limit"
+                );
+            }
         } else if (feedback) {
             feedback.style.color = "#f87171";
             feedback.textContent = res?.message || "Failed to grant entry.";
@@ -10172,6 +10776,9 @@ async function loadLevelUpWizardOptions() {
                 st.rolledDieValue = Math.floor((res.selected_hit_die || 8) / 2) + 1;
                 st.manualDieValue = st.rolledDieValue;
             }
+            if (st.spellLevelFilter === "" && res.max_new_cantrips === 0 && (res.max_new_leveled_spells || 0) > 0) {
+                st.spellLevelFilter = "1";
+            }
             const firstOpt = (res.subclass_options || [])[0] || "";
             if (res.needs_subclass && (!st.subclassChoice || !(res.subclass_options || []).includes(st.subclassChoice))) {
                 st.subclassChoice = firstOpt;
@@ -10521,13 +11128,42 @@ function renderLevelUpWizard() {
             lvlOpts += `<option value="${lv}" ${String(lf) === String(lv) ? "selected" : ""}>${lbl}</option>`;
         }
 
+        const maxCantrips = p.max_new_cantrips ?? 0;
+        const maxLeveled = p.max_new_leveled_spells ?? 0;
+        const maxTotal = p.max_total_new_spells ?? (maxCantrips + maxLeveled);
+
+        // Compute currently selected counts
+        const selSpells = st.selectedSpells || [];
+        let selCantripsCount = 0;
+        let selLeveledCount = 0;
+        selSpells.forEach(sName => {
+            const sp = learnable.find(x => x.name.toLowerCase() === sName.toLowerCase());
+            if (sp && sp.level === 0) selCantripsCount++;
+            else selLeveledCount++;
+        });
+
+        let quotaBadgeHtml = "";
+        if (maxTotal > 0) {
+            const parts = [];
+            if (maxLeveled > 0) parts.push(`${selLeveledCount}/${maxLeveled} Spells`);
+            if (maxCantrips > 0) parts.push(`${selCantripsCount}/${maxCantrips} Cantrips`);
+            const isFull = (selLeveledCount === maxLeveled) && (maxCantrips === 0 || selCantripsCount === maxCantrips);
+            quotaBadgeHtml = `<span style="color:${isFull ? '#4ade80' : '#c084fc'}; font-size:0.75rem; font-weight:700;">${parts.join(" • ")} Selected</span>`;
+        } else if (p.preparation_type === "prepared_full_list") {
+            quotaBadgeHtml = `<span style="color:#94a3b8; font-size:0.72rem;">Prepares from full class spell list</span>`;
+        } else {
+            quotaBadgeHtml = `<span style="color:#94a3b8; font-size:0.72rem;">No new spells this level</span>`;
+        }
+
         spellsSectionHtml = `
             <div class="rest-section-card">
                 <div class="rest-section-title">
                     <span>🔮 Spell Slots &amp; Learn New Spells</span>
-                    <span style="color:#c084fc; font-size:0.74rem;">${(st.selectedSpells || []).length} selected to learn</span>
+                    ${quotaBadgeHtml}
                 </div>
+                ${p.spell_selection_reason ? `<div style="font-size:0.73rem; color:#94a3b8; margin:-2px 0 6px 0; font-style:italic;">💡 ${escapeRpHtml(p.spell_selection_reason)}</div>` : ""}
                 ${slotBadges.length ? `<div class="levelup-stat-preview-row">${slotBadges.join("")}</div>` : ""}
+                <div id="lu-spells-inline-warning" style="display:none; padding:6px 10px; margin-bottom:6px; background:rgba(239, 68, 68, 0.15); border:1px solid rgba(239, 68, 68, 0.4); border-radius:6px; font-size:0.75rem; color:#fca5a5;"></div>
                 ${learnable.length ? `
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
                         <input type="text" id="input-lu-spell-search" class="modal-input" value="${escapeRpHtml(st.spellSearch || "")}" placeholder="Search ${escapeRpHtml(p.selected_class)} spells (Ctrl+F)..." style="flex:1; min-width:160px; padding:5px 9px; font-size:0.78rem;" />
@@ -10537,9 +11173,21 @@ function renderLevelUpWizard() {
                         ${filteredSpells.slice(0, 120).map(sp => {
                             const checked = (st.selectedSpells || []).includes(sp.name);
                             const already = Boolean(sp.already_on_sheet);
+                            const isCantrip = sp.level === 0;
+                            const cantripCapReached = isCantrip && (maxCantrips === 0 || selCantripsCount >= maxCantrips);
+                            const leveledCapReached = !isCantrip && (maxLeveled === 0 || selLeveledCount >= maxLeveled);
+                            const disableUnchecked = !checked && (already || cantripCapReached || leveledCapReached);
+
+                            let lockReason = "";
+                            if (already) lockReason = "Already known on sheet";
+                            else if (isCantrip && maxCantrips === 0) lockReason = `${p.selected_class}s do not unlock new cantrips at Level ${p.selected_class_next_level} (next at Level 4)`;
+                            else if (isCantrip && cantripCapReached) lockReason = `Maximum cantrips (${maxCantrips}) reached for this level`;
+                            else if (!isCantrip && maxLeveled === 0) lockReason = `No new leveled spells unlocked at this level`;
+                            else if (!isCantrip && leveledCapReached) lockReason = `Maximum spells (${maxLeveled}) reached for this level`;
+
                             return `
-                                <label class="rest-spell-card ${checked ? "prepared" : ""} ${already ? "locked" : ""}" title="${escapeRpHtml(sp.description || "")}">
-                                    <input type="checkbox" class="lu-spell-chk" data-spell-name="${escapeRpHtml(sp.name)}" ${checked ? "checked" : ""} ${already ? "disabled" : ""} />
+                                <label class="rest-spell-card ${checked ? "prepared" : ""} ${disableUnchecked ? "locked" : ""}" title="${escapeRpHtml(lockReason || sp.description || "")}" style="${disableUnchecked ? "opacity:0.6; cursor:not-allowed;" : ""}">
+                                    <input type="checkbox" class="lu-spell-chk" data-spell-name="${escapeRpHtml(sp.name)}" data-is-cantrip="${isCantrip ? "1" : "0"}" ${checked ? "checked" : ""} ${disableUnchecked ? "disabled" : ""} />
                                     <div style="min-width:0;">
                                         <div style="font-weight:600; color:#f1f5f9;">${escapeRpHtml(sp.name)}${already ? " <span style='color:#38bdf8;font-size:0.65rem;'>(Known)</span>" : ""}</div>
                                         <div style="font-size:0.68rem; color:#94a3b8;">${escapeRpHtml(sp.level_label)} • ${escapeRpHtml(sp.school)}</div>
@@ -10666,9 +11314,49 @@ function renderLevelUpWizard() {
         chk.addEventListener("change", () => {
             const spName = chk.getAttribute("data-spell-name");
             if (!spName) return;
+            const isCantrip = chk.getAttribute("data-is-cantrip") === "1";
+            const warnEl = document.getElementById("lu-spells-inline-warning");
+
+            const maxCantrips = p.max_new_cantrips ?? 0;
+            const maxLeveled = p.max_new_leveled_spells ?? 0;
+            const selSpells = st.selectedSpells || [];
+            let curCantrips = 0;
+            let curLeveled = 0;
+            selSpells.forEach(sName => {
+                const sp = (p.learnable_spells || []).find(x => x.name.toLowerCase() === sName.toLowerCase());
+                if (sp && sp.level === 0) curCantrips++;
+                else curLeveled++;
+            });
+
             if (chk.checked) {
+                if (isCantrip && maxCantrips === 0) {
+                    chk.checked = false;
+                    if (warnEl) {
+                        warnEl.style.display = "block";
+                        warnEl.textContent = `⚠️ ${p.selected_class}s do not gain new cantrips at Level ${p.selected_class_next_level}. New cantrips unlock at Level 4.`;
+                    }
+                    return;
+                }
+                if (isCantrip && curCantrips >= maxCantrips) {
+                    chk.checked = false;
+                    if (warnEl) {
+                        warnEl.style.display = "block";
+                        warnEl.textContent = `⚠️ You can only select up to ${maxCantrips} new cantrip(s) for this level.`;
+                    }
+                    return;
+                }
+                if (!isCantrip && curLeveled >= maxLeveled) {
+                    chk.checked = false;
+                    if (warnEl) {
+                        warnEl.style.display = "block";
+                        warnEl.textContent = `⚠️ You can only select up to ${maxLeveled} new spell(s) for this level.`;
+                    }
+                    return;
+                }
+                if (warnEl) warnEl.style.display = "none";
                 if (!st.selectedSpells.includes(spName)) st.selectedSpells.push(spName);
             } else {
+                if (warnEl) warnEl.style.display = "none";
                 st.selectedSpells = st.selectedSpells.filter(n => n !== spName);
             }
             renderLevelUpWizard();
@@ -10752,6 +11440,32 @@ async function commitLevelUpWizard() {
         return;
     }
 
+    const maxCantrips = p.max_new_cantrips ?? 0;
+    const maxLeveled = p.max_new_leveled_spells ?? 0;
+    const selSpells = st.selectedSpells || [];
+    let selCantripsCount = 0;
+    let selLeveledCount = 0;
+    selSpells.forEach(sName => {
+        const sp = (p.learnable_spells || []).find(x => x.name.toLowerCase() === sName.toLowerCase());
+        if (sp && sp.level === 0) selCantripsCount++;
+        else selLeveledCount++;
+    });
+
+    if (selCantripsCount > maxCantrips) {
+        if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = `Too many cantrips selected (${selCantripsCount}/${maxCantrips} allowed).`;
+        }
+        return;
+    }
+    if (selLeveledCount > maxLeveled) {
+        if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = `Too many spells selected (${selLeveledCount}/${maxLeveled} allowed).`;
+        }
+        return;
+    }
+
     const proj = _computeProjectedWizardStats(p);
     const payload = {
         edition: st.edition,
@@ -10813,6 +11527,19 @@ window.handleRoleplayLevelUpOpened = function(data) {
         data.source || "campaign",
         data
     );
+};
+
+window.handleRoleplayLevelUpEvent = async function(data) {
+    if (!data) return;
+    if (data.level_up_ready_characters && Array.isArray(data.level_up_ready_characters)) {
+        for (const ch of data.level_up_ready_characters) {
+            await checkAndPromptLevelUp(ch.name, ch.experience_points, ch.level);
+        }
+    } else if (data.character_name) {
+        await checkAndPromptLevelUp(data.character_name, data.experience_points, data.level);
+    } else if (typeof window.handleRoleplayLevelUpOpened === "function") {
+        window.handleRoleplayLevelUpOpened(data);
+    }
 };
 
 document.addEventListener("DOMContentLoaded", () => {
