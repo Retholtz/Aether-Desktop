@@ -3,7 +3,7 @@ core/campaign/campaign_manager.py - Persistent Campaign Ledger, World State & Un
 """
 import json
 import os
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, fields as dc_fields
 from typing import Dict, Any, List, Optional, Tuple, Union
 from core.campaign.schema import (
     CampaignManifest, LocationNode, LocationType,
@@ -16,14 +16,21 @@ logger = get_logger("CampaignManager")
 
 
 def _serialize_manifest(manifest: CampaignManifest) -> Dict[str, Any]:
-    """Helper to serialize CampaignManifest handling both dataclasses and Pydantic models."""
-    raw = asdict(manifest)
-    if "locations" in raw:
-        raw["locations"] = {
-            k: (v.model_dump() if hasattr(v, "model_dump") else (asdict(v) if is_dataclass(v) else v))
-            for k, v in manifest.locations.items()
-        }
-    return raw
+    """Helper to serialize CampaignManifest into plain JSON-safe primitives."""
+    def _to_plain(obj: Any) -> Any:
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump(mode="json")
+        if is_dataclass(obj):
+            return {f.name: _to_plain(getattr(obj, f.name)) for f in dc_fields(obj)}
+        if isinstance(obj, dict):
+            return {str(k): _to_plain(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_to_plain(v) for v in obj]
+        if hasattr(obj, "value"):
+            return obj.value
+        return obj
+
+    return _to_plain(manifest)
 
 
 class QuestUpdateResult(tuple):
@@ -90,13 +97,19 @@ class CampaignStoreFacade:
         }
         self.load()
 
+    def serialize_manifest(self) -> Dict[str, Any]:
+        """Returns a fully JSON-serializable dictionary representation of the campaign manifest."""
+        return _serialize_manifest(self.manifest)
+
     def load(self) -> None:
-        """Loads campaign and session state from unified JSON file or legacy files."""
+        """Loads campaign and session state from unified JSON file or legacy files, avoiding stale overrides."""
         data: Dict[str, Any] = {}
         state_data: Dict[str, Any] = {}
+        unified_mtime = 0.0
 
         if os.path.exists(self.unified_file):
             try:
+                unified_mtime = os.path.getmtime(self.unified_file)
                 with open(self.unified_file, "r", encoding="utf-8") as f:
                     unified = json.load(f)
                 if isinstance(unified, dict):
@@ -105,17 +118,34 @@ class CampaignStoreFacade:
             except Exception:
                 pass
 
-        if not data and os.path.exists(self.manifest_file):
+        if os.path.exists(self.manifest_file):
             try:
-                with open(self.manifest_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                man_mtime = os.path.getmtime(self.manifest_file)
+                if not data or not os.path.exists(self.unified_file) or man_mtime > unified_mtime:
+                    with open(self.manifest_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
             except Exception:
                 pass
 
-        if not state_data and os.path.exists(self.state_file):
+        if os.path.exists(self.state_file):
             try:
+                st_mtime = os.path.getmtime(self.state_file)
                 with open(self.state_file, "r", encoding="utf-8") as f:
-                    state_data = json.load(f)
+                    disk_state = json.load(f)
+                if isinstance(disk_state, dict):
+                    if not state_data or not os.path.exists(self.unified_file) or st_mtime > unified_mtime:
+                        prior_clues = state_data.get("discovered_clues", []) if isinstance(state_data, dict) else []
+                        state_data = disk_state
+                        if prior_clues:
+                            merged_clues = state_data.setdefault("discovered_clues", [])
+                            for c_txt in prior_clues:
+                                if c_txt and c_txt not in merged_clues:
+                                    merged_clues.append(c_txt)
+                    else:
+                        # Safeguard TTRPGService-owned collections against same-second stale unified state
+                        for rich_key in ("characters", "documents", "journal"):
+                            if disk_state.get(rich_key) and not state_data.get(rich_key):
+                                state_data[rich_key] = disk_state[rich_key]
             except Exception:
                 pass
 
@@ -178,12 +208,14 @@ class CampaignStoreFacade:
                     "grittiness": 5, "magic_tech_level": 7, "political_intrigue": 5
                 },
                 premise=data.get("premise", ""),
+                difficulty=data.get("difficulty", "helpful"),
                 active_location_id=data.get("active_location_id"),
                 factions=factions,
                 locations=locations,
                 quests=quests,
                 clues=clues,
-                world_rules=data.get("world_rules", {})
+                world_rules=data.get("world_rules", {}),
+                module_adherence=data.get("module_adherence", "strict")
             )
 
         # Merge session state

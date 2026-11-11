@@ -2,6 +2,8 @@
 tests/test_phase4_narrative_and_scenes.py - Phase 4 Narrative, Quest Gating, Moral Friction & Sub-Scenes
 """
 import unittest
+import os
+import shutil
 
 from core.briefing import ColdStartBriefingEngine
 from core.campaign.schema import CampaignManifest, LocationNode, LocationType, QuestRecord, QuestStatus
@@ -14,6 +16,16 @@ from tools.lore_tools import tool_query_campaign_lore
 
 
 class TestPhase4NarrativeAndScenes(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = "tests/test_phase4_temp"
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir, ignore_errors=True)
+        os.makedirs(self.test_dir, exist_ok=True)
+
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir, ignore_errors=True)
+
     def test_cold_start_briefing_generation(self):
         """Verify 3-sentence synthesis and atmospheric context assembling."""
         manifest = {
@@ -45,7 +57,7 @@ class TestPhase4NarrativeAndScenes(unittest.TestCase):
 
     def test_quest_prerequisite_gating(self):
         """Verify that activating a quest fails if prerequisites are not completed."""
-        cm = CampaignManager()
+        cm = CampaignManager(campaign_id="camp_test", storage_root=self.test_dir)
         cm.manifest = CampaignManifest(id="camp_test", name="Test")
         cm.manifest.quests["q1"] = QuestRecord(id="q1", title="Find the Key", status=QuestStatus.ACTIVE)
         cm.manifest.quests["q2"] = QuestRecord(
@@ -85,7 +97,7 @@ class TestPhase4NarrativeAndScenes(unittest.TestCase):
 
     def test_split_party_combat_isolation(self):
         """Verify combat includes only co-located entities, excluding remote allies."""
-        sm = SceneManager()
+        sm = SceneManager(campaign_id="camp_split", base_data_dir=self.test_dir)
         sm.place_entity("hero_a", "room_cell")
         sm.place_entity("guard_1", "room_cell")
         sm.place_entity("hero_b", "room_courtyard")  # Remote

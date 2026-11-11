@@ -6779,9 +6779,8 @@ class GuiBridge:
         if active_id:
             try:
                 from core.campaign.campaign_manager import CampaignManager
-                from dataclasses import asdict
-                c_mgr = CampaignManager(campaign_id=active_id)
-                world_state = asdict(c_mgr.manifest)
+                c_mgr = CampaignManager(campaign_id=active_id, storage_root=self.ttrpg_service.data_dir)
+                world_state = c_mgr.serialize_manifest()
                 world_context = c_mgr.generate_prompt_context()
             except Exception as e:
                 logger.debug(f"[GUIBridge] World state load error for '{active_id}': {e}")
@@ -6804,7 +6803,7 @@ class GuiBridge:
             try:
                 from core.campaign.campaign_manager import CampaignManager
                 import tools.campaign_tools as ct
-                ct._CAMPAIGN = CampaignManager(campaign_id=campaign_id)
+                ct._CAMPAIGN = CampaignManager(campaign_id=campaign_id, storage_root=self.ttrpg_service.data_dir)
             except Exception as e:
                 logger.debug(f"[GUIBridge] Failed to update campaign_tools singleton: {e}")
 
@@ -6853,10 +6852,11 @@ class GuiBridge:
                         FactionDisposition, QuestRecord, QuestObjective, QuestStatus
                     )
                     import re
-                    c_mgr = CampaignManager(campaign_id=cid)
-                    c_mgr.manifest.title = title
+                    c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
+                    c_mgr.manifest.title = (res.get("campaign") or {}).get("title") or title
                     c_mgr.manifest.ruleset = system_preset or "dnd_5e"
-                    c_mgr.manifest.premise = setting_overview or f"The adventure begins in {title}."
+                    c_mgr.manifest.premise = setting_overview or f"The adventure begins in {c_mgr.manifest.title}."
+                    c_mgr.manifest.difficulty = difficulty or "helpful"
                     c_mgr.manifest.module_adherence = module_adherence or "strict"
 
                     if byoc_data and isinstance(byoc_data, dict):
@@ -6963,6 +6963,8 @@ class GuiBridge:
                             c_mgr.register_clue(clue_node)
 
                     c_mgr.save()
+                    self.ttrpg_service.load_active_campaign_state()
+                    res["state"] = self.ttrpg_service.active_state
                     try:
                         import tools.campaign_tools as ct
                         ct._CAMPAIGN = c_mgr
@@ -6970,6 +6972,13 @@ class GuiBridge:
                         pass
                 except Exception as ex:
                     logger.warning(f"[GUIBridge] BYOC setup failed for '{cid}': {ex}")
+
+            if cid and hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_active_workspace"):
+                try:
+                    camp_title = (res.get("campaign") or {}).get("title", cid) if isinstance(res.get("campaign"), dict) else cid
+                    self._engine.set_active_workspace("campaign", cid, camp_title)
+                except Exception as ex_ws:
+                    logger.debug(f"[GUIBridge] set_active_workspace on create error: {ex_ws}")
 
             self._on_engine_event("ttrpg_state_updated", res)
         return res
@@ -7053,12 +7062,11 @@ class GuiBridge:
             return {"status": "error", "message": "No active campaign"}
         try:
             from core.campaign.campaign_manager import CampaignManager
-            from dataclasses import asdict
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             return {
                 "status": "success",
                 "campaign_id": cid,
-                "manifest": asdict(c_mgr.manifest),
+                "manifest": c_mgr.serialize_manifest(),
                 "context": c_mgr.generate_prompt_context()
             }
         except Exception as e:
@@ -7070,7 +7078,7 @@ class GuiBridge:
             return {"status": "error", "message": "No active campaign"}
         try:
             from core.campaign.campaign_manager import CampaignManager
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             res = c_mgr.set_active_location(location_id)
             self._on_engine_event("world_state_updated", {"campaign_id": cid})
             return {"status": "success", "result": res}
@@ -7085,7 +7093,7 @@ class GuiBridge:
             import re
             from core.campaign.campaign_manager import CampaignManager
             from core.campaign.schema import LocationNode, LocationType
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             loc_id = location_data.get("id") or f"loc_{re.sub(r'[^a-z0-9_]+', '_', location_data.get('name', 'node').lower()).strip('_')}"
             try:
                 ltype = LocationType(location_data.get("type", "point_of_interest").lower())
@@ -7117,7 +7125,7 @@ class GuiBridge:
             import re
             from core.campaign.campaign_manager import CampaignManager
             from core.campaign.schema import FactionRecord, FactionDisposition
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             fac_id = faction_data.get("id") or f"fac_{re.sub(r'[^a-z0-9_]+', '_', faction_data.get('name', 'faction').lower()).strip('_')}"
             try:
                 fdisp = FactionDisposition(faction_data.get("disposition", "neutral").lower())
@@ -7146,7 +7154,7 @@ class GuiBridge:
         try:
             from core.campaign.campaign_manager import CampaignManager
             from core.campaign.schema import FactionDisposition
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             disp_enum = FactionDisposition(disposition.lower().strip()) if disposition else None
             res = c_mgr.adjust_faction_reputation(faction_id, delta, disp_enum)
             self._on_engine_event("world_state_updated", {"campaign_id": cid})
@@ -7162,7 +7170,7 @@ class GuiBridge:
             import re
             from core.campaign.campaign_manager import CampaignManager
             from core.campaign.schema import QuestRecord, QuestObjective, QuestStatus
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             q_id = quest_data.get("id") or f"quest_{re.sub(r'[^a-z0-9_]+', '_', quest_data.get('title', 'quest').lower()).strip('_')}"
             objs = []
             for idx, od in enumerate(quest_data.get("objectives", [])):
@@ -7195,7 +7203,7 @@ class GuiBridge:
             return {"status": "error", "message": "No active campaign"}
         try:
             from core.campaign.campaign_manager import CampaignManager
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             res = c_mgr.complete_objective(quest_id, objective_id)
             self._on_engine_event("world_state_updated", {"campaign_id": cid})
             return {"status": "success", "result": res}
@@ -7210,7 +7218,7 @@ class GuiBridge:
             import re
             from core.campaign.campaign_manager import CampaignManager
             from core.campaign.schema import ClueRecord
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             c_id = clue_data.get("id") or f"clue_{re.sub(r'[^a-z0-9_]+', '_', clue_data.get('title', 'clue').lower()).strip('_')}"
             clue = ClueRecord(
                 id=c_id,
@@ -7232,7 +7240,7 @@ class GuiBridge:
             return {"status": "error", "message": "No active campaign"}
         try:
             from core.campaign.campaign_manager import CampaignManager
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             res = c_mgr.reveal_clue(clue_id)
             self._on_engine_event("world_state_updated", {"campaign_id": cid})
             return {"status": "success", "result": res}
@@ -7245,7 +7253,7 @@ class GuiBridge:
             return {"status": "error", "message": "No active campaign"}
         try:
             from core.campaign.campaign_manager import CampaignManager
-            c_mgr = CampaignManager(campaign_id=cid)
+            c_mgr = CampaignManager(campaign_id=cid, storage_root=self.ttrpg_service.data_dir)
             c_mgr.manifest.tone_sliders.update(sliders)
             c_mgr.save()
             self._on_engine_event("world_state_updated", {"campaign_id": cid})
@@ -8193,7 +8201,7 @@ class GuiBridge:
             try:
                 from core.campaign.campaign_manager import CampaignManager
                 import tools.campaign_tools as ct
-                ct._CAMPAIGN = CampaignManager(campaign_id=context_id)
+                ct._CAMPAIGN = CampaignManager(campaign_id=context_id, storage_root=self.ttrpg_service.data_dir)
             except Exception as e:
                 logger.debug(f"[GUIBridge] Failed to update campaign_tools singleton: {e}")
 

@@ -5355,11 +5355,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (stem) title = stem.replace(/\b\w/g, l => l.toUpperCase());
             }
 
-            if (!title) return;
+            if (!title) {
+                await showAetherAlert("Please enter a campaign title (or attach a module/adventure file).", "Campaign Title Required");
+                return;
+            }
 
             if (campaignModalEditMode) {
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.update_ttrpg_campaign) {
-                    await window.pywebview.api.update_ttrpg_campaign(
+                    const res = await window.pywebview.api.update_ttrpg_campaign(
                         ttrpgData.active_campaign,
                         title,
                         preset,
@@ -5371,6 +5374,10 @@ document.addEventListener("DOMContentLoaded", () => {
                         null,
                         adherenceKey
                     );
+                    if (res && res.status === "error") {
+                        await showAetherAlert(res.message || "Failed to update campaign.", "Campaign Error");
+                        return;
+                    }
                     campModal.classList.add("hidden");
                     await loadRolePlayUI();
                 }
@@ -5386,7 +5393,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     }));
                     const byocPayload = getByocModalData();
                     if (window.pywebview && window.pywebview.api && window.pywebview.api.create_ttrpg_campaign) {
-                        await window.pywebview.api.create_ttrpg_campaign(
+                        const res = await window.pywebview.api.create_ttrpg_campaign(
                             title,
                             preset,
                             gmMode,
@@ -5398,12 +5405,18 @@ document.addEventListener("DOMContentLoaded", () => {
                             byocPayload,
                             adherenceKey
                         );
+                        if (res && res.status === "error") {
+                            await showAetherAlert(res.message || "Failed to create campaign.", "Campaign Error");
+                            return;
+                        }
                         stagedCampaignModalFiles = [];
+                        window._loadedCampaignStoryId = null;
                         campModal.classList.add("hidden");
                         await loadRolePlayUI();
                     }
                 } catch (err) {
                     console.error("[RolePlay] Error creating campaign:", err);
+                    await showAetherAlert(`Error creating campaign: ${err}`, "Campaign Error");
                 } finally {
                     confirmCampBtn.disabled = false;
                     confirmCampBtn.textContent = origText;

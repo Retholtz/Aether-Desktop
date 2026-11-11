@@ -178,7 +178,7 @@ class TestBYOCGUIBridge(unittest.TestCase):
 
         # Verify disk persistence via CampaignManager directly
         from core.campaign.campaign_manager import CampaignManager
-        c_mgr = CampaignManager(campaign_id=cid)
+        c_mgr = CampaignManager(campaign_id=cid, storage_root=self.service.data_dir)
         self.assertEqual(c_mgr.manifest.genre, "cyberpunk")
         self.assertEqual(c_mgr.manifest.tone_sliders["grittiness"], 9)
         self.assertEqual(c_mgr.manifest.tone_sliders["magic_tech_level"], 10)
@@ -206,6 +206,53 @@ class TestBYOCGUIBridge(unittest.TestCase):
         self.assertIn("clue_leaked_netwatch_badge", c_mgr.manifest.clues)
         self.assertFalse(c_mgr.manifest.clues["clue_decryption_chip"].is_revealed)
         self.assertTrue(c_mgr.manifest.clues["clue_leaked_netwatch_badge"].is_revealed)
+
+    def test_get_ttrpg_data_json_serializable_and_store_sync(self):
+        """Verify get_ttrpg_data and get_ttrpg_world_state are strictly JSON serializable with LocationNodes and preserve characters across saves."""
+        import json
+        byoc_payload = {
+            "genre": "heroic_fantasy",
+            "locations": [
+                {
+                    "id": "loc_durahns_gate",
+                    "name": "Durahn's Gate",
+                    "type": "dungeon",
+                    "description": "Ancient stone fortress gate.",
+                    "hazards": ["Freezing Cold"]
+                }
+            ]
+        }
+        res_create = self.bridge.create_ttrpg_campaign(
+            title="Serializable Realm",
+            system_preset="dnd_5e",
+            byoc_data=byoc_payload
+        )
+        self.assertEqual(res_create["status"], "success")
+        cid = res_create["campaign"]["id"]
+
+        # Ensure PyWebView JSON serialization never fails on LocationNode Pydantic models
+        ttrpg_payload = self.bridge.get_ttrpg_data()
+        serialized = json.dumps(ttrpg_payload)
+        self.assertIn("Serializable Realm", serialized)
+        self.assertEqual(ttrpg_payload["active_campaign"], cid)
+        self.assertIn(cid, ttrpg_payload["campaigns"])
+        self.assertIsInstance(ttrpg_payload["world_state"]["locations"]["loc_durahns_gate"], dict)
+
+        ws_payload = self.bridge.get_ttrpg_world_state(cid)
+        json.dumps(ws_payload)
+        self.assertEqual(ws_payload["status"], "success")
+
+        # Add character via TTRPGService, then mutate via BYOC -> character must NOT be wiped
+        self.service.add_character({
+            "name": "Aria",
+            "vitals": {"health": {"current": 22, "max": 22}, "guard": {"current": 15, "max": 15}}
+        })
+        res_loc = self.bridge.byoc_add_location({"name": "Sunken Hall", "type": "room"}, campaign_id=cid)
+        self.assertEqual(res_loc["status"], "success")
+
+        reloaded_data = self.bridge.get_ttrpg_data()
+        chars = reloaded_data["state"]["characters"]
+        self.assertTrue(any(c.get("name") == "Aria" for c in chars.values()), f"Character lost after BYOC save: {chars}")
 
 
 if __name__ == "__main__":

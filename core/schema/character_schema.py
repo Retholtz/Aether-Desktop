@@ -117,7 +117,7 @@ class SpellEntry(BaseModel):
 
 class NativeSystemData(BaseModel):
     system_name: str = "dnd_5e"
-    class_level: str
+    class_level: str = ""
     is_pact_magic: bool = False
     species: str = "Human"
     background: str = ""
@@ -130,15 +130,15 @@ class NativeSystemData(BaseModel):
     speed: str = "30 ft."
     defenses: str = ""
     resistances: str = ""
-    hit_points: Dict[str, Any]
-    hit_dice: Dict[str, Any]
-    ability_scores: Dict[str, int]
-    saving_throws: Dict[str, Any]
-    skills: Dict[str, str]
-    passives: Dict[str, int]
+    hit_points: Dict[str, Any] = Field(default_factory=dict)
+    hit_dice: Union[Dict[str, Any], str] = Field(default_factory=dict)
+    ability_scores: Dict[str, Any] = Field(default_factory=dict)
+    saving_throws: Dict[str, Any] = Field(default_factory=dict)
+    skills: Dict[str, Any] = Field(default_factory=dict)
+    passives: Dict[str, Any] = Field(default_factory=dict)
     weapons: List[Dict[str, Any]] = []
     currency: Dict[str, int] = Field(default_factory=lambda: {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0})
-    proficiencies: Dict[str, Any] = {}
+    proficiencies: Dict[str, Any] = Field(default_factory=dict)
     attuned_magic_items: Dict[str, int] = Field(default_factory=lambda: {"current": 0, "max": 3})
     spell_slots: Dict[str, SpellSlotInfo] = {}
     max_prepared_leveled_spells: int = 0
@@ -150,6 +150,15 @@ class NativeSystemData(BaseModel):
     encumbered: str = "150 lb."
     push_drag_lift: str = "300 lb."
     description: AppearanceDescription = Field(default_factory=AppearanceDescription)
+
+    @field_validator("proficiencies", mode="before")
+    @classmethod
+    def normalize_proficiencies(cls, v: Any) -> Dict[str, Any]:
+        if v is None:
+            return {}
+        if isinstance(v, list):
+            return {"general": v}
+        return v
 
 
 class CharacterDocument(BaseModel):
@@ -168,12 +177,12 @@ class CharacterDocument(BaseModel):
     native_genre: str = "heroic_fantasy"
     native_system: str = "dnd_5e"
     vitals: VitalsBlock
-    attributes: Dict[str, int]
-    armor_class: int
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+    armor_class: int = 10
     speed: str = "30 ft."
-    hit_dice: str
-    saving_throws: Dict[str, Any]
-    currency: Dict[str, int]
+    hit_dice: Union[str, Dict[str, Any]] = "1d8"
+    saving_throws: Dict[str, Any] = Field(default_factory=dict)
+    currency: Dict[str, int] = Field(default_factory=lambda: {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0})
     weapons: List[Dict[str, Any]] = []
     inventory: List[Dict[str, Any]] = []
     features_and_traits: List[str] = []

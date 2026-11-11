@@ -384,6 +384,20 @@ class TTRPGService:
         try:
             with open(state_path, "w", encoding="utf-8") as f:
                 json.dump(self.active_state, f, indent=2)
+            unified_path = os.path.join(c_dir, "campaign_state.json")
+            if os.path.exists(unified_path):
+                try:
+                    with open(unified_path, "r", encoding="utf-8") as uf:
+                        unified = json.load(uf)
+                    if isinstance(unified, dict):
+                        unified["state"] = dict(self.active_state)
+                        for k, v in self.active_state.items():
+                            if k not in ("id", "title", "ruleset", "genre") or k not in unified:
+                                unified[k] = v
+                        with open(unified_path, "w", encoding="utf-8") as uf:
+                            json.dump(unified, uf, indent=2)
+                except Exception as ue:
+                    logger.debug(f"[TTRPG] Could not sync campaign_state.json: {ue}")
         except Exception as e:
             logger.error(f"[TTRPG] Error saving campaign state: {e}")
 
