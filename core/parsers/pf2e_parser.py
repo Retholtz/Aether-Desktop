@@ -146,10 +146,34 @@ class PF2eParser(BaseSheetParser):
             backstory=fields.get("Background", "Wandering Pathfinder scholar.")
         )
 
+        # Extract 4-tier proficiency ranks for saves and skills
+        proficiencies = {}
+        skills_dict = {}
+        skill_names = [
+            "Acrobatics", "Arcana", "Athletics", "Crafting", "Deception", "Diplomacy",
+            "Intimidation", "Medicine", "Nature", "Occultism", "Performance", "Religion",
+            "Society", "Stealth", "Survival", "Thievery", "Fortitude", "Reflex", "Will"
+        ]
+        for s in skill_names:
+            rank = "untrained"
+            for r_name in ("legendary", "master", "expert", "trained"):
+                key_candidate = f"{s}_{r_name}".lower()
+                for fk, fv in fields.items():
+                    if key_candidate in str(fk).lower() and str(fv).lower() in ("yes", "on", "1", "true"):
+                        rank = r_name
+                        break
+                if rank != "untrained":
+                    break
+            bonus = self.calculate_proficiency_bonus(rank, level)
+            proficiencies[s] = {"rank": rank, "bonus": bonus}
+            skills_dict[s] = bonus
+
         native_payload = {
             "system_name": "pathfinder_2e",
             "class": char_class,
             "level": level,
+            "proficiencies": proficiencies,
+            "skills": skills_dict,
             "spellcasting": spellcasting_data,
             "raw_acro_form_fields": fields
         }
@@ -158,6 +182,19 @@ class PF2eParser(BaseSheetParser):
             "universal_core": core,
             "native_system_data": native_payload
         }
+
+    @staticmethod
+    def calculate_proficiency_bonus(rank: str, level: int) -> int:
+        r = str(rank).lower().strip()
+        if "legendary" in r or r == "l":
+            return 8 + level
+        elif "master" in r or r == "m":
+            return 6 + level
+        elif "expert" in r or r == "e":
+            return 4 + level
+        elif "trained" in r or r == "t":
+            return 2 + level
+        return 0  # Untrained
 
     def parse_spellcasting_page(self, fields: Dict[str, Any], raw_text: str, level: int) -> Dict[str, Any]:
         """Parses Page 4: Traditions, Statistics, Slots, Focus, Innate, and Spells."""

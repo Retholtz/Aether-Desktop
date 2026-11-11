@@ -57,42 +57,87 @@ class CheckResult:
 class AttackResult:
     attacker_name: str
     target_name: str
-    weapon_name: str
-    raw_roll: int
-    attack_bonus: int
-    attack_total: int
-    target_defense: int
-    is_hit: bool
-    is_critical: bool
-    is_fumble: bool
-    damage_rolled: int
-    damage_type: str
-    narrative: str
+    weapon_name: str = "Weapon"
+    raw_roll: int = 10
+    attack_bonus: int = 0
+    attack_total: int = 10
+    target_defense: int = 10
+    is_hit: bool = False
+    is_critical: bool = False
+    is_fumble: bool = False
+    damage_rolled: int = 0
+    damage_type: str = "physical"
+    narrative: str = ""
+    attack_roll: Optional[int] = None
+    target_ac: Optional[int] = None
+    damage_dealt: Optional[int] = None
+    breakdown: Optional[str] = None
+
+    def __post_init__(self):
+        if self.attack_roll is not None:
+            self.attack_total = self.attack_roll
+            self.raw_roll = self.attack_roll
+        else:
+            self.attack_roll = self.attack_total
+        if self.target_ac is not None:
+            self.target_defense = self.target_ac
+        else:
+            self.target_ac = self.target_defense
+        if self.damage_dealt is not None:
+            self.damage_rolled = self.damage_dealt
+        else:
+            self.damage_dealt = self.damage_rolled
+        if self.breakdown is not None:
+            self.narrative = self.breakdown
+        else:
+            self.breakdown = self.narrative
 
 
 @dataclass
 class DamageReport:
     target_name: str
-    damage_received: int
-    damage_type: str
-    previous_hp: int
-    current_hp: int
-    temp_hp_lost: int
-    is_downed: bool
-    is_instant_death: bool
+    damage_received: int = 0
+    damage_type: str = "physical"
+    previous_hp: int = 10
+    current_hp: int = 10
+    temp_hp_lost: int = 0
+    is_downed: bool = False
+    is_instant_death: bool = False
     notes: List[str] = field(default_factory=list)
+    damage_taken: Optional[int] = None
+    absorbed_by_guard: int = 0
+    is_unconscious: Optional[bool] = None
+
+    def __post_init__(self):
+        if self.damage_taken is not None:
+            self.damage_received = self.damage_taken
+        else:
+            self.damage_taken = self.damage_received
+        if self.is_unconscious is not None:
+            self.is_downed = self.is_unconscious
+        else:
+            self.is_unconscious = self.is_downed
 
 
 @dataclass
 class RestResult:
-    entity_name: str
-    rest_type: str
-    hp_recovered: int
-    hit_dice_spent: int
-    hit_dice_remaining: int
-    slots_recovered: Dict[str, int]
-    meters_recovered: List[str]
-    narrative: str
+    entity_name: str = ""
+    rest_type: str = "short"
+    hp_recovered: int = 0
+    hit_dice_spent: int = 0
+    hit_dice_remaining: int = 0
+    slots_recovered: Dict[str, int] = field(default_factory=dict)
+    meters_recovered: List[str] = field(default_factory=list)
+    narrative: str = ""
+    character_name: Optional[str] = None
+    hit_dice_recovered: Optional[Any] = None
+    spell_slots_restored: Optional[Any] = None
+
+    def __post_init__(self):
+        if self.character_name:
+            self.entity_name = self.character_name
+        else:
+            self.character_name = self.entity_name
 
 
 class TTRPGRulesetAdapter(ABC):

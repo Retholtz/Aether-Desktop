@@ -154,14 +154,46 @@ class CoC7eParser(BaseSheetParser):
             backstory=fields.get("PersonalDescription") or fields.get("Description") or "Keeper of forbidden occult knowledge."
         )
 
+        characteristics = {
+            "STR": str_val, "CON": con_val, "SIZ": siz_val, "DEX": dex_val,
+            "APP": app_val, "INT": int_val, "POW": pow_val, "EDU": edu_val,
+            "Move": move_val,
+            "STR_half": str_val // 2, "STR_fifth": str_val // 5,
+            "CON_half": con_val // 2, "CON_fifth": con_val // 5,
+            "SIZ_half": siz_val // 2, "SIZ_fifth": siz_val // 5,
+            "DEX_half": dex_val // 2, "DEX_fifth": dex_val // 5,
+            "APP_half": app_val // 2, "APP_fifth": app_val // 5,
+            "INT_half": int_val // 2, "INT_fifth": int_val // 5,
+            "POW_half": pow_val // 2, "POW_fifth": pow_val // 5,
+            "EDU_half": edu_val // 2, "EDU_fifth": edu_val // 5,
+            "values": {
+                k: {"regular": v, "half": v // 2, "fifth": v // 5}
+                for k, v in [
+                    ("STR", str_val), ("CON", con_val), ("SIZ", siz_val), ("DEX", dex_val),
+                    ("APP", app_val), ("INT", int_val), ("POW", pow_val), ("EDU", edu_val)
+                ]
+            }
+        }
+
+        # Parse investigator skill percentiles from AcroForms into structured dictionary
+        parsed_skills = {}
+        for fk, fv in fields.items():
+            k_str = str(fk).strip()
+            v_str = str(fv).strip().replace("%", "")
+            if v_str.isdigit():
+                val = int(v_str)
+                if 1 <= val <= 100 and not any(ign in k_str.lower() for ign in ["hp", "mp", "san", "luck", "age", "year", "page", "damage"]):
+                    parsed_skills[k_str] = {
+                        "regular": val,
+                        "half": val // 2,
+                        "fifth": val // 5
+                    }
+
         native_payload = {
             "system_name": "coc_7e",
             "occupation": occupation,
-            "characteristics": {
-                "STR": str_val, "CON": con_val, "SIZ": siz_val, "DEX": dex_val,
-                "APP": app_val, "INT": int_val, "POW": pow_val, "EDU": edu_val,
-                "Move": move_val
-            },
+            "characteristics": characteristics,
+            "skills": parsed_skills,
             "vitals": {
                 "hit_points": {"current": hp_val, "max": hp_val},
                 "magic_points": {"current": current_mp, "max": calculated_max_mp},

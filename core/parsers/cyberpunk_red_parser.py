@@ -164,6 +164,25 @@ class CyberpunkRedParser(BaseSheetParser):
             backstory=fields.get("CulturalOrigins", "Street Infiltrator operating in the sprawl.")
         )
 
+        skill_map = {
+            "Athletics": "DEX", "Brawling": "DEX", "Concentration": "WILL",
+            "Conversation": "EMP", "Cybertech": "TECH", "Drive Land Vehicle": "REF",
+            "Education": "INT", "Evasion": "DEX", "First Aid": "TECH",
+            "Handgun": "REF", "Heavy Weapons": "REF", "Human Perception": "EMP",
+            "Interrogation": "COOL", "Melee Weapon": "DEX", "Perception": "INT",
+            "Persuasion": "COOL", "Play Instrument": "TECH", "Resist Torture/Drugs": "WILL",
+            "Shoulder Arms": "REF", "Stealth": "DEX", "Tracking": "INT",
+            "Wardrobe & Style": "COOL", "Basic Tech": "TECH", "Autofire": "REF"
+        }
+        skills_tree = {}
+        for sk_name, stat_key in skill_map.items():
+            lvl = self._get_num(fields, [sk_name, f"Skill_{sk_name}", sk_name.replace(" ", "_")], default=0)
+            stat_val = stats.get(stat_key, 6)
+            base_val = stat_val + lvl
+            skills_tree[sk_name] = base_val
+            skills_tree[f"{sk_name}_Level"] = lvl
+            skills_tree[f"{sk_name}_Base"] = base_val
+
         native_payload = {
             "system_name": "cyberpunk_red",
             "handle": handle,
@@ -174,6 +193,7 @@ class CyberpunkRedParser(BaseSheetParser):
                 "notes": fields.get("RoleNotes", "")
             },
             "stats": stats,
+            "skills": skills_tree,
             "vitals": {
                 "hit_points": {"current": hp_max, "max": hp_max, "seriously_wounded": hp_max // 2},
                 "humanity": {"current": humanity_cur, "max": stats["EMP"] * 10},
