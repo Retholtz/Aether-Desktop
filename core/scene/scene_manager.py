@@ -11,6 +11,7 @@ class SceneManager:
     def __init__(self, campaign_id: str, base_data_dir: str = "data/campaigns"):
         self.campaign_id = campaign_id
         self.scene_file = os.path.join(base_data_dir, campaign_id, "scene_state.json")
+        self.active_containers: Dict[str, List[Dict[str, Any]]] = {}
         self.state: Dict[str, Any] = {
             "scene_title": "Wilderness Encampment",
             "location_path": "Faerun/Sword Coast/Wilds",
