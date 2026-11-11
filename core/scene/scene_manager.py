@@ -46,7 +46,9 @@ class SceneManager:
         ac: int,
         attack_bonus: str = "+4",
         damage: str = "1d6+2",
-        dex_score: int = 12
+        dex_score: int = 12,
+        inventory: Optional[List[Dict[str, Any]]] = None,
+        swallowed_items: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """Spawns an ephemeral adversary into the scene without modifying player vault records."""
         adv_id = f"adv_{uuid.uuid4().hex[:8]}"
@@ -54,6 +56,8 @@ class SceneManager:
             "id": adv_id,
             "name": name,
             "is_adversary": True,
+            "inventory": list(inventory) if inventory is not None else [],
+            "swallowed_items": list(swallowed_items) if swallowed_items is not None else [],
             "vitals": {
                 "health": {"current": hp, "max": hp, "label": "Health"},
                 "guard": {"current": ac, "max": ac, "label": "Armor Defense"}
@@ -71,6 +75,49 @@ class SceneManager:
         self.state["adversaries"].append(adversary)
         self.save_state()
         return adversary
+
+    def handle_adversary_slain(
+        self,
+        adversary: Dict[str, Any],
+        location_id: str,
+        current_round: int,
+        corpse_manager: Any
+    ):
+        """Converts a defeated adversary into a physical scene corpse container."""
+        inv = list(adversary.get("inventory", []))
+        swallowed = adversary.get("swallowed_items", [])
+        if swallowed:
+            inv.extend(swallowed)
+
+        corpse = corpse_manager.spawn_corpse(
+            entity_id=adversary.get("id", "adv_unknown"),
+            entity_name=adversary.get("name", "Fallen Adversary"),
+            location_id=location_id,
+            inventory=inv,
+            current_round=current_round
+        )
+        # Remove from active adversary roster
+        self.state["adversaries"] = [a for a in self.state.get("adversaries", []) if a.get("id") != adversary.get("id")]
+        self.active_containers.setdefault(location_id, []).append(corpse.model_dump())
+        self.save_state()
+        return corpse
+
+    def remove_adversary(
+        self,
+        adversary_id: str,
+        location_id: Optional[str] = None,
+        current_round: int = 1,
+        corpse_manager: Optional[Any] = None
+    ) -> Optional[Any]:
+        """Removes an adversary, spawning a CorpseContainer if corpse_manager and location_id are provided."""
+        adv = next((a for a in self.state.get("adversaries", []) if a.get("id") == adversary_id), None)
+        if not adv:
+            return None
+        if corpse_manager and location_id:
+            return self.handle_adversary_slain(adv, location_id, current_round, corpse_manager)
+        self.state["adversaries"] = [a for a in self.state.get("adversaries", []) if a.get("id") != adversary_id]
+        self.save_state()
+        return None
 
     def clear_adversaries(self) -> None:
         """Purges defeated adversaries upon encounter resolution."""

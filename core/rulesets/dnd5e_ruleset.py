@@ -281,6 +281,25 @@ class DnD5eRuleset(TTRPGRulesetAdapter):
             hd_remaining = hd_meter.get("current", 0) if hd_meter else 0
             narrative = f"{name} finished a Long Rest. Healed to Max HP ({max_hp}). Spell slots and meters fully refreshed."
 
+            # Decrement Resurrection Sickness penalty by +1 per completed Long Rest (-4 -> -3 -> -2 -> -1 -> Cleared)
+            conditions = entity_data.get("conditions")
+            if isinstance(conditions, list):
+                new_conds = []
+                for cond in conditions:
+                    c_str = str(cond)
+                    m_sick = re.search(r"Resurrection Sickness\s*\((-?\d+)\)", c_str, re.IGNORECASE)
+                    if m_sick:
+                        cur_pen = int(m_sick.group(1))
+                        next_pen = cur_pen + 1
+                        if next_pen < 0:
+                            new_conds.append(f"Resurrection Sickness ({next_pen})")
+                            narrative += f" Resurrection Sickness eased to ({next_pen})."
+                        else:
+                            narrative += " Resurrection Sickness has completely cleared."
+                    else:
+                        new_conds.append(cond)
+                entity_data["conditions"] = new_conds
+
         # Keep root vitals synchronized
         if "vitals" in entity_data and "health" in entity_data["vitals"]:
             entity_data["vitals"]["health"]["current"] = hp_dict["current"]

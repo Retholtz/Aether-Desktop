@@ -267,17 +267,27 @@ class CombatManager:
                 atk_result.narrative += f" {conc_msg}"
 
             # Check for death saving throw failures or massive damage if target at 0 HP
-            if dmg_report.is_downed and target.is_player:
-                max_hp = target.raw_data.get("vitals", {}).get("health", {}).get("max", 10)
-                ds = target.raw_data.setdefault("death_saves", DeathEngine.initialize_death_state())
-                updated_ds, ds_msg = DeathEngine.apply_damage_at_zero(
-                    ds,
-                    damage_amount=atk_result.damage_rolled,
-                    is_critical=atk_result.is_critical,
-                    max_hp=max_hp
-                )
-                target.raw_data["death_saves"] = updated_ds
-                atk_result.narrative += f" {ds_msg}"
+            if dmg_report.is_downed:
+                if target.is_player:
+                    max_hp = target.raw_data.get("vitals", {}).get("health", {}).get("max", 10)
+                    ds = target.raw_data.setdefault("death_saves", DeathEngine.initialize_death_state())
+                    updated_ds, ds_msg = DeathEngine.apply_damage_at_zero(
+                        ds,
+                        damage_amount=atk_result.damage_rolled,
+                        is_critical=atk_result.is_critical,
+                        max_hp=max_hp
+                    )
+                    target.raw_data["death_saves"] = updated_ds
+                    atk_result.narrative += f" {ds_msg}"
+                else:
+                    if not target.raw_data.get("_corpse_spawned"):
+                        target.raw_data["_corpse_spawned"] = True
+                        corpse = self.corpse_manager.spawn_corpse_from_entity(
+                            entity=target.raw_data,
+                            current_round=self.round_counter,
+                            location_id="current_scene"
+                        )
+                        atk_result.narrative += f" {target.name} falls slain, leaving behind {corpse.name}."
 
         return {
             "attack_result": atk_result,
