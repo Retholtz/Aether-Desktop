@@ -1,17 +1,29 @@
 """
-core/scene/scene_manager.py - Scene State & Ephemeral Adversary Management
+core/scene/scene_manager.py - Scene State, Sub-Scenes & Ephemeral Adversary Management
 """
 import json
 import os
 import uuid
 from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
+from core.logger import get_logger
+
+logger = get_logger("SceneManager")
+
+
+class SubScene(BaseModel):
+    location_id: str
+    entity_ids: List[str] = Field(default_factory=list)
+    is_in_combat: bool = False
 
 
 class SceneManager:
-    def __init__(self, campaign_id: str, base_data_dir: str = "data/campaigns"):
+    def __init__(self, campaign_id: str = "default_campaign", base_data_dir: str = "data/campaigns"):
         self.campaign_id = campaign_id
         self.scene_file = os.path.join(base_data_dir, campaign_id, "scene_state.json")
         self.active_containers: Dict[str, List[Dict[str, Any]]] = {}
+        self.sub_scenes: Dict[str, SubScene] = {}
+        self.entity_locations: Dict[str, str] = {}
         self.state: Dict[str, Any] = {
             "scene_title": "Wilderness Encampment",
             "location_path": "Faerun/Sword Coast/Wilds",
@@ -20,6 +32,28 @@ class SceneManager:
             "adversaries": []
         }
         self.load_state()
+
+    def place_entity(self, entity_id: str, location_id: str) -> None:
+        """Places an entity into a specific sub-scene location."""
+        old_loc = self.entity_locations.get(entity_id)
+        if old_loc and old_loc in self.sub_scenes:
+            self.sub_scenes[old_loc].entity_ids = [e for e in self.sub_scenes[old_loc].entity_ids if e != entity_id]
+
+        self.entity_locations[entity_id] = location_id
+        if location_id not in self.sub_scenes:
+            self.sub_scenes[location_id] = SubScene(location_id=location_id)
+        if entity_id not in self.sub_scenes[location_id].entity_ids:
+            self.sub_scenes[location_id].entity_ids.append(entity_id)
+        logger.info("Entity %s positioned in location %s", entity_id, location_id)
+
+    def assign_entity_location(self, entity_id: str, location_id: str) -> None:
+        """Alias for place_entity."""
+        self.place_entity(entity_id, location_id)
+
+    def get_co_located_entities(self, location_id: str) -> List[str]:
+        """Returns entity IDs currently positioned in the specified sub-scene."""
+        sub = self.sub_scenes.get(location_id)
+        return list(sub.entity_ids) if sub else []
 
     def load_state(self) -> None:
         if os.path.exists(self.scene_file):

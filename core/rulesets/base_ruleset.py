@@ -8,15 +8,49 @@ from typing import Dict, Any, List, Optional
 
 @dataclass
 class CheckResult:
-    entity_name: str
+    character_name: str
     stat_or_skill: str
+    total_roll: int
     target_dc: int
-    raw_roll: int
-    modifier: int
-    total: int
-    success: bool
-    degree: str  # "success", "failure", "critical_success", "critical_failure"
-    narrative: str
+    is_success: bool
+    is_critical: bool
+    breakdown: str
+    degree: str = "success"  # 'critical_success', 'success', 'partial_success', 'failure', 'critical_failure'
+    consequence: Optional[str] = None
+    raw_roll: int = 10
+    modifier: int = 0
+
+    @property
+    def entity_name(self) -> str:
+        return self.character_name
+
+    @entity_name.setter
+    def entity_name(self, val: str) -> None:
+        self.character_name = val
+
+    @property
+    def total(self) -> int:
+        return self.total_roll
+
+    @total.setter
+    def total(self, val: int) -> None:
+        self.total_roll = val
+
+    @property
+    def success(self) -> bool:
+        return self.is_success
+
+    @success.setter
+    def success(self, val: bool) -> None:
+        self.is_success = val
+
+    @property
+    def narrative(self) -> str:
+        return self.breakdown
+
+    @narrative.setter
+    def narrative(self, val: str) -> None:
+        self.breakdown = val
 
 
 @dataclass

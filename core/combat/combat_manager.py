@@ -77,6 +77,19 @@ class CombatManager:
     def combatants(self) -> List[Combatant]:
         return self.turn_order
 
+    @combatants.setter
+    def combatants(self, val: List[Any]) -> None:
+        self.turn_order = [
+            v if isinstance(v, Combatant) else Combatant(
+                entity_id=v.get("id", v.get("entity_id", "unknown")),
+                name=v.get("name", "Unknown"),
+                is_player=not v.get("is_adversary", False),
+                initiative=float(v.get("initiative", 10.0)),
+                raw_data=v
+            )
+            for v in val
+        ]
+
     @property
     def active_index(self) -> int:
         return self.turn_index
@@ -92,6 +105,26 @@ class CombatManager:
     @current_round.setter
     def current_round(self, val: int) -> None:
         self.round_counter = val
+
+    def start_encounter_in_location(
+        self,
+        location_id: str,
+        scene_manager: Any,
+        all_entities: List[Dict[str, Any]]
+    ) -> List[Combatant]:
+        """Starts combat filtered strictly to entities in the specified location."""
+        present_ids = set(scene_manager.get_co_located_entities(location_id))
+        local_combatants = [
+            c for c in all_entities
+            if c.get("id") in present_ids or c.get("entity_id") in present_ids or c.get("name") in present_ids
+        ]
+
+        self.combatants = local_combatants
+        self.active_index = 0
+        self.current_round = 1
+        self.is_active = True
+        logger.info("Encounter began in %s with %d combatants (remote allies excluded).", location_id, len(local_combatants))
+        return self.combatants
 
     def check_tpk_condition(self) -> bool:
         """Evaluates whether all player characters are incapacitated or slain."""

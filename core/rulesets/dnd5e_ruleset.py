@@ -30,6 +30,24 @@ class DnD5eRuleset(TTRPGRulesetAdapter):
         tie_breaker = dex_score / 100.0
         return float(raw_roll + init_bonus + tie_breaker)
 
+    def _extract_check_modifier(self, entity_data: Dict[str, Any], stat_or_skill: str) -> int:
+        native = entity_data.get("native_system_data", entity_data)
+        skills = native.get("skills") or entity_data.get("skills") or {}
+        norm_target = stat_or_skill.strip().title()
+
+        if norm_target in skills:
+            s_val = skills[norm_target]
+            m = re.search(r'[-+]?\d+', str(s_val))
+            return int(m.group(0)) if m else 0
+
+        scores = native.get("ability_scores") or entity_data.get("attributes") or {}
+        if norm_target in scores:
+            try:
+                return (int(scores[norm_target]) - 10) // 2
+            except (ValueError, TypeError):
+                return 0
+        return 0
+
     def resolve_check(
         self,
         entity_data: Dict[str, Any],
@@ -37,39 +55,46 @@ class DnD5eRuleset(TTRPGRulesetAdapter):
         target_dc: int,
         reported_roll: Optional[int] = None
     ) -> CheckResult:
-        native = entity_data.get("native_system_data", entity_data)
-        name = entity_data.get("name", "Unknown")
-        raw_roll = reported_roll if reported_roll is not None else random.randint(1, 20)
+        mod = self._extract_check_modifier(entity_data, stat_or_skill)
+        d20 = reported_roll if reported_roll is not None else random.randint(1, 20)
+        total = d20 + mod
 
-        # Modifier extraction
-        mod = 0
-        skills = native.get("skills", {})
-        norm_target = stat_or_skill.strip().title()
+        is_crit_succ = (d20 == 20) or (total >= target_dc + 10)
+        is_crit_fail = (d20 == 1) or (total <= target_dc - 10)
 
-        if norm_target in skills:
-            s_val = skills[norm_target]
-            m = re.search(r'[-+]?\d+', str(s_val))
-            mod = int(m.group(0)) if m else 0
+        consequence = None
+        if is_crit_succ:
+            degree = "critical_success"
+            is_success = True
+        elif total >= target_dc:
+            degree = "success"
+            is_success = True
+        elif total in (target_dc - 1, target_dc - 2):
+            # Programmatic Fail-Forward: Success with Complication
+            degree = "partial_success"
+            is_success = True
+            consequence = "Success achieved, but a complication arises: noise alerted nearby sentries, or a minor tool broke."
+        elif is_crit_fail:
+            degree = "critical_failure"
+            is_success = False
+            consequence = "Catastrophic failure: equipment damaged or position compromised."
         else:
-            scores = native.get("ability_scores", {})
-            if norm_target in scores:
-                mod = (scores[norm_target] - 10) // 2
+            degree = "failure"
+            is_success = False
 
-        total = raw_roll + mod
-        is_success = total >= target_dc
-        degree = "critical_success" if raw_roll == 20 else ("critical_failure" if raw_roll == 1 else ("success" if is_success else "failure"))
-        narrative = f"{name} rolled {raw_roll} + {mod} = {total} vs DC {target_dc} ({degree.replace('_', ' ').title()})."
-
+        breakdown = f"d20 ({d20}) + Mod ({mod}) = {total} vs DC {target_dc}"
         return CheckResult(
-            entity_name=name,
+            character_name=entity_data.get("name", "Adventurer"),
             stat_or_skill=stat_or_skill,
+            total_roll=total,
             target_dc=target_dc,
-            raw_roll=raw_roll,
-            modifier=mod,
-            total=total,
-            success=is_success,
+            is_success=is_success,
+            is_critical=is_crit_succ or is_crit_fail,
+            breakdown=breakdown,
             degree=degree,
-            narrative=narrative
+            consequence=consequence,
+            raw_roll=d20,
+            modifier=mod
         )
 
     def resolve_attack(

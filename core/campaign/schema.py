@@ -18,6 +18,7 @@ class LocationType(str, Enum):
 
 class QuestStatus(str, Enum):
     UNASSIGNED = "unassigned"
+    NOT_STARTED = "not_started"
     ACTIVE = "active"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -96,7 +97,8 @@ class ClueRecord:
 @dataclass
 class CampaignManifest:
     id: str
-    title: str
+    title: str = ""
+    name: str = ""
     ruleset: str = "dnd_5e"
     genre: str = "heroic_fantasy"
     tone_sliders: Dict[str, int] = field(default_factory=lambda: {
@@ -113,3 +115,9 @@ class CampaignManifest:
     clues: Dict[str, ClueRecord] = field(default_factory=dict)
     world_rules: Dict[str, Any] = field(default_factory=dict)
     module_adherence: str = "strict"
+
+    def __post_init__(self):
+        if not self.title and self.name:
+            self.title = self.name
+        elif not self.name and self.title:
+            self.name = self.title

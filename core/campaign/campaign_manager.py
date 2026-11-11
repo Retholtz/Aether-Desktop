@@ -4,12 +4,15 @@ core/campaign/campaign_manager.py - Persistent Campaign Ledger, World State & Un
 import json
 import os
 from dataclasses import asdict, is_dataclass
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Union
 from core.campaign.schema import (
     CampaignManifest, LocationNode, LocationType,
     FactionRecord, FactionDisposition, QuestRecord,
     QuestStatus, QuestObjective, ClueRecord
 )
+from core.logger import get_logger
+
+logger = get_logger("CampaignManager")
 
 
 def _serialize_manifest(manifest: CampaignManifest) -> Dict[str, Any]:
@@ -23,6 +26,42 @@ def _serialize_manifest(manifest: CampaignManifest) -> Dict[str, Any]:
     return raw
 
 
+class QuestUpdateResult(tuple):
+    """
+    Tuple (success, msg) supporting tuple unpacking and dict-like subscripting.
+    Supports:
+        success, msg = cm.update_quest_status(...)
+        res["new_status"], res["quest_title"]
+    """
+    def __new__(cls, success: bool, msg: str, quest_title: str = "", new_status: str = ""):
+        return super().__new__(cls, (success, msg))
+
+    def __init__(self, success: bool, msg: str, quest_title: str = "", new_status: str = ""):
+        self.success = success
+        self.msg = msg
+        self.quest_title = quest_title
+        self.new_status = new_status
+
+    def __getitem__(self, item: Union[int, str]):
+        if isinstance(item, str):
+            if item == "success":
+                return self.success
+            if item in ("msg", "message"):
+                return self.msg
+            if item == "quest_title":
+                return self.quest_title
+            if item == "new_status":
+                return self.new_status
+            raise KeyError(f"Unknown key '{item}' in QuestUpdateResult")
+        return super().__getitem__(item)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
 class CampaignStoreFacade:
     """
     Unified persistence manager ensuring synchronization between world context
@@ -30,7 +69,7 @@ class CampaignStoreFacade:
     discovered clues, journal, stored items).
     Manages data/campaigns/{id}/campaign_state.json alongside legacy campaign.json and state.json.
     """
-    def __init__(self, campaign_id: str, storage_root: str = "data/campaigns"):
+    def __init__(self, campaign_id: str = "default_campaign", storage_root: str = "data/campaigns"):
         self.campaign_id = campaign_id
         self.storage_root = storage_root
         self.storage_dir = os.path.join(storage_root, campaign_id)
@@ -204,12 +243,42 @@ class CampaignStoreFacade:
                 clues_list.append(clue.content)
         self.save()
 
-    def update_quest_status(self, quest_id: str, new_status: QuestStatus) -> Dict[str, Any]:
-        """Updates quest status synchronously across world context and session state."""
+    def update_quest_status(self, quest_id: str, new_status: Union[QuestStatus, str], force: bool = False) -> QuestUpdateResult:
+        """
+        Updates quest status with strict prerequisite dependency validation.
+        Synchronously mirrors world context and session state.
+        """
         if quest_id not in self.manifest.quests:
-            raise ValueError(f"Quest ID '{quest_id}' does not exist.")
+            return QuestUpdateResult(False, f"Quest '{quest_id}' not found.")
+
         quest = self.manifest.quests[quest_id]
-        quest.status = new_status
+
+        if isinstance(new_status, str):
+            try:
+                status_enum = QuestStatus(new_status.lower().strip())
+            except ValueError:
+                status_enum = new_status
+        else:
+            status_enum = new_status
+
+        # Enforce prerequisite gating when activating a quest
+        is_active_target = (status_enum == QuestStatus.ACTIVE) or (str(status_enum).lower() in ("active", "queststatus.active"))
+        if is_active_target and not force:
+            unmet_prereqs = []
+            for prereq_id in quest.prerequisite_quest_ids:
+                prereq = self.manifest.quests.get(prereq_id)
+                prereq_status = prereq.status if prereq else None
+                prereq_is_completed = (prereq_status == QuestStatus.COMPLETED) or (str(prereq_status).lower() in ("completed", "queststatus.completed"))
+                if not prereq or not prereq_is_completed:
+                    unmet_prereqs.append(prereq.title if prereq else prereq_id)
+
+            if unmet_prereqs:
+                msg = f"Cannot activate quest '{quest.title}'. Unfulfilled prerequisites: {', '.join(unmet_prereqs)}."
+                logger.warning(msg)
+                return QuestUpdateResult(False, msg, quest_title=quest.title, new_status=str(quest.status))
+
+        old_status = quest.status
+        quest.status = status_enum
 
         # Synchronously mirror to state
         self.state.setdefault("quests", {})[quest_id] = {
@@ -217,7 +286,7 @@ class CampaignStoreFacade:
             "status": quest.status.value if hasattr(quest.status, "value") else str(quest.status)
         }
 
-        if new_status == QuestStatus.COMPLETED:
+        if status_enum in (QuestStatus.COMPLETED, "completed", "COMPLETED"):
             for obj in quest.objectives:
                 if obj.is_mandatory:
                     obj.is_completed = True
@@ -226,17 +295,19 @@ class CampaignStoreFacade:
                 completed_list.append(quest.title)
             if self.state.get("active_quest") in (quest.title, quest_id):
                 self.state["active_quest"] = ""
-        elif new_status == QuestStatus.ACTIVE:
+        elif is_active_target:
             self.state["active_quest"] = quest.title
-        elif new_status in (QuestStatus.FAILED, QuestStatus.UNASSIGNED):
+        elif status_enum in (QuestStatus.FAILED, QuestStatus.UNASSIGNED, "failed", "unassigned"):
             if self.state.get("active_quest") in (quest.title, quest_id):
                 self.state["active_quest"] = ""
 
-        self.save()
-        return {
-            "quest_title": quest.title,
-            "new_status": quest.status.value if hasattr(quest.status, "value") else str(quest.status)
-        }
+        try:
+            self.save()
+        except Exception:
+            pass
+        logger.info("Quest '%s' status changed from %s to %s", quest.title, old_status, status_enum)
+        status_val = quest.status.value if hasattr(quest.status, "value") else str(quest.status)
+        return QuestUpdateResult(True, f"Quest '{quest.title}' transitioned to {status_val}.", quest_title=quest.title, new_status=status_val)
 
 
 class CampaignManager(CampaignStoreFacade):
