@@ -4,6 +4,7 @@ core/campaign/schema.py - Structured Data Definitions for BYOC & World State
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
 
 
 class LocationType(str, Enum):
@@ -30,17 +31,24 @@ class FactionDisposition(str, Enum):
     HOSTILE = "hostile"
 
 
-@dataclass
-class LocationNode:
-    id: str
-    name: str
-    type: LocationType
-    parent_id: Optional[str] = None
-    description: str = ""
-    is_discovered: bool = False
-    hazards: List[str] = field(default_factory=list)
-    hidden_secrets: List[str] = field(default_factory=list)
-    connected_location_ids: List[str] = field(default_factory=list)
+class LocationNode(BaseModel):
+    id: str = Field(..., description="Unique slug for the location node")
+    name: str = Field(..., description="Display name of the location")
+    type: LocationType = Field(LocationType.ROOM, description="Granular type of location")
+    parent_id: Optional[str] = Field(None, description="Hierarchical parent node id")
+    connected_location_ids: List[str] = Field(default_factory=list, description="Adjoining navigable locations")
+    is_discovered: bool = Field(False, description="Whether players know this location exists")
+    description: str = Field("", description="Public sensory description revealed upon entering")
+    hazards: List[str] = Field(default_factory=list, description="Active hazards or atmospheric traits")
+    hidden_secrets: List[str] = Field(default_factory=list, description="DM-only hidden elements requiring checks")
+    # --- PHASE 1 ADDITION: Settlement Divine Spell Tier Gating ---
+    max_spell_tier: int = Field(
+        default=1,
+        ge=1,
+        le=9,
+        description="Maximum divine/arcane spell level castable by local NPCs or temple clerics."
+    )
+
 
 
 @dataclass

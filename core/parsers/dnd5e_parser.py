@@ -336,8 +336,15 @@ def sanitize_inventory(raw_inventory: List[Any]) -> List[Any]:
         key = norm_name.lower()
         qty = int(raw_qty) if raw_qty.isdigit() else 1
 
+        finite_scarcity = bool(item.get("finite_scarcity", False)) if isinstance(item, dict) else False
+        lower_check = norm_name.lower()
+        if any(ammo in lower_check for ammo in ["9mm", "5.56", "7.62", "slug", "bullet", "round", "energy cell"]):
+            finite_scarcity = True
+
         if key in stacked:
             stacked[key]["qty"] += qty
+            if finite_scarcity:
+                stacked[key]["finite_scarcity"] = True
             if stacked[key]["weight"] in ("--", "", None) and weight not in ("--", "", None):
                 stacked[key]["weight"] = weight
         else:
@@ -346,7 +353,8 @@ def sanitize_inventory(raw_inventory: List[Any]) -> List[Any]:
                 "qty": qty,
                 "weight": weight if weight not in (None, "") else "--",
                 "category": category,
-                "notes": notes
+                "notes": notes,
+                "finite_scarcity": finite_scarcity
             }
             if genre:
                 entry["genre"] = genre

@@ -2128,12 +2128,27 @@ Respond ONLY with valid JSON."""
         res["action"] = "created"
         return res
 
+    def import_character_to_campaign(self, vault_char_data: Dict[str, Any], overwrite_existing: bool = False) -> Dict[str, Any]:
+        """Strictly-validated ingestion of a character sheet into the active campaign."""
+        return self.import_character_to_active_campaign(vault_char_data, overwrite_existing=overwrite_existing)
+
     def import_character_to_active_campaign(self, vault_char_data: Dict[str, Any], overwrite_existing: bool = False) -> Dict[str, Any]:
         """
         ONE-WAY INGESTION: Clones a character sheet from the Vault directly into the
         active campaign's persistent state.json. Severing the template link ensures
         live in-game updates (HP loss, spent spell slots) NEVER reset on UI refresh.
         """
+        if not isinstance(vault_char_data, dict):
+            raise ValueError("Character payload must be a dictionary.")
+
+        # Strict Schema 2.1 Gatekeeper Validation
+        from core.schema.validator import validate_character_payload
+        from core.schema.character_schema import CharacterDocument
+        valid, errors, doc = validate_character_payload(vault_char_data)
+        if not valid:
+            logger.warning(f"[TTRPG] Character payload failed Schema 2.1 validation: {errors}")
+            CharacterDocument.model_validate(vault_char_data)
+
         if not self.active_state:
             return {"status": "error", "message": "No active campaign session loaded."}
 

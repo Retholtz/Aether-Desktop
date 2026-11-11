@@ -543,6 +543,14 @@ class CharacterVaultService:
             elif isinstance(n_data, dict) and n_data.get("max_prepared_leveled_spells") is not None:
                 char_record["max_prepared_leveled_spells"] = n_data["max_prepared_leveled_spells"]
 
+            # Strict Schema 2.1 Gatekeeper
+            from core.schema.validator import validate_character_payload
+            from core.schema.character_schema import CharacterDocument
+            valid, errors, doc = validate_character_payload(char_record)
+            if not valid:
+                logger.warning(f"[VAULT] Character '{c_name}' failed Schema 2.1 validation: {errors}")
+                CharacterDocument.model_validate(char_record)
+
             self._save_character(char_record)
             saved_characters.append(char_record)
             logger.info(f"[VAULT] Imported '{c_name}' into vault from document '{filename}' (Ruleset: {char_record['ruleset_label']}).")
@@ -620,11 +628,11 @@ class CharacterVaultService:
             i_val = int(raw_attrs.get("INT") or raw_attrs.get("Intelligence") or ch.get("Intellect") or 50)
             p_val = int(raw_attrs.get("POW") or raw_attrs.get("APP") or raw_attrs.get("Charisma") or ch.get("Presence") or 50)
             norm_attrs = {
-                "might": min(100, max(1, m_val)),
-                "agility": min(100, max(1, a_val)),
-                "vigor": min(100, max(1, v_val)),
-                "intellect": min(100, max(1, i_val)),
-                "presence": min(100, max(1, p_val))
+                "might": min(100, max(10, m_val)),
+                "agility": min(100, max(10, a_val)),
+                "vigor": min(100, max(10, v_val)),
+                "intellect": min(100, max(10, i_val)),
+                "presence": min(100, max(10, p_val))
             }
         else:
             m_val = ch.get("Might") or raw_attrs.get("Might") or raw_attrs.get("Strength") or 10
@@ -753,38 +761,50 @@ class CharacterVaultService:
             if inferred_meters:
                 meters.update(inferred_meters)
 
+        existing_nsd = ch.get("native_system_data") if isinstance(ch.get("native_system_data"), dict) else {}
+        hit_dice_val = existing_nsd.get("hit_dice") if isinstance(existing_nsd.get("hit_dice"), dict) else {"current": int(ch.get("level") or 1), "max": int(ch.get("level") or 1), "die": str(ch.get("hit_dice") or "1d8")}
+        skills_val = existing_nsd.get("skills") if isinstance(existing_nsd.get("skills"), dict) else (ch.get("skills") if isinstance(ch.get("skills"), dict) else {})
+        prof_val = existing_nsd.get("proficiencies") if isinstance(existing_nsd.get("proficiencies"), dict) else (ch.get("proficiencies") if isinstance(ch.get("proficiencies"), dict) else {})
+        ability_scores_val = raw_attrs or existing_nsd.get("ability_scores") or {"Might": 10, "Agility": 10, "Vigor": 10, "Intellect": 10, "Presence": 10}
+
         return {
             "system_name": ruleset,
             "class_level": class_level_clean,
             "armor_class": guard_val,
             "speed": ch.get("speed") or "30 ft.",
             "hit_points": {"current": cur_hp, "max": max_hp},
-            "ability_scores": raw_attrs,
-            "saving_throws": ch.get("saving_throws") or {},
-            "currency": ch.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0},
-            "proficiencies": ch.get("proficiencies") or "",
-            "weapons": ch.get("weapons") or [],
+            "hit_dice": hit_dice_val,
+            "ability_scores": ability_scores_val,
+            "saving_throws": ch.get("saving_throws") or existing_nsd.get("saving_throws") or {},
+            "skills": skills_val,
+            "currency": ch.get("currency") or existing_nsd.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0},
+            "proficiencies": prof_val,
+            "weapons": ch.get("weapons") or existing_nsd.get("weapons") or [],
             "features_and_traits": feats,
             "spells": spells_clean,
-            "spellcasting_ability": ch.get("spellcasting_ability") or "",
-            "spell_save_dc": ch.get("spell_save_dc") or "",
-            "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
-            "passives": ch.get("passives") or {},
-            "senses": ch.get("senses") or "",
-            "inspiration": bool(ch.get("inspiration", False)),
-            "is_pact_magic": bool(ch.get("is_pact_magic", False)),
-            "ability_save_dc": ch.get("ability_save_dc") or ch.get("spell_save_dc") or "",
-            "spell_attack_bonus": ch.get("spell_attack_bonus") or "",
-            "attuned_magic_items": ch.get("attuned_magic_items") or {"current": 0, "max": 3},
+            "spellcasting_ability": ch.get("spellcasting_ability") or existing_nsd.get("spellcasting_ability") or "",
+            "spell_save_dc": ch.get("spell_save_dc") or existing_nsd.get("spell_save_dc") or "",
+            "spell_attack_bonus": ch.get("spell_attack_bonus") or existing_nsd.get("spell_attack_bonus") or "+0",
+            "passives": ch.get("passives") or existing_nsd.get("passives") or {},
+            "senses": ch.get("senses") or existing_nsd.get("senses") or "",
+            "defenses": ch.get("defenses") or existing_nsd.get("defenses") or "",
+            "resistances": ch.get("resistances") or existing_nsd.get("resistances") or "",
+            "species": ch.get("species") or existing_nsd.get("species") or ch.get("race") or "Human",
+            "background": ch.get("background") or existing_nsd.get("background") or "",
+            "initiative_bonus": int(ch.get("initiative_bonus") or existing_nsd.get("initiative_bonus") or 0),
+            "inspiration": bool(ch.get("inspiration", existing_nsd.get("inspiration", False))),
+            "is_pact_magic": bool(ch.get("is_pact_magic", existing_nsd.get("is_pact_magic", False))),
+            "ability_save_dc": ch.get("ability_save_dc") or existing_nsd.get("ability_save_dc") or ch.get("spell_save_dc") or 10,
+            "attuned_magic_items": ch.get("attuned_magic_items") or existing_nsd.get("attuned_magic_items") or {"current": 0, "max": 3},
             "spell_slots": slots,
-            "max_prepared_leveled_spells": max_prep,
+            "max_prepared_leveled_spells": max_prep if max_prep is not None else 0,
             "custom_meters": meters,
             "roleplay_anchors": ch.get("roleplay_anchors") or (ch.get("universal_core", {}).get("roleplay_anchors") if isinstance(ch.get("universal_core"), dict) else {}),
             "inventory": sanitize_inventory(ch.get("inventory") or ch.get("tagged_inventory") or []),
             "description": ch.get("description") or (ch.get("universal_core", {}).get("description") if isinstance(ch.get("universal_core"), dict) else {}),
-            "weight_carried": ch.get("weight_carried") or "",
-            "encumbered": ch.get("encumbered") or "",
-            "push_drag_lift": ch.get("push_drag_lift") or ""
+            "weight_carried": ch.get("weight_carried") or "0 lb.",
+            "encumbered": ch.get("encumbered") or "150 lb.",
+            "push_drag_lift": ch.get("push_drag_lift") or "300 lb."
         }
 
     def import_from_campaign(
@@ -1134,15 +1154,28 @@ class CharacterVaultService:
 
     def save_character(self, char_data: Dict[str, Any]) -> Dict[str, Any]:
         """Public method to save or upsert character data in the Character Vault."""
+        # Gatekeeper check for raw input corruption
+        from core.schema.character_schema import CharacterDocument
+        from core.schema.validator import validate_character_payload
+
+        if isinstance(char_data, dict):
+            if "vitals" in char_data and (char_data["vitals"] is None or not isinstance(char_data["vitals"], dict)):
+                CharacterDocument.model_validate(char_data)
+            if "universal_core" in char_data and isinstance(char_data["universal_core"], dict):
+                norm = char_data["universal_core"].get("normalized_attributes")
+                if isinstance(norm, dict) and any(isinstance(v, (int, float)) and (v < 10 or v > 100) for v in norm.values()):
+                    CharacterDocument.model_validate(char_data)
+
         char_id = char_data.get("id")
         existing = self.get_character(char_id) if char_id else None
         merged = json.loads(json.dumps(existing)) if existing else {
-            "schema_version": "2.0",
+            "schema_version": "2.1",
             "is_root": True,
             "parent_id": None,
             "variant_label": "Canonical Root",
             "quarantined_stash": []
         }
+        merged["schema_version"] = "2.1"
 
         # Merge new incoming data
         merged.update(char_data)
@@ -1251,9 +1284,31 @@ class CharacterVaultService:
         if "traits_and_abilities" in merged:
             merged["traits_and_abilities"] = clean_traits_and_headers(merged["traits_and_abilities"])
 
-        # Rebuild Universal Core and Native System Data (Schema 2.0)
+        merged["level"] = int(merged.get("level") or 1)
+        merged["archetype"] = merged.get("archetype") or "Adventurer"
+        merged["species"] = merged.get("species") or "Human"
+        merged["background"] = merged.get("background") or ""
+        merged["attributes"] = merged.get("attributes") or {
+            "Might": 10,
+            "Agility": 10,
+            "Vigor": 10,
+            "Intellect": 10,
+            "Presence": 10
+        }
+        merged["hit_dice"] = merged.get("hit_dice") or "1d8"
+        merged["saving_throws"] = merged.get("saving_throws") or {}
+        merged["currency"] = merged.get("currency") or {"cp": 0, "sp": 0, "ep": 0, "gp": 0, "pp": 0}
+        merged["weapons"] = sanitize_character_weapons(merged.get("weapons") or [], merged.get("spells"))
+
+        # Rebuild Universal Core and Native System Data (Schema 2.1)
         merged["universal_core"] = self._build_universal_core(merged)
         merged["native_system_data"] = self._build_native_system_data(merged)
+
+        # Gatekeeper validation
+        valid, errors, doc = validate_character_payload(merged)
+        if not valid:
+            logger.warning("[VAULT] Character payload failed Schema 2.1 validation: %s", errors)
+            CharacterDocument.model_validate(merged)
 
         # Preserve root-level custom_meters, spells, and spell_slots for UI and Schema 2.1 consumers
         if not merged.get("custom_meters") and isinstance(merged.get("native_system_data"), dict) and merged["native_system_data"].get("custom_meters"):

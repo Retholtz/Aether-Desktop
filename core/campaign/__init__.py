@@ -12,7 +12,7 @@ from core.campaign.schema import (
     ClueRecord,
     CampaignManifest,
 )
-from core.campaign.campaign_manager import CampaignManager
+from core.campaign.campaign_manager import CampaignManager, CampaignStoreFacade
 
 __all__ = [
     "LocationType",
@@ -25,4 +25,5 @@ __all__ = [
     "ClueRecord",
     "CampaignManifest",
     "CampaignManager",
+    "CampaignStoreFacade",
 ]

@@ -1,9 +1,9 @@
 """
-core/campaign/campaign_manager.py - Persistent Campaign Ledger & Narrative Anchors
+core/campaign/campaign_manager.py - Persistent Campaign Ledger, World State & Unified Store
 """
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from typing import Dict, Any, List, Optional
 from core.campaign.schema import (
     CampaignManifest, LocationNode, LocationType,
@@ -12,71 +12,235 @@ from core.campaign.schema import (
 )
 
 
-class CampaignManager:
+def _serialize_manifest(manifest: CampaignManifest) -> Dict[str, Any]:
+    """Helper to serialize CampaignManifest handling both dataclasses and Pydantic models."""
+    raw = asdict(manifest)
+    if "locations" in raw:
+        raw["locations"] = {
+            k: (v.model_dump() if hasattr(v, "model_dump") else (asdict(v) if is_dataclass(v) else v))
+            for k, v in manifest.locations.items()
+        }
+    return raw
+
+
+class CampaignStoreFacade:
+    """
+    Unified persistence manager ensuring synchronization between world context
+    (nodes, factions, quests, clues) and session state (active characters,
+    discovered clues, journal, stored items).
+    Manages data/campaigns/{id}/campaign_state.json alongside legacy campaign.json and state.json.
+    """
     def __init__(self, campaign_id: str, storage_root: str = "data/campaigns"):
         self.campaign_id = campaign_id
+        self.storage_root = storage_root
         self.storage_dir = os.path.join(storage_root, campaign_id)
+        self.unified_file = os.path.join(self.storage_dir, "campaign_state.json")
         self.manifest_file = os.path.join(self.storage_dir, "campaign.json")
+        self.state_file = os.path.join(self.storage_dir, "state.json")
         self.manifest = CampaignManifest(id=campaign_id, title="Default Campaign")
+        self.state: Dict[str, Any] = {
+            "campaign_id": campaign_id,
+            "characters": {},
+            "stored_items": [],
+            "discovered_clues": [],
+            "journal": [],
+            "active_quest": "",
+            "current_location": "",
+            "quests": {},
+            "completed_quests": []
+        }
         self.load()
 
     def load(self) -> None:
-        """Loads campaign state from JSON file or initializes defaults."""
-        if os.path.exists(self.manifest_file):
+        """Loads campaign and session state from unified JSON file or legacy files."""
+        data: Dict[str, Any] = {}
+        state_data: Dict[str, Any] = {}
+
+        if os.path.exists(self.unified_file):
             try:
-                with open(self.manifest_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                
-                # Rehydrate dataclasses
-                factions = {}
-                for k, v in data.get("factions", {}).items():
-                    f_data = dict(v)
-                    if "disposition" in f_data and isinstance(f_data["disposition"], str):
-                        f_data["disposition"] = FactionDisposition(f_data["disposition"])
-                    factions[k] = FactionRecord(**f_data)
-
-                locations = {}
-                for k, v in data.get("locations", {}).items():
-                    l_data = dict(v)
-                    if "type" in l_data and isinstance(l_data["type"], str):
-                        l_data["type"] = LocationType(l_data["type"])
-                    locations[k] = LocationNode(**l_data)
-                
-                quests = {}
-                for q_id, q_data in data.get("quests", {}).items():
-                    q_dict = dict(q_data)
-                    if "status" in q_dict and isinstance(q_dict["status"], str):
-                        q_dict["status"] = QuestStatus(q_dict["status"])
-                    objs = [QuestObjective(**o) for o in q_dict.pop("objectives", [])]
-                    quests[q_id] = QuestRecord(objectives=objs, **q_dict)
-
-                clues = {k: ClueRecord(**v) for k, v in data.get("clues", {}).items()}
-
-                self.manifest = CampaignManifest(
-                    id=data.get("id", self.campaign_id),
-                    title=data.get("title", "Untitled Campaign"),
-                    ruleset=data.get("ruleset", "dnd_5e"),
-                    genre=data.get("genre", "heroic_fantasy"),
-                    tone_sliders=data.get("tone_sliders") if data.get("tone_sliders") is not None else {
-                        "grittiness": 5, "magic_tech_level": 7, "political_intrigue": 5
-                    },
-                    premise=data.get("premise", ""),
-                    active_location_id=data.get("active_location_id"),
-                    factions=factions,
-                    locations=locations,
-                    quests=quests,
-                    clues=clues,
-                    world_rules=data.get("world_rules", {})
-                )
+                with open(self.unified_file, "r", encoding="utf-8") as f:
+                    unified = json.load(f)
+                if isinstance(unified, dict):
+                    data = unified.get("manifest") if "manifest" in unified and isinstance(unified["manifest"], dict) else unified
+                    state_data = unified.get("state") if "state" in unified and isinstance(unified["state"], dict) else unified
             except Exception:
                 pass
 
+        if not data and os.path.exists(self.manifest_file):
+            try:
+                with open(self.manifest_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+
+        if not state_data and os.path.exists(self.state_file):
+            try:
+                with open(self.state_file, "r", encoding="utf-8") as f:
+                    state_data = json.load(f)
+            except Exception:
+                pass
+
+        # Rehydrate manifest dataclasses and Pydantic models
+        if data:
+            factions = {}
+            for k, v in data.get("factions", {}).items():
+                if isinstance(v, FactionRecord):
+                    factions[k] = v
+                elif isinstance(v, dict):
+                    f_data = dict(v)
+                    if "disposition" in f_data and isinstance(f_data["disposition"], str):
+                        try:
+                            f_data["disposition"] = FactionDisposition(f_data["disposition"])
+                        except Exception:
+                            pass
+                    factions[k] = FactionRecord(**f_data)
+
+            locations = {}
+            for k, v in data.get("locations", {}).items():
+                if isinstance(v, LocationNode):
+                    locations[k] = v
+                elif isinstance(v, dict):
+                    l_data = dict(v)
+                    if "type" in l_data and isinstance(l_data["type"], str):
+                        try:
+                            l_data["type"] = LocationType(l_data["type"])
+                        except Exception:
+                            pass
+                    locations[k] = LocationNode(**l_data)
+
+            quests = {}
+            for q_id, q_data in data.get("quests", {}).items():
+                if isinstance(q_data, QuestRecord):
+                    quests[q_id] = q_data
+                elif isinstance(q_data, dict):
+                    q_dict = dict(q_data)
+                    if "status" in q_dict and isinstance(q_dict["status"], str):
+                        try:
+                            q_dict["status"] = QuestStatus(q_dict["status"])
+                        except Exception:
+                            pass
+                    raw_objs = q_dict.pop("objectives", [])
+                    objs = [o if isinstance(o, QuestObjective) else QuestObjective(**o) for o in raw_objs]
+                    quests[q_id] = QuestRecord(objectives=objs, **q_dict)
+
+            clues = {}
+            for k, v in data.get("clues", {}).items():
+                if isinstance(v, ClueRecord):
+                    clues[k] = v
+                elif isinstance(v, dict):
+                    clues[k] = ClueRecord(**v)
+
+            self.manifest = CampaignManifest(
+                id=data.get("id", self.campaign_id),
+                title=data.get("title", "Untitled Campaign"),
+                ruleset=data.get("ruleset", "dnd_5e"),
+                genre=data.get("genre", "heroic_fantasy"),
+                tone_sliders=data.get("tone_sliders") if data.get("tone_sliders") is not None else {
+                    "grittiness": 5, "magic_tech_level": 7, "political_intrigue": 5
+                },
+                premise=data.get("premise", ""),
+                active_location_id=data.get("active_location_id"),
+                factions=factions,
+                locations=locations,
+                quests=quests,
+                clues=clues,
+                world_rules=data.get("world_rules", {})
+            )
+
+        # Merge session state
+        if state_data:
+            self.state.update(state_data)
+
+        # Ensure synchronization between manifest clues and state discovered_clues
+        discovered = self.state.setdefault("discovered_clues", [])
+        for c in self.manifest.clues.values():
+            c_name = c.title or c.content
+            if c_name and c_name not in discovered:
+                discovered.append(c_name)
+
+        # Ensure quests are tracked in session state
+        st_quests = self.state.setdefault("quests", {})
+        for q_id, q in self.manifest.quests.items():
+            st_quests[q_id] = {
+                "title": q.title,
+                "status": q.status.value if hasattr(q.status, "value") else str(q.status)
+            }
+
     def save(self) -> None:
-        """Flushes campaign state to disk."""
+        """Flushes campaign state to unified JSON file and syncs legacy stores."""
         os.makedirs(self.storage_dir, exist_ok=True)
-        raw_dict = asdict(self.manifest)
+        manifest_dict = _serialize_manifest(self.manifest)
+        state_dict = dict(self.state)
+
+        # Build unified representation
+        unified_dict = dict(manifest_dict)
+        for k, v in state_dict.items():
+            if k not in ("id", "title", "ruleset", "genre") or k not in unified_dict:
+                unified_dict[k] = v
+        unified_dict["manifest"] = manifest_dict
+        unified_dict["state"] = state_dict
+
+        # 1. Save unified campaign_state.json
+        with open(self.unified_file, "w", encoding="utf-8") as f:
+            json.dump(unified_dict, f, indent=2)
+
+        # 2. Save legacy campaign.json (world model)
         with open(self.manifest_file, "w", encoding="utf-8") as f:
-            json.dump(raw_dict, f, indent=2)
+            json.dump(manifest_dict, f, indent=2)
+
+        # 3. Save legacy state.json (session state)
+        with open(self.state_file, "w", encoding="utf-8") as f:
+            json.dump(state_dict, f, indent=2)
+
+    def register_clue(self, clue: ClueRecord) -> None:
+        """Registers a clue in the world model and synchronously synchronizes it with session state discovered_clues."""
+        self.manifest.clues[clue.id] = clue
+        clue_text = clue.title or clue.content
+        if clue_text:
+            clues_list = self.state.setdefault("discovered_clues", [])
+            if clue_text not in clues_list:
+                clues_list.append(clue_text)
+            if clue.content and clue.content != clue_text and clue.content not in clues_list:
+                clues_list.append(clue.content)
+        self.save()
+
+    def update_quest_status(self, quest_id: str, new_status: QuestStatus) -> Dict[str, Any]:
+        """Updates quest status synchronously across world context and session state."""
+        if quest_id not in self.manifest.quests:
+            raise ValueError(f"Quest ID '{quest_id}' does not exist.")
+        quest = self.manifest.quests[quest_id]
+        quest.status = new_status
+
+        # Synchronously mirror to state
+        self.state.setdefault("quests", {})[quest_id] = {
+            "title": quest.title,
+            "status": quest.status.value if hasattr(quest.status, "value") else str(quest.status)
+        }
+
+        if new_status == QuestStatus.COMPLETED:
+            for obj in quest.objectives:
+                if obj.is_mandatory:
+                    obj.is_completed = True
+            completed_list = self.state.setdefault("completed_quests", [])
+            if quest.title not in completed_list:
+                completed_list.append(quest.title)
+            if self.state.get("active_quest") in (quest.title, quest_id):
+                self.state["active_quest"] = ""
+        elif new_status == QuestStatus.ACTIVE:
+            self.state["active_quest"] = quest.title
+        elif new_status in (QuestStatus.FAILED, QuestStatus.UNASSIGNED):
+            if self.state.get("active_quest") in (quest.title, quest_id):
+                self.state["active_quest"] = ""
+
+        self.save()
+        return {
+            "quest_title": quest.title,
+            "new_status": quest.status.value if hasattr(quest.status, "value") else str(quest.status)
+        }
+
+
+class CampaignManager(CampaignStoreFacade):
+    """Full campaign manager with narrative routing, spatial navigation, and GM context assembly."""
 
     # --- Geographic Navigation ---
 
@@ -94,11 +258,12 @@ class CampaignManager:
         loc = self.manifest.locations[location_id]
         loc.is_discovered = True
         self.manifest.active_location_id = location_id
+        self.state["current_location"] = loc.name
         self.save()
 
         return {
             "active_location": loc.name,
-            "type": loc.type.value,
+            "type": loc.type.value if hasattr(loc.type, "value") else str(loc.type),
             "description": loc.description,
             "hazards": loc.hazards,
             "connections": [
@@ -110,16 +275,17 @@ class CampaignManager:
 
     # --- Information & Clue Tracking ---
 
-    def register_clue(self, clue: ClueRecord) -> None:
-        self.manifest.clues[clue.id] = clue
-        self.save()
-
     def reveal_clue(self, clue_id: str) -> Dict[str, Any]:
-        """Reveals a secret clue to the party, marking it for GM context injection."""
+        """Reveals a secret clue to the party, marking it for GM context injection and session state."""
         if clue_id not in self.manifest.clues:
             raise ValueError(f"Clue ID '{clue_id}' does not exist.")
         clue = self.manifest.clues[clue_id]
         clue.is_revealed = True
+        clue_text = clue.title or clue.content
+        if clue_text:
+            clues_list = self.state.setdefault("discovered_clues", [])
+            if clue_text not in clues_list:
+                clues_list.append(clue_text)
         self.save()
         return {"revealed_clue": clue.title, "content": clue.content}
 
@@ -127,15 +293,13 @@ class CampaignManager:
 
     def add_quest(self, quest: QuestRecord) -> None:
         self.manifest.quests[quest.id] = quest
+        self.state.setdefault("quests", {})[quest.id] = {
+            "title": quest.title,
+            "status": quest.status.value if hasattr(quest.status, "value") else str(quest.status)
+        }
+        if quest.status == QuestStatus.ACTIVE and not self.state.get("active_quest"):
+            self.state["active_quest"] = quest.title
         self.save()
-
-    def update_quest_status(self, quest_id: str, new_status: QuestStatus) -> Dict[str, Any]:
-        if quest_id not in self.manifest.quests:
-            raise ValueError(f"Quest ID '{quest_id}' does not exist.")
-        quest = self.manifest.quests[quest_id]
-        quest.status = new_status
-        self.save()
-        return {"quest_title": quest.title, "new_status": quest.status.value}
 
     def complete_objective(self, quest_id: str, objective_id: str) -> Dict[str, Any]:
         if quest_id not in self.manifest.quests:
@@ -150,12 +314,22 @@ class CampaignManager:
         all_mandatory_done = all(o.is_completed for o in quest.objectives if o.is_mandatory)
         if all_mandatory_done:
             quest.status = QuestStatus.COMPLETED
+            completed_list = self.state.setdefault("completed_quests", [])
+            if quest.title not in completed_list:
+                completed_list.append(quest.title)
+            if self.state.get("active_quest") in (quest.title, quest_id):
+                self.state["active_quest"] = ""
+
+        self.state.setdefault("quests", {})[quest_id] = {
+            "title": quest.title,
+            "status": quest.status.value if hasattr(quest.status, "value") else str(quest.status)
+        }
 
         self.save()
         return {
             "quest": quest.title,
             "objective_completed": target_obj.description,
-            "quest_status": quest.status.value
+            "quest_status": quest.status.value if hasattr(quest.status, "value") else str(quest.status)
         }
 
     # --- Faction Matrix ---
@@ -171,7 +345,7 @@ class CampaignManager:
         return {
             "faction": faction.name,
             "influence": faction.influence_score,
-            "disposition": faction.disposition.value
+            "disposition": faction.disposition.value if hasattr(faction.disposition, "value") else str(faction.disposition)
         }
 
     # --- GM Context Prompt Assembler ---
@@ -191,7 +365,8 @@ class CampaignManager:
         # Location details
         if self.manifest.active_location_id and self.manifest.active_location_id in self.manifest.locations:
             loc = self.manifest.locations[self.manifest.active_location_id]
-            lines.append(f"**CURRENT LOCATION: {loc.name} ({loc.type.value.upper()})**")
+            ltype_val = loc.type.value if hasattr(loc.type, "value") else str(loc.type)
+            lines.append(f"**CURRENT LOCATION: {loc.name} ({ltype_val.upper()})**")
             lines.append(f"Description: {loc.description}")
             if loc.hazards:
                 lines.append(f"Active Environmental Hazards: {', '.join(loc.hazards)}")
@@ -220,7 +395,8 @@ class CampaignManager:
         if self.manifest.factions:
             lines.append("**REGIONAL FACTIONS:**")
             for f in self.manifest.factions.values():
-                lines.append(f"- {f.name}: Disposition={f.disposition.value.upper()} (Reputation: {f.public_reputation})")
+                disp_val = f.disposition.value if hasattr(f.disposition, "value") else str(f.disposition)
+                lines.append(f"- {f.name}: Disposition={disp_val.upper()} (Reputation: {f.public_reputation})")
             lines.append("")
 
         return "\n".join(lines).strip()
