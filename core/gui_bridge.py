@@ -738,7 +738,7 @@ class GuiBridge:
 
 
 
-            # Health Watchdog: Revive audio engine streams if invalidated by OS
+            # Health Watchdog: Revive audio engine streams if invalidated by OS or stalled
 
             if os.environ.get("AETHER_TESTING") != "1":
 
@@ -752,11 +752,9 @@ class GuiBridge:
 
                         out_s = getattr(aud, "out_stream", None)
 
-                        if out_s is not None and not getattr(out_s, "active", False):
+                        if out_s is not None and hasattr(aud, "ensure_output_stream_healthy"):
 
-                            if hasattr(aud, "ensure_output_stream_healthy"):
-
-                                aud.ensure_output_stream_healthy()
+                            aud.ensure_output_stream_healthy()
 
                 except Exception:
 
@@ -8243,6 +8241,7 @@ class GuiBridge:
                         f"    - If an action genuinely requires a skill check: ASK THE TABLE: 'Who in the party steps forward to do this? Joe, Sam, or Shadow?' DO NOT arbitrarily pick an actor or call roll_dice until the player specifies who acts!\n"
                         f"- STRICT BAN ON UNSOLICITED DIALOGUE ROLLS: Routine conversation with NPCs ('Press Sandra for information', 'Ask about Imis', 'Question the guards') is NORMAL DIALOGUE, NOT a Persuasion check! Moving to an area ('Head to the western gate') is MOVEMENT, NOT a Survival check! Never roll dice for ordinary conversation or travel!\n"
                         f"- ACTOR ATTRIBUTION & CLEAN NARRATION: Every dice roll MUST be explicitly attributed to a character or monster/DM. Always pass their name in `character_name` when calling `roll_dice`. In your narration, state the character and the final total (e.g. 'Joe rolled a 16')—DO NOT read off or append dice formulas like '(1d20+4)'.\n"
+                        f"- AUTONOMOUS REWARD & LOOT BESTOWAL: When the player asks you to grant class-appropriate weapons or gear upon a successful check without naming exact items, DO NOT ask them which items to add—call `grant_loot(mode='class_reward', character_name='all', ...)` (or `complete_quest` at quest end, or `manage_party_inventory` for exact items) immediately in this same turn using tier-scaled, proficiency-legal gear for each hero.\n"
                         f"- Do NOT answer as a general desktop assistant.]"
                     )
 

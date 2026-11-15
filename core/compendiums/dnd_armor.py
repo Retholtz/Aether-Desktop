@@ -6,7 +6,12 @@ import os
 import json
 from functools import lru_cache
 from typing import Dict, Any, List, Optional
-from core.compendiums.homebrew_manager import HomebrewManager, get_default_homebrew_manager, query_match_rank
+from core.compendiums.homebrew_manager import (
+    HomebrewManager,
+    get_default_homebrew_manager,
+    query_match_rank,
+    resolve_compendium_entry,
+)
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
@@ -81,17 +86,8 @@ def get_armor(
     name_or_index: str,
     homebrew_mgr: Optional[HomebrewManager] = None,
 ) -> Optional[Dict[str, Any]]:
-    target = (name_or_index or "").strip().lower()
-    if not target:
-        return None
     items = _all_armor(homebrew_mgr)
-    for a in items:
-        if a.get("index", "").lower() == target or a.get("name", "").lower() == target:
-            return dict(a)
-    for a in items:
-        if target in a.get("name", "").lower():
-            return dict(a)
-    return None
+    return resolve_compendium_entry(items, name_or_index)
 
 
 def compute_armor_class(

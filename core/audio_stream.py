@@ -3,6 +3,7 @@ import collections
 import ctypes
 import io
 import logging
+import os
 import sys
 import threading
 import time
@@ -168,6 +169,11 @@ class AudioPipeline:
         self.is_calibrating = False
         self.current_mic_level = 0.0  # Normalized 0.0 - 1.0 for UI visualizer
         self._last_utterance_was_ptt: bool = False
+        self._output_stream_started_at: float = 0.0
+        self._last_output_callback_time: float = 0.0
+        self._last_output_status: str = ""
+        self._output_status_error_count: int = 0
+        self._last_recovery_attempt_time: float = 0.0
         _active_pipelines.add(self)
 
         # Wake Word Gating & State Machine
@@ -701,6 +707,10 @@ class AudioPipeline:
         return True
 
     def _output_callback(self, outdata, frames, time_info, status):
+        self._last_output_callback_time = time.monotonic()
+        if status:
+            self._last_output_status = str(status)
+            self._output_status_error_count += 1
         if not self._running:
             outdata.fill(0)
             return
@@ -836,13 +846,20 @@ class AudioPipeline:
 
     def ensure_output_stream_healthy(self):
         """
-        Verifies that PortAudio output stream is active and operational.
-        If the audio driver reset, endpoint invalidated, or audiosrv restarted, revives streams automatically.
+        Verifies that PortAudio output stream is active and its callback is advancing.
+        If the audio driver reset, Bluetooth sink stalled, endpoint invalidated, or audiosrv restarted,
+        reinitializes PortAudio and revives streams automatically.
         """
         if not getattr(self, "_running", False) or os.environ.get("AETHER_TESTING") == "1":
             return
         if self.out_stream is None:
             return
+
+        if getattr(self, "_last_output_status", ""):
+            status_msg = self._last_output_status
+            self._last_output_status = ""
+            logger.warning(f"[AUDIO] PortAudio output callback status flag observed: {status_msg}")
+
         is_active = False
         try:
             if getattr(self.out_stream, "active", False):
@@ -850,20 +867,43 @@ class AudioPipeline:
         except Exception:
             is_active = False
 
-        if not is_active:
-            logger.warning("[AUDIO] Hardware output stream is inactive or invalid. Auto-recovering WASAPI streams...")
+        now_mono = time.monotonic()
+        stall_secs = 0.0
+        is_stalled = False
+        started_at = getattr(self, "_output_stream_started_at", 0.0)
+        if isinstance(started_at, (int, float)) and started_at > 0.0:
+            last_cb = getattr(self, "_last_output_callback_time", 0.0)
+            ref_ts = last_cb if isinstance(last_cb, (int, float)) and last_cb > 0.0 else started_at
+            stall_secs = now_mono - ref_ts
+            is_stalled = stall_secs > 1.5
+
+        if not is_active or is_stalled:
+            last_attempt = getattr(self, "_last_recovery_attempt_time", 0.0)
+            if (now_mono - last_attempt) < 2.0:
+                return
+            self._last_recovery_attempt_time = now_mono
+            logger.warning(
+                f"[AUDIO] Hardware output stream unhealthy "
+                f"(active={is_active}, callback_stall={stall_secs:.2f}s). "
+                f"Reinitializing PortAudio & WASAPI streams..."
+            )
             try:
-                with _pa_lock:
-                    self._close_streams_only()
-                    self._open_and_start_streams_sync()
-                logger.info("[AUDIO] AudioPipeline output stream successfully reconnected.")
+                _reinitialize_portaudio()
+                if self.out_stream is None or not getattr(self.out_stream, "active", False):
+                    with _pa_lock:
+                        self._close_streams_only()
+                        self._open_and_start_streams_sync()
+                logger.info(
+                    f"[AUDIO] AudioPipeline output stream recovered "
+                    f"(Output #{self.output_device}: {self.output_device_name})."
+                )
             except Exception as e:
                 logger.error(f"[AUDIO] Failed to auto-recover audio output stream: {e}")
 
     def write_output_chunk(self, data: bytes):
         if not data:
             return
-        if getattr(self, "_running", False) and self.out_stream is not None and not getattr(self.out_stream, "active", False):
+        if getattr(self, "_running", False) and self.out_stream is not None:
             self.ensure_output_stream_healthy()
         with self.buffer_lock:
             self._fade_out_buffer = None
@@ -959,9 +999,12 @@ class AudioPipeline:
                 logger.warning(f"[AUDIO] Retrying input stream start (attempt {attempt+1}): {e}")
                 time.sleep(0.05)
 
+        self._last_output_callback_time = 0.0
+        self._last_output_status = ""
         for attempt in range(3):
             try:
                 self.out_stream.start()
+                self._output_stream_started_at = time.monotonic()
                 break
             except Exception as e:
                 if attempt == 2:

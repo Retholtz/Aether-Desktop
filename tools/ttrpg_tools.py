@@ -131,6 +131,38 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
                     elif effective_roll_type == "advantage":
                         effective_roll_type = "normal"
 
+            # Strict D&D 5e RAW: Non-proficient equipped armor/shield imposes Disadvantage on STR/DEX checks, saves & attacks
+            from core.compendiums.dnd_loot import get_equipped_armor_penalties, is_weapon_proficient
+            arm_pen = get_equipped_armor_penalties(cdata)
+            is_str_dex_roll = is_attack or any(
+                k in p_low
+                for k in (
+                    "strength", "dexterity", "athletics", "acrobatics", "stealth",
+                    "sleight of hand", "initiative", "str save", "dex save",
+                    "strength save", "dexterity save",
+                )
+            )
+            if arm_pen.get("imposes_str_dex_disadvantage") and is_str_dex_roll:
+                bad_arm = ", ".join(arm_pen.get("non_proficient_items") or ["Armor"])
+                condition_notes.append(f"Non-Proficient Armor Equipped ({bad_arm}) (5e RAW Disadvantage)")
+                if effective_roll_type == "normal":
+                    effective_roll_type = "disadvantage"
+                elif effective_roll_type == "advantage":
+                    effective_roll_type = "normal"
+
+            # Strict D&D 5e RAW: Non-proficient weapons omit Proficiency Bonus on attack rolls (no automatic disadvantage)
+            if is_attack:
+                for w_entry in cdata.get("weapons") or []:
+                    w_n = (w_entry.get("name") if isinstance(w_entry, dict) else str(w_entry)).strip()
+                    if w_n and w_n.lower() in p_low:
+                        is_np = isinstance(w_entry, dict) and (w_entry.get("proficient") is False)
+                        if not is_np:
+                            ok_w, _ = is_weapon_proficient(cdata, w_entry)
+                            is_np = not ok_w
+                        if is_np:
+                            condition_notes.append(f"Non-Proficient Weapon '{w_n}' (5e RAW: omit Proficiency Bonus)")
+                        break
+
         if target_name and any(k in p_low for k in ("attack", "to hit", "strike")):
             _, t_data = service._find_character(target_name)
             t_comb = service._find_combatant(target_name) if not t_data else None
@@ -780,6 +812,9 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         action: str = "add",
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
+        armor: Optional[List[Any]] = None,
+        gold: Optional[float] = None,
+        equip_armor: bool = False,
         reason: Optional[str] = None,
         storage_location: Optional[str] = None,
         location_knowledge: Optional[str] = None,
@@ -793,6 +828,9 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
             action=action,
             items=items,
             weapons=weapons,
+            armor=armor,
+            gold=gold,
+            equip_armor=equip_armor,
             reason=reason,
             storage_location=storage_location,
             location_knowledge=location_knowledge,
@@ -803,11 +841,12 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
         )
         if res.get("status") == "success":
             emit_update("ttrpg_state_updated", res)
+            emit_update("roster_updated", service.get_campaign_roster())
         return res
 
     dispatcher.register_tool(
         name="manage_party_inventory",
-        description="Adds, removes, uses, disarms, retrieves, discovers, or destroys physical items and weapons for a party member or the entire party. Supports 'disarm' upon arrest/surrender (storing weapons in evidence with unknown or known location), 'discover_location' (revealing storage location upon successful checks/clues), 'retrieve' (reclaiming stored gear or salvaging slayed beasts), and 'destroy' (permanent incineration in lava/acid where items are lost forever). NOTE: Captives, prisoners, and living NPCs are NOT inventory!",
+        description="Adds, removes, uses, disarms, retrieves, discovers, or destroys physical items, weapons, armor, and gold for a party member or the entire party. Never blocks non-proficient loot (tags `[NOT PROFICIENT]` and omits Proficiency Bonus from weapons per 5e RAW). Supports 'disarm', 'discover_location', 'retrieve', and 'destroy'. NOTE: Captives, prisoners, and living NPCs are NOT inventory!",
         parameters={
             "type": "object",
             "properties": {
@@ -830,14 +869,27 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
                     "items": {
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string", "description": "Weapon name, e.g. 'Dual Daggers' or 'Longsword'."},
-                            "atk_bonus": {"type": "string", "description": "Attack bonus modifier, e.g. '+4'."},
-                            "damage": {"type": "string", "description": "Damage formula, e.g. '1d4+2 Piercing'."},
-                            "notes": {"type": "string", "description": "Weapon properties, e.g. 'Finesse, Light'."}
+                            "name": {"type": "string", "description": "Weapon name, e.g. 'Greataxe +2' or 'Dual Daggers'."},
+                            "atk_bonus": {"type": "string", "description": "Optional attack bonus override; omitted/recomputed if character is not proficient."},
+                            "damage": {"type": "string", "description": "Damage formula, e.g. '1d12+4 Slashing'."},
+                            "notes": {"type": "string", "description": "Weapon properties, e.g. 'Heavy, Two-Handed'."}
                         },
                         "required": ["name"]
                     },
                     "description": "List of structured weapon dictionaries to add or remove."
+                },
+                "armor": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of armor/shield names (e.g. ['Plate', 'Shield +1']). Tagged `[NOT PROFICIENT]` if character lacks proficiency."
+                },
+                "gold": {
+                    "type": "number",
+                    "description": "Optional gold pieces (GP) to add (positive) or subtract (negative) to target character wallet(s)."
+                },
+                "equip_armor": {
+                    "type": "boolean",
+                    "description": "If true when adding armor/shield, equips it and updates AC immediately."
                 },
                 "storage_location": {
                     "type": "string",
@@ -873,6 +925,157 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
             "required": ["character_name", "action"]
         },
         handler=manage_party_inventory
+    )
+
+    async def grant_loot(
+        mode: str = "random_chest",
+        character_name: str = "all",
+        hoard_size: str = "standard",
+        item_type: str = "auto",
+        gold: Optional[float] = None,
+        xp: int = 0,
+        creative_homebrew: Optional[Any] = None,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generates and awards unbiased random chest loot OR level/proficiency-matched class/homebrew rewards."""
+        res = service.grant_loot(
+            mode=mode,
+            character_name=character_name,
+            hoard_size=hoard_size,
+            item_type=item_type,
+            gold=gold,
+            xp=xp,
+            creative_homebrew=creative_homebrew,
+            reason=reason,
+        )
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("roster_updated", service.get_campaign_roster())
+        return res
+
+    dispatcher.register_tool(
+        name="grant_loot",
+        description="Generates and awards D&D 5e loot. Use mode='random_chest' for general chests/stashes (level-scaled unbiased SRD loot; non-proficient drops are tagged [NOT PROFICIENT]). Use mode='class_reward' when granting class-appropriate gear to heroes (prioritizes highest class level, randomizes tied multiclasses, enforces sheet proficiencies, and optionally accepts creative tier-bounded `creative_homebrew` specs).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["random_chest", "class_reward"],
+                    "description": "'random_chest' for general unbiased treasure drops; 'class_reward' for proficiency-legal class-matched or homebrew rewards."
+                },
+                "character_name": {
+                    "type": "string",
+                    "description": "Target hero name or 'all' for the whole party."
+                },
+                "hoard_size": {
+                    "type": "string",
+                    "enum": ["small", "standard", "boss", "hoard"],
+                    "description": "Chest/hoard size when mode='random_chest'."
+                },
+                "item_type": {
+                    "type": "string",
+                    "enum": ["auto", "weapon", "armor", "item"],
+                    "description": "Preferred reward slot when mode='class_reward'."
+                },
+                "gold": {
+                    "type": "number",
+                    "description": "Optional GP amount (total split in random_chest, or per-player in class_reward). Auto-scaled if omitted."
+                },
+                "xp": {
+                    "type": "integer",
+                    "description": "Optional XP to grant per player alongside loot."
+                },
+                "creative_homebrew": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "character_name": {"type": "string"},
+                            "name": {"type": "string", "description": "Creative item/weapon/armor name."},
+                            "category": {"type": "string", "enum": ["weapons", "armor", "items"]},
+                            "base_item": {"type": "string", "description": "Base SRD weapon/armor (e.g. 'Greataxe', 'Rapier', 'Studded Leather')."},
+                            "description": {"type": "string"},
+                            "magic_bonus": {"type": "integer", "description": "0 to 3 (automatically clamped to hero level tier)."},
+                            "extra_damage": {"type": "string", "description": "Optional extra damage dice e.g. '1d6 fire' (clamped to tier limits)."}
+                        },
+                        "required": ["character_name", "name"]
+                    },
+                    "description": "Optional list of creative DM-crafted homebrew items (clamped to character tier & proficiency rules)."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Narrative reason/location for the loot."
+                }
+            }
+        },
+        handler=grant_loot
+    )
+
+    async def complete_quest(
+        quest_title_or_id: str,
+        summary: str = "",
+        xp_per_player: Optional[int] = None,
+        gold_per_player: Optional[float] = None,
+        fixed_items: Optional[List[Any]] = None,
+        award_class_gear: Optional[bool] = None,
+        creative_rewards: Optional[Any] = None,
+        milestone_only: bool = False,
+    ) -> Dict[str, Any]:
+        """Marks a quest completed and distributes XP, Gold, and fixed/class/homebrew gear rewards to the party."""
+        res = service.complete_quest(
+            quest_title_or_id=quest_title_or_id,
+            summary=summary,
+            xp_per_player=xp_per_player,
+            gold_per_player=gold_per_player,
+            fixed_items=fixed_items,
+            award_class_gear=award_class_gear,
+            creative_rewards=creative_rewards,
+            milestone_only=milestone_only,
+        )
+        if res.get("status") == "success":
+            emit_update("ttrpg_state_updated", res)
+            emit_update("roster_updated", service.get_campaign_roster())
+        return res
+
+    dispatcher.register_tool(
+        name="complete_quest",
+        description="Completes a campaign quest and automatically distributes XP, Gold (e.g. 500 GP per player), and fixed or tier-scaled class-appropriate/homebrew gear rewards across all party members.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "quest_title_or_id": {"type": "string", "description": "Quest title or ID."},
+                "summary": {"type": "string", "description": "2-3 sentence completion summary for the campaign journal."},
+                "xp_per_player": {"type": "integer", "description": "Optional XP per player (auto-scaled by party tier if omitted; 0 if milestone_only=true)."},
+                "gold_per_player": {"type": "number", "description": "Optional GP per player (e.g. 500; auto-scaled by tier if omitted)."},
+                "fixed_items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional specific items/weapons/armor awarded to every hero."
+                },
+                "award_class_gear": {"type": "boolean", "description": "If true, grants each hero a proficiency-legal, tier-scaled class item (or creative_rewards entry) alongside gold/XP."},
+                "creative_rewards": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "character_name": {"type": "string"},
+                            "name": {"type": "string"},
+                            "category": {"type": "string", "enum": ["weapons", "armor", "items"]},
+                            "base_item": {"type": "string"},
+                            "description": {"type": "string"},
+                            "magic_bonus": {"type": "integer"},
+                            "extra_damage": {"type": "string"}
+                        },
+                        "required": ["character_name", "name"]
+                    },
+                    "description": "Optional creative tier-bounded homebrew reward specs per character."
+                },
+                "milestone_only": {"type": "boolean", "description": "Set true in milestone-only campaigns to skip numeric XP while still granting gold and gear."}
+            },
+            "required": ["quest_title_or_id"]
+        },
+        handler=complete_quest
     )
 
     async def lookup_dnd_compendium(

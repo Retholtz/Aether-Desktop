@@ -7,7 +7,12 @@ import os
 import json
 from functools import lru_cache
 from typing import Dict, Any, List, Optional
-from core.compendiums.homebrew_manager import HomebrewManager, get_default_homebrew_manager, query_match_rank
+from core.compendiums.homebrew_manager import (
+    HomebrewManager,
+    get_default_homebrew_manager,
+    query_match_rank,
+    resolve_compendium_entry,
+)
 
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
@@ -101,18 +106,8 @@ def get_weapon(
     name_or_index: str,
     homebrew_mgr: Optional[HomebrewManager] = None,
 ) -> Optional[Dict[str, Any]]:
-    target = (name_or_index or "").strip().lower()
-    if not target:
-        return None
     items = _all_weapons(homebrew_mgr)
-    for w in items:
-        if w.get("index", "").lower() == target or w.get("name", "").lower() == target:
-            return dict(w)
-    # Partial match fallback
-    for w in items:
-        if target in w.get("name", "").lower():
-            return dict(w)
-    return None
+    return resolve_compendium_entry(items, name_or_index)
 
 
 def format_weapon_for_sheet(

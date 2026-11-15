@@ -257,18 +257,36 @@ class SessionLifecycleManager:
 
         summary_text = ""
         if client:
+            def _build_compactor_config():
+                try:
+                    return types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=1024,
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    )
+                except Exception:
+                    return types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=1024,
+                    )
+
+            def _extract_summary_text(resp_obj) -> str:
+                if resp_obj and resp_obj.candidates and resp_obj.candidates[0].content and resp_obj.candidates[0].content.parts:
+                    return "".join(
+                        p.text for p in resp_obj.candidates[0].content.parts
+                        if getattr(p, "text", None) and getattr(p, "thought", False) is not True
+                    ).strip()
+                return ""
+
+            compactor_cfg = _build_compactor_config()
             try:
                 # Use client.aio for non-blocking async generation
                 resp = await client.aio.models.generate_content(
                     model=model,
                     contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.2,
-                        max_output_tokens=600,
-                    )
+                    config=compactor_cfg
                 )
-                if resp.candidates and resp.candidates[0].content and resp.candidates[0].content.parts:
-                    summary_text = "".join(p.text for p in resp.candidates[0].content.parts if getattr(p, "text", None)).strip()
+                summary_text = _extract_summary_text(resp)
             except Exception as compactor_err:
                 logger.warning(f"[LIFECYCLE COMPACTOR] {model} failed: {compactor_err}. Attempting fallback...")
                 try:
@@ -276,13 +294,9 @@ class SessionLifecycleManager:
                     resp = await client.aio.models.generate_content(
                         model=fallback_model,
                         contents=full_prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.2,
-                            max_output_tokens=600,
-                        )
+                        config=compactor_cfg
                     )
-                    if resp.candidates and resp.candidates[0].content and resp.candidates[0].content.parts:
-                        summary_text = "".join(p.text for p in resp.candidates[0].content.parts if getattr(p, "text", None)).strip()
+                    summary_text = _extract_summary_text(resp)
                 except Exception as fb_err:
                     logger.error(f"[LIFECYCLE COMPACTOR] Fallback LLM also failed: {fb_err}")
 

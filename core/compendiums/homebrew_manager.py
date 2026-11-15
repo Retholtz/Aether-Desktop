@@ -53,6 +53,40 @@ def query_match_rank(entry: Dict[str, Any], query: str) -> int:
     return 3
 
 
+def resolve_compendium_entry(entries: List[Dict[str, Any]], name_or_index: str) -> Optional[Dict[str, Any]]:
+    """
+    Finds an entry by exact index/name, partial substring, or stripped `+[1-3]` enchantment
+    (e.g. 'Greataxe +2', '+1 Breastplate'), applying the enhancement bonus to a copy.
+    """
+    target = (name_or_index or "").strip().lower()
+    if not target:
+        return None
+    for e in entries:
+        if e.get("index", "").lower() == target or e.get("name", "").lower() == target:
+            return dict(e)
+    for e in entries:
+        if target in e.get("name", "").lower():
+            return dict(e)
+
+    m = re.match(r"^\+([1-3])\s+(.+)$|^(.+?)\s*\+([1-3])$", target)
+    if m:
+        bonus = int(m.group(1) or m.group(4))
+        base_target = (m.group(2) or m.group(3) or "").strip()
+        if base_target:
+            base = resolve_compendium_entry(entries, base_target)
+            if base:
+                base["name"] = f"{base['name']} +{bonus}"
+                base["is_magic"] = True
+                base["rarity"] = {1: "Uncommon", 2: "Rare", 3: "Very Rare"}.get(bonus, "Rare")
+                base["index"] = f"{base.get('index', 'item')}-plus-{bonus}"
+                if "damage_dice" in base or "weapon_class" in base:
+                    base["atk_bonus"] = f"+{bonus}"
+                elif "ac_base" in base:
+                    base["ac_bonus"] = int(base.get("ac_bonus") or 0) + bonus
+                return base
+    return None
+
+
 class HomebrewManager:
     def __init__(self, store_path: str = "data/homebrew/dnd5e_homebrew.json"):
         self.store_path = os.path.abspath(store_path)

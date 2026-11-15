@@ -3634,6 +3634,14 @@ Respond in JSON with schema:
         lines.append(
             "\n[INVENTORY, EQUIPMENT & LOOT DIRECTIVES]\n"
             "* AUTOMATIC INVENTORY UPDATES: Whenever a character finds, loots, receives, pockets, buys, drops, gives away, loses, or consumes an item or weapon (e.g., 'Joe finds a locket and puts it in his pocket', 'The wizard drinks a potion', 'Sam buys a crossbow'), you MUST IMMEDIATELY execute the `manage_party_inventory` tool in that same turn!\n"
+            "* AUTONOMOUS DM GEAR & REWARD BESTOWAL (WHEN PLAYER DELEGATES CHOICE TO DM):\n"
+            "  - When a player succeeds on a roll (e.g. Charisma/Persuasion haggling, looting, or quest requisition) AND asks you to bestow gear or weapons suited to each character's class (e.g. 'give each character a weapon for their class', 'arm the party', 'roll loot for us') WITHOUT naming exact items:\n"
+            "    1. DO NOT stall or ask the players 'What weapons do you want?'!\n"
+            "    2. Call `grant_loot(mode='class_reward', character_name='all', ...)` (or pass `creative_homebrew` specs for signature tier-bounded homebrew items). It inspects each hero's highest class level (randomizing tied multiclasses), sheet proficiencies, and level tier (Lv.1-4 mundane/+1, Lv.5-10 +1, Lv.11-16 +2, Lv.17-20 +2/+3) and adds legal weapons/armor/items immediately in THAT SAME TURN.\n"
+            "  - For general world treasure (caves, chests, enemy stashes) where drops shouldn't cater to party classes, call `grant_loot(mode='random_chest', hoard_size='standard'|'boss'|'hoard')` so unbiased D&D 5e loot rolls naturally (non-proficient drops are tagged `[NOT PROFICIENT]`).\n"
+            "  - STRICT D&D 5e NON-PROFICIENCY RULES: Never block carrying non-proficient loot, but weapons without proficiency omit Proficiency Bonus on attack rolls, and wearing non-proficient armor/shields imposes Disadvantage on STR/DEX checks, saves, and attacks and prevents spellcasting.\n"
+            "* QUEST COMPLETION REWARDS (XP + GOLD + GEAR):\n"
+            "  - Whenever the party completes a quest or major objective, call `complete_quest(quest_title_or_id=..., xp_per_player=..., gold_per_player=..., fixed_items=..., creative_rewards=..., award_class_gear=True)` in that same turn so XP, coin purses, and class-appropriate/homebrew rewards update automatically!\n"
             "* MANDATORY DISARMING & ARREST DIRECTIVE:\n"
             "  - Whenever characters are arrested, captured, imprisoned, surrender, or are ordered to disarm (e.g., Filip and the guards intercept and arrest the party):\n"
             "    YOU MUST IMMEDIATELY CALL `manage_party_inventory(character_name='all', action='disarm', storage_location='<e.g. Camp Highmore Guard Barracks - Evidence Chest>', reason='Arrested by Chief Filip')`!\n"
@@ -3856,6 +3864,7 @@ Respond in JSON with schema:
 
         # 3. Active Party Roster
         if chars:
+            from core.compendiums.dnd_loot import get_character_proficiencies, get_equipped_armor_penalties
             char_summaries = []
             for _, ch in chars.items():
                 hp = ch.get("vitals", {}).get("health", {})
@@ -3868,7 +3877,15 @@ Respond in JSON with schema:
                 lvl_xp = f" ({', '.join(filter(None, [lvl_str, xp_str]))})"
 
                 wpns = ch.get("weapons", [])
-                wpn_parts = [f"{(w.get('name') if isinstance(w, dict) else str(w))} ({w.get('atk_bonus', '+0') if isinstance(w, dict) else '+0'}, {w.get('damage', '1d4') if isinstance(w, dict) else '1d4'})" for w in wpns if w]
+                wpn_parts = []
+                for w in wpns:
+                    if not w:
+                        continue
+                    if isinstance(w, dict):
+                        np_tag = " [NOT PROFICIENT]" if (w.get("proficient") is False or "not proficient" in str(w.get("notes", "")).lower()) else ""
+                        wpn_parts.append(f"{w.get('name')} ({w.get('atk_bonus', '+0')}, {w.get('damage', '1d4')}){np_tag}")
+                    else:
+                        wpn_parts.append(f"{w} (+0, 1d4)")
                 wpn_str = f" | Attacks: {', '.join(wpn_parts)}" if wpn_parts else ""
 
                 inv = ch.get("inventory", [])
@@ -3894,12 +3911,26 @@ Respond in JSON with schema:
                 feat_parts = [(f.get("name") if isinstance(f, dict) else str(f)).strip() for f in feats[:4] if f]
                 feat_str = f" | Features: {', '.join(feat_parts)}" if feat_parts else ""
 
+                profs = get_character_proficiencies(ch)
+                w_prof_list = [x.title() for x in (profs.get("weapon_categories") or []) + (profs.get("specific_weapons") or [])]
+                a_prof_list = [x.title() for x in (profs.get("armor_categories") or [])]
+                prof_str = ""
+                if w_prof_list or a_prof_list:
+                    prof_str = f" | Proficiencies: W=[{', '.join(w_prof_list[:6]) or 'None'}], A=[{', '.join(a_prof_list) or 'None'}]"
+
+                arm_pen = get_equipped_armor_penalties(ch)
+                arm_pen_str = (
+                    f" [⚠️ NON-PROFICIENT ARMOR EQUIPPED: {', '.join(arm_pen['non_proficient_items'])} -> STR/DEX Disadvantage & No Spellcasting]"
+                    if arm_pen.get("has_non_proficient_armor")
+                    else ""
+                )
+
                 init = ch.get("initiative", "")
                 init_str = f", Init: {init}" if init else ""
 
                 char_summaries.append(
                     f"{ch.get('name')}{lvl_xp} - {ch.get('archetype', 'Adventurer')} (Player: {ch.get('player_name', 'Player')} | "
-                    f"HP: {hp.get('current', 0)}/{hp.get('max', 0)}, AC/Guard: {guard.get('current', 10)}{init_str}{cond_str}{slot_str}{wpn_str}{inv_str}{spell_str}{feat_str})"
+                    f"HP: {hp.get('current', 0)}/{hp.get('max', 0)}, AC/Guard: {guard.get('current', 10)}{init_str}{cond_str}{arm_pen_str}{prof_str}{slot_str}{wpn_str}{inv_str}{spell_str}{feat_str})"
                 )
             lines.append("\n- Active Party Roster: \n  * " + "\n  * ".join(char_summaries))
         else:
@@ -4824,7 +4855,20 @@ Respond in JSON with schema:
         if not char:
             return {"status": "error", "message": f"Character '{character_name}' not found."}
 
-        # 1. Incapacitation check on caster
+        # 1. Non-proficient armor spellcasting block & incapacitation check
+        from core.compendiums.dnd_loot import get_equipped_armor_penalties
+        arm_pen = get_equipped_armor_penalties(char)
+        if arm_pen.get("blocks_spellcasting"):
+            bad_arm = ", ".join(arm_pen.get("non_proficient_items") or ["armor"])
+            return {
+                "status": "error",
+                "code": "non_proficient_armor_spell_block",
+                "message": (
+                    f"Cannot cast '{spell_name}'! {char['name']} is wearing non-proficient armor/shield "
+                    f"({bad_arm}) and cannot cast spells under D&D 5e rules until doffing it."
+                ),
+            }
+
         conds = char.get("conditions", [])
         for c in conds:
             c_base = c.split("(")[0].strip()
@@ -4942,6 +4986,194 @@ Respond in JSON with schema:
             ret["target_name"] = target_name
         return ret
 
+    def _resolve_char_combat_mods(self, char_data: Dict[str, Any]) -> Tuple[int, int, int]:
+        from core.compendiums.dnd_advancement import proficiency_bonus_for_level
+        lvl = max(1, self._safe_int(char_data.get("level"), 1))
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else {}
+        str_mod = (self._get_character_ability_score(char_data, "STR", 10) - 10) // 2
+        dex_mod = (self._get_character_ability_score(char_data, "DEX", 10) - 10) // 2
+        level_prof = proficiency_bonus_for_level(lvl)
+        prof_raw = char_data.get("prof_bonus") or (native.get("proficiency_bonus") if native else None)
+        prof_bonus = max(level_prof, self._safe_int(prof_raw, level_prof)) if prof_raw is not None else level_prof
+        return str_mod, dex_mod, prof_bonus
+
+    def _apply_weapon_entry_to_character(
+        self,
+        char_data: Dict[str, Any],
+        weapon_spec: Any,
+        edition: str = "2024",
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Normalizes a weapon entry onto `char_data['weapons']` and `native_system_data['weapons']`.
+        Never blocks non-proficient weapons; instead enforces strict D&D 5e RAW by omitting
+        Proficiency Bonus from `atk_bonus` and tagging `proficient=False` + `[NOT PROFICIENT]`.
+        """
+        from core.compendiums.dnd_weapons import get_weapon, format_weapon_for_sheet
+        from core.compendiums.dnd_loot import is_weapon_proficient
+
+        if isinstance(weapon_spec, dict):
+            w_name = str(weapon_spec.get("name") or "").strip()
+            raw_dict = dict(weapon_spec)
+        else:
+            w_name = str(weapon_spec or "").strip()
+            raw_dict = {"name": w_name}
+        if not w_name:
+            return None, None
+
+        comp_wpn = get_weapon(w_name)
+        str_mod, dex_mod, prof_bonus = self._resolve_char_combat_mods(char_data)
+        ok_prof, prof_reason = is_weapon_proficient(char_data, comp_wpn or raw_dict)
+
+        is_compendium_raw = isinstance(weapon_spec, dict) and any(
+            k in weapon_spec for k in ("weapon_class", "damage_dice", "compendium_type", "index")
+        )
+        has_explicit_atk = (
+            isinstance(weapon_spec, dict)
+            and not is_compendium_raw
+            and weapon_spec.get("atk_bonus") not in (None, "")
+        )
+        has_explicit_dmg = (
+            isinstance(weapon_spec, dict)
+            and not is_compendium_raw
+            and weapon_spec.get("damage") not in (None, "")
+        )
+
+        if comp_wpn and (not has_explicit_atk or not ok_prof):
+            sheet_wpn = format_weapon_for_sheet(
+                comp_wpn,
+                str_mod=str_mod,
+                dex_mod=dex_mod,
+                prof_bonus=prof_bonus,
+                proficient=ok_prof,
+                edition=edition,
+            )
+            if has_explicit_dmg:
+                sheet_wpn["damage"] = str(raw_dict["damage"]).strip()
+            elif isinstance(raw_dict.get("damage"), str):
+                m_extra = re.search(r"(\(\+[^)]+\))", raw_dict["damage"])
+                if m_extra and m_extra.group(1) not in sheet_wpn["damage"]:
+                    sheet_wpn["damage"] = f"{sheet_wpn['damage']} {m_extra.group(1)}".strip()
+            if raw_dict.get("notes") and not is_compendium_raw:
+                sheet_wpn["notes"] = ", ".join(filter(None, [sheet_wpn.get("notes", ""), str(raw_dict["notes"]).strip()]))
+        else:
+            atk_str = str(raw_dict.get("atk_bonus") or f"+{max(str_mod, dex_mod) + (prof_bonus if ok_prof else 0)}").strip()
+            if not ok_prof and has_explicit_atk:
+                # Recompute without proficiency bonus if caller assumed proficiency
+                m_atk = re.match(r"^([+-]?\d+)$", atk_str)
+                if m_atk and int(m_atk.group(1)) >= max(str_mod, dex_mod) + prof_bonus:
+                    adj = int(m_atk.group(1)) - prof_bonus
+                    atk_str = f"+{adj}" if adj >= 0 else str(adj)
+            sheet_wpn = {
+                "name": w_name,
+                "atk_bonus": atk_str,
+                "damage": str(raw_dict.get("damage") or "1d4").strip(),
+                "notes": str(raw_dict.get("notes") or "").strip(),
+            }
+            if raw_dict.get("compendium_index"):
+                sheet_wpn["compendium_index"] = raw_dict["compendium_index"]
+
+        sheet_wpn["proficient"] = bool(ok_prof)
+        if not ok_prof:
+            cur_notes = str(sheet_wpn.get("notes") or "").strip()
+            if "not proficient" not in cur_notes.lower():
+                sheet_wpn["notes"] = f"[NOT PROFICIENT - no prof bonus] {cur_notes}".strip()
+
+        wpns_list = char_data.setdefault("weapons", [])
+        existing_w = next((x for x in wpns_list if isinstance(x, dict) and x.get("name", "").strip().lower() == sheet_wpn["name"].lower()), None)
+        if existing_w:
+            existing_w.update(sheet_wpn)
+        else:
+            wpns_list.append(sheet_wpn)
+
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else None
+        if native is not None and isinstance(native.get("weapons"), list):
+            ex_nw = next((x for x in native["weapons"] if isinstance(x, dict) and x.get("name", "").strip().lower() == sheet_wpn["name"].lower()), None)
+            if ex_nw:
+                ex_nw.update(copy.deepcopy(sheet_wpn))
+            else:
+                native["weapons"].append(copy.deepcopy(sheet_wpn))
+
+        return sheet_wpn, (prof_reason if not ok_prof else None)
+
+    def _apply_armor_entry_to_character(
+        self,
+        char_data: Dict[str, Any],
+        armor_rec: Dict[str, Any],
+        qty: int = 1,
+        equip: bool = False,
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[str]]:
+        """
+        Adds an armor/shield entry across inventory mirrors, tagging non-proficiency without blocking
+        and recalculating AC via `_recompute_and_apply_character_ac` when `equip=True`.
+        """
+        from core.compendiums.dnd_loot import is_armor_proficient
+
+        native = char_data.get("native_system_data") if isinstance(char_data.get("native_system_data"), dict) else None
+        is_shield = (armor_rec.get("category") == "Shield")
+        ok_prof, prof_reason = is_armor_proficient(char_data, armor_rec)
+
+        ac_note_parts: List[str] = []
+        if not ok_prof:
+            ac_note_parts.append("[NOT PROFICIENT - STR/DEX Disadv & No Spells if equipped]")
+        if is_shield:
+            bonus_val = 2 + int(armor_rec.get("ac_bonus") or 0)
+            ac_note_parts.append(f"+{bonus_val} AC")
+        else:
+            base_ac = int(armor_rec.get("ac_base") or 10)
+            extra_ac = int(armor_rec.get("ac_bonus") or 0)
+            dex_txt = ""
+            if armor_rec.get("dex_bonus"):
+                max_d = armor_rec.get("max_dex_bonus")
+                dex_txt = f" + DEX (max {max_d})" if max_d is not None else " + DEX"
+            ac_note_parts.append(f"AC {base_ac + extra_ac}{dex_txt}")
+        if armor_rec.get("stealth_disadvantage"):
+            ac_note_parts.append("Stealth Disadv.")
+        if armor_rec.get("str_minimum"):
+            ac_note_parts.append(f"STR {armor_rec['str_minimum']}+")
+
+        inv_entry = {
+            "name": armor_rec["name"],
+            "qty": str(max(1, int(qty or 1))),
+            "weight": f"{armor_rec['weight']} lb" if armor_rec.get("weight") else "",
+            "category": "Shield" if is_shield else "Armor",
+            "notes": ", ".join(ac_note_parts),
+            "equipped": bool(equip),
+            "proficient": bool(ok_prof),
+            "compendium_index": armor_rec.get("index", ""),
+            "is_magic": bool(armor_rec.get("is_magic", False)),
+        }
+
+        if equip:
+            for target_inv in (
+                [char_data.get("inventory")]
+                + ([native.get("inventory")] if native else [])
+                + [char_data.get("live_inventory"), char_data.get("tagged_inventory")]
+            ):
+                if isinstance(target_inv, list):
+                    for ex in target_inv:
+                        if isinstance(ex, dict) and ex.get("category") == inv_entry["category"]:
+                            ex["equipped"] = False
+
+        self._sync_char_inventory_views(char_data, [inv_entry])
+        ac_report = None
+        if equip:
+            cur_armor = char_data.get("armor_equipped") if is_shield else armor_rec["name"]
+            if is_shield and not cur_armor:
+                cur_armor = next(
+                    (
+                        it.get("name")
+                        for it in char_data.get("inventory", [])
+                        if isinstance(it, dict) and it.get("category") == "Armor" and it.get("equipped")
+                    ),
+                    None,
+                )
+            has_sh = True if is_shield else bool(char_data.get("shield_equipped"))
+            ac_report = self._recompute_and_apply_character_ac(char_data, cur_armor, has_sh)
+            if not ok_prof and ac_report is not None:
+                ac_report.setdefault("warnings", []).append(prof_reason)
+
+        return inv_entry, ac_report, (prof_reason if not ok_prof else None)
+
     def manage_character_inventory(
         self,
         character_name: str,
@@ -4949,6 +5181,9 @@ Respond in JSON with schema:
         items: Optional[List[str]] = None,
         weapons: Optional[List[Dict[str, str]]] = None,
         spells: Optional[List[Any]] = None,
+        armor: Optional[List[Any]] = None,
+        gold: Optional[float] = None,
+        equip_armor: bool = False,
         reason: Optional[str] = None,
         storage_location: Optional[str] = None,
         location_knowledge: Optional[str] = None,
@@ -5321,6 +5556,9 @@ Respond in JSON with schema:
         total_modified_items: List[str] = []
         total_modified_weapons: List[str] = []
         total_modified_spells: List[str] = []
+        total_modified_armor: List[str] = []
+        total_gold_delta: float = 0.0
+        proficiency_warnings: List[str] = []
 
         for char_id, char_data in target_chars:
             current_inv = char_data.setdefault("inventory", [])
@@ -5356,20 +5594,37 @@ Respond in JSON with schema:
                                     current_inv.append(clean_it)
                                 total_modified_items.append(clean_it)
                 if weapons:
+                    ed = self._get_campaign_edition()
                     for w in weapons:
-                        if isinstance(w, dict) and w.get("name"):
-                            w_record = {
-                                "name": str(w["name"]).strip(),
-                                "atk_bonus": str(w.get("atk_bonus", "+0")).strip(),
-                                "damage": str(w.get("damage", "1d4")).strip(),
-                                "notes": str(w.get("notes", "")).strip()
-                            }
-                            existing_w = next((x for x in current_wpns if isinstance(x, dict) and x.get("name", "").lower() == w_record["name"].lower()), None)
-                            if existing_w:
-                                existing_w.update(w_record)
-                            else:
-                                current_wpns.append(w_record)
-                            total_modified_weapons.append(w_record["name"])
+                        sheet_wpn, prof_warn = self._apply_weapon_entry_to_character(char_data, w, edition=ed)
+                        if sheet_wpn:
+                            total_modified_weapons.append(sheet_wpn["name"])
+                            if prof_warn:
+                                proficiency_warnings.append(f"{char_data['name']}: {prof_warn}")
+                if armor:
+                    from core.compendiums.dnd_armor import get_armor
+                    for a in armor:
+                        a_name = str(a.get("name") if isinstance(a, dict) else a).strip()
+                        if not a_name:
+                            continue
+                        a_rec = get_armor(a_name) or (
+                            dict(a) if isinstance(a, dict) else {"name": a_name, "category": "Medium Armor", "ac_base": 12, "dex_bonus": True, "max_dex_bonus": 2}
+                        )
+                        do_equip = bool(a.get("equip", equip_armor)) if isinstance(a, dict) else bool(equip_armor)
+                        inv_ent, _, prof_warn = self._apply_armor_entry_to_character(char_data, a_rec, qty=1, equip=do_equip)
+                        total_modified_armor.append(inv_ent["name"])
+                        if prof_warn:
+                            proficiency_warnings.append(f"{char_data['name']}: {prof_warn}")
+                if gold is not None and float(gold) != 0:
+                    if float(gold) > 0:
+                        self._credit_gold_to_character(char_data, float(gold))
+                    else:
+                        from core.compendiums.dnd_items import deduct_currency
+                        wallet = self._normalize_wallet(char_data)
+                        ok_pay, new_wallet, _ = deduct_currency(wallet, int(round(abs(float(gold)) * 100)))
+                        if ok_pay:
+                            self._write_wallet(char_data, new_wallet)
+                    total_gold_delta += float(gold)
                 if spells:
                     for s in spells:
                         if isinstance(s, dict) and s.get("name"):
@@ -5486,10 +5741,13 @@ Respond in JSON with schema:
             "action": action_norm,
             "modified_items": total_modified_items,
             "modified_weapons": total_modified_weapons,
+            "modified_armor": total_modified_armor,
             "modified_spells": total_modified_spells,
+            "gold_delta": total_gold_delta,
+            "proficiency_warnings": proficiency_warnings,
             "storage_location": storage_location,
             "total_stored_items": len(stored_items_list),
-            "message": f"Successfully updated inventory for '{primary_name}' ({action_norm}: {len(total_modified_items)} item(s), {len(total_modified_weapons)} weapon(s))."
+            "message": f"Successfully updated inventory for '{primary_name}' ({action_norm}: {len(total_modified_items)} item(s), {len(total_modified_weapons)} weapon(s), {len(total_modified_armor)} armor)."
         }
         if not is_party_wide and len(target_chars) == 1:
             res_payload["inventory"] = target_chars[0][1].get("inventory", [])
@@ -6762,35 +7020,11 @@ Return ONLY valid JSON.
             wpn = get_weapon(index_or_name)
             if not wpn:
                 return {"status": "error", "message": f"Weapon '{index_or_name}' not found in compendium."}
-            sheet_wpn = format_weapon_for_sheet(
-                wpn,
-                str_mod=str_mod,
-                dex_mod=dex_mod,
-                prof_bonus=prof_bonus,
-                proficient=True,
-                edition=edition,
-            )
-            wpns_list = char_data.setdefault("weapons", [])
-            existing_w = next(
-                (w for w in wpns_list if isinstance(w, dict) and w.get("name", "").strip().lower() == sheet_wpn["name"].lower()),
-                None,
-            )
-            if existing_w:
-                existing_w.update(sheet_wpn)
-            else:
-                wpns_list.append(sheet_wpn)
-
-            if native is not None and isinstance(native.get("weapons"), list):
-                ex_nw = next(
-                    (w for w in native["weapons"] if isinstance(w, dict) and w.get("name", "").strip().lower() == sheet_wpn["name"].lower()),
-                    None,
-                )
-                if ex_nw:
-                    ex_nw.update(copy.deepcopy(sheet_wpn))
-                else:
-                    native["weapons"].append(copy.deepcopy(sheet_wpn))
-
+            sheet_wpn, prof_warn = self._apply_weapon_entry_to_character(char_data, wpn, edition=edition)
             self.save_active_campaign_state()
+            msg = f"Granted weapon '{sheet_wpn['name']}' ({sheet_wpn['atk_bonus']} to hit, {sheet_wpn['damage']}) to {char_data['name']}."
+            if prof_warn:
+                msg += f" ({prof_warn})"
             return {
                 "status": "success",
                 "category": "weapons",
@@ -6798,110 +7032,34 @@ Return ONLY valid JSON.
                 "character_id": char_id,
                 "granted": [sheet_wpn["name"]],
                 "entry": sheet_wpn,
-                "message": f"Granted weapon '{sheet_wpn['name']}' ({sheet_wpn['atk_bonus']} to hit, {sheet_wpn['damage']}) to {char_data['name']}.",
+                "proficient": bool(sheet_wpn.get("proficient", True)),
+                "proficiency_warning": prof_warn,
+                "message": msg,
             }
 
         elif cat in ("armor", "armors", "shield", "shields"):
             arm = get_armor(index_or_name)
             if not arm:
                 return {"status": "error", "message": f"Armor '{index_or_name}' not found in compendium."}
-            is_shield = (arm.get("category") == "Shield")
-            ac_note_parts = []
-            if is_shield:
-                bonus_val = 2 + int(arm.get("ac_bonus") or 0)
-                ac_note_parts.append(f"+{bonus_val} AC")
-            else:
-                base_ac = int(arm.get("ac_base") or 10)
-                extra_ac = int(arm.get("ac_bonus") or 0)
-                dex_txt = ""
-                if arm.get("dex_bonus"):
-                    max_d = arm.get("max_dex_bonus")
-                    dex_txt = f" + DEX (max {max_d})" if max_d is not None else " + DEX"
-                ac_note_parts.append(f"AC {base_ac + extra_ac}{dex_txt}")
-            if arm.get("stealth_disadvantage"):
-                ac_note_parts.append("Stealth Disadv.")
-            if arm.get("str_minimum"):
-                ac_note_parts.append(f"STR {arm['str_minimum']}+")
-
-            inv_entry = {
-                "name": arm["name"],
-                "qty": str(max(1, int(qty or 1))),
-                "weight": f"{arm['weight']} lb" if arm.get("weight") else "",
-                "category": "Shield" if is_shield else "Armor",
-                "notes": ", ".join(ac_note_parts),
-                "equipped": bool(equip),
-                "compendium_index": arm.get("index", ""),
-                "is_magic": bool(arm.get("is_magic", False)),
-            }
-
-            if equip:
-                # Unequip previous items in the same slot (Armor vs Shield)
-                for target_inv in (
-                    [char_data.get("inventory")]
-                    + ([native.get("inventory")] if native else [])
-                    + [char_data.get("live_inventory"), char_data.get("tagged_inventory")]
-                ):
-                    if isinstance(target_inv, list):
-                        for ex in target_inv:
-                            if isinstance(ex, dict) and ex.get("category") == inv_entry["category"]:
-                                ex["equipped"] = False
-
-            added = self._sync_char_inventory_views(char_data, [inv_entry])
-            ac_report = None
-            if equip:
-                if is_shield:
-                    cur_armor = char_data.get("armor_equipped")
-                    if not cur_armor:
-                        # Look for currently equipped body armor in inventory
-                        eq_arm = next(
-                            (
-                                it.get("name")
-                                for it in char_data.get("inventory", [])
-                                if isinstance(it, dict) and it.get("category") == "Armor" and it.get("equipped")
-                            ),
-                            None,
-                        )
-                        cur_armor = eq_arm
-                    s_bonus = 2 + int(arm.get("ac_bonus") or 0)
-                    has_sh = True
-                else:
-                    cur_armor = arm["name"]
-                    has_sh = bool(char_data.get("shield_equipped"))
-                    s_bonus = 2
-                ac_report = compute_armor_class(
-                    armor_name=cur_armor,
-                    has_shield=has_sh,
-                    dex_mod=dex_mod,
-                    shield_bonus=s_bonus,
-                    str_score=str_score,
-                )
-                new_ac = ac_report["armor_class"]
-                char_data["armor_class"] = new_ac
-                char_data["armor_equipped"] = ac_report["armor_equipped"]
-                char_data["shield_equipped"] = ac_report["shield_equipped"]
-                char_data["stealth_disadvantage"] = ac_report["stealth_disadvantage"]
-                guard_obj = char_data.setdefault("vitals", {}).setdefault("guard", {"current": new_ac, "max": new_ac, "label": "Armor Defense"})
-                guard_obj["current"] = new_ac
-                guard_obj["max"] = max(1, new_ac)
-                if native is not None:
-                    native["armor_class"] = new_ac
-                    native["armor_equipped"] = ac_report["armor_equipped"]
-                    native["shield_equipped"] = ac_report["shield_equipped"]
-
+            inv_entry, ac_report, prof_warn = self._apply_armor_entry_to_character(char_data, arm, qty=qty, equip=equip)
             self.save_active_campaign_state()
             msg = f"Granted armor '{arm['name']}' to {char_data['name']}."
             if ac_report:
                 msg += f" Equipped! AC is now {ac_report['armor_class']}."
-                if ac_report["warnings"]:
+                if ac_report.get("warnings"):
                     msg += " (" + "; ".join(ac_report["warnings"]) + ")"
+            elif prof_warn:
+                msg += f" ({prof_warn})"
             return {
                 "status": "success",
                 "category": "armor",
                 "character_name": char_data["name"],
                 "character_id": char_id,
-                "granted": added,
+                "granted": [inv_entry["name"]],
                 "entry": inv_entry,
                 "ac_report": ac_report,
+                "proficient": bool(inv_entry.get("proficient", True)),
+                "proficiency_warning": prof_warn,
                 "message": msg,
             }
 
@@ -8277,6 +8435,372 @@ Return ONLY valid JSON.
         res["character_id"] = char_id
         res["state"] = self.active_state
         return res
+
+    def _credit_gold_to_character(self, char_data: Dict[str, Any], gp_amount: float) -> Dict[str, int]:
+        from core.compendiums.dnd_items import add_currency
+        wallet = self._normalize_wallet(char_data)
+        new_wallet = add_currency(wallet, int(round(max(0.0, float(gp_amount)) * 100)))
+        self._write_wallet(char_data, new_wallet)
+        return new_wallet
+
+    def grant_loot(
+        self,
+        mode: str = "random_chest",
+        character_name: str = "all",
+        hoard_size: str = "standard",
+        item_type: str = "auto",
+        gold: Optional[float] = None,
+        xp: int = 0,
+        creative_homebrew: Optional[Any] = None,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Generates and distributes either:
+        - `mode='random_chest'`: Unbiased, level-scaled D&D 5e loot from SRD/Homebrew tables.
+          Non-proficient drops are allowed and tagged `[NOT PROFICIENT]` per 5e RAW.
+        - `mode='class_reward'`: Class-appropriate & proficiency-legal gear per character
+          (prioritizing highest class level with random tie-breaking, or creative tier-bounded
+          homebrew specs via `creative_homebrew`).
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        from core.compendiums.dnd_loot import (
+            create_tier_bounded_homebrew,
+            generate_random_loot,
+            select_class_loot_for_character,
+        )
+
+        chars_dict = self.active_state.get("characters", {})
+        is_party = (character_name or "all").lower().strip() in ("all", "party", "everyone", "team")
+        if is_party:
+            target_chars = list(chars_dict.items())
+        else:
+            cid, cdata = self._find_character(character_name)
+            target_chars = [(cid, cdata)] if cdata else []
+
+        if not target_chars:
+            return {"status": "error", "message": f"No matching character(s) found for '{character_name}'."}
+
+        ed = self._get_campaign_edition()
+        mode_norm = (mode or "random_chest").lower().strip()
+        awards: List[Dict[str, Any]] = []
+        proficiency_warnings: List[str] = []
+
+        if mode_norm in ("class_reward", "quest_reward", "targeted"):
+            # Normalize creative homebrew specs keyed by lowercase character name
+            hb_by_char: Dict[str, Dict[str, Any]] = {}
+            if isinstance(creative_homebrew, dict):
+                tgt = str(creative_homebrew.get("character_name") or "").strip().lower()
+                if tgt:
+                    hb_by_char[tgt] = creative_homebrew
+                elif len(target_chars) == 1:
+                    hb_by_char[target_chars[0][1]["name"].strip().lower()] = creative_homebrew
+            elif isinstance(creative_homebrew, list):
+                for spec in creative_homebrew:
+                    if isinstance(spec, dict):
+                        tgt = str(spec.get("character_name") or "").strip().lower()
+                        if tgt:
+                            hb_by_char[tgt] = spec
+
+            for _, ch in target_chars:
+                ch_name = ch["name"]
+                entry_award: Dict[str, Any] = {"character": ch_name, "granted": []}
+                spec = hb_by_char.get(ch_name.lower())
+
+                if spec:
+                    hb_res = create_tier_bounded_homebrew(ch, spec, edition=ed)
+                    if hb_res.get("status") == "success":
+                        raw = hb_res["entry"]
+                        cat = hb_res["category"]
+                        if cat == "weapons":
+                            wpn_res, warn = self._apply_weapon_entry_to_character(ch, raw, edition=ed)
+                            entry_award["granted"].append({"type": "weapon", "item": wpn_res["name"], "atk_bonus": wpn_res["atk_bonus"], "damage": wpn_res["damage"], "homebrew": True})
+                        elif cat == "armor":
+                            arm_ent, _, warn = self._apply_armor_entry_to_character(ch, raw, qty=1, equip=bool(spec.get("equip", False)))
+                            entry_award["granted"].append({"type": "armor", "item": arm_ent["name"], "homebrew": True})
+                        else:
+                            self._sync_char_inventory_views(ch, [raw["name"]])
+                            entry_award["granted"].append({"type": "item", "item": raw["name"], "homebrew": True})
+                else:
+                    picked = select_class_loot_for_character(ch, item_type=item_type, edition=ed)
+                    if picked:
+                        cat = picked["category"]
+                        if cat == "weapons":
+                            wpn_res, warn = self._apply_weapon_entry_to_character(ch, picked["raw_record"], edition=ed)
+                            entry_award["granted"].append({
+                                "type": "weapon",
+                                "item": wpn_res["name"],
+                                "atk_bonus": wpn_res["atk_bonus"],
+                                "damage": wpn_res["damage"],
+                                "priority_class": picked.get("priority_class"),
+                            })
+                        elif cat == "armor":
+                            arm_ent, _, warn = self._apply_armor_entry_to_character(ch, picked["raw_record"], qty=1, equip=False)
+                            entry_award["granted"].append({
+                                "type": "armor",
+                                "item": arm_ent["name"],
+                                "priority_class": picked.get("priority_class"),
+                            })
+                        else:
+                            sh_it = picked["sheet_entry"]
+                            self._sync_char_inventory_views(ch, [sh_it])
+                            entry_award["granted"].append({
+                                "type": "item",
+                                "item": sh_it["name"],
+                                "priority_class": picked.get("priority_class"),
+                            })
+
+                if gold and float(gold) > 0:
+                    self._credit_gold_to_character(ch, float(gold))
+                    entry_award["gold_gp"] = float(gold)
+                if xp and int(xp) > 0:
+                    prog = self.manage_character_progression(ch_name, action="award_xp", amount_or_level=int(xp), notes=reason or "Loot/Reward")
+                    entry_award["xp"] = int(xp)
+                    entry_award["level_up_ready"] = bool(prog.get("level_up_ready"))
+                awards.append(entry_award)
+        else:
+            avg_lvl = max(1, int(round(sum(int(ch.get("level") or 1) for _, ch in target_chars) / len(target_chars))))
+            chest = generate_random_loot(party_level=avg_lvl, hoard_size=hoard_size, edition=ed)
+            total_gp = float(gold) if gold is not None else float(chest["gold_total"])
+            gp_each = round(total_gp / len(target_chars), 2) if total_gp > 0 else 0.0
+
+            per_char_map: Dict[str, Dict[str, Any]] = {
+                ch["name"]: {"character": ch["name"], "granted": [], **({"gold_gp": gp_each} if gp_each > 0 else {})}
+                for _, ch in target_chars
+            }
+            if gp_each > 0:
+                for _, ch in target_chars:
+                    self._credit_gold_to_character(ch, gp_each)
+
+            idx = 0
+            for wpn in chest.get("weapons", []):
+                _, ch = target_chars[idx % len(target_chars)]
+                idx += 1
+                wpn_res, warn = self._apply_weapon_entry_to_character(ch, wpn, edition=ed)
+                if warn:
+                    proficiency_warnings.append(f"{ch['name']}: {warn}")
+                per_char_map[ch["name"]]["granted"].append({
+                    "type": "weapon",
+                    "item": wpn_res["name"],
+                    "proficient": bool(wpn_res.get("proficient", True)),
+                })
+            for arm in chest.get("armor", []):
+                _, ch = target_chars[idx % len(target_chars)]
+                idx += 1
+                arm_ent, _, warn = self._apply_armor_entry_to_character(ch, arm, qty=1, equip=False)
+                if warn:
+                    proficiency_warnings.append(f"{ch['name']}: {warn}")
+                per_char_map[ch["name"]]["granted"].append({
+                    "type": "armor",
+                    "item": arm_ent["name"],
+                    "proficient": bool(arm_ent.get("proficient", True)),
+                })
+            for it in chest.get("items", []):
+                _, ch = target_chars[idx % len(target_chars)]
+                idx += 1
+                self._sync_char_inventory_views(ch, [it])
+                per_char_map[ch["name"]]["granted"].append({
+                    "type": "item",
+                    "item": it["name"] if isinstance(it, dict) else str(it),
+                })
+            if xp and int(xp) > 0:
+                for _, ch in target_chars:
+                    prog = self.manage_character_progression(ch["name"], action="award_xp", amount_or_level=int(xp), notes=reason or "Chest Loot")
+                    per_char_map[ch["name"]]["xp"] = int(xp)
+                    per_char_map[ch["name"]]["level_up_ready"] = bool(prog.get("level_up_ready"))
+
+            awards = list(per_char_map.values())
+
+        self.save_active_campaign_state()
+        return {
+            "status": "success",
+            "mode": mode_norm,
+            "reason": reason or ("Class Quest/NPC Reward" if "class" in mode_norm else "Random World Treasure"),
+            "awards": awards,
+            "proficiency_warnings": proficiency_warnings,
+            "message": f"Distributed {mode_norm} loot across {len(target_chars)} character(s).",
+        }
+
+    def complete_quest(
+        self,
+        quest_title_or_id: str,
+        summary: str = "",
+        xp_per_player: Optional[int] = None,
+        gold_per_player: Optional[float] = None,
+        fixed_items: Optional[List[Any]] = None,
+        award_class_gear: Optional[bool] = None,
+        creative_rewards: Optional[Any] = None,
+        milestone_only: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Marks a quest completed across `CampaignManager` and active campaign state, then
+        distributes XP, Gold (`gold_per_player`), fixed module rewards, and/or tier-scaled
+        class-appropriate (or creative homebrew) gear to every party member.
+        """
+        if not self._ensure_active_state():
+            return {"status": "error", "message": "No active campaign loaded."}
+
+        from core.compendiums.dnd_loot import get_tier_for_level
+        from core.compendiums.dnd_weapons import get_weapon
+        from core.compendiums.dnd_armor import get_armor
+
+        active_id = self.active_state.get("campaign_id")
+        clean_q = (quest_title_or_id or "").strip()
+        if not clean_q:
+            return {"status": "error", "message": "quest_title_or_id is required."}
+
+        manifest_rewards: Dict[str, Any] = {}
+        resolved_title = clean_q
+
+        # Sync with structured CampaignManager if present for this campaign
+        c_dir = os.path.join(self.data_dir, active_id) if active_id else ""
+        if c_dir and (os.path.exists(os.path.join(c_dir, "campaign.json")) or os.path.exists(os.path.join(c_dir, "campaign_state.json"))):
+            try:
+                from core.campaign.campaign_manager import CampaignManager
+                from core.campaign.schema import QuestStatus
+                cm = CampaignManager(campaign_id=active_id, storage_root=self.data_dir)
+                matched_qid = None
+                for qid, qrec in cm.manifest.quests.items():
+                    if qid.lower() == clean_q.lower() or (qrec.title or "").lower() == clean_q.lower():
+                        matched_qid = qid
+                        resolved_title = qrec.title or clean_q
+                        if isinstance(qrec.rewards, dict):
+                            manifest_rewards = dict(qrec.rewards)
+                        break
+                if matched_qid:
+                    cm.update_quest_status(matched_qid, QuestStatus.COMPLETED, force=True)
+                    # Keep in-memory active_state aligned with CampaignManager quest mirrors
+                    self.active_state["quests"] = dict(cm.state.get("quests") or {})
+                    self.active_state["completed_quests"] = list(cm.state.get("completed_quests") or [])
+                    if self.active_state.get("active_quest", "").lower() in (clean_q.lower(), resolved_title.lower(), matched_qid.lower()):
+                        self.active_state["active_quest"] = ""
+            except Exception as cm_err:
+                logger.warning(f"[TTRPG] CampaignManager sync skipped during complete_quest: {cm_err}")
+
+        completed_list = self.active_state.setdefault("completed_quests", [])
+        if resolved_title not in completed_list:
+            completed_list.append(resolved_title)
+        if (self.active_state.get("active_quest") or "").strip().lower() in (clean_q.lower(), resolved_title.lower()):
+            self.active_state["active_quest"] = ""
+
+        chars_dict = self.active_state.get("characters", {})
+        if not chars_dict:
+            self.save_active_campaign_state()
+            return {
+                "status": "success",
+                "quest_title": resolved_title,
+                "xp_per_player": 0,
+                "gold_per_player": 0,
+                "awards": [],
+                "message": f"Quest '{resolved_title}' marked completed (no party characters present).",
+            }
+
+        avg_lvl = max(1, int(round(sum(int(c.get("level") or 1) for c in chars_dict.values()) / len(chars_dict))))
+        tier = get_tier_for_level(avg_lvl)
+
+        if milestone_only:
+            eff_xp = 0
+        elif xp_per_player is not None:
+            eff_xp = max(0, int(xp_per_player))
+        elif manifest_rewards.get("xp_per_player") is not None:
+            eff_xp = max(0, int(manifest_rewards["xp_per_player"]))
+        elif manifest_rewards.get("xp") is not None:
+            eff_xp = max(0, int(manifest_rewards["xp"]))
+        else:
+            eff_xp = int(tier["quest_xp_default"])
+
+        if gold_per_player is not None:
+            eff_gold = max(0.0, float(gold_per_player))
+        elif manifest_rewards.get("gold_per_player") is not None:
+            eff_gold = max(0.0, float(manifest_rewards["gold_per_player"]))
+        elif manifest_rewards.get("gold") is not None:
+            eff_gold = max(0.0, float(manifest_rewards["gold"]))
+        else:
+            eff_gold = float(tier["quest_gold_default"])
+
+        eff_fixed = list(fixed_items) if fixed_items is not None else list(manifest_rewards.get("fixed_items") or manifest_rewards.get("items") or [])
+        should_grant_class_gear = (
+            bool(award_class_gear)
+            if award_class_gear is not None
+            else (bool(manifest_rewards.get("award_class_gear")) if "award_class_gear" in manifest_rewards else (bool(creative_rewards) or not eff_fixed))
+        )
+
+        # Grant XP + Gold + Class/Homebrew Gear via unified grant_loot when enabled
+        ed = self._get_campaign_edition()
+        awards_summary: List[Dict[str, Any]] = []
+        level_up_ready_chars: List[str] = []
+
+        if should_grant_class_gear:
+            loot_res = self.grant_loot(
+                mode="class_reward",
+                character_name="all",
+                gold=eff_gold,
+                xp=eff_xp,
+                creative_homebrew=creative_rewards,
+                reason=f"Quest Completed: {resolved_title}",
+            )
+            awards_summary = loot_res.get("awards", [])
+            for a in awards_summary:
+                if a.get("level_up_ready"):
+                    level_up_ready_chars.append(a["character"])
+        else:
+            for _, ch in chars_dict.items():
+                ch_name = ch["name"]
+                rec: Dict[str, Any] = {"character": ch_name, "granted": []}
+                if eff_gold > 0:
+                    self._credit_gold_to_character(ch, eff_gold)
+                    rec["gold_gp"] = eff_gold
+                if eff_xp > 0:
+                    prog = self.manage_character_progression(ch_name, action="award_xp", amount_or_level=eff_xp, notes=f"Quest Completed: {resolved_title}")
+                    rec["xp"] = eff_xp
+                    if prog.get("level_up_ready"):
+                        rec["level_up_ready"] = True
+                        level_up_ready_chars.append(ch_name)
+                awards_summary.append(rec)
+
+        # Also grant any explicit fixed_items to every party member (tagging [NOT PROFICIENT] if applicable)
+        fixed_warnings: List[str] = []
+        if eff_fixed:
+            for idx_c, (_, ch) in enumerate(chars_dict.items()):
+                rec = awards_summary[idx_c] if idx_c < len(awards_summary) else {"character": ch["name"], "granted": []}
+                for fi in eff_fixed:
+                    f_name = str(fi.get("name") if isinstance(fi, dict) else fi).strip()
+                    if not f_name:
+                        continue
+                    if get_weapon(f_name) or (isinstance(fi, dict) and fi.get("category") == "weapons"):
+                        w_ent, warn = self._apply_weapon_entry_to_character(ch, fi, edition=ed)
+                        if warn:
+                            fixed_warnings.append(f"{ch['name']}: {warn}")
+                        rec.setdefault("granted", []).append({"type": "weapon", "item": w_ent["name"], "proficient": bool(w_ent.get("proficient", True))})
+                    elif get_armor(f_name) or (isinstance(fi, dict) and fi.get("category") == "armor"):
+                        a_rec = get_armor(f_name) or dict(fi)
+                        a_ent, _, warn = self._apply_armor_entry_to_character(ch, a_rec, qty=1, equip=False)
+                        if warn:
+                            fixed_warnings.append(f"{ch['name']}: {warn}")
+                        rec.setdefault("granted", []).append({"type": "armor", "item": a_ent["name"], "proficient": bool(a_ent.get("proficient", True))})
+                    else:
+                        self._sync_char_inventory_views(ch, [fi])
+                        rec.setdefault("granted", []).append({"type": "item", "item": f_name})
+
+        note_summary = summary.strip() or f"Completed quest '{resolved_title}' ({eff_xp} XP, {eff_gold:g} GP per hero)."
+        self.record_campaign_notes(
+            summary=note_summary,
+            last_action=f"Quest completed: {resolved_title}",
+        )
+        self.save_active_campaign_state()
+
+        return {
+            "status": "success",
+            "quest_title": resolved_title,
+            "xp_per_player": eff_xp,
+            "gold_per_player": eff_gold,
+            "milestone_only": milestone_only,
+            "level_up_ready_characters": level_up_ready_chars,
+            "awards": awards_summary,
+            "proficiency_warnings": fixed_warnings,
+            "message": f"Quest '{resolved_title}' completed! Awarded {eff_xp} XP and {eff_gold:g} GP per player.",
+        }
 
 
 # Full Caster Slot Table (Levels 1-20 -> Ranks 1-9)

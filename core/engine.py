@@ -1093,11 +1093,27 @@ class AetherEngine:
             from core.context_sanitizer import sanitize_turn_history
             active_turns = getattr(self, "turn_history", [])
             sanitized = sanitize_turn_history(active_turns[-4:]) if active_turns else []
-            
+
             if sanitized and hasattr(self, "live_session") and self.live_session:
+                turns_payload = sanitized
+                if type(self.live_session).__module__.startswith("google"):
+                    turns_payload = []
+                    for t in sanitized:
+                        if isinstance(t, types.Content):
+                            turns_payload.append(t)
+                        elif isinstance(t, dict):
+                            txt = (t.get("content") or t.get("text") or "").strip()
+                            if not txt:
+                                continue
+                            raw_role = str(t.get("role", "user")).lower()
+                            sdk_role = "model" if raw_role in ("assistant", "model") else "user"
+                            turns_payload.append(types.Content(role=sdk_role, parts=[types.Part.from_text(text=txt)]))
+                    if not turns_payload:
+                        return
+
                 # Injects condensed recent context turn
                 if hasattr(self.live_session, "send_client_content"):
-                    coro = self.live_session.send_client_content(turns=sanitized, turn_complete=False)
+                    coro = self.live_session.send_client_content(turns=turns_payload, turn_complete=False)
                     if asyncio.iscoroutine(coro):
                         loop = getattr(self, "_loop", None)
                         try:
@@ -1110,7 +1126,7 @@ class AetherEngine:
                             asyncio.run_coroutine_threadsafe(coro, loop)
                         else:
                             coro.close()
-                print(f"[INFO] [ENGINE] Rehydrated {len(sanitized)} turns into reconnected live session.")
+                print(f"[INFO] [ENGINE] Rehydrated {len(turns_payload)} turns into reconnected live session.")
         except Exception as e:
             print(f"[WARN] [ENGINE] Context rehydration skipped: {e}")
 
@@ -2882,6 +2898,9 @@ class AetherEngine:
             self.current_user_speech = ""
             self.current_turn_text = ""
             self.current_turn_tools = []
+            self._turn_audio_chunks = 0
+            self._turn_audio_bytes = 0
+            self._turn_audio_peak = 0.0
 
             while self.is_running:
                 async for response in session.receive():
@@ -3140,10 +3159,29 @@ class AetherEngine:
                             # Feed raw audio chunks directly to playback buffer unless interrupted
                             inline_data = getattr(part, "inline_data", None)
                             if inline_data is not None and inline_data.data:
+                                chunk_bytes = inline_data.data
+                                self._turn_audio_chunks = getattr(self, "_turn_audio_chunks", 0) + 1
+                                self._turn_audio_bytes = getattr(self, "_turn_audio_bytes", 0) + len(chunk_bytes)
+                                try:
+                                    even_len = len(chunk_bytes) - (len(chunk_bytes) % 2)
+                                    if even_len >= 2:
+                                        arr = np.frombuffer(chunk_bytes[:even_len], dtype=np.int16)
+                                        if arr.size > 0:
+                                            chunk_peak = float(np.max(np.abs(arr))) / 32768.0
+                                            if chunk_peak > getattr(self, "_turn_audio_peak", 0.0):
+                                                self._turn_audio_peak = chunk_peak
+                                except Exception:
+                                    pass
+                                if self._turn_audio_chunks == 1:
+                                    logger.info(
+                                        f"[AUDIO_OUT] Receiving live audio stream "
+                                        f"(first chunk: {len(chunk_bytes)} bytes, kill_flag={self._kill_playback_flag})"
+                                    )
                                 if not self._kill_playback_flag:
                                     if hasattr(self, "audio_player") and self.audio_player:
-                                        self.audio_player.enqueue_chunk(inline_data.data)
-                                    self.audio.write_output_chunk(inline_data.data)
+                                        self.audio_player.enqueue_chunk(chunk_bytes)
+                                    if self.audio:
+                                        self.audio.write_output_chunk(chunk_bytes)
                                     self.notify("status", {"state": "speaking", "message": f"{agent_name} is speaking..."})
 
                             text_part = getattr(part, "text", None)
@@ -3181,6 +3219,9 @@ class AetherEngine:
                         self.notify("agent_turn_interrupted", {})
                         self.current_turn_text = ""
                         self.current_turn_tools = []
+                        self._turn_audio_chunks = 0
+                        self._turn_audio_bytes = 0
+                        self._turn_audio_peak = 0.0
                         if self.current_user_speech.strip():
                             clean_user_speech = self.current_user_speech.strip()
                             self.notify("chat_event", {
@@ -3214,6 +3255,22 @@ class AetherEngine:
                             })
                             self.session_lifecycle.record_turn("assistant", clean_turn_text, tools_used=self.current_turn_tools)
                         self.notify("agent_turn_complete", {"content": clean_turn_text})
+                        audio_chunks = getattr(self, "_turn_audio_chunks", 0)
+                        audio_bytes = getattr(self, "_turn_audio_bytes", 0)
+                        audio_peak = getattr(self, "_turn_audio_peak", 0.0)
+                        if audio_chunks > 0 or clean_turn_text:
+                            logger.info(
+                                f"[AUDIO_OUT] Turn complete: chunks={audio_chunks}, bytes={audio_bytes} "
+                                f"(~{audio_bytes / 48000:.2f}s), peak={audio_peak:.4f}, text_len={len(clean_turn_text)}"
+                            )
+                        if clean_turn_text and (audio_chunks == 0 or audio_peak < 0.001):
+                            logger.warning(
+                                f"[AUDIO_OUT] Turn produced text ({len(clean_turn_text)} chars) with empty/silent audio "
+                                f"(chunks={audio_chunks}, peak={audio_peak:.4f})!"
+                            )
+                        self._turn_audio_chunks = 0
+                        self._turn_audio_bytes = 0
+                        self._turn_audio_peak = 0.0
                         self.current_turn_text = ""
                         self.current_turn_tools = []
 
@@ -3237,6 +3294,10 @@ class AetherEngine:
                             await asyncio.sleep(0.05)
                             wait_count += 1
 
+                        if wait_count >= 100 and self.audio and not self.audio.is_output_empty():
+                            logger.warning(
+                                "[AUDIO_OUT] Hardware output buffer failed to drain within 5.0s after turn_complete; clearing stale buffer."
+                            )
                         if self.audio:
                             self.audio.clear_output_buffer()
                         if self.is_running:
@@ -4982,6 +5043,8 @@ class AetherEngine:
                 "record_campaign_notes",
                 "get_campaign_notes",
                 "manage_party_inventory",
+                "grant_loot",
+                "complete_quest",
                 "cast_spell",
                 "modify_vitals",
                 "modify_resource_meter",
@@ -5918,8 +5981,13 @@ class AetherEngine:
                     pass
 
             # 9. Flush raw session transcript and reset lifecycle metrics
+            was_explicit_reset = bool(self._reset_context_flag) or reason.startswith(
+                ("User Context Reset", "Workspace Switch", "Game Mode")
+            )
             self.session_lifecycle.flush_session_to_disk()
             self.session_lifecycle.reset_metrics()
+            if not was_explicit_reset:
+                self._rehydrate_session_context()
             now_rot = time.time()
             self._last_live_turn_completed_ts = now_rot
             self.last_agent_turn_timestamp = now_rot
