@@ -396,6 +396,8 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     cfg.setdefault("boot_on_startup", False)
     cfg.setdefault("start_minimized", False)
+    cfg.setdefault("auto_check_updates", True)
+    cfg.setdefault("skipped_update_version", "")
 
     # Desktop Vision schema defaults
     vision_cfg = cfg.setdefault("vision", {})

@@ -11,6 +11,17 @@ function loadStartupSettings(config) {
   if (minEl && config.start_minimized !== undefined) {
     minEl.checked = Boolean(config.start_minimized);
   }
+  const autoUpdEl = document.getElementById('toggle-auto-check-updates');
+  if (autoUpdEl) {
+    autoUpdEl.checked = config.auto_check_updates !== undefined ? Boolean(config.auto_check_updates) : true;
+  }
+  if (config.app_version) {
+    const label = `${config.app_channel || 'Alpha'} v${config.app_version}`;
+    const verEl = document.getElementById('appVersionDisplay');
+    if (verEl) verEl.textContent = label;
+    const tagEl = document.getElementById('hudVersionTag');
+    if (tagEl) tagEl.textContent = label;
+  }
 }
 
 // Function to sort models chronologically with newest models at the top
@@ -1472,6 +1483,7 @@ if (typeof document !== "undefined") {
 function collectSettingsPayload() {
   const bootEl = document.getElementById('toggle-boot-startup');
   const minEl = document.getElementById('toggle-start-minimized');
+  const autoUpdEl = document.getElementById('toggle-auto-check-updates');
   const primaryEl = document.getElementById('select-primary-model') || 
                     document.getElementById('modelSelect') || 
                     document.querySelector('select[name="primary_model_endpoint"]');
@@ -1494,6 +1506,7 @@ function collectSettingsPayload() {
   return {
     boot_on_startup: bootEl ? bootEl.checked : false,
     start_minimized: minEl ? minEl.checked : false,
+    auto_check_updates: autoUpdEl ? autoUpdEl.checked : true,
     primary_model_endpoint: primaryEl ? primaryEl.value : 'gemini-3.8-live',
     tier1_fast_model: primaryEl ? primaryEl.value : 'gemini-3.8-live',
     tier2_moderate_model: moderateEl ? moderateEl.value : 'gemini-4-hydrogen:medium',

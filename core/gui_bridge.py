@@ -473,6 +473,8 @@ class GuiBridge:
         self._overlay_visible = False
 
         self._hud_bridge = None
+        self._hud_window = None
+        self._update_in_progress = False
 
         self._current_hud_mode = "normal"
 
@@ -972,6 +974,10 @@ class GuiBridge:
 
         self._hud_bridge = hud_bridge
 
+    def set_hud_window(self, hud_window):
+
+        self._hud_window = hud_window
+
 
 
     def update_whitelist(self, new_whitelist: list) -> dict:
@@ -1118,6 +1124,14 @@ class GuiBridge:
             cfg["boot_on_startup"] = self._config.get("boot_on_startup", False)
 
             cfg["start_minimized"] = self._config.get("start_minimized", False)
+
+            cfg["auto_check_updates"] = self._config.get("auto_check_updates", True)
+
+            cfg["skipped_update_version"] = self._config.get("skipped_update_version", "")
+
+            from core.version import APP_VERSION, APP_CHANNEL
+            cfg["app_version"] = APP_VERSION
+            cfg["app_channel"] = APP_CHANNEL
 
             cfg["vad_trailing_silence_ms"] = self._config.get("vad_trailing_silence_ms", 1400)
 
@@ -1275,7 +1289,7 @@ class GuiBridge:
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
 
-            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "tts_pace", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "ttrpg_model_endpoint", "tier1_fast_model", "tier2_moderate_model", "tier2_heavy_model", "tier3_heavy_model", "tier2_thinking_level", "tier2_thinking_budget", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
+            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "tts_pace", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "auto_check_updates", "skipped_update_version", "primary_model_endpoint", "ttrpg_model_endpoint", "tier1_fast_model", "tier2_moderate_model", "tier2_heavy_model", "tier3_heavy_model", "tier2_thinking_level", "tier2_thinking_budget", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
 
                 if top_key in new_config:
 
@@ -8969,6 +8983,177 @@ class GuiBridge:
         except Exception as e:
             logger.error(f"[GUI_BRIDGE] apply_character_dnd_level_up error: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
+
+    # =========================================================================
+    # Application Version & GitHub Releases Auto-Updater
+    # =========================================================================
+
+    def get_app_version(self) -> Dict[str, Any]:
+        """Returns the current application version, channel, and packaging mode."""
+        from core.paths import is_frozen
+        from core.version import APP_CHANNEL, APP_VERSION, GITHUB_RELEASES_PAGE, GITHUB_REPO
+        return {
+            "version": APP_VERSION,
+            "channel": APP_CHANNEL,
+            "repo": GITHUB_REPO,
+            "releases_page": GITHUB_RELEASES_PAGE,
+            "is_frozen": is_frozen(),
+        }
+
+    def check_for_updates(self, force: bool = False) -> Dict[str, Any]:
+        """
+        Checks GitHub Releases for a newer version than the local APP_VERSION.
+        When force=False (auto-check on load), respects skipped_update_version.
+        """
+        from core.updater import check_for_updates as _check_updates
+        result = _check_updates()
+        with self._config_lock:
+            skipped = str(self._config.get("skipped_update_version") or "").strip()
+        latest = str(result.get("latest_version") or "").strip()
+        result["skipped"] = bool(
+            not force
+            and result.get("update_available")
+            and skipped
+            and latest
+            and skipped == latest
+        )
+        return result
+
+    def skip_update_version(self, version: str) -> Dict[str, Any]:
+        """Persists a version string to skip automatic startup update prompts for it."""
+        clean_ver = str(version or "").strip()
+        with self._config_lock:
+            self._config["skipped_update_version"] = clean_ver
+            save_config_atomic(self._config, self._config_path)
+        return {"success": True, "skipped_update_version": clean_ver}
+
+    def open_release_page(self, url: str = "") -> Dict[str, Any]:
+        """Opens the GitHub release URL in the user's default browser."""
+        import webbrowser
+        from core.updater import is_trusted_github_url
+        from core.version import GITHUB_RELEASES_PAGE
+        target = str(url or "").strip() or GITHUB_RELEASES_PAGE
+        if not is_trusted_github_url(target):
+            target = GITHUB_RELEASES_PAGE
+        try:
+            webbrowser.open(target)
+            return {"success": True, "url": target}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def download_and_install_update(self, download_url: str = "") -> Dict[str, Any]:
+        """
+        Downloads and stages the release .zip on a background thread, pushes progress
+        events ('update_progress') to the UI, launches the .bat replacer, and exits cleanly.
+        """
+        from core.paths import is_frozen
+        from core.updater import (
+            check_for_updates as _check_updates,
+            download_and_stage_update,
+            launch_updater_bat,
+        )
+
+        if getattr(self, "_update_in_progress", False):
+            return {"success": False, "error": "An update download is already in progress."}
+
+        if not is_frozen():
+            return {
+                "success": False,
+                "dev_mode": True,
+                "error": "Auto-install only runs in the packaged AetherDesktop.exe build. Use Git pull or download from GitHub Releases.",
+            }
+
+        target_url = str(download_url or "").strip()
+        if not target_url:
+            check_res = _check_updates()
+            target_url = str(check_res.get("download_url") or "").strip()
+        if not target_url:
+            return {
+                "success": False,
+                "error": "No downloadable .zip asset found on the latest GitHub release.",
+            }
+
+        self._update_in_progress = True
+
+        def _worker():
+            last_pct = -1
+            try:
+                def _on_progress(downloaded: int, total: int, stage: str):
+                    nonlocal last_pct
+                    if stage == "downloading":
+                        pct = int((downloaded * 100) / total) if total > 0 else 0
+                        if pct == last_pct and downloaded < total:
+                            return
+                        last_pct = pct
+                        mb_done = downloaded / (1024 * 1024)
+                        mb_tot = total / (1024 * 1024) if total > 0 else 0
+                        msg = (
+                            f"Downloading update... {mb_done:.1f} / {mb_tot:.1f} MB ({pct}%)"
+                            if total > 0
+                            else f"Downloading update... {mb_done:.1f} MB"
+                        )
+                        self._on_engine_event("update_progress", {
+                            "stage": "downloading",
+                            "percent": pct,
+                            "downloaded": downloaded,
+                            "total": total,
+                            "message": msg,
+                        })
+                    elif stage == "extracting":
+                        self._on_engine_event("update_progress", {
+                            "stage": "extracting",
+                            "percent": 100,
+                            "message": "Extracting update package...",
+                        })
+
+                staged = download_and_stage_update(target_url, progress_cb=_on_progress)
+                if not staged.get("success"):
+                    self._on_engine_event("update_progress", {
+                        "stage": "error",
+                        "message": staged.get("error") or "Update staging failed.",
+                    })
+                    return
+
+                self._on_engine_event("update_progress", {
+                    "stage": "applying",
+                    "percent": 100,
+                    "message": "Replacing executable and restarting Aether Desktop...",
+                })
+
+                launched = launch_updater_bat(
+                    payload_dir=staged["payload_dir"],
+                    stage_dir=staged["stage_dir"],
+                    exe_name=staged.get("exe_name", "AetherDesktop.exe"),
+                )
+                if not launched.get("success"):
+                    self._on_engine_event("update_progress", {
+                        "stage": "error",
+                        "message": launched.get("error") or "Failed to launch updater script.",
+                    })
+                    return
+
+                # Brief pause so UI renders the 'restarting' state before closing windows
+                time.sleep(0.45)
+                if getattr(self, "_hud_window", None) and hasattr(self._hud_window, "close_all"):
+                    self._hud_window.close_all()
+                elif getattr(self, "_window", None):
+                    try:
+                        self._window.destroy()
+                    except Exception:
+                        os._exit(0)
+                else:
+                    os._exit(0)
+            except Exception as exc:
+                logger.error(f"[UPDATER] Background update worker error: {exc}", exc_info=True)
+                self._on_engine_event("update_progress", {
+                    "stage": "error",
+                    "message": str(exc),
+                })
+            finally:
+                self._update_in_progress = False
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return {"success": True, "started": True}
 
 
 GUIBridge = GuiBridge

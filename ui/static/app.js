@@ -92,6 +92,11 @@ window.aetherUI = {
       this.setupEventHandlers();
       this.startTelemetryLoop();
       this.log("Aether Desktop initialized and ready.");
+      if (!this.currentConfig || this.currentConfig.auto_check_updates !== false) {
+        setTimeout(() => {
+          this.checkForUpdates(false);
+        }, 1200);
+      }
     } finally {
       this._isConfigLoading = false;
       this._isConfigLoaded = true;
@@ -336,6 +341,29 @@ window.aetherUI = {
     const topSaveBtn = document.getElementById("topSaveSettingsBtn") || document.getElementById("btn-save-settings");
     if (topSaveBtn) {
       topSaveBtn.addEventListener("click", () => this.saveSettings());
+    }
+
+    // Application Update Check & Modal Controls
+    const checkUpdBtn = document.getElementById("btn-check-updates");
+    if (checkUpdBtn) {
+      checkUpdBtn.addEventListener("click", () => this.checkForUpdates(true));
+    }
+    const closeUpdBtn = document.getElementById("btn-close-update-modal");
+    if (closeUpdBtn) closeUpdBtn.addEventListener("click", () => this.closeUpdateModal());
+    const laterUpdBtn = document.getElementById("btn-later-update");
+    if (laterUpdBtn) laterUpdBtn.addEventListener("click", () => this.closeUpdateModal());
+    const skipUpdBtn = document.getElementById("btn-skip-update");
+    if (skipUpdBtn) skipUpdBtn.addEventListener("click", () => this.skipPendingUpdate());
+    const installUpdBtn = document.getElementById("btn-install-update");
+    if (installUpdBtn) installUpdBtn.addEventListener("click", () => this.installPendingUpdate());
+    const openRelBtn = document.getElementById("btn-open-release-page");
+    if (openRelBtn) {
+      openRelBtn.addEventListener("click", async () => {
+        if (window.pywebview?.api?.open_release_page) {
+          const url = this._pendingUpdateInfo?.release_url || "";
+          await window.pywebview.api.open_release_page(url);
+        }
+      });
     }
 
 
@@ -1778,6 +1806,17 @@ window.aetherUI = {
       if (startMinimizedToggle) {
         startMinimizedToggle.checked = Boolean(cfg.start_minimized);
       }
+      const autoUpdateToggle = document.getElementById("toggle-auto-check-updates");
+      if (autoUpdateToggle) {
+        autoUpdateToggle.checked = cfg.auto_check_updates !== undefined ? Boolean(cfg.auto_check_updates) : true;
+      }
+      if (cfg.app_version) {
+        const verLabel = `${cfg.app_channel || "Alpha"} v${cfg.app_version}`;
+        const verEl = document.getElementById("appVersionDisplay");
+        if (verEl) verEl.textContent = verLabel;
+        const tagEl = document.getElementById("hudVersionTag");
+        if (tagEl) tagEl.textContent = verLabel;
+      }
 
       this.updateTelemetryDeviceLabels();
 
@@ -1996,7 +2035,8 @@ window.aetherUI = {
         primary_model_endpoint: primaryModelVal,
         tier2_heavy_model: heavyModelVal,
         boot_on_startup: document.getElementById("toggle-boot-startup") ? document.getElementById("toggle-boot-startup").checked : Boolean(this.currentConfig?.boot_on_startup),
-        start_minimized: document.getElementById("toggle-start-minimized") ? document.getElementById("toggle-start-minimized").checked : Boolean(this.currentConfig?.start_minimized)
+        start_minimized: document.getElementById("toggle-start-minimized") ? document.getElementById("toggle-start-minimized").checked : Boolean(this.currentConfig?.start_minimized),
+        auto_check_updates: document.getElementById("toggle-auto-check-updates") ? document.getElementById("toggle-auto-check-updates").checked : (this.currentConfig?.auto_check_updates ?? true)
       };
 
       const res = await window.pywebview.api.save_config(payload);
@@ -2265,6 +2305,8 @@ window.aetherUI = {
       }
     } else if (type === "desktop_notification") {
       this.handleDesktopNotification(data);
+    } else if (type === "update_progress") {
+      this.handleUpdateProgress(data);
     } else if (type === "mic_status") {
       this.isPttActive = !!data.ptt_active;
       this.updatePttButtonUI();
@@ -2326,6 +2368,214 @@ window.aetherUI = {
       } else if (typeof window.handleRoleplayLevelUpOpened === "function") {
         window.handleRoleplayLevelUpOpened(data);
       }
+    }
+  },
+
+  // =========================================================================
+  // Application Updates (GitHub Releases)
+  // =========================================================================
+  _pendingUpdateInfo: null,
+
+  checkForUpdates: async function(manual = false) {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.check_for_updates) {
+      return null;
+    }
+    const statusEl = document.getElementById("updateStatusText");
+    const btnEl = document.getElementById("btn-check-updates");
+    if (manual && statusEl) {
+      statusEl.textContent = "Checking GitHub Releases...";
+      statusEl.style.color = "#38bdf8";
+    }
+    if (btnEl) {
+      btnEl.disabled = true;
+    }
+
+    try {
+      const res = await window.pywebview.api.check_for_updates(Boolean(manual));
+      if (!res) return null;
+
+      if (!res.success) {
+        if (manual && statusEl) {
+          statusEl.textContent = res.error || "Update check failed.";
+          statusEl.style.color = "#f87171";
+        }
+        return res;
+      }
+
+      if (res.update_available) {
+        this._pendingUpdateInfo = res;
+        if (statusEl) {
+          statusEl.textContent = `Update available: v${res.latest_version} (Current: v${res.current_version})`;
+          statusEl.style.color = "#34d399";
+        }
+        if (manual || !res.skipped) {
+          this.showUpdateModal(res);
+        }
+      } else if (res.no_releases) {
+        if (statusEl) {
+          statusEl.textContent = `No releases published on GitHub yet (Local: v${res.current_version}).`;
+          statusEl.style.color = "#94a3b8";
+        }
+      } else {
+        if (statusEl) {
+          statusEl.textContent = `Up to date (v${res.current_version}).`;
+          statusEl.style.color = "#34d399";
+        }
+      }
+      return res;
+    } catch (err) {
+      console.warn("Update check failed:", err);
+      if (manual && statusEl) {
+        statusEl.textContent = `Update check error: ${err}`;
+        statusEl.style.color = "#f87171";
+      }
+      return null;
+    } finally {
+      if (btnEl) {
+        btnEl.disabled = false;
+      }
+    }
+  },
+
+  showUpdateModal: function(info) {
+    if (!info) return;
+    this._pendingUpdateInfo = info;
+    const modal = document.getElementById("modal-app-update");
+    if (!modal) return;
+
+    const curEl = document.getElementById("update-current-ver");
+    const latEl = document.getElementById("update-latest-ver");
+    const notesEl = document.getElementById("update-release-notes");
+    const progWrap = document.getElementById("update-progress-wrap");
+    const progBar = document.getElementById("update-progress-bar");
+    const progText = document.getElementById("update-progress-text");
+    const errEl = document.getElementById("update-modal-error");
+    const installBtn = document.getElementById("btn-install-update");
+    const openRelBtn = document.getElementById("btn-open-release-page");
+    const skipBtn = document.getElementById("btn-skip-update");
+    const laterBtn = document.getElementById("btn-later-update");
+
+    if (curEl) curEl.textContent = `v${info.current_version || "0.81"}`;
+    if (latEl) latEl.textContent = `v${info.latest_version || ""}`;
+    if (notesEl) {
+      notesEl.textContent = info.release_notes || "No release notes provided for this release.";
+    }
+    if (progWrap) progWrap.style.display = "none";
+    if (progBar) progBar.style.width = "0%";
+    if (progText) progText.textContent = "Preparing download...";
+
+    if (errEl) {
+      errEl.style.display = "none";
+      errEl.textContent = "";
+    }
+    if (skipBtn) skipBtn.disabled = false;
+    if (laterBtn) laterBtn.disabled = false;
+
+    if (!info.download_url) {
+      if (errEl) {
+        errEl.textContent = "No .zip release package was found on this GitHub release. You can open the release page to download manually.";
+        errEl.style.display = "block";
+      }
+      if (installBtn) installBtn.style.display = "none";
+      if (openRelBtn) openRelBtn.style.display = "inline-flex";
+    } else if (info.is_frozen === false) {
+      if (errEl) {
+        errEl.textContent = "Running from Python source (dev mode). Auto-replace only runs in the packaged AetherDesktop.exe build.";
+        errEl.style.display = "block";
+      }
+      if (installBtn) installBtn.style.display = "none";
+      if (openRelBtn) openRelBtn.style.display = "inline-flex";
+    } else {
+      if (installBtn) {
+        installBtn.style.display = "inline-flex";
+        installBtn.disabled = false;
+        installBtn.textContent = "Download & Install";
+      }
+      if (openRelBtn) openRelBtn.style.display = "none";
+    }
+
+    modal.classList.remove("hidden");
+  },
+
+  closeUpdateModal: function() {
+    const modal = document.getElementById("modal-app-update");
+    if (modal) modal.classList.add("hidden");
+  },
+
+  skipPendingUpdate: async function() {
+    const ver = this._pendingUpdateInfo?.latest_version;
+    if (ver && window.pywebview?.api?.skip_update_version) {
+      try {
+        await window.pywebview.api.skip_update_version(ver);
+      } catch (e) {
+        console.warn("Could not save skipped update version:", e);
+      }
+    }
+    this.closeUpdateModal();
+  },
+
+  installPendingUpdate: async function() {
+    const url = this._pendingUpdateInfo?.download_url || "";
+    if (!window.pywebview?.api?.download_and_install_update) return;
+
+    const installBtn = document.getElementById("btn-install-update");
+    const skipBtn = document.getElementById("btn-skip-update");
+    const laterBtn = document.getElementById("btn-later-update");
+    const progWrap = document.getElementById("update-progress-wrap");
+    const progText = document.getElementById("update-progress-text");
+    const errEl = document.getElementById("update-modal-error");
+
+    if (errEl) errEl.style.display = "none";
+    if (progWrap) progWrap.style.display = "block";
+    if (progText) progText.textContent = "Starting download...";
+    if (installBtn) {
+      installBtn.disabled = true;
+      installBtn.textContent = "Updating...";
+    }
+    if (skipBtn) skipBtn.disabled = true;
+    if (laterBtn) laterBtn.disabled = true;
+
+    try {
+      const res = await window.pywebview.api.download_and_install_update(url);
+      if (res && !res.success) {
+        this.handleUpdateProgress({ stage: "error", message: res.error || "Update failed." });
+      }
+    } catch (err) {
+      this.handleUpdateProgress({ stage: "error", message: String(err) });
+    }
+  },
+
+  handleUpdateProgress: function(data) {
+    if (!data) return;
+    const progWrap = document.getElementById("update-progress-wrap");
+    const progBar = document.getElementById("update-progress-bar");
+    const progText = document.getElementById("update-progress-text");
+    const errEl = document.getElementById("update-modal-error");
+    const installBtn = document.getElementById("btn-install-update");
+    const skipBtn = document.getElementById("btn-skip-update");
+    const laterBtn = document.getElementById("btn-later-update");
+
+    if (data.stage === "error") {
+      if (errEl) {
+        errEl.textContent = data.message || "Update failed.";
+        errEl.style.display = "block";
+      }
+      if (progWrap) progWrap.style.display = "none";
+      if (installBtn) {
+        installBtn.disabled = false;
+        installBtn.textContent = "Retry Install";
+      }
+      if (skipBtn) skipBtn.disabled = false;
+      if (laterBtn) laterBtn.disabled = false;
+      return;
+    }
+
+    if (progWrap) progWrap.style.display = "block";
+    if (progBar && typeof data.percent === "number") {
+      progBar.style.width = `${Math.max(0, Math.min(100, data.percent))}%`;
+    }
+    if (progText && data.message) {
+      progText.textContent = data.message;
     }
   },
 
@@ -4093,6 +4343,7 @@ window.onAssistantSleep = function() {
 function collectSettingsPayload() {
   const bootEl = document.getElementById("toggle-boot-startup");
   const minEl = document.getElementById("toggle-start-minimized");
+  const autoUpdEl = document.getElementById("toggle-auto-check-updates");
   const primaryEl = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
   const moderateEl = document.getElementById("select-moderate-model") || document.querySelector('select[name="tier2_moderate_model"]');
   const heavyEl = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier3_heavy_model"]') || document.querySelector('select[name="tier2_heavy_model"]');
@@ -4101,6 +4352,7 @@ function collectSettingsPayload() {
   return {
     boot_on_startup: bootEl ? bootEl.checked : false,
     start_minimized: minEl ? minEl.checked : false,
+    auto_check_updates: autoUpdEl ? autoUpdEl.checked : true,
     primary_model_endpoint: primaryEl ? primaryEl.value : "gemini-3.8-live",
     tier1_fast_model: primaryEl ? primaryEl.value : "gemini-3.8-live",
     tier2_moderate_model: moderateEl ? moderateEl.value : "gemini-4-hydrogen:medium",

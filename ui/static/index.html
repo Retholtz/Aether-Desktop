@@ -18,7 +18,7 @@
         <div class="hud-logo-icon">▲</div>
         <div class="hud-titles">
           <span class="hud-title" id="hudAgentTitle">AETHER DESKTOP</span>
-          <span class="hud-subtitle">AI VOICE & DESKTOP ASSISTANT</span>
+          <span class="hud-subtitle">AI VOICE & DESKTOP ASSISTANT · <span id="hudVersionTag">Alpha v0.81</span></span>
         </div>
       </div>
 
@@ -1649,6 +1649,30 @@
                       <span class="toggle-label">Start Minimized to Tray</span>
                     </label>
                     <span class="field-hint input-hint">Launches Aether directly into the taskbar/system tray without taking screen focus.</span>
+                  </div>
+                </div>
+
+                <!-- Row: Auto-Check Updates & Manual Check for Updates -->
+                <div class="grid-row row-double" style="margin-top: 12px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.08); align-items: center;">
+                  <div class="form-group toggle-group">
+                    <label class="toggle-container">
+                      <input type="checkbox" id="toggle-auto-check-updates" checked />
+                      <span class="toggle-slider"></span>
+                      <span class="toggle-label">Auto-Check for Updates on Load</span>
+                    </label>
+                    <span class="field-hint input-hint">Checks GitHub Releases on startup and prompts when a newer version is available.</span>
+                  </div>
+
+                  <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                      <span style="font-size: 0.85rem; color: #cbd5e1;">
+                        Installed Version: <strong id="appVersionDisplay" style="color: #38bdf8;">Alpha v0.81</strong>
+                      </span>
+                      <button type="button" id="btn-check-updates" class="hud-btn-secondary sm" title="Check GitHub Releases for a newer version">
+                        🔄 CHECK FOR UPDATE
+                      </button>
+                    </div>
+                    <span id="updateStatusText" class="field-hint input-hint">Checks against GitHub Releases (Retholtz/Aether-Desktop).</span>
                   </div>
                 </div>
               </div>
@@ -5720,6 +5744,58 @@
       </div>
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px;">
         <button type="button" id="btn-cancel-vault-export-choice" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Application Update Available -->
+  <div id="modal-app-update" class="modal-overlay hidden" style="z-index: 100070;">
+    <div class="modal-card" style="max-width: 500px; width: 92%;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.25rem;">🚀</span>
+          <h3 style="margin: 0; font-size: 1.05rem; color: #f1f5f9;">Update Available</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-update-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.28); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px;">
+          <div>
+            <div style="font-size: 0.74rem; color: #94a3b8; text-transform: uppercase;">Current Version</div>
+            <div id="update-current-ver" style="font-size: 0.95rem; font-weight: 600; color: #cbd5e1;">v0.81</div>
+          </div>
+          <div style="font-size: 1.1rem; color: #38bdf8;">→</div>
+          <div style="text-align: right;">
+            <div style="font-size: 0.74rem; color: #94a3b8; text-transform: uppercase;">GitHub Release</div>
+            <div id="update-latest-ver" style="font-size: 0.95rem; font-weight: 700; color: #34d399;">v0.82</div>
+          </div>
+        </div>
+
+        <p style="color: #e2e8f0; font-size: 0.95rem; font-weight: 600; margin: 0 0 10px 0;">
+          Would you like to download and install new update?
+        </p>
+
+        <div id="update-release-notes-wrap" style="margin-bottom: 12px;">
+          <div style="font-size: 0.76rem; color: #94a3b8; margin-bottom: 4px;">Release Notes</div>
+          <pre id="update-release-notes" style="max-height: 150px; overflow-y: auto; margin: 0; padding: 10px; background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 6px; color: #cbd5e1; font-size: 0.8rem; line-height: 1.45; white-space: pre-wrap; font-family: inherit;"></pre>
+        </div>
+
+        <div id="update-progress-wrap" style="display: none; margin-top: 10px;">
+          <div style="width: 100%; height: 8px; background: rgba(30, 41, 59, 0.9); border-radius: 999px; overflow: hidden; margin-bottom: 6px;">
+            <div id="update-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #38bdf8, #34d399); transition: width 0.2s ease;"></div>
+          </div>
+          <div id="update-progress-text" style="font-size: 0.8rem; color: #38bdf8;">Preparing download...</div>
+        </div>
+
+        <div id="update-modal-error" style="display: none; margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.35); color: #fca5a5; font-size: 0.82rem; line-height: 1.4;"></div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 20px; flex-wrap: wrap;">
+        <button type="button" id="btn-skip-update" class="btn-secondary-sm" style="padding: 7px 12px; color: #94a3b8;">Skip This Version</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button type="button" id="btn-open-release-page" class="btn-secondary-sm" style="display: none; padding: 7px 14px;">Open GitHub Release</button>
+          <button type="button" id="btn-later-update" class="btn-secondary-sm" style="padding: 7px 14px;">Later</button>
+          <button type="button" id="btn-install-update" class="btn-primary-sm" style="padding: 7px 16px;">Download &amp; Install</button>
+        </div>
       </div>
     </div>
   </div>

@@ -503,6 +503,8 @@ class HudWindow:
         self.min_height = min_height
         self.on_init = on_init
         self._is_closing_permanently = False
+        if hasattr(self.bridge, "set_hud_window"):
+            self.bridge.set_hud_window(self)
 
         # Determine path to static UI assets
         base_dir = get_bundle_dir()
