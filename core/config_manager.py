@@ -24,13 +24,31 @@ def apply_startup_configuration(cfg: dict):
 
 
 DEFAULT_CURATED_MODELS: Dict[str, List[Dict[str, str]]] = {
+    "primary_options": [
+        {"id": "gemini-3.8-live", "display_name": "Gemini 3.8 Live (Default)", "label": "Gemini 3.8 Live (Default)"},
+        {"id": "gemini-4-hydrogen:instant", "display_name": "Gemini 4.0 Hydrogen Instant (Modular)", "label": "Gemini 4.0 Hydrogen Instant (Modular)"},
+        {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (Modular High Speed)", "label": "Gemini 3.8 Flash (Modular High Speed)"}
+    ],
     "tier1_options": [
-        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (High Speed)"},
-        {"id": "gemini-4-argon", "label": "Gemini 4 Argon (Balanced Reasoning)"}
+        {"id": "gemini-3.8-live", "display_name": "Gemini 3.8 Live (Default)", "label": "Gemini 3.8 Live (Default)"},
+        {"id": "gemini-4-hydrogen:instant", "display_name": "Gemini 4.0 Hydrogen Instant (Modular)", "label": "Gemini 4.0 Hydrogen Instant (Modular)"},
+        {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (Modular High Speed)", "label": "Gemini 3.8 Flash (Modular High Speed)"}
+    ],
+    "tier2_moderate_options": [
+        {"id": "gemini-4-hydrogen:low", "display_name": "Gemini 4.0 Hydrogen Low", "label": "Gemini 4.0 Hydrogen Low"},
+        {"id": "gemini-4-hydrogen:medium", "display_name": "Gemini 4.0 Hydrogen Medium (Default)", "label": "Gemini 4.0 Hydrogen Medium (Default)"},
+        {"id": "gemini-4-hydrogen:high", "display_name": "Gemini 4.0 Hydrogen High", "label": "Gemini 4.0 Hydrogen High"},
+        {"id": "gemini-4-hydrogen:xhigh", "display_name": "Gemini 4.0 Hydrogen Extra", "label": "Gemini 4.0 Hydrogen Extra"}
     ],
     "tier2_options": [
-        {"id": "gemini-4-argon", "label": "Gemini 4 Argon (High Reasoning)"},
-        {"id": "gemini-3.8-flash-extended", "label": "Gemini 3.8 Extended (Deep Reasoning)"}
+        {"id": "gemini-4-argon:low", "display_name": "Gemini 4.0 Argon Low", "label": "Gemini 4.0 Argon Low"},
+        {"id": "gemini-4-argon:medium", "display_name": "Gemini 4.0 Argon Medium (Default)", "label": "Gemini 4.0 Argon Medium (Default)"},
+        {"id": "gemini-4-argon:high", "display_name": "Gemini 4.0 Argon High", "label": "Gemini 4.0 Argon High"}
+    ],
+    "tier3_options": [
+        {"id": "gemini-4-argon:low", "display_name": "Gemini 4.0 Argon Low", "label": "Gemini 4.0 Argon Low"},
+        {"id": "gemini-4-argon:medium", "display_name": "Gemini 4.0 Argon Medium (Default)", "label": "Gemini 4.0 Argon Medium (Default)"},
+        {"id": "gemini-4-argon:high", "display_name": "Gemini 4.0 Argon High", "label": "Gemini 4.0 Argon High"}
     ],
     "stt_options": [
         {"id": "gemini_live_audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)"},
@@ -54,6 +72,7 @@ DEFAULT_VOICE_CONFIG: Dict[str, Any] = {
     "tts_endpoint": "gemini_live",
     "tts_voice": "Achernar",
     "tts_speed": 1.0,
+    "tts_pace": "natural",
     "voice_accent": "default",
     "wake_word_enabled": True,
     "idle_timeout_seconds": 8.0,
@@ -263,6 +282,12 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg["tts_speed"] = tts_speed
     api_cfg["voice_speed"] = tts_speed
 
+    tts_pace = str(api_cfg.get("tts_pace") or cfg.get("tts_pace") or "natural").strip().lower()
+    if tts_pace not in ("measured", "natural", "brisk"):
+        tts_pace = "natural"
+    cfg["tts_pace"] = tts_pace
+    api_cfg["tts_pace"] = tts_pace
+
     voice_accent = (
         api_cfg.get("voice_accent")
         or cfg.get("voice_accent")
@@ -274,12 +299,15 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     api_cfg["voice_accent"] = voice_accent
 
     pipeline_mode = (
-        cfg.get("pipeline_mode")
-        or api_cfg.get("pipeline_mode")
+        api_cfg.get("pipeline_mode")
+        or cfg.get("pipeline_mode")
         or "live"
     ).lower()
     cfg["pipeline_mode"] = pipeline_mode
     api_cfg["pipeline_mode"] = pipeline_mode
+
+    if api_cfg.get("live_model_id") in (None, "", "gemini-3.1-flash-live-preview"):
+        api_cfg["live_model_id"] = "gemini-3.8-live"
 
     vad_silence = int(cfg.get("vad_trailing_silence_ms") or audio_cfg.get("vad_trailing_silence_ms") or 800)
     cfg["vad_trailing_silence_ms"] = vad_silence
@@ -292,34 +320,77 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         for opt_key, opt_val in DEFAULT_CURATED_MODELS.items():
             if opt_key not in cfg["models"] or not cfg["models"][opt_key]:
                 cfg["models"][opt_key] = copy.deepcopy(opt_val)
+        # Upgrade legacy/pre-3-tier curated lists cleanly
+        t1_opts = cfg["models"].get("tier1_options") or []
+        if not any(str(o.get("id", "")).lower() == "gemini-3.8-live" for o in t1_opts if isinstance(o, dict)):
+            cfg["models"]["primary_options"] = copy.deepcopy(DEFAULT_CURATED_MODELS["primary_options"])
+            cfg["models"]["tier1_options"] = copy.deepcopy(DEFAULT_CURATED_MODELS["tier1_options"])
+        t2m_opts = cfg["models"].get("tier2_moderate_options") or []
+        if not any("hydrogen:" in str(o.get("id", "")).lower() for o in t2m_opts if isinstance(o, dict)):
+            cfg["models"]["tier2_moderate_options"] = copy.deepcopy(DEFAULT_CURATED_MODELS["tier2_moderate_options"])
+        t2_opts = cfg["models"].get("tier2_options") or []
+        if not any("argon:medium" in str(o.get("label", "")).lower() for o in t2_opts if isinstance(o, dict)):
+            cfg["models"]["tier2_options"] = copy.deepcopy(DEFAULT_CURATED_MODELS["tier2_options"])
+            cfg["models"]["tier3_options"] = copy.deepcopy(DEFAULT_CURATED_MODELS["tier3_options"])
 
-    # Dynamic Model Discovery Endpoints
+    # Dynamic Model Discovery Endpoints (Tier 1 Primary -> Tier 2 Moderate Hydrogen -> Tier 3 Heavy Argon)
     primary_model = (
         cfg.get("primary_model_endpoint")
         or cfg.get("tier1_fast_model")
         or api_cfg.get("model_id")
-        or "gemini-3.8-flash"
+        or "gemini-3.8-live"
     )
+    if primary_model in ("gemini-4-hydrogen", "gemini-4.0-hydrogen"):
+        primary_model = "gemini-4-hydrogen:instant"
     cfg["primary_model_endpoint"] = primary_model
     cfg["tier1_fast_model"] = primary_model
     api_cfg["model_id"] = primary_model
+    if "live" in str(primary_model).lower():
+        api_cfg["live_model_id"] = primary_model
+
+    moderate_model = (
+        cfg.get("tier2_moderate_model")
+        or api_cfg.get("moderate_model_id")
+        or "gemini-4-hydrogen:medium"
+    )
+    if moderate_model in ("gemini-4-hydrogen", "gemini-4.0-hydrogen", "gemini-4-hydrogen:instant"):
+        moderate_model = "gemini-4-hydrogen:medium"
+    cfg["tier2_moderate_model"] = moderate_model
+    api_cfg["moderate_model_id"] = moderate_model
+
+    ttrpg_model = (
+        cfg.get("ttrpg_model_endpoint")
+        or api_cfg.get("ttrpg_model_id")
+        or "gemini-4-hydrogen:medium"
+    )
+    if ttrpg_model in ("gemini-4-hydrogen", "gemini-4.0-hydrogen"):
+        ttrpg_model = "gemini-4-hydrogen:medium"
+    cfg["ttrpg_model_endpoint"] = ttrpg_model
+    api_cfg["ttrpg_model_id"] = ttrpg_model
 
     heavy_model = (
-        cfg.get("tier2_heavy_model")
+        cfg.get("tier3_heavy_model")
+        or cfg.get("tier2_heavy_model")
         or api_cfg.get("pro_model_id")
-        or "gemini-4-argon"
+        or "gemini-4-argon:medium"
     )
-    # Migrate legacy defaults to gemini-4-argon if still on deprecated preview models
-    if heavy_model in ("gemini-3.1-pro-preview", "gemini-3.8-pro", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"):
-        heavy_model = "gemini-4-argon"
+    # Migrate legacy/bare defaults to curated Argon profile IDs
+    if heavy_model in ("gemini-4-argon", "gemini-3.1-pro-preview", "gemini-3.8-pro", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.8-flash-extended"):
+        existing_lvl = str(cfg.get("tier2_thinking_level") or api_cfg.get("tier2_thinking_level") or "medium").strip().lower()
+        if existing_lvl not in ("low", "medium", "high"):
+            existing_lvl = "medium"
+        heavy_model = f"gemini-4-argon:{existing_lvl}"
+    cfg["tier3_heavy_model"] = heavy_model
     cfg["tier2_heavy_model"] = heavy_model
     api_cfg["pro_model_id"] = heavy_model
 
     thinking_level = (
         cfg.get("tier2_thinking_level")
         or api_cfg.get("tier2_thinking_level")
-        or "high"
+        or "medium"
     )
+    if ":" in str(heavy_model):
+        thinking_level = str(heavy_model).split(":", 1)[1].strip().lower() or thinking_level
     cfg["tier2_thinking_level"] = thinking_level
     api_cfg["tier2_thinking_level"] = thinking_level
 
@@ -401,8 +472,11 @@ class ConfigManager:
                 "boot_on_startup",
                 "start_minimized",
                 "primary_model_endpoint",
+                "ttrpg_model_endpoint",
                 "tier1_fast_model",
+                "tier2_moderate_model",
                 "tier2_heavy_model",
+                "tier3_heavy_model",
                 "tier2_thinking_level",
                 "tier2_thinking_budget",
                 "mode",
@@ -421,9 +495,17 @@ class ConfigManager:
                 self.config["primary_model_endpoint"] = updates["primary_model_endpoint"]
                 self.config["tier1_fast_model"] = updates["primary_model_endpoint"]
                 self.config.setdefault("api", {})["model_id"] = updates["primary_model_endpoint"]
-            if "tier2_heavy_model" in updates:
-                self.config["tier2_heavy_model"] = updates["tier2_heavy_model"]
-                self.config.setdefault("api", {})["pro_model_id"] = updates["tier2_heavy_model"]
+            if "ttrpg_model_endpoint" in updates:
+                self.config["ttrpg_model_endpoint"] = updates["ttrpg_model_endpoint"]
+                self.config.setdefault("api", {})["ttrpg_model_id"] = updates["ttrpg_model_endpoint"]
+            if "tier2_moderate_model" in updates:
+                self.config["tier2_moderate_model"] = updates["tier2_moderate_model"]
+                self.config.setdefault("api", {})["moderate_model_id"] = updates["tier2_moderate_model"]
+            if "tier3_heavy_model" in updates or "tier2_heavy_model" in updates:
+                heavy_val = updates.get("tier3_heavy_model") or updates.get("tier2_heavy_model")
+                self.config["tier3_heavy_model"] = heavy_val
+                self.config["tier2_heavy_model"] = heavy_val
+                self.config.setdefault("api", {})["pro_model_id"] = heavy_val
             if "tier2_thinking_level" in updates:
                 self.config["tier2_thinking_level"] = updates["tier2_thinking_level"]
                 self.config.setdefault("api", {})["tier2_thinking_level"] = updates["tier2_thinking_level"]

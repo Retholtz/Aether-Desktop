@@ -109,11 +109,17 @@ class ReflexionEngine:
         if not isinstance(self.config, dict):
             self.config = {}
 
-        configured_heavy = self.config.get("tier2_heavy_model", "gemini-4-argon")
+        from core.model_discovery import resolve_model_profile
+        configured_heavy = self.config.get("tier2_heavy_model", "gemini-4-argon:high")
         if configured_heavy in ("gemini-3.8-pro",):
-            configured_heavy = "gemini-4-argon"
-        self.heavy_model = configured_heavy
-        self.thinking_level = self.config.get("tier2_thinking_level", "high")
+            configured_heavy = "gemini-4-argon:high"
+        base_heavy, profile_lvl = resolve_model_profile(
+            configured_heavy,
+            default_model="gemini-4-argon",
+            default_level=self.config.get("tier2_thinking_level", "high")
+        )
+        self.heavy_model = base_heavy
+        self.thinking_level = profile_lvl or self.config.get("tier2_thinking_level", "high")
         self.thinking_budget = self.config.get("tier2_thinking_budget", 2048)
 
         # Gemini Client Resolution: env var -> engine client -> decrypted config
@@ -145,15 +151,14 @@ class ReflexionEngine:
         response_mime_type: Optional[str] = None,
         temperature: Optional[float] = None
     ) -> types.GenerateContentConfig:
-        """Constructs GenerateContentConfig adapting thinking parameters for Argon vs older models."""
-        is_argon = "argon" in str(self.heavy_model).lower()
-        if is_argon:
-            level = str(self.thinking_level or "high").lower()
-            if level not in ("low", "medium", "high"):
-                level = "high"
-            thinking_cfg = types.ThinkingConfig(thinking_level=level)
-        else:
-            thinking_cfg = types.ThinkingConfig(thinking_budget=int(self.thinking_budget or 2048))
+        """Constructs GenerateContentConfig adapting thinking parameters for Gemini 4 vs older models."""
+        from core.model_discovery import build_thinking_config
+        thinking_cfg = build_thinking_config(
+            self.heavy_model,
+            thinking_level=self.thinking_level,
+            thinking_budget=self.thinking_budget,
+        )
+        is_argon = "argon" in str(self.heavy_model).lower() or "hydrogen" in str(self.heavy_model).lower()
 
         kwargs: Dict[str, Any] = {
             "safety_settings": get_permissive_safety_settings(),

@@ -45,7 +45,9 @@ class AudioGateState(Enum):
     ACTIVE_CONVERSATION = "ACTIVE_CONVERSATION"
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from core.paths import get_bundle_dir
+
+PROJECT_ROOT = get_bundle_dir()
 SOUNDS_DIR = os.path.join(PROJECT_ROOT, "ui", "sounds")
 
 

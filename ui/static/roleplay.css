@@ -934,6 +934,40 @@
   line-height: 1.35;
 }
 
+.rp-engine-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rp-engine-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.rp-engine-select {
+  flex: 1;
+  min-width: 0;
+  background: rgba(11, 17, 24, 0.85);
+  color: #e2e8f0;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 0.74rem;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.rp-engine-select:hover,
+.rp-engine-select:focus {
+  border-color: rgba(56, 189, 248, 0.65);
+}
+
 /* Adventure Action Button (Matches Start Aether button in style & size) */
 .rp-adventure-btn {
   display: flex;

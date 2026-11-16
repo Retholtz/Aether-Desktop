@@ -59,7 +59,8 @@ class SessionLifecycleManager:
         self.rotation_threshold_duration = rotation_threshold_duration
         self.rotation_threshold_tool_chars = rotation_threshold_tool_chars
 
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        from core.paths import get_app_dir
+        base_dir = get_app_dir()
         self.chats_dir = chats_dir or os.path.join(base_dir, "data", "chats")
         os.makedirs(self.chats_dir, exist_ok=True)
 

@@ -41,8 +41,10 @@ class _TelemetryConnection(sqlite3.Connection):
         return res
 
 
+from core.paths import get_app_dir
+
 def get_default_telemetry_db_path() -> str:
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = get_app_dir()
     return os.path.join(base_dir, DEFAULT_DB_REL_PATH)
 
 

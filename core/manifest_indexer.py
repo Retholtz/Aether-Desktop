@@ -12,6 +12,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from core.logger import get_logger
+from core.paths import get_app_dir
 
 logger = get_logger("ManifestIndexer")
 
@@ -20,7 +21,7 @@ _db_lock = threading.Lock()
 
 
 def get_default_db_path() -> str:
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = get_app_dir()
     return os.path.join(base_dir, DEFAULT_DB_REL_PATH)
 
 
@@ -189,7 +190,7 @@ def resolve_gemini_client(explicit_client: Optional[Any] = None) -> Optional[Any
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         try:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            base_dir = get_app_dir()
             cfg_path = os.path.join(base_dir, "config.json")
             if os.path.exists(cfg_path):
                 with open(cfg_path, "r", encoding="utf-8") as f:
@@ -346,7 +347,7 @@ def queue_manifest_extraction(
 
 
 def get_default_chats_dir() -> str:
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = get_app_dir()
     return os.path.join(base_dir, "data", "chats")
 
 

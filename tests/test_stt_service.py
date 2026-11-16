@@ -32,7 +32,6 @@ class TestSTTService(unittest.TestCase):
         for non_model in (
             "gemini_live_audio",
             "gemini_live",
-            "gemini-3.5-transcribe",
             "gemini-3.5-transcribe-live",
             "gemini-3.8-transcribe",
             "gemini-3.8-transcribe-live",
@@ -42,7 +41,8 @@ class TestSTTService(unittest.TestCase):
             resolved = resolve_stt_model_endpoint(non_model)
             self.assertEqual(resolved, "gemini-3.8-flash", f"Failed for {non_model}")
 
-        # Real model endpoint preserved
+        # Real model endpoints preserved
+        self.assertEqual(resolve_stt_model_endpoint("gemini-3.5-transcribe"), "gemini-3.5-transcribe")
         self.assertEqual(resolve_stt_model_endpoint("gemini-2.5-flash"), "gemini-2.5-flash")
         self.assertEqual(resolve_stt_model_endpoint("models/gemini-2.5-flash"), "gemini-2.5-flash")
 

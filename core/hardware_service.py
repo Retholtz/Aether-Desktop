@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any, List, Tuple, Callable
 import psutil
 
 from core.logger import get_logger
+from core.paths import get_bundle_dir
 
 logger = get_logger("HardwareService")
 
@@ -267,7 +268,7 @@ class CpuMonitorBackend:
         candidates = []
         if dll_path:
             candidates.append(dll_path)
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = get_bundle_dir()
         candidates.append(os.path.join(base_dir, "assets", "bin", "LibreHardwareMonitorLib.dll"))
         site_dll = os.path.join(sys.prefix, "Lib", "site-packages", "WinTmp", "LibreHardwareMonitorLib.dll")
         candidates.append(site_dll)
@@ -576,7 +577,7 @@ class HardwareService:
     def _resolve_presentmon_bin(self) -> str:
         resolved = shutil.which(self.presentmon_path) or self.presentmon_path
         if not os.path.isabs(resolved) and not os.path.exists(resolved):
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            base_dir = get_bundle_dir()
             candidate = os.path.join(base_dir, self.presentmon_path)
             if os.path.exists(candidate):
                 return candidate

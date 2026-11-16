@@ -258,12 +258,14 @@ class TestReflexionArgonConfig(unittest.TestCase):
         self.assertEqual(config.response_mime_type, "application/json")
 
     def test_schema_sync_defaults_to_argon(self):
-        """Verifies sync_config_schema defaults heavy model to gemini-4-argon."""
+        """Verifies sync_config_schema defaults 3-tier endpoints cleanly to 3.8-live, Hydrogen Medium, and Argon Medium."""
         cfg = sync_config_schema({})
-        self.assertEqual(cfg["primary_model_endpoint"], "gemini-3.8-flash")
-        self.assertEqual(cfg["tier2_heavy_model"], "gemini-4-argon")
-        self.assertEqual(cfg["tier2_thinking_level"], "high")
-        self.assertEqual(cfg["api"]["pro_model_id"], "gemini-4-argon")
+        self.assertEqual(cfg["primary_model_endpoint"], "gemini-3.8-live")
+        self.assertEqual(cfg["tier2_moderate_model"], "gemini-4-hydrogen:medium")
+        self.assertEqual(cfg["tier3_heavy_model"], "gemini-4-argon:medium")
+        self.assertEqual(cfg["tier2_heavy_model"], "gemini-4-argon:medium")
+        self.assertEqual(cfg["tier2_thinking_level"], "medium")
+        self.assertEqual(cfg["api"]["pro_model_id"], "gemini-4-argon:medium")
 
 
 class TestProgramManagerWhitelist(unittest.TestCase):

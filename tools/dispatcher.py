@@ -899,10 +899,10 @@ EXPORT_DOSSIER_DECLARATION = {
 DELEGATE_HEAVY_TASK_DECLARATION = {
     "name": "delegate_heavy_task",
     "description": (
-        "Delegates complex multi-step tasks, comprehensive guides/manuals/recipes from scratch, deep research document generation, "
+        "Delegates complex multi-step synthesis, comprehensive guides/manuals/recipes from scratch, deep research document generation, "
         "high-stakes calibrated correspondence (resignation letters, formal speeches, executive announcements), or intricate Python automation coding "
-        "to the Tier 2 Heavy Reasoning Model (Gemini 4 Argon with High Thinking). "
-        "ALWAYS invoke this tool whenever the user asks to 'use Argon', 'use Tier 2', 'think deeply', create an exhaustive document or guide, "
+        "to the Tier 3 Heavy Reasoning Model (Gemini 4 Argon). "
+        "ALWAYS invoke this tool whenever the user asks to 'use Argon', 'use Tier 3', 'think deeply', create an exhaustive document or guide, "
         "or requires multi-page structured reports with tables, diagrams, and meticulous detail."
     ),
     "parameters": {
@@ -912,7 +912,7 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
                 "type": "STRING",
                 "enum": ["research_dossier", "correspondence", "python_automation", "deep_analysis"],
                 "description": (
-                    "The category of heavy task to delegate to Tier 2: 'research_dossier' for exhaustive guides, manuals, recipes, or research reports; "
+                    "The category of heavy task to delegate to Tier 3: 'research_dossier' for exhaustive guides, manuals, recipes, or research reports; "
                     "'correspondence' for high-stakes letters, speeches, emails, or memos where deep calibration is requested without executive summaries; "
                     "'python_automation' for robust scripts; 'deep_analysis' for system or strategic audits."
                 )
@@ -944,14 +944,58 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
             },
             "paste_to_active_doc": {
                 "type": "BOOLEAN",
-                "description": "Whether to automatically paste the formatted document into the active editor or browser (e.g. Google Docs in Chrome, Word, Notepad) via rich HTML clipboard."
+                "description": "Whether to automatically paste the formatted document into an active editor via rich HTML clipboard. Set false when orchestrating window opening and verification separately."
             },
             "target_app": {
                 "type": "STRING",
-                "description": "The target application name for pasting (e.g. 'google docs', 'chrome', 'winword', 'notepad'). Defaults to 'google docs'."
+                "description": "The target application name for pasting (e.g. 'google docs', 'winword', 'notepad', 'chrome'). Defaults to 'google docs'."
             }
         },
         "required": ["task_type", "title", "instructions"]
+    }
+}
+
+DELEGATE_MODERATE_TASK_DECLARATION = {
+    "name": "delegate_moderate_task",
+    "description": (
+        "Delegates tasks and reasoning to the Tier 2 Moderate Engine / Orchestrator (Gemini 4.0 Hydrogen). "
+        "Use `task_type='workflow_orchestration'` for ANY app-agnostic multi-step desktop, browser, email, or document task "
+        "(e.g. opening Google Docs / Word / Notepad / Gmail, planning checklist steps, sub-contracting Argon for heavy text, pasting, and visually verifying the screen). "
+        "Use `puzzle_reasoning`, `analysis`, `correspondence`, or `code_helper` for moderate reasoning, game puzzles, or debugging."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "task_type": {
+                "type": "STRING",
+                "enum": ["workflow_orchestration", "puzzle_reasoning", "analysis", "correspondence", "code_helper"],
+                "description": (
+                    "'workflow_orchestration' for multi-step desktop/browser/app tasks with planning and visual verification; "
+                    "or reasoning category ('puzzle_reasoning', 'analysis', 'correspondence', 'code_helper')."
+                )
+            },
+            "title": {
+                "type": "STRING",
+                "description": "Short descriptive title for the task, workflow, or puzzle."
+            },
+            "instructions": {
+                "type": "STRING",
+                "description": "Full user goal, target app(s), requirements, or problem details for Gemini 4.0 Hydrogen."
+            },
+            "context_data": {
+                "type": "STRING",
+                "description": "Optional screen context, clues, file paths, code snippet, or background text."
+            },
+            "use_google_search": {
+                "type": "BOOLEAN",
+                "description": "Whether Gemini 4.0 Hydrogen should also search the web while reasoning (default false)."
+            },
+            "enable_tools": {
+                "type": "BOOLEAN",
+                "description": "Forces Hydrogen tool-calling orchestration loop even outside 'workflow_orchestration'."
+            }
+        },
+        "required": ["title", "instructions"]
     }
 }
 
@@ -959,23 +1003,25 @@ PASTE_TO_DOCUMENT_DECLARATION = {
     "name": "paste_to_document",
     "description": (
         "Pastes formatted text or markdown directly into an open document or application canvas "
-        "(such as Google Docs in Chrome, Word, Notepad, or an email editor) via rich HTML clipboard. "
-        "Use this for fast direct drafting of letters, emails, notes, and short articles from Tier 1 "
-        "without delegating to Tier 2."
+        "(such as Google Docs in Chrome, Microsoft Word, Notepad, or an email editor) via rich HTML clipboard. "
+        "Accepts either inline `content_markdown` or a saved `.md` `file_path` (e.g. returned by Argon)."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "content_markdown": {
                 "type": "STRING",
-                "description": "The complete formatted text or markdown content to paste into the active document."
+                "description": "The complete formatted text or markdown content to paste into the active document (optional if file_path is provided)."
+            },
+            "file_path": {
+                "type": "STRING",
+                "description": "Optional path to a saved Markdown file on disk (e.g. from data/dossiers/) to load and paste."
             },
             "target_app": {
                 "type": "STRING",
-                "description": "The target application name (e.g. 'google docs', 'chrome', 'winword', 'notepad'). Defaults to 'google docs'."
+                "description": "The target application name (e.g. 'google docs', 'winword', 'notepad', 'chrome'). Defaults to 'google docs'."
             }
-        },
-        "required": ["content_markdown"]
+        }
     }
 }
 
@@ -1239,6 +1285,7 @@ def get_all_tool_declarations() -> List[dict]:
         LIST_ACTIVE_MONITORS_DECLARATION,
         SEND_DESKTOP_NOTIFICATION_DECLARATION,
         EXPORT_DOSSIER_DECLARATION,
+        DELEGATE_MODERATE_TASK_DECLARATION,
         DELEGATE_HEAVY_TASK_DECLARATION,
         PASTE_TO_DOCUMENT_DECLARATION,
     ]
@@ -1390,6 +1437,7 @@ class ToolDispatcher:
             EXECUTE_AUTOMATION_SCRIPT_DECLARATION,
             SEND_DESKTOP_NOTIFICATION_DECLARATION,
             EXPORT_DOSSIER_DECLARATION,
+            DELEGATE_MODERATE_TASK_DECLARATION,
             DELEGATE_HEAVY_TASK_DECLARATION,
             REMEMBER_USER_FACT_DECLARATION,
             FORGET_USER_FACT_DECLARATION,
@@ -2424,6 +2472,28 @@ class ToolDispatcher:
                 })
                 return result
 
+            elif fn_name == "delegate_moderate_task":
+                task_type = str(args.get("task_type", "analysis")).lower()
+                title = str(args.get("title", "Moderate_Task")).strip() or "Moderate_Task"
+                instructions = str(args.get("instructions", "")).strip()
+                context_data = str(args.get("context_data", "")).strip()
+                use_google_search = bool(args.get("use_google_search", False))
+                enable_tools = bool(args.get("enable_tools", False))
+                result = await self.execute_moderate_task(
+                    task_type=task_type,
+                    title=title,
+                    instructions=instructions,
+                    context_data=context_data,
+                    use_google_search=use_google_search,
+                    enable_tools=enable_tools,
+                )
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Moderate Reasoning / Orchestrator (Hydrogen)",
+                    "content": f"🧠 [TIER 2] Completed {task_type.replace('_', ' ').title()}: '{title}'"
+                })
+                return result
+
             elif fn_name == "delegate_heavy_task":
                 task_type = str(args.get("task_type", "research_dossier")).lower()
                 title = str(args.get("title", "Heavy_Task")).strip() or "Heavy_Task"
@@ -2432,7 +2502,8 @@ class ToolDispatcher:
                 category = str(args.get("category", "general"))
                 open_immediately = bool(args.get("open_immediately", False))
                 execute_if_code = bool(args.get("execute_if_code", True))
-                paste_to_active_doc = bool(args.get("paste_to_active_doc", False))
+                raw_paste_flag = args.get("paste_to_active_doc", None)
+                paste_to_active_doc = None if raw_paste_flag is None else bool(raw_paste_flag)
                 target_app = str(args.get("target_app", "")).strip()
                 if not target_app or target_app.lower() in ("chrome", "browser"):
                     if any(kw in instructions.lower() or kw in title.lower() for kw in ("google doc", "google docs", "docs", "doc")):
@@ -2454,26 +2525,36 @@ class ToolDispatcher:
                 self.notify("chat_event", {
                     "type": "tool",
                     "name": "Heavy Reasoning Task (Argon)",
-                    "content": f"🧠 [TIER 2] Completed {task_type.replace('_', ' ').title()}: '{title}'"
+                    "content": f"🧠 [TIER 3] Completed {task_type.replace('_', ' ').title()}: '{title}'"
                 })
                 return result
 
             elif fn_name == "paste_to_document":
                 content_markdown = str(args.get("content_markdown", "")).strip()
+                file_path = str(args.get("file_path", "")).strip()
                 target_app = str(args.get("target_app", "")).strip() or "google docs"
                 if target_app.lower() in ("chrome", "browser"):
                     target_app = "google docs"
-                if not content_markdown:
-                    return {"status": "error", "message": "content_markdown cannot be empty."}
 
-                try:
-                    export_research_dossier(
-                        title="Document_Draft",
-                        content_markdown=content_markdown,
-                        category="general"
-                    )
-                except Exception:
-                    pass
+                if not content_markdown and file_path:
+                    resolved_fp = os.path.abspath(file_path)
+                    if not os.path.exists(resolved_fp) or not os.path.isfile(resolved_fp):
+                        return {"status": "error", "message": f"Markdown file not found: {file_path}"}
+                    with open(resolved_fp, "r", encoding="utf-8") as mf:
+                        content_markdown = mf.read().strip()
+
+                if not content_markdown:
+                    return {"status": "error", "message": "Either content_markdown or a valid file_path must be provided."}
+
+                if not file_path:
+                    try:
+                        export_research_dossier(
+                            title="Document_Draft",
+                            content_markdown=content_markdown,
+                            category="general"
+                        )
+                    except Exception:
+                        pass
 
                 paste_res = await asyncio.to_thread(paste_markdown_to_target_app, content_markdown, app_name=target_app)
                 if paste_res.get("status") == "success":
@@ -2587,6 +2668,230 @@ class ToolDispatcher:
                 "message": err_msg
             }
 
+    def _get_or_init_genai_client(self):
+        client = getattr(self, "genai_client", None)
+        if client:
+            return client
+        cfg = self.config_getter() if self.config_getter else {}
+        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+        encrypted_key = api_cfg.get("api_key_encrypted", "")
+        api_key = unprotect_secret(encrypted_key) if encrypted_key else os.environ.get("GEMINI_API_KEY", "")
+        if api_key:
+            try:
+                client = genai.Client(api_key=api_key)
+                self.genai_client = client
+            except Exception as ce:
+                logger.warning(f"[DISPATCHER] Failed initializing GenAI client: {ce}")
+        return client
+
+    async def execute_moderate_task(
+        self,
+        task_type: str,
+        title: str,
+        instructions: str,
+        context_data: str = "",
+        use_google_search: bool = False,
+        enable_tools: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Executes a moderate reasoning or app-agnostic workflow orchestration task using Tier 2
+        (Gemini 4.0 Hydrogen: Low/Medium/High/Extra).
+        - For `workflow_orchestration` (or `enable_tools=True`): runs Hydrogen's Plan -> Act -> Visually Verify
+          multi-turn tool loop across any target application and sub-contracts Argon if heavy writing is needed.
+        - Otherwise: runs fast single-turn Hydrogen reasoning for puzzles, debugging, or structured analysis.
+        """
+        client = self._get_or_init_genai_client()
+        if not client:
+            return {"status": "error", "message": "GenAI API Client is not configured or available for Tier 2 delegation."}
+
+        from core.model_discovery import resolve_model_profile, build_thinking_config
+        cfg = self.config_getter() if self.config_getter else {}
+        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+        raw_mod = (
+            cfg.get("tier2_moderate_model")
+            or api_cfg.get("moderate_model_id")
+            or "gemini-4-hydrogen:medium"
+        )
+        mod_model, mod_level = resolve_model_profile(
+            raw_mod,
+            default_model="gemini-4-hydrogen",
+            default_level="medium",
+        )
+        mod_level = mod_level or "medium"
+
+        is_orchestration = enable_tools or str(task_type or "").lower() in (
+            "workflow_orchestration",
+            "desktop_task",
+            "app_workflow",
+            "orchestration",
+        )
+        action_verb = "Orchestrating" if is_orchestration else "Reasoning on"
+        self.notify("status", {
+            "state": "thinking",
+            "action": f"🧠 Hydrogen: {title}...",
+            "message": f"Gemini 4.0 Hydrogen ({mod_level}) is {action_verb.lower()} '{title}'..."
+        })
+        self.notify("chat_event", {
+            "type": "tool",
+            "name": "Gemini 4.0 Hydrogen",
+            "content": f"🧠 [TIER 2] {action_verb} '{title}' via {mod_model} (level: {mod_level})..."
+        })
+
+        if is_orchestration:
+            try:
+                from core.orchestrator import TaskOrchestrator
+                orchestrator = TaskOrchestrator(self)
+                return await orchestrator.run(
+                    client=client,
+                    model=mod_model,
+                    thinking_level=mod_level,
+                    title=title,
+                    instructions=instructions,
+                    context_data=context_data,
+                    use_google_search=use_google_search,
+                )
+            except Exception as e:
+                logger.error(f"[MODERATE_ORCHESTRATOR] Failed ({mod_model}): {e}", exc_info=True)
+                return {"status": "error", "message": str(e)}
+
+        prompt = (
+            f"You are Aether's Tier 2 Moderate Reasoning Engine ({mod_model}, thinking: {mod_level}). "
+            f"Task ({task_type}): {title}\n\nInstructions:\n{instructions}\n"
+        )
+        if context_data:
+            prompt += f"\nContext / Clues:\n{context_data}\n"
+        prompt += "\nProvide a clear, accurate, concise answer optimized for a voice assistant to act on or summarize."
+
+        gen_kwargs: Dict[str, Any] = {
+            "thinking_config": build_thinking_config(mod_model, thinking_level=mod_level),
+            "temperature": 0.4,
+        }
+        if use_google_search:
+            gen_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+
+        try:
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.models.generate_content(
+                    model=mod_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**gen_kwargs),
+                ),
+            )
+            answer_text = (getattr(response, "text", "") or "").strip()
+            if not answer_text:
+                return {"status": "error", "message": "Tier 2 Moderate reasoning returned an empty response."}
+            return {
+                "status": "success",
+                "model": mod_model,
+                "thinking_level": mod_level,
+                "answer": answer_text,
+            }
+        except Exception as e:
+            logger.error(f"[MODERATE_TASK] Failed ({mod_model}): {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def _finalize_heavy_document_output(
+        self,
+        task_type: str,
+        title: str,
+        instructions: str,
+        markdown_content: str,
+        category: str,
+        open_immediately: bool,
+        paste_to_active_doc: Optional[bool],
+        target_app: str,
+        heavy_model: str,
+        is_dossier: bool = False,
+    ) -> Dict[str, Any]:
+        """Exports heavy-model markdown to disk and optionally handles direct paste + verification snapshot."""
+        dossier_res = export_research_dossier(
+            title=title,
+            content_markdown=markdown_content,
+            category=category,
+            open_immediately=open_immediately,
+        )
+
+        if paste_to_active_doc is False:
+            should_paste = False
+        elif paste_to_active_doc is True:
+            should_paste = True
+        else:
+            should_paste = any(
+                kw in instructions.lower() or kw in title.lower()
+                for kw in ("doc", "google doc", "docs", "document canvas", "active doc", "paste")
+            )
+
+        effective_target = target_app
+        if not effective_target or effective_target.lower() in ("chrome", "browser"):
+            if any(kw in instructions.lower() or kw in title.lower() for kw in ("google doc", "google docs", "docs", "doc")):
+                effective_target = "google docs"
+            elif not effective_target:
+                effective_target = "google docs"
+
+        pasted_info = ""
+        paste_error = ""
+        if should_paste:
+            try:
+                paste_res = await asyncio.to_thread(
+                    paste_markdown_to_target_app, markdown_content, app_name=effective_target
+                )
+                if paste_res.get("status") == "success":
+                    noun = "The formatted document with rich tables" if is_dossier else "The draft"
+                    pasted_info = f" {noun} was automatically pasted into {effective_target}."
+                    label = "Full formatted document" if is_dossier else "Draft"
+                    self.notify("chat_event", {
+                        "type": "tool",
+                        "name": "Document Paste",
+                        "content": f"📋 [PASTED] {label} ({len(markdown_content)} chars) pasted into {effective_target} via HTML clipboard.",
+                    })
+                else:
+                    paste_error = str(paste_res.get("message") or "Paste did not succeed.")
+            except Exception as pe:
+                paste_error = str(pe)
+                logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
+
+        is_pasted = bool(pasted_info)
+        jpeg_bytes = None
+        noun_cap = f"Research dossier '{title}'" if is_dossier else f"Draft '{title}'"
+        if is_pasted:
+            tail_prompt = (
+                "Double-check with a quick capture_screen_snapshot to verify the content appears on screen, then deliver a crisp "
+                "2-to-3 sentence conversational executive summary of the key findings over voice."
+                if is_dossier
+                else "Double-check with a quick capture_screen_snapshot to verify the text appears on screen, then deliver a warm, "
+                "crisp 1-to-2 sentence confirmation over voice."
+            )
+            directive = f"{noun_cap} successfully synthesized via Tier 3 ({heavy_model}) and pasted into {effective_target}.{pasted_info} {tail_prompt}"
+            try:
+                jpeg_bytes, _ = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
+            except Exception as se:
+                logger.debug(f"[HEAVY_TASK] Closed-loop snapshot capture skipped: {se}")
+        else:
+            file_hint = dossier_res.get("file_path") or ""
+            directive = (
+                f"{noun_cap} synthesized via Tier 3 ({heavy_model}) and saved to disk at '{file_hint}'. "
+                f"Content has NOT been pasted into {effective_target} yet. Open/focus the target application, verify its canvas on screen, "
+                f"and call paste_to_document(file_path='{file_hint}', target_app='{effective_target}') followed by visual confirmation."
+            )
+
+        res_data: Dict[str, Any] = {
+            "status": "success",
+            "task_type": task_type,
+            "file_path": dossier_res.get("file_path"),
+            "filename": dossier_res.get("filename"),
+            "char_count": len(markdown_content),
+            "pasted": is_pasted,
+            "pasted_to_doc": is_pasted,
+            "directive": directive,
+        }
+        if paste_error:
+            res_data["paste_error"] = paste_error
+        if jpeg_bytes:
+            res_data["_jpeg_bytes"] = jpeg_bytes
+        return res_data
+
     async def execute_heavy_task(
         self,
         task_type: str,
@@ -2596,47 +2901,42 @@ class ToolDispatcher:
         category: str = "general",
         open_immediately: bool = False,
         execute_if_code: bool = True,
-        paste_to_active_doc: bool = False,
+        paste_to_active_doc: Optional[bool] = None,
         target_app: str = "chrome"
     ) -> Dict[str, Any]:
         """
-        Executes a complex task on demand using the Tier 2 Heavy Reasoning Model (Gemini 4 Argon).
+        Executes a complex task on demand using the Tier 3 Heavy Reasoning Model (Gemini 4 Argon).
         Generates exhaustive research dossiers, complex Python scripts, or deep analysis.
         """
-        client = getattr(self, "genai_client", None)
-        if not client:
-            cfg = self.config_getter() if self.config_getter else {}
-            api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
-            encrypted_key = api_cfg.get("api_key_encrypted", "")
-            api_key = unprotect_secret(encrypted_key) if encrypted_key else os.environ.get("GEMINI_API_KEY", "")
-            if api_key:
-                try:
-                    client = genai.Client(api_key=api_key)
-                    self.genai_client = client
-                except Exception as ce:
-                    logger.warning(f"[HEAVY_TASK] Failed initializing GenAI client: {ce}")
-
+        client = self._get_or_init_genai_client()
         if not client:
             return {
                 "status": "error",
-                "message": "GenAI API Client is not configured or available for Tier 2 delegation."
+                "message": "GenAI API Client is not configured or available for Tier 3 delegation."
             }
 
+        from core.model_discovery import resolve_model_profile, build_thinking_config
         cfg = self.config_getter() if self.config_getter else {}
-        heavy_model = cfg.get("tier2_heavy_model") or "gemini-4-argon"
-        thinking_level = cfg.get("tier2_thinking_level", "high")
-        is_argon = "argon" in str(heavy_model).lower()
+        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+        raw_heavy = cfg.get("tier3_heavy_model") or cfg.get("tier2_heavy_model") or api_cfg.get("pro_model_id") or "gemini-4-argon:medium"
+        heavy_model, thinking_level = resolve_model_profile(
+            raw_heavy,
+            default_model="gemini-4-argon",
+            default_level=cfg.get("tier2_thinking_level", "medium"),
+        )
+        thinking_level = thinking_level or "medium"
+        is_argon = "argon" in str(heavy_model).lower() or "hydrogen" in str(heavy_model).lower()
 
         # Visual HUD & Audio working indicator
         self.notify("status", {
             "state": "thinking",
             "action": f"🧠 Argon: {title}...",
-            "message": f"Gemini 4 Argon ({heavy_model}) is synthesizing '{title}' with High Thinking..."
+            "message": f"Gemini 4 Argon ({heavy_model}, {thinking_level}) is synthesizing '{title}'..."
         })
         self.notify("chat_event", {
             "type": "tool",
             "name": "Gemini 4 Argon",
-            "content": f"🧠 [TIER 2] Initiating deep synthesis for '{title}' via {heavy_model} (thinking_level: {thinking_level})..."
+            "content": f"🧠 [TIER 3] Initiating deep synthesis for '{title}' via {heavy_model} (thinking_level: {thinking_level})..."
         })
         try:
             from core.wake_word import play_chime_async
@@ -2644,20 +2944,20 @@ class ToolDispatcher:
         except Exception:
             pass
 
+        thinking_cfg = build_thinking_config(
+            heavy_model,
+            thinking_level=thinking_level,
+            thinking_budget=int(cfg.get("tier2_thinking_budget", 2048)),
+        )
         if is_argon:
-            level = str(thinking_level or "high").lower()
-            if level not in ("low", "medium", "high"):
-                level = "high"
-            thinking_cfg = types.ThinkingConfig(thinking_level=level)
             gen_config = types.GenerateContentConfig(
                 thinking_config=thinking_cfg,
                 max_output_tokens=65536,
                 temperature=0.3
             )
         else:
-            budget = int(cfg.get("tier2_thinking_budget", 2048))
             gen_config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=budget),
+                thinking_config=thinking_cfg,
                 temperature=0.3
             )
 
@@ -2725,74 +3025,18 @@ class ToolDispatcher:
                 if not markdown_content.strip():
                     return {"status": "error", "message": "Heavy reasoning model returned empty content."}
 
-                dossier_res = export_research_dossier(
+                return await self._finalize_heavy_document_output(
+                    task_type="correspondence",
                     title=title,
-                    content_markdown=markdown_content,
+                    instructions=instructions,
+                    markdown_content=markdown_content,
                     category=category,
-                    open_immediately=open_immediately
+                    open_immediately=open_immediately,
+                    paste_to_active_doc=paste_to_active_doc,
+                    target_app=target_app,
+                    heavy_model=heavy_model,
+                    is_dossier=False,
                 )
-
-                pasted_info = ""
-                should_paste = paste_to_active_doc or any(
-                    kw in instructions.lower() or kw in title.lower()
-                    for kw in ("doc", "google doc", "docs", "document canvas", "active doc", "paste")
-                )
-                effective_target = target_app
-                if not effective_target or effective_target.lower() in ("chrome", "browser"):
-                    if any(kw in instructions.lower() or kw in title.lower() for kw in ("google doc", "google docs", "docs", "doc")):
-                        effective_target = "google docs"
-                    elif not effective_target:
-                        effective_target = "google docs"
-
-                if should_paste:
-                    try:
-                        paste_res = await asyncio.to_thread(
-                            paste_markdown_to_target_app, markdown_content, app_name=effective_target
-                        )
-                        if paste_res.get("status") == "success":
-                            pasted_info = f" The draft was automatically pasted into {effective_target}."
-                            self.notify("chat_event", {
-                                "type": "tool",
-                                "name": "Document Paste",
-                                "content": f"📋 [PASTED] Draft ({len(markdown_content)} chars) pasted into {effective_target} via HTML clipboard."
-                            })
-                    except Exception as pe:
-                        logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
-
-                is_pasted = bool(pasted_info)
-                jpeg_bytes = None
-                if is_pasted:
-                    directive = (
-                        f"Draft '{title}' successfully generated via Tier 2 ({heavy_model}) and pasted into {effective_target}.{pasted_info} "
-                        "Double-check with a quick capture_screen_snapshot to verify the text appears on screen, then deliver a warm, "
-                        "crisp 1-to-2 sentence confirmation over voice."
-                    )
-                    try:
-                        jpeg_bytes, _ = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
-                    except Exception as se:
-                        logger.debug(f"[HEAVY_TASK] Closed-loop snapshot capture skipped: {se}")
-                else:
-                    directive = (
-                        f"Draft '{title}' successfully generated via Tier 2 ({heavy_model}) and saved to disk. "
-                        f"WARNING: Content has NOT been pasted into {target_app} yet because the document window was not open. "
-                        "You MUST navigate to or focus the document (e.g. navigate_browser('https://docs.new')), wait for the canvas to load, "
-                        "click into the canvas, press Ctrl+V, and perform a quick double-check with capture_screen_snapshot to verify text is present "
-                        "before telling the user the document is ready."
-                    )
-
-                res_data = {
-                    "status": "success",
-                    "task_type": "correspondence",
-                    "file_path": dossier_res.get("file_path"),
-                    "filename": dossier_res.get("filename"),
-                    "char_count": len(markdown_content),
-                    "pasted": is_pasted,
-                    "pasted_to_doc": is_pasted,
-                    "directive": directive
-                }
-                if jpeg_bytes:
-                    res_data["_jpeg_bytes"] = jpeg_bytes
-                return res_data
             except Exception as e:
                 logger.error(f"[HEAVY_TASK] Correspondence drafting failed: {e}")
                 return {"status": "error", "message": str(e)}
@@ -2850,74 +3094,18 @@ class ToolDispatcher:
                 if not markdown_content.strip():
                     return {"status": "error", "message": "Heavy reasoning model returned empty content."}
 
-                dossier_res = export_research_dossier(
+                return await self._finalize_heavy_document_output(
+                    task_type="research_dossier",
                     title=title,
-                    content_markdown=markdown_content,
+                    instructions=instructions,
+                    markdown_content=markdown_content,
                     category=category,
-                    open_immediately=open_immediately
+                    open_immediately=open_immediately,
+                    paste_to_active_doc=paste_to_active_doc,
+                    target_app=target_app,
+                    heavy_model=heavy_model,
+                    is_dossier=True,
                 )
-
-                pasted_info = ""
-                should_paste = paste_to_active_doc or any(
-                    kw in instructions.lower() or kw in title.lower()
-                    for kw in ("doc", "google doc", "docs", "document canvas", "active doc", "paste")
-                )
-                effective_target = target_app
-                if not effective_target or effective_target.lower() in ("chrome", "browser"):
-                    if any(kw in instructions.lower() or kw in title.lower() for kw in ("google doc", "google docs", "docs", "doc")):
-                        effective_target = "google docs"
-                    elif not effective_target:
-                        effective_target = "google docs"
-
-                if should_paste:
-                    try:
-                        paste_res = await asyncio.to_thread(
-                            paste_markdown_to_target_app, markdown_content, app_name=effective_target
-                        )
-                        if paste_res.get("status") == "success":
-                            pasted_info = f" The formatted document with rich tables was automatically pasted into {effective_target}."
-                            self.notify("chat_event", {
-                                "type": "tool",
-                                "name": "Document Paste",
-                                "content": f"📋 [PASTED] Full formatted document ({len(markdown_content)} chars) pasted into {effective_target} via HTML clipboard."
-                            })
-                    except Exception as pe:
-                        logger.debug(f"[HEAVY_TASK] Automated paste skipped or failed: {pe}")
-
-                is_pasted = bool(pasted_info)
-                jpeg_bytes = None
-                if is_pasted:
-                    directive = (
-                        f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and pasted into {effective_target}.{pasted_info} "
-                        "Double-check with a quick capture_screen_snapshot to verify the content appears on screen, then deliver a crisp "
-                        "2-to-3 sentence conversational executive summary of the key findings over voice."
-                    )
-                    try:
-                        jpeg_bytes, _ = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
-                    except Exception as se:
-                        logger.debug(f"[HEAVY_TASK] Closed-loop snapshot capture skipped: {se}")
-                else:
-                    directive = (
-                        f"Research dossier '{title}' successfully synthesized via Tier 2 ({heavy_model}) and saved to disk. "
-                        f"WARNING: Content has NOT been pasted into {target_app} yet because the document window was not open. "
-                        "You MUST navigate to or focus the document (e.g. navigate_browser('https://docs.new')), wait for the canvas to load, "
-                        "click into the canvas, press Ctrl+V, and perform a quick double-check with capture_screen_snapshot to verify text is present "
-                        "before telling the user the document is ready."
-                    )
-
-                res_data = {
-                    "status": "success",
-                    "task_type": "research_dossier",
-                    "file_path": dossier_res.get("file_path"),
-                    "filename": dossier_res.get("filename"),
-                    "char_count": len(markdown_content),
-                    "pasted": is_pasted,
-                    "pasted_to_doc": is_pasted,
-                    "directive": directive
-                }
-                if jpeg_bytes:
-                    res_data["_jpeg_bytes"] = jpeg_bytes
-                return res_data
             except Exception as e:
                 logger.error(f"[HEAVY_TASK] Research dossier synthesis failed: {e}")
                 return {"status": "error", "message": str(e)}

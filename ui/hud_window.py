@@ -10,6 +10,7 @@ import time
 import webview
 from typing import Optional
 
+from core.paths import get_bundle_dir
 from core.screen_stream import ensure_thread_desktop
 from ui.tray import SystemTrayManager
 
@@ -504,7 +505,7 @@ class HudWindow:
         self._is_closing_permanently = False
 
         # Determine path to static UI assets
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = get_bundle_dir()
         self.html_path = os.path.join(base_dir, "ui", "static", "index.html")
         self.overlay_html_path = os.path.join(base_dir, "ui", "static", "overlay.html")
 
@@ -589,9 +590,20 @@ class HudWindow:
 
         self.overlay_window.events.moved += _on_overlay_moved
 
+        def _is_windows_shutting_down() -> bool:
+            if sys.platform != "win32":
+                return False
+            try:
+                import ctypes
+                # SM_SHUTTINGDOWN = 0x2000
+                return bool(ctypes.windll.user32.GetSystemMetrics(0x2000))
+            except Exception:
+                return False
+
         # 3. Wire window close, minimize, and restore events
         def on_closing():
-            if getattr(self, "_is_closing_permanently", False):
+            if getattr(self, "_is_closing_permanently", False) or _is_windows_shutting_down():
+                self._is_closing_permanently = True
                 return True
             cfg = self.bridge.get_raw_config().get("ui", {})
             if cfg.get("minimize_to_tray", True):
@@ -654,9 +666,52 @@ class HudWindow:
         if overlay_mode == "always" or (raw_cfg.get("start_minimized", False) and overlay_mode == "on_minimize"):
             self.bridge.show_overlay()
 
+        # Hook Windows session/shutdown events so minimize_to_tray never blocks OS shutdown/logoff
+        if sys.platform == "win32":
+            self._register_windows_shutdown_hooks()
+
+    def _register_windows_shutdown_hooks(self):
+        """Registers WinForms FormClosing & SystemEvents.SessionEnding hooks to allow clean OS shutdown."""
+        try:
+            native_form = getattr(self.window, "native", None)
+            if native_form is not None and hasattr(native_form, "FormClosing"):
+                def _on_native_form_closing(sender, e):
+                    try:
+                        reason = str(getattr(e, "CloseReason", ""))
+                        if reason in ("WindowsShutDown", "ApplicationExitCall", "TaskManagerClosing"):
+                            self._is_closing_permanently = True
+                            e.Cancel = False
+                            threading.Thread(target=self.close_all, daemon=True).start()
+                    except Exception:
+                        pass
+                native_form.FormClosing += _on_native_form_closing
+        except Exception as e:
+            print(f"[HUD] Could not attach native FormClosing hook: {e}")
+
+        try:
+            from Microsoft.Win32 import SystemEvents
+            def _on_session_ending(sender, e):
+                try:
+                    self._is_closing_permanently = True
+                    e.Cancel = False
+                    threading.Thread(target=self.close_all, daemon=True).start()
+                except Exception:
+                    pass
+            self._session_ending_handler = _on_session_ending
+            SystemEvents.SessionEnding += self._session_ending_handler
+        except Exception as e:
+            print(f"[HUD] Could not attach SystemEvents.SessionEnding hook: {e}")
+
     def close_all(self):
         """Cleanly closes all windows and stops tray."""
         self._is_closing_permanently = True
+        if getattr(self, "_session_ending_handler", None) is not None:
+            try:
+                from Microsoft.Win32 import SystemEvents
+                SystemEvents.SessionEnding -= self._session_ending_handler
+                self._session_ending_handler = None
+            except Exception:
+                pass
         if hasattr(self, "_pos_save_timer") and self._pos_save_timer:
             try:
                 self._pos_save_timer.cancel()

@@ -667,6 +667,7 @@ class AudioPipeline:
         min_bytes = 2400 if is_ptt_turn else 11200
         if len(total_pcm) < min_bytes:
             logger.info(f"[VAD GATE] Utterance too short ({len(total_pcm)} bytes < {min_bytes}), discarding.")
+            self._queue_put(self.input_queue, b"__DISCARD_TURN__")
             if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
@@ -677,6 +678,7 @@ class AudioPipeline:
         # Dead microphone safeguard for PTT
         if is_ptt_turn and peak_rms < 0.0008:
             logger.warning(f"[AUDIO] Discarded PTT utterance: no audio signal detected (peak RMS: {peak_rms:.5f})")
+            self._queue_put(self.input_queue, b"__DISCARD_TURN__")
             if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
@@ -1566,3 +1568,109 @@ def resolve_valid_audio_devices(
     valid_in = _resolve_one(configured_in, configured_in_name, inputs, "input")
     valid_out = _resolve_one(configured_out, configured_out_name, outputs, "output")
     return valid_in, valid_out
+
+
+class StreamingWSOLAScaler:
+    """
+    Real-time pitch-preserving WSOLA time-scaler for 16-bit mono PCM audio chunks.
+    Enables deterministic cadence scaling (e.g. Brisk 1.18x, Measured 0.88x) without
+    altering vocal pitch or regional accent characteristics.
+    """
+
+    def __init__(self, speed: float = 1.0, sample_rate: int = 24000):
+        self.speed = max(0.5, min(2.0, float(speed)))
+        self.sr = int(sample_rate)
+        self.win = int(self.sr * 0.040)
+        if self.win % 2:
+            self.win += 1
+        self.hs = self.win // 2
+        self.ha = max(1, int(round(self.hs * self.speed)))
+        self.max_seek = int(self.sr * 0.010)
+        self.hann = np.hanning(self.win).astype(np.float32)
+        self.in_buf = np.zeros(0, dtype=np.float32)
+        self.ola_tail = np.zeros(self.hs, dtype=np.float32)
+        self.norm_tail = np.zeros(self.hs, dtype=np.float32)
+        self.first_frame = True
+        self._pending_first = None
+        self._next_target = 0
+
+    def process(self, pcm_bytes: bytes) -> bytes:
+        if not pcm_bytes or abs(self.speed - 1.0) < 0.02:
+            return pcm_bytes
+        samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+        self.in_buf = np.concatenate((self.in_buf, samples))
+        out_chunks = []
+
+        if self.first_frame:
+            if len(self.in_buf) < self.win:
+                return b""
+            seg = self.in_buf[:self.win] * self.hann
+            self.ola_tail = seg[self.hs:].copy()
+            self.norm_tail = self.hann[self.hs:].copy()
+            self._pending_first = (seg[:self.hs], self.hann[:self.hs])
+            self._next_target = self.ha
+            drop = max(0, self._next_target - self.max_seek)
+            if drop > 0:
+                self.in_buf = self.in_buf[drop:]
+                self._next_target -= drop
+            self.first_frame = False
+
+        while True:
+            lo = max(0, self._next_target - self.max_seek)
+            hi = self._next_target + self.max_seek
+            if len(self.in_buf) < hi + self.win:
+                break
+            ref = self.ola_tail
+            cands = np.lib.stride_tricks.sliding_window_view(
+                self.in_buf[lo:hi + self.hs], self.hs
+            )
+            scores = cands @ ref
+            best = lo + int(np.argmax(scores))
+            seg = self.in_buf[best:best + self.win] * self.hann
+            mixed = self.ola_tail + seg[:self.hs]
+            norm = self.norm_tail + self.hann[:self.hs]
+            valid = norm > 1e-4
+            mixed[valid] /= norm[valid]
+            if self._pending_first is not None:
+                p_audio, p_norm = self._pending_first
+                self._pending_first = None
+                pn = p_norm > 1e-4
+                p_audio[pn] /= p_norm[pn]
+                out_chunks.append(p_audio)
+            out_chunks.append(mixed)
+            self.ola_tail = seg[self.hs:].copy()
+            self.norm_tail = self.hann[self.hs:].copy()
+            self._next_target += self.ha
+            drop = max(0, self._next_target - self.max_seek)
+            if drop > 0:
+                self.in_buf = self.in_buf[drop:]
+                self._next_target -= drop
+
+        if not out_chunks:
+            return b""
+        cat = np.concatenate(out_chunks)
+        return np.clip(np.round(cat), -32768, 32767).astype(np.int16).tobytes()
+
+    def flush(self) -> bytes:
+        if abs(self.speed - 1.0) < 0.02:
+            return b""
+        parts = []
+        if self._pending_first is not None:
+            p_audio, p_norm = self._pending_first
+            self._pending_first = None
+            pn = p_norm > 1e-4
+            p_audio[pn] /= p_norm[pn]
+            parts.append(p_audio)
+        if not self.first_frame and np.any(self.norm_tail > 1e-4):
+            tail = self.ola_tail.copy()
+            vn = self.norm_tail > 1e-4
+            tail[vn] /= self.norm_tail[vn]
+            parts.append(tail)
+        rem_start = min(len(self.in_buf), max(0, self._next_target))
+        if len(self.in_buf) > rem_start:
+            parts.append(self.in_buf[rem_start:])
+        self.in_buf = np.zeros(0, dtype=np.float32)
+        if not parts:
+            return b""
+        cat = np.concatenate(parts)
+        return np.clip(np.round(cat), -32768, 32767).astype(np.int16).tobytes()

@@ -157,9 +157,11 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         if client:
             try:
                 from google.genai import types
-                model_endpoint = "gemini-3.8-flash"
+                from core.model_discovery import resolve_model_profile
+                model_endpoint = "gemini-4-hydrogen"
                 if engine and hasattr(engine, "config") and isinstance(engine.config, dict):
-                    model_endpoint = engine.config.get("primary_model_endpoint", "gemini-3.8-flash")
+                    model_endpoint = engine.config.get("primary_model_endpoint", "gemini-4-hydrogen")
+                model_endpoint = resolve_model_profile(model_endpoint, default_model="gemini-4-hydrogen")[0]
 
                 search_scope = f"'{domain}' and {game_title}" if domain else f"'{game_title}'"
                 prompt_content = (

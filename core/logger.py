@@ -13,8 +13,10 @@ import sys
 import threading
 from typing import Callable, List, Optional
 
+from core.paths import get_app_dir
+
 # Root directory of Aether Desktop
-_WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_WORKSPACE_ROOT = get_app_dir()
 _LOGS_DIR = os.path.join(_WORKSPACE_ROOT, "logs")
 _LOG_FILE = os.path.join(_LOGS_DIR, "aether_debug.log")
 

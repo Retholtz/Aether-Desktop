@@ -16,6 +16,7 @@ ensure_thread_desktop()
 
 from core.config_manager import load_config
 from core.gui_bridge import GuiBridge
+from core.paths import get_app_dir, is_frozen
 from tools.script_runner import prune_script_cache
 from ui.hud_window import HudWindow
 from core.user_memory import (
@@ -99,20 +100,23 @@ def run_asyncio_loop(loop: asyncio.AbstractEventLoop):
 
 
 def main():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = get_app_dir()
 
     # Check for elevation argument (--elevate or --admin)
     if "--elevate" in sys.argv or "--admin" in sys.argv:
         from tools.os_controls import is_running_as_admin
         if not is_running_as_admin():
             import ctypes
-            main_script = os.path.abspath(__file__)
             print("[INFO] [ELEVATE] Elevating to Administrator privileges via Windows UAC...")
-            clean_args = [a for a in sys.argv if a not in ("--elevate", "--admin")]
-            target_args = [f'"{main_script}"']
-            for a in clean_args:
-                if a != sys.argv[0] and not a.endswith("main.py"):
-                    target_args.append(f'"{a}"' if " " in a else a)
+            clean_args = [a for a in sys.argv[1:] if a not in ("--elevate", "--admin")]
+            if is_frozen():
+                target_args = [f'"{a}"' if " " in a else a for a in clean_args]
+            else:
+                main_script = os.path.abspath(__file__)
+                target_args = [f'"{main_script}"']
+                for a in clean_args:
+                    if not a.endswith("main.py"):
+                        target_args.append(f'"{a}"' if " " in a else a)
             params = " ".join(target_args)
             ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, base_dir, 1)
             if ret > 32:
@@ -216,6 +220,9 @@ def main():
             except Exception:
                 pass
         print("[SHUTDOWN] Clean exit.")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":

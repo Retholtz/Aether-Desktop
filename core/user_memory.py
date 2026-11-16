@@ -51,7 +51,8 @@ def _resolve_db_path(db_path: Optional[str] = None) -> str:
         return db_path
     if os.path.isabs(MEMORY_DB_PATH):
         return MEMORY_DB_PATH
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    from core.paths import get_app_dir
+    base_dir = get_app_dir()
     return os.path.join(base_dir, MEMORY_DB_PATH)
 
 
@@ -349,7 +350,8 @@ class UserMemory:
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            from core.paths import get_app_dir
+            base_dir = get_app_dir()
             self.db_path = os.path.join(base_dir, DEFAULT_DB_REL_PATH)
         else:
             self.db_path = db_path

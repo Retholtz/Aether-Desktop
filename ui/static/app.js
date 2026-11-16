@@ -64,6 +64,12 @@ window.aetherUI = {
   edgeCatalog: null,
   storedSessions: [],
   selectedStoredSessionId: null,
+  dossiers: [],
+  selectedDossierFilename: null,
+  selectedDossierMarkdown: "",
+  dossierDarkMode: false,
+  _windowsIsDark: true,
+  dossierZoom: "fit",
   _isConfigLoaded: false,
   _isConfigLoading: false,
 
@@ -99,8 +105,13 @@ window.aetherUI = {
     if (!window.pywebview || !window.pywebview.api) return;
     try {
       const theme = await window.pywebview.api.get_windows_theme();
-      if (theme && theme.accent_color) {
-        document.documentElement.style.setProperty("--win-accent", theme.accent_color);
+      if (theme) {
+        if (typeof theme.is_dark === "boolean") {
+          this._windowsIsDark = theme.is_dark;
+        }
+        if (theme.accent_color) {
+          document.documentElement.style.setProperty("--win-accent", theme.accent_color);
+        }
       }
     } catch (e) {
       console.warn("Could not query Windows theme:", e);
@@ -157,6 +168,9 @@ window.aetherUI = {
           } else if (tabKey === "chats" || tabKey === "stored") {
             targetPane.focus();
             this.loadStoredSessions();
+          } else if (tabKey === "dossiers") {
+            targetPane.focus();
+            this.loadDossiers();
           } else if (tabKey === "games") {
             targetPane.focus();
             if (typeof loadGamesUI === "function") {
@@ -360,6 +374,12 @@ window.aetherUI = {
     document.getElementById("clearChatBtn").addEventListener("click", () => {
       document.getElementById("chatHistory").innerHTML = "";
     });
+
+    // Refresh Connection button
+    const refreshConnectionBtn = document.getElementById("refreshConnectionBtn");
+    if (refreshConnectionBtn) {
+      refreshConnectionBtn.addEventListener("click", () => this.refreshConnection());
+    }
 
     // New Task / Reset Context button
     const newSessionBtn = document.getElementById("newSessionBtn");
@@ -811,6 +831,7 @@ window.aetherUI = {
 
     this.setupPreferencesHandlers();
     this.setupStoredChatsHandlers();
+    this.setupDossiersHandlers();
   },
 
   updateVoiceLabels: function() {
@@ -1140,6 +1161,7 @@ window.aetherUI = {
 
     const edgeRegionGroup = document.getElementById("edgeRegionGroup");
     const accentGroup = document.getElementById("voiceAccentGroup");
+    const geminiPaceGroup = document.getElementById("geminiPaceGroup");
     const localGroup = document.getElementById("localTtsGroup");
     const speedGroup = document.getElementById("voiceSpeedGroup");
 
@@ -1169,6 +1191,9 @@ window.aetherUI = {
     // Accent choices shown on the right (under AI Output Voice) when using Gemini TTS; Region shown when using Edge TTS
     if (accentGroup) {
       accentGroup.style.display = isGemini ? "flex" : "none";
+    }
+    if (geminiPaceGroup) {
+      geminiPaceGroup.style.display = isGemini ? "flex" : "none";
     }
     if (edgeRegionGroup) {
       edgeRegionGroup.style.display = isEdge ? "flex" : "none";
@@ -1427,6 +1452,17 @@ window.aetherUI = {
       const audio = cfg.audio || {};
       const vision = cfg.vision || {};
       const security = cfg.security || {};
+      const uiCfg = cfg.ui || {};
+
+      // Dossier Viewer theme: honor explicit saved preference, else default to Windows system theme
+      if (uiCfg.dossier_theme === "dark") {
+        this.dossierDarkMode = true;
+      } else if (uiCfg.dossier_theme === "paper") {
+        this.dossierDarkMode = false;
+      } else {
+        this.dossierDarkMode = Boolean(this._windowsIsDark);
+      }
+      this.applyDossierThemeUI();
 
       // Agent Name, Wake Phrase & Stop Listening Phrase
       const resolvedAgentName = cfg.agent_name || api.agent_name || "Aether";
@@ -1487,12 +1523,16 @@ window.aetherUI = {
         }
       }
 
-      const activePrimary = cfg.primary_model_endpoint || api.model_id || cfg.tier1_fast_model || "gemini-3.8-flash";
+      const activePrimary = cfg.primary_model_endpoint || api.model_id || cfg.tier1_fast_model || "gemini-3.8-live";
       const primSel = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
       if (primSel) primSel.value = activePrimary;
 
-      const activeHeavy = cfg.tier2_heavy_model || api.pro_model_id || "gemini-4-argon";
-      const heavySel = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]');
+      const activeModerate = cfg.tier2_moderate_model || api.moderate_model_id || "gemini-4-hydrogen:medium";
+      const modSel = document.getElementById("select-moderate-model") || document.querySelector('select[name="tier2_moderate_model"]');
+      if (modSel) modSel.value = activeModerate;
+
+      const activeHeavy = cfg.tier3_heavy_model || cfg.tier2_heavy_model || api.pro_model_id || "gemini-4-argon:medium";
+      const heavySel = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier3_heavy_model"]') || document.querySelector('select[name="tier2_heavy_model"]');
       if (heavySel) heavySel.value = activeHeavy;
       const currentStt = cfg.stt_endpoint || cfg.stt_model_endpoint || api.stt_model_id || api.stt_endpoint || "gemini_live_audio";
       const sttEl = document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
@@ -1512,6 +1552,9 @@ window.aetherUI = {
       await this.loadAccents();
       if (document.getElementById("select-voice-accent")) {
         document.getElementById("select-voice-accent").value = api.voice_accent || cfg.voice_accent || "default";
+      }
+      if (document.getElementById("select-gemini-tts-pace")) {
+        document.getElementById("select-gemini-tts-pace").value = api.tts_pace || cfg.tts_pace || "natural";
       }
       this.updateTtsUiVisibility(currentTts);
       await this.loadVoices(currentTts, api.voice_name || cfg.tts_voice);
@@ -1820,11 +1863,13 @@ window.aetherUI = {
       const vadSilenceMs = parseInt(document.getElementById("vadSilenceSlider")?.value || (this.currentConfig?.vad_trailing_silence_ms || "1400"), 10);
       const voiceSpeedNum = parseFloat(document.getElementById("input-tts-speed")?.value || (this.currentConfig?.tts_speed || "1.00"));
       const voiceAccentVal = (document.getElementById("select-voice-accent") || document.getElementById("voiceAccentSelect"))?.value || this.currentConfig?.voice_accent || this.currentConfig?.api?.voice_accent || "default";
+      const geminiPaceVal = document.getElementById("select-gemini-tts-pace")?.value || this.currentConfig?.tts_pace || this.currentConfig?.api?.tts_pace || "natural";
 
       const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || this.currentConfig?.stt_endpoint || "gemini_live_audio";
       const ttsModelVal = ttsVal;
-      const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || this.currentConfig?.primary_model_endpoint || "gemini-3.8-flash";
-      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]'))?.value || this.currentConfig?.tier2_heavy_model || "gemini-4-argon";
+      const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || this.currentConfig?.primary_model_endpoint || "gemini-3.8-live";
+      const moderateModelVal = (document.getElementById("select-moderate-model") || document.querySelector('select[name="tier2_moderate_model"]'))?.value || this.currentConfig?.tier2_moderate_model || "gemini-4-hydrogen:medium";
+      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier3_heavy_model"]') || document.querySelector('select[name="tier2_heavy_model"]'))?.value || this.currentConfig?.tier3_heavy_model || this.currentConfig?.tier2_heavy_model || "gemini-4-argon:medium";
 
       const inIdx = (inSel && inSel.value && inSel.value !== "-1" && !isNaN(parseInt(inSel.value, 10))) ? parseInt(inSel.value, 10) : (this.currentConfig?.audio?.input_device_index ?? null);
       const inName = (inSel && inSel.selectedOptions[0]) ? inSel.selectedOptions[0].text : (this.currentConfig?.audio?.input_device_name || "");
@@ -1851,9 +1896,12 @@ window.aetherUI = {
         stt_model_endpoint: sttModelVal,
         primary_model_endpoint: primaryModelVal,
         tier1_fast_model: primaryModelVal,
+        tier2_moderate_model: moderateModelVal,
+        tier3_heavy_model: heavyModelVal,
         tier2_heavy_model: heavyModelVal,
         tts_voice: voiceName,
         tts_speed: voiceSpeedNum,
+        tts_pace: geminiPaceVal,
         voice_accent: voiceAccentVal,
         wake_word_enabled: wakeWordEnabled,
         idle_timeout_seconds: this.currentConfig?.idle_timeout_seconds !== undefined ? this.currentConfig.idle_timeout_seconds : 8.0,
@@ -1869,12 +1917,14 @@ window.aetherUI = {
           voice_name: voiceName,
           voice_accent: voiceAccentVal,
           voice_speed: voiceSpeedNum,
+          tts_pace: geminiPaceVal,
           local_tts_url: document.getElementById("localTtsUrlInput")?.value || this.currentConfig?.api?.local_tts_url || "http://localhost:8880/v1/audio/speech",
           model_id: primaryModelVal,
           pipeline_mode: primaryModelVal.includes("live") ? "live" : "modular",
+          moderate_model_id: moderateModelVal,
           stt_model_id: sttModelVal,
           tts_model_id: ttsModelVal,
-          live_model_id: "gemini-3.1-flash-live-preview",
+          live_model_id: primaryModelVal.includes("live") ? primaryModelVal : "gemini-3.8-live",
           stt_endpoint: sttModelVal,
           tts_endpoint: ttsModelVal,
           pro_model_id: heavyModelVal,
@@ -2036,6 +2086,44 @@ window.aetherUI = {
       }
     } finally {
       this._isTogglingAssistant = false;
+    }
+  },
+
+  refreshConnection: async function() {
+    if (this._isRefreshingConnection || this._isTogglingAssistant) return;
+    const btn = document.getElementById("refreshConnectionBtn");
+    const origText = btn ? btn.innerText : "↻ REFRESH CONNECTION";
+    this._isRefreshingConnection = true;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = "↻ REFRESHING...";
+    }
+    try {
+      const res = await window.pywebview.api.refresh_connection();
+      if (res && res.success) {
+        this.isAssistantRunning = true;
+        this.updateAssistantButtonState(true);
+        this.renderChatBubble({
+          type: "system",
+          content: "Connection refreshed and audio/session buffers cleared."
+        });
+      } else {
+        this.renderChatBubble({
+          type: "error",
+          content: `Failed to refresh connection: ${(res && res.error) || "Unknown error"}`
+        });
+      }
+    } catch (err) {
+      this.renderChatBubble({
+        type: "error",
+        content: `Refresh connection error: ${err}`
+      });
+    } finally {
+      this._isRefreshingConnection = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = origText;
+      }
     }
   },
 
@@ -3591,6 +3679,321 @@ handleDesktopNotification: function(notif) {
       console.error("Error clearing all sessions:", e);
       alert(`Error clearing all sessions: ${e}`);
     }
+  },
+
+  // =========================================================================
+  // Dossier Viewer Methods (Word / Google Docs Style)
+  // =========================================================================
+  setupDossiersHandlers: function() {
+    const searchInput = document.getElementById("dossiersSearch");
+    if (searchInput) {
+      let debounceTimer = null;
+      searchInput.addEventListener("input", (e) => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          this.loadDossiers(e.target.value.trim());
+        }, 250);
+      });
+    }
+
+    const refreshBtn = document.getElementById("refreshDossiersBtn");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => {
+        const query = document.getElementById("dossiersSearch")?.value?.trim() || "";
+        this.loadDossiers(query);
+      });
+    }
+
+    const copyRichBtn = document.getElementById("copyDossierRichBtn");
+    if (copyRichBtn) {
+      copyRichBtn.addEventListener("click", () => this.copyDossierFormatted());
+    }
+
+    const copyMdBtn = document.getElementById("copyDossierMdBtn");
+    if (copyMdBtn) {
+      copyMdBtn.addEventListener("click", () => this.copyDossierMarkdown());
+    }
+
+    const toggleThemeBtn = document.getElementById("toggleDossierThemeBtn");
+    if (toggleThemeBtn) {
+      toggleThemeBtn.addEventListener("click", () => this.toggleDossierTheme());
+    }
+
+    const openBtn = document.getElementById("openDossierExternalBtn");
+    if (openBtn) {
+      openBtn.addEventListener("click", () => this.openDossierExternal());
+    }
+
+    const printBtn = document.getElementById("printDossierBtn");
+    if (printBtn) {
+      printBtn.addEventListener("click", () => window.print());
+    }
+
+    const delBtn = document.getElementById("deleteCurrentDossierBtn");
+    if (delBtn) {
+      delBtn.addEventListener("click", () => {
+        if (this.selectedDossierFilename) {
+          this.deleteDossier(this.selectedDossierFilename);
+        }
+      });
+    }
+
+    const zoomSel = document.getElementById("dossierZoomSelect");
+    if (zoomSel) {
+      zoomSel.addEventListener("change", (e) => this.setDossierZoom(e.target.value));
+    }
+
+    const zoomOutBtn = document.getElementById("dossierZoomOutBtn");
+    if (zoomOutBtn) {
+      zoomOutBtn.addEventListener("click", () => this.stepDossierZoom(-1));
+    }
+
+    const zoomInBtn = document.getElementById("dossierZoomInBtn");
+    if (zoomInBtn) {
+      zoomInBtn.addEventListener("click", () => this.stepDossierZoom(1));
+    }
+  },
+
+  loadDossiers: async function(query = "") {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_dossiers) {
+      return;
+    }
+    try {
+      const res = await window.pywebview.api.get_dossiers(query);
+      if (res && res.success) {
+        this.dossiers = res.dossiers || [];
+        const countEl = document.getElementById("dossiersCount");
+        if (countEl) {
+          countEl.innerText = `${this.dossiers.length} DOSSIER${this.dossiers.length === 1 ? "" : "S"}`;
+        }
+        this.renderDossiersList(this.dossiers);
+        if (this.selectedDossierFilename) {
+          const exists = this.dossiers.some(d => d.filename === this.selectedDossierFilename);
+          if (exists) {
+            this.selectDossier(this.selectedDossierFilename);
+          } else {
+            this.resetDossierDetail();
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error calling get_dossiers:", e);
+    }
+  },
+
+  renderDossiersList: function(dossiers) {
+    const listEl = document.getElementById("dossiersList");
+    if (!listEl) return;
+
+    if (!dossiers || dossiers.length === 0) {
+      listEl.innerHTML = `<div class="stored-empty-state">No saved dossiers found in data/dossiers/.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = dossiers.map(d => {
+      const isSelected = d.filename === this.selectedDossierFilename;
+      const title = this.escapeHtml(d.title || d.filename);
+      const preview = this.escapeHtml(d.preview || "Markdown research dossier");
+      const dateStr = this.escapeHtml(d.date || "");
+      const timeStr = this.escapeHtml(d.time || "");
+      const category = this.escapeHtml((d.category || "general").toUpperCase());
+      const words = d.word_count || 0;
+
+      return `
+        <div class="session-card ${isSelected ? "selected" : ""}" data-dossier-file="${this.escapeHtml(d.filename)}">
+          <div class="session-card-header">
+            <span class="session-card-date">${dateStr} ${timeStr}</span>
+            <button type="button" class="session-card-del-btn" title="Delete dossier" data-del-dossier="${this.escapeHtml(d.filename)}">✕</button>
+          </div>
+          <div class="session-card-preview" style="font-weight: 600; color: var(--text-main);">${title}</div>
+          <div class="session-card-preview" style="opacity: 0.78; font-size: 11px;">${preview}</div>
+          <div class="session-card-meta">
+            <span>${words} words</span> · <span>${category}</span>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    listEl.querySelectorAll(".session-card").forEach(card => {
+      const fname = card.dataset.dossierFile;
+      card.addEventListener("click", () => this.selectDossier(fname));
+    });
+
+    listEl.querySelectorAll(".session-card-del-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.deleteDossier(btn.dataset.delDossier);
+      });
+    });
+  },
+
+  selectDossier: async function(filename) {
+    if (!filename || !window.pywebview?.api?.get_dossier_content) return;
+    this.selectedDossierFilename = filename;
+
+    document.querySelectorAll("#dossiersList .session-card").forEach(c => {
+      c.classList.toggle("selected", c.dataset.dossierFile === filename);
+    });
+
+    try {
+      const res = await window.pywebview.api.get_dossier_content(filename);
+      if (!res || !res.success || !res.dossier) {
+        return;
+      }
+      const d = res.dossier;
+      this.selectedDossierMarkdown = d.content_markdown || "";
+
+      const placeholder = document.getElementById("dossierDetailPlaceholder");
+      const view = document.getElementById("dossierDetailView");
+      if (placeholder) placeholder.style.display = "none";
+      if (view) view.classList.remove("hidden");
+
+      const titleEl = document.getElementById("dossierDetailTitle");
+      if (titleEl) titleEl.innerText = d.title || d.filename;
+
+      const metaEl = document.getElementById("dossierDetailMeta");
+      if (metaEl) {
+        metaEl.innerText = `${d.date || ""} ${d.time || ""} · ${(d.category || "general").toUpperCase()} · ${d.word_count || 0} words`;
+      }
+
+      const pageEl = document.getElementById("dossierPaperPage");
+      if (pageEl) {
+        pageEl.innerHTML = d.rendered_html || "";
+        // Wrap tables so wide multi-column tables scroll cleanly inside the page bounds
+        pageEl.querySelectorAll("table").forEach(tbl => {
+          if (!tbl.parentElement || !tbl.parentElement.classList.contains("dossier-table-wrap")) {
+            const wrap = document.createElement("div");
+            wrap.className = "dossier-table-wrap";
+            tbl.parentNode.insertBefore(wrap, tbl);
+            wrap.appendChild(tbl);
+          }
+        });
+        pageEl.classList.toggle("dark-mode", Boolean(this.dossierDarkMode));
+        this.applyDossierZoom();
+        const canvas = pageEl.parentElement;
+        if (canvas) {
+          canvas.scrollTop = 0;
+          canvas.scrollLeft = 0;
+        }
+      }
+    } catch (e) {
+      console.error("Error loading dossier content:", e);
+    }
+  },
+
+  resetDossierDetail: function() {
+    this.selectedDossierFilename = null;
+    this.selectedDossierMarkdown = "";
+    const placeholder = document.getElementById("dossierDetailPlaceholder");
+    const view = document.getElementById("dossierDetailView");
+    if (placeholder) placeholder.style.display = "flex";
+    if (view) view.classList.add("hidden");
+  },
+
+  deleteDossier: async function(filename) {
+    if (!filename) return;
+    if (!confirm(`Are you sure you want to permanently delete dossier "${filename}"?`)) {
+      return;
+    }
+    if (!window.pywebview?.api?.delete_dossier) return;
+    try {
+      const res = await window.pywebview.api.delete_dossier(filename);
+      if (res && res.success) {
+        if (this.selectedDossierFilename === filename) {
+          this.resetDossierDetail();
+        }
+        const query = document.getElementById("dossiersSearch")?.value?.trim() || "";
+        await this.loadDossiers(query);
+      } else {
+        alert(`Failed to delete dossier: ${res?.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      console.error("Error deleting dossier:", e);
+    }
+  },
+
+  copyDossierFormatted: async function() {
+    if (!this.selectedDossierFilename || !window.pywebview?.api?.copy_dossier_rich_html) return;
+    const btn = document.getElementById("copyDossierRichBtn");
+    const orig = btn ? btn.innerText : "";
+    try {
+      const res = await window.pywebview.api.copy_dossier_rich_html(this.selectedDossierFilename);
+      if (res && res.success && btn) {
+        btn.innerText = "✓ COPIED!";
+        setTimeout(() => { btn.innerText = orig; }, 1600);
+      }
+    } catch (e) {
+      console.error("Copy rich HTML error:", e);
+    }
+  },
+
+  copyDossierMarkdown: async function() {
+    if (!this.selectedDossierMarkdown) return;
+    const btn = document.getElementById("copyDossierMdBtn");
+    const orig = btn ? btn.innerText : "MD";
+    try {
+      await navigator.clipboard.writeText(this.selectedDossierMarkdown);
+      if (btn) {
+        btn.innerText = "✓";
+        setTimeout(() => { btn.innerText = orig; }, 1500);
+      }
+    } catch (e) {
+      console.error("Copy Markdown error:", e);
+    }
+  },
+
+  applyDossierThemeUI: function() {
+    const pageEl = document.getElementById("dossierPaperPage");
+    if (pageEl) pageEl.classList.toggle("dark-mode", Boolean(this.dossierDarkMode));
+    const btn = document.getElementById("toggleDossierThemeBtn");
+    if (btn) btn.innerText = this.dossierDarkMode ? "☀️ PAPER" : "🌙 DARK";
+  },
+
+  toggleDossierTheme: async function() {
+    this.dossierDarkMode = !this.dossierDarkMode;
+    this.applyDossierThemeUI();
+    try {
+      if (window.pywebview?.api?.save_dossier_theme) {
+        await window.pywebview.api.save_dossier_theme(this.dossierDarkMode ? "dark" : "paper");
+      }
+    } catch (e) {
+      console.warn("Could not save dossier theme preference:", e);
+    }
+  },
+
+  openDossierExternal: async function() {
+    if (!this.selectedDossierFilename || !window.pywebview?.api?.open_dossier_file) return;
+    await window.pywebview.api.open_dossier_file(this.selectedDossierFilename);
+  },
+
+  setDossierZoom: function(val) {
+    this.dossierZoom = val || "fit";
+    const sel = document.getElementById("dossierZoomSelect");
+    if (sel && sel.value !== this.dossierZoom) {
+      sel.value = this.dossierZoom;
+    }
+    this.applyDossierZoom();
+  },
+
+  stepDossierZoom: function(delta) {
+    const levels = ["0.75", "0.9", "1", "1.25", "1.5", "1.75", "2"];
+    const current = this.dossierZoom === "fit" ? "1" : String(this.dossierZoom);
+    let idx = levels.indexOf(current);
+    if (idx === -1) idx = 2;
+    const nextIdx = Math.max(0, Math.min(levels.length - 1, idx + delta));
+    this.setDossierZoom(levels[nextIdx]);
+  },
+
+  applyDossierZoom: function() {
+    const pageEl = document.getElementById("dossierPaperPage");
+    if (!pageEl) return;
+    if (this.dossierZoom === "fit") {
+      pageEl.classList.remove("fixed-page");
+      pageEl.style.zoom = "1";
+    } else {
+      pageEl.classList.add("fixed-page");
+      pageEl.style.zoom = String(this.dossierZoom);
+    }
   }
 };
 
@@ -3691,15 +4094,18 @@ function collectSettingsPayload() {
   const bootEl = document.getElementById("toggle-boot-startup");
   const minEl = document.getElementById("toggle-start-minimized");
   const primaryEl = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
-  const heavyEl = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier2_heavy_model"]');
+  const moderateEl = document.getElementById("select-moderate-model") || document.querySelector('select[name="tier2_moderate_model"]');
+  const heavyEl = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier3_heavy_model"]') || document.querySelector('select[name="tier2_heavy_model"]');
   const sttEl = document.getElementById("stt_endpoint") || document.querySelector('select[name="stt_endpoint"]') || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
   const ttsEl = document.getElementById("tts_endpoint") || document.querySelector('select[name="tts_endpoint"]') || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model") || document.getElementById("ttsSelect");
   return {
     boot_on_startup: bootEl ? bootEl.checked : false,
     start_minimized: minEl ? minEl.checked : false,
-    primary_model_endpoint: primaryEl ? primaryEl.value : "gemini-3.8-flash",
-    tier1_fast_model: primaryEl ? primaryEl.value : "gemini-3.8-flash",
-    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-4-argon",
+    primary_model_endpoint: primaryEl ? primaryEl.value : "gemini-3.8-live",
+    tier1_fast_model: primaryEl ? primaryEl.value : "gemini-3.8-live",
+    tier2_moderate_model: moderateEl ? moderateEl.value : "gemini-4-hydrogen:medium",
+    tier3_heavy_model: heavyEl ? heavyEl.value : "gemini-4-argon:medium",
+    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-4-argon:medium",
     stt_model_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
     stt_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
     tts_model_endpoint: ttsEl ? ttsEl.value : "gemini_live",

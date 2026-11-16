@@ -36,12 +36,13 @@ class UniversalGameNavigator:
     def __init__(
         self,
         client=None,
-        model_endpoint: str = "gemini-3.8-flash",
+        model_endpoint: str = "gemini-4-hydrogen",
         target_process: str = "",
         map_controls: Optional[Dict[str, Any]] = None
     ):
+        from core.model_discovery import resolve_model_profile
         self.client = client
-        self.model_endpoint = model_endpoint
+        self.model_endpoint = resolve_model_profile(model_endpoint, default_model="gemini-4-hydrogen")[0]
         self.target_process = target_process
         self.map_controls = map_controls or {}
 

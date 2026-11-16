@@ -90,9 +90,11 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
             content = f.read()
 
         self.assertIn('id="select-primary-model"', content)
+        self.assertIn('id="select-moderate-model"', content)
         self.assertIn('id="select-heavy-model"', content)
-        self.assertIn('value="gemini-3.8-flash"', content)
-        self.assertIn('value="gemini-4-argon"', content)
+        self.assertIn('value="gemini-3.8-live"', content)
+        self.assertIn('value="gemini-4-hydrogen:medium"', content)
+        self.assertIn('value="gemini-4-argon:medium"', content)
 
     def test_settings_js_default_models_defined(self):
         """Ensures settings.js defines default fallback model arrays."""

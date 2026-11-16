@@ -10,9 +10,115 @@ import wave
 import re
 import json
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
 
-MANIFEST_PATH = os.path.join("data", "models_manifest.json")
+from core.paths import app_path
+
+MANIFEST_PATH = app_path("data", "models_manifest.json")
+
+PRIMARY_CURATED_PROFILES: List[Dict[str, Any]] = [
+    {"id": "gemini-3.8-live", "display_name": "Gemini 3.8 Live (Default)"},
+    {"id": "gemini-4-hydrogen:instant", "display_name": "Gemini 4.0 Hydrogen Instant (Modular)"},
+    {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (Modular High Speed)"},
+]
+
+MODERATE_CURATED_PROFILES: List[Dict[str, Any]] = [
+    {"id": "gemini-4-hydrogen:low", "display_name": "Gemini 4.0 Hydrogen Low"},
+    {"id": "gemini-4-hydrogen:medium", "display_name": "Gemini 4.0 Hydrogen Medium (Default)"},
+    {"id": "gemini-4-hydrogen:high", "display_name": "Gemini 4.0 Hydrogen High"},
+    {"id": "gemini-4-hydrogen:xhigh", "display_name": "Gemini 4.0 Hydrogen Extra"},
+]
+
+TIER1_CURATED_PROFILES: List[Dict[str, Any]] = [
+    {"id": "gemini-4-hydrogen:xhigh", "display_name": "Gemini 4.0 Hydrogen Extra"},
+    {"id": "gemini-4-hydrogen:high", "display_name": "Gemini 4.0 Hydrogen High"},
+    {"id": "gemini-4-hydrogen:medium", "display_name": "Gemini 4.0 Hydrogen Medium"},
+    {"id": "gemini-4-hydrogen:low", "display_name": "Gemini 4.0 Hydrogen Low"},
+    {"id": "gemini-4-hydrogen:instant", "display_name": "Gemini 4.0 Hydrogen Instant (Default)"},
+    {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (High Speed)"},
+]
+
+TIER2_CURATED_PROFILES: List[Dict[str, Any]] = [
+    {"id": "gemini-4-argon:low", "display_name": "Gemini 4.0 Argon Low"},
+    {"id": "gemini-4-argon:medium", "display_name": "Gemini 4.0 Argon Medium (Default)"},
+    {"id": "gemini-4-argon:high", "display_name": "Gemini 4.0 Argon High"},
+]
+
+HEAVY_CURATED_PROFILES = TIER2_CURATED_PROFILES
+
+
+def get_ttrpg_model_options() -> List[Dict[str, str]]:
+    """Returns curated model/thinking profiles available for the TTRPG Live Game Master."""
+    options: List[Dict[str, str]] = []
+    for item in TIER1_CURATED_PROFILES + TIER2_CURATED_PROFILES:
+        mid = str(item.get("id", "")).strip()
+        label = str(item.get("display_name", mid)).strip()
+        if mid == "gemini-4-hydrogen:medium":
+            label = "Gemini 4.0 Hydrogen Medium (Recommended)"
+        elif mid == "gemini-4-hydrogen:instant":
+            label = "Gemini 4.0 Hydrogen Instant (Fastest)"
+        elif mid == "gemini-4-argon:high":
+            label = "Gemini 4.0 Argon High"
+        options.append({"id": mid, "display_name": label})
+    return options
+
+
+def resolve_model_profile(
+    endpoint: Optional[str],
+    default_model: str = "gemini-4-hydrogen",
+    default_level: Optional[str] = None,
+) -> Tuple[str, Optional[str]]:
+    """
+    Splits a configured endpoint profile (e.g. 'gemini-4-hydrogen:medium' or 'gemini-4-argon:high')
+    into (base_model_id, thinking_level).
+    """
+    raw = str(endpoint or "").strip()
+    if raw.startswith("models/"):
+        raw = raw[len("models/"):]
+
+    level = default_level
+    if ":" in raw:
+        base_part, lvl_part = raw.split(":", 1)
+        base_model = base_part.strip() or default_model
+        level = lvl_part.strip().lower() or default_level
+    else:
+        base_model = raw or default_model
+
+    if level:
+        level = str(level).strip().lower()
+        if level == "extra":
+            level = "xhigh"
+        if ("argon" in base_model.lower() or "carbon" in base_model.lower()) and level == "xhigh":
+            level = "high"
+
+    return base_model, level
+
+
+def build_thinking_config(
+    model_or_profile: Optional[str],
+    thinking_level: Optional[str] = None,
+    thinking_budget: Optional[int] = None,
+):
+    """
+    Builds a google.genai.types.ThinkingConfig adapted for Gemini 4 (Hydrogen/Argon/Carbon)
+    thinking_level vs legacy thinking_budget models (e.g. gemini-3.8-flash).
+    """
+    from google.genai import types
+    base_model, level = resolve_model_profile(model_or_profile, default_level=thinking_level)
+    mid_low = base_model.lower()
+    if level in ("instant", "none", "off", "0"):
+        return types.ThinkingConfig(thinking_budget=0)
+    if "hydrogen" in mid_low or "argon" in mid_low or "carbon" in mid_low:
+        if not level:
+            level = "medium" if "hydrogen" in mid_low else "high"
+        if level not in ("low", "medium", "high", "xhigh"):
+            level = "medium" if "hydrogen" in mid_low else "high"
+        if ("argon" in mid_low or "carbon" in mid_low) and level == "xhigh":
+            level = "high"
+        return types.ThinkingConfig(thinking_level=level)
+
+    budget = int(thinking_budget if thinking_budget is not None else 0)
+    return types.ThinkingConfig(thinking_budget=budget)
 
 # Keywords that disqualify a model from general conversational/reasoning chat:
 CHAT_EXCLUDE_KEYWORDS = [
@@ -34,14 +140,10 @@ CHAT_EXCLUDE_KEYWORDS = [
 ]
 
 DEFAULT_CATEGORIZED_MODELS: Dict[str, List[Dict[str, Any]]] = {
-    "chat_models": [
-        {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (High Speed)"},
-        {"id": "gemini-4-argon", "display_name": "Gemini 4 Argon (Balanced Reasoning)"}
-    ],
-    "heavy_models": [
-        {"id": "gemini-4-argon", "display_name": "Gemini 4 Argon (High Reasoning)"},
-        {"id": "gemini-3.8-flash-extended", "display_name": "Gemini 3.8 Extended (Deep Reasoning)"}
-    ],
+    "chat_models": list(TIER1_CURATED_PROFILES),
+    "primary_models": list(PRIMARY_CURATED_PROFILES),
+    "moderate_models": list(MODERATE_CURATED_PROFILES),
+    "heavy_models": list(TIER2_CURATED_PROFILES),
     "tts_models": [
         {"id": "gemini-3.8-flash-tts", "display_name": "Gemini 3.8 Flash TTS (Cloud)"},
         {"id": "gemini-3.8-flash-lite-tts", "display_name": "Gemini 3.8 Flash Lite TTS (Cloud)"},
@@ -53,8 +155,11 @@ DEFAULT_CATEGORIZED_MODELS: Dict[str, List[Dict[str, Any]]] = {
     ]
 }
 
+DEFAULT_CATEGORIZED_MODELS["primary_options"] = DEFAULT_CATEGORIZED_MODELS["primary_models"]
 DEFAULT_CATEGORIZED_MODELS["tier1_options"] = DEFAULT_CATEGORIZED_MODELS["chat_models"]
+DEFAULT_CATEGORIZED_MODELS["tier2_moderate_options"] = DEFAULT_CATEGORIZED_MODELS["moderate_models"]
 DEFAULT_CATEGORIZED_MODELS["tier2_options"] = DEFAULT_CATEGORIZED_MODELS["heavy_models"]
+DEFAULT_CATEGORIZED_MODELS["tier3_options"] = DEFAULT_CATEGORIZED_MODELS["heavy_models"]
 
 DEFAULT_FALLBACK_MODELS = DEFAULT_CATEGORIZED_MODELS["chat_models"]
 
@@ -74,15 +179,17 @@ def _generate_silent_wav_bytes(duration_sec: float = 0.1) -> bytes:
 def verify_chat_endpoint(client, model_id: str) -> bool:
     """Probes a conversational chat model with a verification query."""
     try:
-        if "argon" in model_id.lower():
+        base_model, _ = resolve_model_profile(model_id)
+        mid_low = base_model.lower()
+        if "argon" in mid_low or "hydrogen" in mid_low or "carbon" in mid_low:
             res = client.models.generate_content(
-                model=model_id,
+                model=base_model,
                 contents="ping",
                 config={"max_output_tokens": 1024, "thinking_config": {"thinking_level": "low"}}
             )
         else:
             res = client.models.generate_content(
-                model=model_id,
+                model=base_model,
                 contents="ping",
                 config={"max_output_tokens": 1}
             )
@@ -263,19 +370,36 @@ def fetch_available_gemini_models(client, probe_endpoints: bool = True) -> Dict[
             if not probe_endpoints or verify_chat_endpoint(client, candidate["id"]):
                 verified_chat.append(entry)
 
-    # Sort with newest versions first
+    # Sort with newest versions first, then assemble curated Hydrogen profiles at top & 3.8 Flash at bottom
     verified_chat.sort(key=model_chronological_key, reverse=True)
     verified_tts.sort(key=model_chronological_key, reverse=True)
     verified_stt.sort(key=model_chronological_key, reverse=True)
 
+    verified_ids = {m["id"].lower() for m in verified_chat}
+    curated_chat: List[Dict[str, Any]] = []
+    if not verified_chat or "gemini-4-hydrogen" in verified_ids:
+        curated_chat.extend(TIER1_CURATED_PROFILES[:5])
+    for item in verified_chat:
+        mid_low = item["id"].lower()
+        if mid_low in ("gemini-4-hydrogen", "gemini-3.8-flash"):
+            continue
+        curated_chat.append(item)
+    if not verified_chat or "gemini-3.8-flash" in verified_ids:
+        curated_chat.append(TIER1_CURATED_PROFILES[5])
+
     result = {
         "updated_at": time.time(),
-        "chat_models": verified_chat or DEFAULT_CATEGORIZED_MODELS["chat_models"],
+        "primary_models": DEFAULT_CATEGORIZED_MODELS["primary_models"],
+        "primary_options": DEFAULT_CATEGORIZED_MODELS["primary_models"],
+        "chat_models": curated_chat or DEFAULT_CATEGORIZED_MODELS["chat_models"],
+        "moderate_models": DEFAULT_CATEGORIZED_MODELS["moderate_models"],
+        "tier2_moderate_options": DEFAULT_CATEGORIZED_MODELS["moderate_models"],
         "tts_models": verified_tts or DEFAULT_CATEGORIZED_MODELS["tts_models"],
         "stt_models": verified_stt or DEFAULT_CATEGORIZED_MODELS["stt_models"],
         "heavy_models": DEFAULT_CATEGORIZED_MODELS["heavy_models"],
-        "tier1_options": verified_chat or DEFAULT_CATEGORIZED_MODELS["chat_models"],
+        "tier1_options": curated_chat or DEFAULT_CATEGORIZED_MODELS["chat_models"],
         "tier2_options": DEFAULT_CATEGORIZED_MODELS["heavy_models"],
+        "tier3_options": DEFAULT_CATEGORIZED_MODELS["heavy_models"],
     }
 
     try:

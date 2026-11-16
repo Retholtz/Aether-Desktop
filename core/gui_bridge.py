@@ -1275,11 +1275,39 @@ class GuiBridge:
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
 
-            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "tier1_fast_model", "tier2_heavy_model", "tier2_thinking_level", "tier2_thinking_budget", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
+            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "tts_pace", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "primary_model_endpoint", "ttrpg_model_endpoint", "tier1_fast_model", "tier2_moderate_model", "tier2_heavy_model", "tier3_heavy_model", "tier2_thinking_level", "tier2_thinking_budget", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
 
                 if top_key in new_config:
 
                     self._config[top_key] = new_config[top_key]
+
+            if "tier2_moderate_model" in new_config and new_config["tier2_moderate_model"]:
+                mod_val = str(new_config["tier2_moderate_model"]).strip()
+                self._config["tier2_moderate_model"] = mod_val
+                self._config.setdefault("api", {})["moderate_model_id"] = mod_val
+
+            if "tier3_heavy_model" in new_config or "tier2_heavy_model" in new_config:
+                h_val = str(new_config.get("tier3_heavy_model") or new_config.get("tier2_heavy_model") or "").strip()
+                if h_val:
+                    self._config["tier3_heavy_model"] = h_val
+                    self._config["tier2_heavy_model"] = h_val
+                    self._config.setdefault("api", {})["pro_model_id"] = h_val
+
+            if "primary_model_endpoint" in new_config and new_config["primary_model_endpoint"]:
+                pm_val = str(new_config["primary_model_endpoint"]).strip()
+                self._config["primary_model_endpoint"] = pm_val
+                self._config["tier1_fast_model"] = pm_val
+                self._config.setdefault("api", {})["model_id"] = pm_val
+                if "pipeline_mode" not in new_config and "pipeline_mode" not in (new_config.get("api") or {}):
+                    inferred_pipe = "live" if "live" in pm_val.lower() else "modular"
+                    self._config["pipeline_mode"] = inferred_pipe
+                    self._config.setdefault("api", {})["pipeline_mode"] = inferred_pipe
+                    if inferred_pipe == "live":
+                        self._config["api"]["live_model_id"] = pm_val
+
+            if "ttrpg_model_endpoint" in new_config and new_config["ttrpg_model_endpoint"]:
+                self._config["ttrpg_model_endpoint"] = str(new_config["ttrpg_model_endpoint"]).strip()
+                self._config.setdefault("api", {})["ttrpg_model_id"] = self._config["ttrpg_model_endpoint"]
 
 
 
@@ -1358,6 +1386,16 @@ class GuiBridge:
                 self._config["tier2_heavy_model"] = new_config["tier2_heavy_model"]
 
                 self._config.setdefault("api", {})["pro_model_id"] = new_config["tier2_heavy_model"]
+
+                if ":" in str(new_config["tier2_heavy_model"]):
+
+                    lvl = str(new_config["tier2_heavy_model"]).split(":", 1)[1].strip().lower()
+
+                    if lvl in ("low", "medium", "high"):
+
+                        self._config["tier2_thinking_level"] = lvl
+
+                        self._config.setdefault("api", {})["tier2_thinking_level"] = lvl
 
 
 
@@ -1467,9 +1505,19 @@ class GuiBridge:
 
                 self._config.setdefault("api", {})["model_id"] = api_cfg["model_id"]
 
+            if "moderate_model_id" in api_cfg:
+
+                self._config.setdefault("api", {})["moderate_model_id"] = api_cfg["moderate_model_id"]
+
+                self._config["tier2_moderate_model"] = api_cfg["moderate_model_id"]
+
             if "pipeline_mode" in api_cfg:
 
-                self._config.setdefault("api", {})["pipeline_mode"] = api_cfg["pipeline_mode"]
+                pipe_val = str(api_cfg["pipeline_mode"]).lower()
+
+                self._config.setdefault("api", {})["pipeline_mode"] = pipe_val
+
+                self._config["pipeline_mode"] = pipe_val
 
             if "stt_model_id" in api_cfg:
 
@@ -1518,6 +1566,16 @@ class GuiBridge:
                 self._config.setdefault("api", {})["voice_speed"] = float(api_cfg["voice_speed"])
 
                 self._config["tts_speed"] = float(api_cfg["voice_speed"])
+
+            if "tts_pace" in api_cfg:
+
+                pace_val = str(api_cfg["tts_pace"]).strip().lower()
+
+                if pace_val in ("measured", "natural", "brisk"):
+
+                    self._config.setdefault("api", {})["tts_pace"] = pace_val
+
+                    self._config["tts_pace"] = pace_val
 
             if "local_tts_url" in api_cfg:
 
@@ -2058,6 +2116,43 @@ class GuiBridge:
 
         except Exception as e:
 
+            return {"success": False, "error": str(e)}
+
+    def refresh_connection(self) -> dict:
+        """Stops and restarts the assistant engine while clearing hung audio/session buffers."""
+        try:
+            logger.info("[GUI BRIDGE] Refreshing Aether connection and clearing buffers...")
+            try:
+                self._engine.kill_audio()
+            except Exception:
+                pass
+
+            # Clear any stuck state flags or stale resumption tokens
+            for attr, val in (
+                ("_session_resumption_handle", None),
+                ("is_tool_running", False),
+                ("is_speaking", False),
+                ("is_audio_streaming", False),
+            ):
+                if hasattr(self._engine, attr):
+                    try:
+                        setattr(self._engine, attr, val)
+                    except Exception:
+                        pass
+
+            if getattr(self._engine, "is_running", False):
+                try:
+                    self._engine.stop()
+                except Exception as stop_err:
+                    logger.warning(f"[REFRESH CONNECTION] Stop warning: {stop_err}")
+                time.sleep(0.35)
+
+            if not getattr(self._engine, "is_running", False):
+                self._engine.start(self._loop)
+
+            return {"success": True, "status": "refreshed"}
+        except Exception as e:
+            logger.error(f"[REFRESH CONNECTION ERROR] {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
 
@@ -3418,7 +3513,86 @@ class GuiBridge:
 
             return {"success": False, "error": str(e)}
 
+    # --- DOSSIER VIEWER BRIDGES ---
 
+    def get_dossiers(self, query: Optional[str] = None) -> dict:
+        """Lists saved Markdown dossiers in data/dossiers/."""
+        try:
+            from tools.dossier_exporter import list_dossiers
+            dossiers = list_dossiers(query=query)
+            return {"success": True, "dossiers": dossiers, "total": len(dossiers)}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_dossiers: {e}")
+            return {"success": False, "error": str(e), "dossiers": []}
+
+    def get_dossier_content(self, filename: str) -> dict:
+        """Retrieves metadata, raw Markdown, and Word/Docs-styled HTML for a dossier."""
+        try:
+            from tools.dossier_exporter import get_dossier_details
+            res = get_dossier_details(filename)
+            if res.get("status") == "success":
+                return {"success": True, "dossier": res["dossier"]}
+            return {"success": False, "error": res.get("message", "Dossier not found.")}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_dossier_content: {e}")
+            return {"success": False, "error": str(e)}
+
+    def delete_dossier(self, filename: str) -> dict:
+        """Deletes a saved dossier file from data/dossiers/."""
+        try:
+            from tools.dossier_exporter import delete_dossier_file
+            res = delete_dossier_file(filename)
+            if res.get("status") == "success":
+                return {"success": True, "result": res}
+            return {"success": False, "error": res.get("message", "Dossier not found.")}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] delete_dossier: {e}")
+            return {"success": False, "error": str(e)}
+
+    def copy_dossier_rich_html(self, filename: str) -> dict:
+        """Copies a dossier as rich CF_HTML + plain text for pasting into Word or Google Docs."""
+        try:
+            from tools.dossier_exporter import get_dossier_details
+            from tools.clipboard import copy_markdown_as_rich_html, set_clipboard_text
+            res = get_dossier_details(filename)
+            if res.get("status") != "success":
+                return {"success": False, "error": res.get("message", "Dossier not found.")}
+            md = res["dossier"].get("content_markdown", "")
+            ok = copy_markdown_as_rich_html(md)
+            if not ok:
+                ok = set_clipboard_text(md)
+            return {"success": bool(ok)}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] copy_dossier_rich_html: {e}")
+            return {"success": False, "error": str(e)}
+
+    def open_dossier_file(self, filename: str) -> dict:
+        """Opens a dossier file in the OS default viewer."""
+        try:
+            from tools.dossier_exporter import _safe_dossier_path
+            fpath = _safe_dossier_path(filename)
+            if not fpath or not os.path.isfile(fpath):
+                return {"success": False, "error": "Dossier file not found."}
+            os.startfile(fpath)
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] open_dossier_file: {e}")
+            return {"success": False, "error": str(e)}
+
+    def save_dossier_theme(self, theme: str) -> dict:
+        """Persists the user's preferred Dossier Viewer reading theme ('dark' or 'paper')."""
+        try:
+            clean_theme = "dark" if str(theme).strip().lower() == "dark" else "paper"
+            with self._config_lock:
+                ui_cfg = self._config.setdefault("ui", {})
+                if ui_cfg.get("dossier_theme") == clean_theme:
+                    return {"success": True, "theme": clean_theme}
+                ui_cfg["dossier_theme"] = clean_theme
+                save_config_atomic(self._config, self._config_path)
+            return {"success": True, "theme": clean_theme}
+        except Exception as e:
+            logger.warning(f"[DOSSIER THEME SAVE ERROR] {e}")
+            return {"success": False, "error": str(e)}
 
     # --- GAMES SUBSYSTEM BRIDGES ---
 
@@ -3724,18 +3898,20 @@ class GuiBridge:
 
         """Scans local directories or retrieves web defaults if files are absent."""
 
+        from core.model_discovery import resolve_model_profile
         client = getattr(self.engine, "client", None) or getattr(self._engine, "client", None)
 
-        model = "gemini-2.5-flash"
+        model = "gemini-4-hydrogen"
 
         if hasattr(self, "_config") and isinstance(self._config, dict):
 
-            model = self._config.get("primary_model_endpoint", "gemini-2.5-flash")
+            model = self._config.get("primary_model_endpoint", "gemini-4-hydrogen")
 
         elif hasattr(self, "engine") and hasattr(self.engine, "config"):
 
-            model = getattr(self.engine.config, "get", lambda k, d: d)("primary_model_endpoint", "gemini-2.5-flash")
+            model = getattr(self.engine.config, "get", lambda k, d: d)("primary_model_endpoint", "gemini-4-hydrogen")
 
+        model = resolve_model_profile(model, default_model="gemini-4-hydrogen")[0]
         return self.game_mgr.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model)
 
 
@@ -6783,6 +6959,14 @@ class GuiBridge:
             except Exception as e:
                 logger.debug(f"[GUIBridge] World state load error for '{active_id}': {e}")
 
+        from core.model_discovery import get_ttrpg_model_options
+        with self._config_lock:
+            ttrpg_ep = (
+                self._config.get("ttrpg_model_endpoint")
+                or self._config.get("api", {}).get("ttrpg_model_id")
+                or "gemini-4-hydrogen:medium"
+            )
+
         return {
             "active_campaign": active_id,
             "campaigns": campaigns,
@@ -6790,10 +6974,25 @@ class GuiBridge:
             "dice_mode": campaigns.get(active_id, {}).get("dice_mode", "digital") if active_id else "digital",
             "state": self.ttrpg_service.active_state,
             "is_adventure_active": is_adv,
+            "ttrpg_model_endpoint": ttrpg_ep,
+            "ttrpg_model_options": get_ttrpg_model_options(),
             "projects": self.project_service.data.get("projects", {}) if hasattr(self, "project_service") and self.project_service else {},
             "world_state": world_state,
             "world_context": world_context
         }
+
+    def save_ttrpg_model_endpoint(self, model_endpoint: str) -> Dict[str, Any]:
+        """Persists the user's preferred Cortex model/thinking level for TTRPG sessions."""
+        chosen = str(model_endpoint or "").strip() or "gemini-4-hydrogen:medium"
+        with self._config_lock:
+            self._config["ttrpg_model_endpoint"] = chosen
+            self._config.setdefault("api", {})["ttrpg_model_id"] = chosen
+            save_config(self._config)
+        eng = getattr(self, "_engine", getattr(self, "engine", None))
+        if eng and hasattr(eng, "is_ttrpg_session_active") and eng.is_ttrpg_session_active():
+            eng._reset_context_flag = True
+        logger.info(f"[TTRPG] Saved preferred DM Engine profile: {chosen}")
+        return {"success": True, "ttrpg_model_endpoint": chosen}
 
     def set_active_campaign(self, campaign_id: str) -> Dict[str, Any]:
         res = self.ttrpg_service.set_active_campaign(campaign_id)
@@ -7426,15 +7625,21 @@ class GuiBridge:
             return self.send_workspace_message("campaign", active_id, prompt)
         return self.send_text_message(prompt)
 
-    def start_or_resume_ttrpg_campaign(self) -> Dict[str, Any]:
+    def start_or_resume_ttrpg_campaign(self, model_endpoint: Optional[str] = None) -> Dict[str, Any]:
         """
         Starts a new campaign with opening narration or resumes an existing campaign seamlessly
         from the persistent session recap and journal notes.
-        Auto-starts Aether voice engine if not already running.
+        Auto-starts Aether voice engine if not already running and applies the saved TTRPG Cortex engine.
         """
+        if model_endpoint:
+            self.save_ttrpg_model_endpoint(model_endpoint)
+        self.set_ttrpg_session_active(True)
+        if self._engine.is_running and getattr(self._engine, "_active_pipeline_mode", "live") != "modular":
+            # Switching from fast Live front-end into dedicated TTRPG Modular reasoning engine
+            self._engine.stop()
+            time.sleep(0.15)
         if not self._engine.is_running:
             self.start_assistant()
-        self.set_ttrpg_session_active(True)
         active_id = self.ttrpg_service.manifest.get("active_campaign")
         if not active_id and self.ttrpg_service.manifest.get("campaigns"):
             active_id = next(iter(self.ttrpg_service.manifest["campaigns"]))

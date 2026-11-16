@@ -81,15 +81,24 @@ function sortModelsChronologically(models) {
   });
 }
 
-// Base default options for conversational and heavy models
+// Base default options for Primary, Tier 2 Moderate (Hydrogen), and Tier 3 Heavy (Argon) models
 const DEFAULT_CHAT_MODELS = [
-  { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (High Speed)" },
-  { id: "gemini-4-argon", display_name: "Gemini 4 Argon (Balanced Reasoning)" }
+  { id: "gemini-3.8-live", display_name: "Gemini 3.8 Live (Default)" },
+  { id: "gemini-4-hydrogen:instant", display_name: "Gemini 4.0 Hydrogen Instant (Modular)" },
+  { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (Modular High Speed)" }
+];
+
+const DEFAULT_MODERATE_MODELS = [
+  { id: "gemini-4-hydrogen:low", display_name: "Gemini 4.0 Hydrogen Low" },
+  { id: "gemini-4-hydrogen:medium", display_name: "Gemini 4.0 Hydrogen Medium (Default)" },
+  { id: "gemini-4-hydrogen:high", display_name: "Gemini 4.0 Hydrogen High" },
+  { id: "gemini-4-hydrogen:xhigh", display_name: "Gemini 4.0 Hydrogen Extra" }
 ];
 
 const DEFAULT_HEAVY_MODELS = [
-  { id: "gemini-4-argon", display_name: "Gemini 4 Argon (High Reasoning)" },
-  { id: "gemini-3.8-flash-extended", display_name: "Gemini 3.8 Extended (Deep Reasoning)" }
+  { id: "gemini-4-argon:low", display_name: "Gemini 4.0 Argon Low" },
+  { id: "gemini-4-argon:medium", display_name: "Gemini 4.0 Argon Medium (Default)" },
+  { id: "gemini-4-argon:high", display_name: "Gemini 4.0 Argon High" }
 ];
 
 // Base fixed options for TTS (offline/native engines that are not Google API endpoints)
@@ -105,6 +114,10 @@ const STATIC_STT_ENGINES = [
   { 
     id: "gemini_live_audio", 
     display_name: "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)" 
+  },
+  { 
+    id: "gemini-3.5-transcribe", 
+    display_name: "Gemini 3.5 Transcribe (Dedicated High-Speed STT)" 
   },
   { 
     id: "primary_flash_stt", 
@@ -138,22 +151,32 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
   currentConfig = currentConfig || {};
   categorizedData = categorizedData || {};
 
-  // 1. Primary Model and Tier 2 Heavy Model
+  // 1. Primary Model, Tier 2 Moderate Model (Hydrogen), and Tier 3 Heavy Model (Argon)
   const primaryEl = document.getElementById('select-primary-model') || 
                     document.getElementById('modelSelect') || 
                     document.querySelector('select[name="primary_model_endpoint"]');
+  const moderateEl = document.getElementById('select-moderate-model') ||
+                     document.querySelector('select[name="tier2_moderate_model"]');
   const heavyEl = document.getElementById('select-heavy-model') || 
                   document.getElementById('proModelSelect') || 
+                  document.querySelector('select[name="tier3_heavy_model"]') ||
                   document.querySelector('select[name="tier2_heavy_model"]');
 
-  const rawChat = categorizedData.chat_models || categorizedData.tier1_options;
-  const chatModels = (Array.isArray(rawChat) && rawChat.length > 0)
-    ? rawChat
-    : ((currentConfig.models && Array.isArray(currentConfig.models.tier1_options) && currentConfig.models.tier1_options.length > 0)
-        ? currentConfig.models.tier1_options
+  const rawPrimary = categorizedData.primary_models || categorizedData.primary_options;
+  const primaryModels = (Array.isArray(rawPrimary) && rawPrimary.length > 0)
+    ? rawPrimary
+    : ((currentConfig.models && Array.isArray(currentConfig.models.primary_options) && currentConfig.models.primary_options.length > 0)
+        ? currentConfig.models.primary_options
         : DEFAULT_CHAT_MODELS);
 
-  const rawHeavy = categorizedData.heavy_models || categorizedData.tier2_options;
+  const rawModerate = categorizedData.moderate_models || categorizedData.tier2_moderate_options;
+  const moderateModels = (Array.isArray(rawModerate) && rawModerate.length > 0)
+    ? rawModerate
+    : ((currentConfig.models && Array.isArray(currentConfig.models.tier2_moderate_options) && currentConfig.models.tier2_moderate_options.length > 0)
+        ? currentConfig.models.tier2_moderate_options
+        : DEFAULT_MODERATE_MODELS);
+
+  const rawHeavy = categorizedData.heavy_models || categorizedData.tier3_options || categorizedData.tier2_options;
   const heavyModels = (Array.isArray(rawHeavy) && rawHeavy.length > 0)
     ? rawHeavy
     : ((currentConfig.models && Array.isArray(currentConfig.models.tier2_options) && currentConfig.models.tier2_options.length > 0)
@@ -163,15 +186,22 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
   if (primaryEl) {
     populateDropdown(
       primaryEl, 
-      chatModels, 
-      currentConfig.primary_model_endpoint || (currentConfig.api && currentConfig.api.model_id) || currentConfig.tier1_fast_model || 'gemini-3.8-flash'
+      primaryModels, 
+      currentConfig.primary_model_endpoint || (currentConfig.api && currentConfig.api.model_id) || currentConfig.tier1_fast_model || 'gemini-3.8-live'
+    );
+  }
+  if (moderateEl) {
+    populateDropdown(
+      moderateEl,
+      moderateModels,
+      currentConfig.tier2_moderate_model || (currentConfig.api && currentConfig.api.moderate_model_id) || 'gemini-4-hydrogen:medium'
     );
   }
   if (heavyEl) {
     populateDropdown(
       heavyEl, 
       heavyModels, 
-      currentConfig.tier2_heavy_model || (currentConfig.api && currentConfig.api.pro_model_id) || 'gemini-4-argon'
+      currentConfig.tier3_heavy_model || currentConfig.tier2_heavy_model || (currentConfig.api && currentConfig.api.pro_model_id) || 'gemini-4-argon:medium'
     );
   }
 
@@ -204,7 +234,7 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
 
   if (sttEl) {
     let rawStt = currentConfig.stt_endpoint || currentConfig.stt_model_endpoint || (currentConfig.api && (currentConfig.api.stt_model_id || currentConfig.api.stt_endpoint)) || 'gemini_live_audio';
-    if (!['gemini_live_audio', 'primary_flash_stt'].includes(rawStt)) {
+    if (!['gemini_live_audio', 'gemini-3.5-transcribe', 'primary_flash_stt'].includes(rawStt)) {
       rawStt = 'gemini_live_audio';
     }
     populateDropdown(
@@ -1445,8 +1475,11 @@ function collectSettingsPayload() {
   const primaryEl = document.getElementById('select-primary-model') || 
                     document.getElementById('modelSelect') || 
                     document.querySelector('select[name="primary_model_endpoint"]');
+  const moderateEl = document.getElementById('select-moderate-model') ||
+                     document.querySelector('select[name="tier2_moderate_model"]');
   const heavyEl = document.getElementById('select-heavy-model') || 
                   document.getElementById('proModelSelect') || 
+                  document.querySelector('select[name="tier3_heavy_model"]') ||
                   document.querySelector('select[name="tier2_heavy_model"]');
   const sttEl = document.getElementById('stt_endpoint') || 
                 document.querySelector('select[name="stt_endpoint"]') || 
@@ -1461,9 +1494,11 @@ function collectSettingsPayload() {
   return {
     boot_on_startup: bootEl ? bootEl.checked : false,
     start_minimized: minEl ? minEl.checked : false,
-    primary_model_endpoint: primaryEl ? primaryEl.value : 'gemini-3.8-flash',
-    tier1_fast_model: primaryEl ? primaryEl.value : 'gemini-3.8-flash',
-    tier2_heavy_model: heavyEl ? heavyEl.value : 'gemini-4-argon',
+    primary_model_endpoint: primaryEl ? primaryEl.value : 'gemini-3.8-live',
+    tier1_fast_model: primaryEl ? primaryEl.value : 'gemini-3.8-live',
+    tier2_moderate_model: moderateEl ? moderateEl.value : 'gemini-4-hydrogen:medium',
+    tier3_heavy_model: heavyEl ? heavyEl.value : 'gemini-4-argon:medium',
+    tier2_heavy_model: heavyEl ? heavyEl.value : 'gemini-4-argon:medium',
     stt_model_endpoint: sttEl ? sttEl.value : 'gemini_live_audio',
     stt_endpoint: sttEl ? sttEl.value : 'gemini_live_audio',
     tts_model_endpoint: ttsEl ? ttsEl.value : 'gemini_live',
@@ -1473,6 +1508,7 @@ function collectSettingsPayload() {
 
 if (typeof window !== "undefined") {
   window.DEFAULT_CHAT_MODELS = DEFAULT_CHAT_MODELS;
+  window.DEFAULT_MODERATE_MODELS = DEFAULT_MODERATE_MODELS;
   window.DEFAULT_HEAVY_MODELS = DEFAULT_HEAVY_MODELS;
   window.STATIC_TTS_ENGINES = STATIC_TTS_ENGINES;
   window.STATIC_STT_ENGINES = STATIC_STT_ENGINES;

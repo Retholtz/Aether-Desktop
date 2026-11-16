@@ -7,9 +7,12 @@
   "tts_speed": 1.0,
   "voice_accent": "Default (Native / Standard)",
   "api_key_encrypted": "",
-  "primary_model_endpoint": "gemini-3.8-flash",
-  "tier2_heavy_model": "gemini-4-argon",
-  "tier2_thinking_level": "high",
+  "primary_model_endpoint": "gemini-3.8-live",
+  "tier2_moderate_model": "gemini-4-hydrogen:medium",
+  "ttrpg_model_endpoint": "gemini-4-hydrogen:medium",
+  "tier3_heavy_model": "gemini-4-argon:medium",
+  "tier2_heavy_model": "gemini-4-argon:medium",
+  "tier2_thinking_level": "medium",
   "stt_model_endpoint": "gemini_live_audio",
   "tts_model_endpoint": "gemini-live-voice-stream",
   "creativity_temperature": 0.7,
@@ -18,13 +21,21 @@
   "boot_on_startup": false,
   "start_minimized": false,
   "models": {
-    "tier1_options": [
-      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (High Speed)" },
-      { "id": "gemini-4-argon", "label": "Gemini 4 Argon (Balanced Reasoning)" }
+    "primary_options": [
+      { "id": "gemini-3.8-live", "label": "Gemini 3.8 Live (Default)" },
+      { "id": "gemini-4-hydrogen:instant", "label": "Gemini 4.0 Hydrogen Instant (Modular)" },
+      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (Modular High Speed)" }
+    ],
+    "tier2_moderate_options": [
+      { "id": "gemini-4-hydrogen:low", "label": "Gemini 4.0 Hydrogen Low" },
+      { "id": "gemini-4-hydrogen:medium", "label": "Gemini 4.0 Hydrogen Medium (Default)" },
+      { "id": "gemini-4-hydrogen:high", "label": "Gemini 4.0 Hydrogen High" },
+      { "id": "gemini-4-hydrogen:xhigh", "label": "Gemini 4.0 Hydrogen Extra" }
     ],
     "tier2_options": [
-      { "id": "gemini-4-argon", "label": "Gemini 4 Argon (High Reasoning)" },
-      { "id": "gemini-3.8-flash-extended", "label": "Gemini 3.8 Extended (Deep Reasoning)" }
+      { "id": "gemini-4-argon:low", "label": "Gemini 4.0 Argon Low" },
+      { "id": "gemini-4-argon:medium", "label": "Gemini 4.0 Argon Medium (Default)" },
+      { "id": "gemini-4-argon:high", "label": "Gemini 4.0 Argon High" }
     ],
     "stt_options": [
       { "id": "gemini_live_audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)" },

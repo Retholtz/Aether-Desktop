@@ -282,47 +282,58 @@ def restore_window(app_name: str) -> dict:
         return {"status": "error", "message": f"Failed to restore '{app_name}': {str(e)}"}
 
 
-def focus_window(app_name: str, auto_launch: bool = True) -> dict:
+def focus_window(app_name: Any, auto_launch: bool = True) -> dict:
     """
-    Brings a target window to the foreground so it receives user and keyboard focus.
-    If the window is not currently open and auto_launch=True, attempts to launch it
-    and waits for its window to appear before bringing it to the foreground.
+    Brings a target window (by executable/title query OR integer HWND) to the foreground
+    so it receives user and keyboard focus.
+    If the window is not currently open and auto_launch=True (for string queries), attempts
+    to launch it and waits for its window to appear before bringing it to the foreground.
     """
     ensure_thread_desktop()
     if not win32gui or not win32con:
         return {"status": "error", "message": "Win32 window management is only supported on Windows."}
 
-    hwnd = find_hwnd_by_query(app_name)
-    if not hwnd:
-        if auto_launch:
-            from security.whitelist import WhitelistValidator
-            from core.config_manager import load_config
-
-            cfg = load_config()
-            user_whitelist = cfg.get("allowed_applications") or cfg.get("security", {}).get("app_whitelist", [])
-
-            # Enforce active user whitelist instead of hardcoded wildcard ["*"]
-            launch_res = WhitelistValidator.validate_and_launch(app_name, user_whitelist)
-            if isinstance(launch_res, tuple):
-                is_valid = launch_res[0]
-                launch_err = launch_res[1]
-            else:
-                is_valid = launch_res.get("status") in ("success", "running")
-                launch_err = launch_res.get("error", "Launch failed")
-
-            if not is_valid:
-                return {"status": "error", "message": f"App launch blocked by whitelist: {launch_err}"}
-
-            for _ in range(25):
-                time.sleep(0.1)
-                hwnd = find_hwnd_by_query(app_name)
-                if hwnd:
-                    break
-
-            if not hwnd:
-                return {"status": "launched", "app": app_name}
+    if isinstance(app_name, int):
+        hwnd = app_name if win32gui.IsWindow(app_name) else None
+        if not hwnd:
+            return {"status": "not_found", "app": app_name, "message": f"Window handle {app_name} is not valid."}
+    else:
+        app_query = str(app_name or "").strip()
+        if app_query.isdigit():
+            cand = int(app_query)
+            hwnd = cand if win32gui.IsWindow(cand) else find_hwnd_by_query(app_query)
         else:
-            return {"status": "not_found", "app": app_name}
+            hwnd = find_hwnd_by_query(app_query)
+        if not hwnd:
+            if auto_launch and app_query:
+                from security.whitelist import WhitelistValidator
+                from core.config_manager import load_config
+
+                cfg = load_config()
+                user_whitelist = cfg.get("allowed_applications") or cfg.get("security", {}).get("app_whitelist", [])
+
+                # Enforce active user whitelist instead of hardcoded wildcard ["*"]
+                launch_res = WhitelistValidator.validate_and_launch(app_query, user_whitelist)
+                if isinstance(launch_res, tuple):
+                    is_valid = launch_res[0]
+                    launch_err = launch_res[1]
+                else:
+                    is_valid = launch_res.get("status") in ("success", "running")
+                    launch_err = launch_res.get("error", "Launch failed")
+
+                if not is_valid:
+                    return {"status": "error", "message": f"App launch blocked by whitelist: {launch_err}"}
+
+                for _ in range(25):
+                    time.sleep(0.1)
+                    hwnd = find_hwnd_by_query(app_query)
+                    if hwnd:
+                        break
+
+                if not hwnd:
+                    return {"status": "launched", "app": app_query}
+            else:
+                return {"status": "not_found", "app": app_query}
 
 
     try:

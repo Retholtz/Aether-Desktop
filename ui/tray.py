@@ -7,14 +7,25 @@ Provides system tray integration via pystray with quick actions:
 - Exit Application
 """
 
+import os
 import threading
 from typing import Callable, Optional
 from PIL import Image, ImageDraw
 import pystray
 
+from core.paths import resource_path
+
 
 def create_tray_icon_image(size: int = 64) -> Image.Image:
-    """Generates a sleek glowing circular icon for Aether Desktop tray."""
+    """Loads the bundled Aether Desktop icon or falls back to a procedural orb."""
+    icon_path = resource_path("assets", "icon.png")
+    if os.path.isfile(icon_path):
+        try:
+            with Image.open(icon_path) as src:
+                return src.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+        except Exception:
+            pass
+
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 

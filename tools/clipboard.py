@@ -384,6 +384,23 @@ def copy_markdown_as_rich_html(markdown_content: str) -> bool:
     return set_clipboard_html(html_payload, plain_text=markdown_content)
 
 
+def _get_window_title_safe(hwnd: int) -> str:
+    """Safely fetches a Win32 window title string, returning empty string if unavailable or mocked."""
+    if not HAS_WIN32 or not win32gui or not hwnd:
+        return ""
+    try:
+        title = win32gui.GetWindowText(hwnd)
+        return str(title or "").strip()
+    except Exception:
+        return ""
+
+
+def _is_google_docs_window_title(title: str) -> bool:
+    """Checks whether a non-empty browser window title looks like an open Google Docs editor tab."""
+    low = (title or "").lower()
+    return any(tok in low for tok in ("google docs", "untitled document", "docs.google.com"))
+
+
 def paste_markdown_to_target_app(
     markdown_content: str,
     app_name: str = "google docs",
@@ -395,6 +412,7 @@ def paste_markdown_to_target_app(
     brings the target app (e.g., Google Docs in Chrome, Word, Notepad) to the foreground,
     ensures the document editing canvas has input focus, and pastes it via Ctrl+V.
     If Google Docs is targeted but not yet open, automatically launches https://docs.new.
+    Fails loudly with diagnostic details if the target window/canvas cannot be focused.
     """
     if not HAS_WIN32:
         return {"status": "error", "message": "Windows clipboard APIs not available on this platform."}
@@ -408,77 +426,123 @@ def paste_markdown_to_target_app(
     try:
         from tools.os_controls import find_hwnd_by_query, focus_window
         app_lower = effective_app.lower()
-        is_web_doc = any(k in app_lower for k in ("chrome", "google docs", "google doc", "docs", "document", "docs.new", "browser", "msedge", "edge"))
+        explicit_gdocs = any(k in app_lower for k in ("google doc", "docs.new", "google docs")) or app_lower in ("docs", "doc")
+        is_web_doc = explicit_gdocs or any(k in app_lower for k in ("chrome", "browser", "msedge", "edge", "gmail", "mail.google"))
+        is_web_editor_blank = explicit_gdocs or app_lower in ("chrome", "browser")
 
         hwnd = None
         needs_nav = False
+        nav_error = None
 
-        if is_web_doc:
-            # Check if an existing Google Docs window is already open and visible
+        if is_web_editor_blank:
+            # Check if an existing Google Docs window is already active/visible
             doc_hwnd = find_hwnd_by_query("google docs")
-            if doc_hwnd:
+            doc_title = _get_window_title_safe(doc_hwnd) if doc_hwnd else ""
+            # Ignore false-positive Chrome matches whose visible title is clearly another site/tab
+            if doc_hwnd and (not doc_title or _is_google_docs_window_title(doc_title)):
                 hwnd = doc_hwnd
                 needs_nav = False
             else:
-                # If no Google Docs window exists, we must navigate to https://docs.new
-                # regardless of whether another Chrome/browser tab is running.
                 needs_nav = True
 
             if needs_nav:
                 try:
                     from tools.os_controls import navigate_browser
-                    navigate_browser("https://docs.new")
-                    # Poll up to 8 seconds for the Google Docs window to register and activate
-                    start_wait = time.time()
-                    while time.time() - start_wait < 8.0:
-                        time.sleep(0.5)
-                        hwnd = find_hwnd_by_query("google docs")
-                        if hwnd:
-                            break
-                    if not hwnd:
-                        hwnd = find_hwnd_by_query("chrome") or find_hwnd_by_query(effective_app)
+                    nav_res = navigate_browser("https://docs.new")
+                    if isinstance(nav_res, dict) and nav_res.get("status") in ("error", "blocked"):
+                        nav_error = nav_res.get("message") or nav_res.get("error") or str(nav_res)
+                    else:
+                        # Poll up to 10 seconds for the Google Docs window title to appear
+                        start_wait = time.time()
+                        while time.time() - start_wait < 10.0:
+                            time.sleep(0.5)
+                            cand = find_hwnd_by_query("google docs")
+                            cand_title = _get_window_title_safe(cand) if cand else ""
+                            if cand and (not cand_title or _is_google_docs_window_title(cand_title)):
+                                hwnd = cand
+                                break
+                        if not hwnd and not explicit_gdocs:
+                            hwnd = find_hwnd_by_query("chrome") or find_hwnd_by_query(effective_app)
 
-                    # Docs.new requires settling time to finish redirecting, loading the editor bundle,
-                    # and rendering the interactive canvas surface before accepting clicks or keystrokes.
-                    time.sleep(3.5)
-                except Exception:
-                    pass
+                        # Docs.new requires settling time to finish redirecting, loading the editor bundle,
+                        # and rendering the interactive canvas surface before accepting clicks or keystrokes.
+                        if hwnd:
+                            time.sleep(3.5)
+                except Exception as ne:
+                    nav_error = str(ne)
         else:
             hwnd = find_hwnd_by_query(effective_app)
 
-        if not hwnd:
+        if nav_error and not hwnd:
             return {
                 "status": "error",
-                "message": f"Window for '{effective_app}' was not found. Please ensure Google Docs or your target app is open before pasting."
+                "app_name": effective_app,
+                "message": f"Failed navigating to Google Docs for '{effective_app}': {nav_error}",
             }
 
-        focus_window(hwnd)
+        if not hwnd:
+            extra = (
+                " A Chrome window may be open on a non-Docs tab, or Google Docs is still loading / requires sign-in."
+                if explicit_gdocs else ""
+            )
+            return {
+                "status": "error",
+                "app_name": effective_app,
+                "message": f"Target window for '{effective_app}' was not found or active.{extra}",
+            }
+
+        focus_res = focus_window(hwnd)
+        if focus_res is False or (isinstance(focus_res, dict) and focus_res.get("status") in ("error", "blocked")):
+            return {
+                "status": "error",
+                "app_name": effective_app,
+                "message": f"Could not bring '{effective_app}' window to foreground: {focus_res}",
+            }
         time.sleep(0.35)
 
         from tools.gui_primitives import GuiPrimitivesController
         gui = GuiPrimitivesController()
 
+        click_warning = None
         if is_web_doc:
-            # In Google Docs and browser-based editors, focusing the window does NOT
-            # establish active cursor focus inside the white document canvas.
-            # We explicitly click into the center of the document body area.
-            target_query = "google docs" if find_hwnd_by_query("google docs") else (effective_app if not str(effective_app).isdigit() else "chrome")
-            try:
-                gui.click(x=500, y=380, normalized=True, app_name=target_query, window_relative=True)
-                time.sleep(0.3)
-            except Exception:
-                pass
+            # In web editors (Google Docs, Gmail compose, etc.), focusing the OS window alone may not
+            # place the cursor in the editor canvas. For Google Docs/generic browser targets, click center canvas.
+            if is_web_editor_blank:
+                doc_cand = find_hwnd_by_query("google docs")
+                doc_cand_title = _get_window_title_safe(doc_cand) if doc_cand else ""
+                target_query = "google docs" if (doc_cand and (not doc_cand_title or _is_google_docs_window_title(doc_cand_title))) else (
+                    effective_app if not str(effective_app).isdigit() else "chrome"
+                )
+                try:
+                    click_res = gui.click(x=500, y=380, normalized=True, app_name=target_query, window_relative=True)
+                    if isinstance(click_res, dict) and click_res.get("status") == "error":
+                        click_warning = click_res.get("message")
+                    time.sleep(0.3)
+                except Exception as ce:
+                    click_warning = str(ce)
 
-        gui.press_key("ctrl+v")
+        key_res = gui.press_key("ctrl+v")
+        if isinstance(key_res, dict) and key_res.get("status") == "error":
+            return {
+                "status": "error",
+                "app_name": effective_app,
+                "message": f"Focused '{effective_app}', but Ctrl+V paste failed: {key_res.get('message')}",
+            }
         time.sleep(0.35)
+
+        win_title = _get_window_title_safe(hwnd)
+        msg = f"Successfully pasted rich formatted document ({len(markdown_content)} chars) into {effective_app}."
+        if click_warning:
+            msg += f" (Note: canvas pre-click reported '{click_warning}', verify paste visually.)"
 
         return {
             "status": "success",
             "app_name": effective_app,
+            "window_title": win_title,
             "char_count": len(markdown_content),
-            "message": f"Successfully pasted rich formatted document ({len(markdown_content)} chars) into {effective_app}."
+            "message": msg,
         }
     except Exception as e:
-        return {"status": "error", "message": f"Pasting to {effective_app} failed: {e}"}
+        return {"status": "error", "app_name": effective_app, "message": f"Pasting to {effective_app} failed: {e}"}
 
 

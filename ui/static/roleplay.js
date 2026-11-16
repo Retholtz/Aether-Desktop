@@ -435,10 +435,45 @@ function renderCampaignHeader() {
         }
     }
 
+    renderTtrpgModelSelector();
+
     if (!isTogglingAdventure) {
         const uiApp = window.aetherUI || window.app;
         const isRunning = Boolean(uiApp && uiApp.isAssistantRunning);
         updateAdventureButtonState(isRunning && isAdventureActive);
+    }
+}
+
+function renderTtrpgModelSelector() {
+    const sel = document.getElementById("rp-ttrpg-model-select");
+    if (!sel) return;
+    const options = Array.isArray(ttrpgData.ttrpg_model_options) && ttrpgData.ttrpg_model_options.length > 0
+        ? ttrpgData.ttrpg_model_options
+        : [
+            { id: "gemini-4-hydrogen:xhigh", display_name: "Gemini 4.0 Hydrogen Extra" },
+            { id: "gemini-4-hydrogen:high", display_name: "Gemini 4.0 Hydrogen High" },
+            { id: "gemini-4-hydrogen:medium", display_name: "Gemini 4.0 Hydrogen Medium (Recommended)" },
+            { id: "gemini-4-hydrogen:low", display_name: "Gemini 4.0 Hydrogen Low" },
+            { id: "gemini-4-hydrogen:instant", display_name: "Gemini 4.0 Hydrogen Instant (Fastest)" },
+            { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (High Speed)" },
+            { id: "gemini-4-argon:high", display_name: "Gemini 4.0 Argon High" },
+            { id: "gemini-4-argon:medium", display_name: "Gemini 4.0 Argon Medium" },
+            { id: "gemini-4-argon:low", display_name: "Gemini 4.0 Argon Low" }
+        ];
+    const current = ttrpgData.ttrpg_model_endpoint || "gemini-4-hydrogen:medium";
+    const signature = options.map(o => `${o.id}:${o.display_name}`).join("|");
+    if (sel.dataset.renderedSignature !== signature) {
+        sel.innerHTML = "";
+        options.forEach(opt => {
+            const oEl = document.createElement("option");
+            oEl.value = opt.id;
+            oEl.textContent = opt.display_name || opt.id;
+            sel.appendChild(oEl);
+        });
+        sel.dataset.renderedSignature = signature;
+    }
+    if (sel.value !== current) {
+        sel.value = current;
     }
 }
 
@@ -6399,6 +6434,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Start / Resume / Stop Adventure Button
     const startResumeCampBtn = document.getElementById("btn-start-resume-campaign");
+    const ttrpgModelSelect = document.getElementById("rp-ttrpg-model-select");
+    if (ttrpgModelSelect) {
+        ttrpgModelSelect.addEventListener("change", async () => {
+            const chosen = ttrpgModelSelect.value;
+            ttrpgData.ttrpg_model_endpoint = chosen;
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.save_ttrpg_model_endpoint) {
+                try {
+                    await window.pywebview.api.save_ttrpg_model_endpoint(chosen);
+                } catch (err) {
+                    console.error("[RolePlay] Failed saving TTRPG model preference:", err);
+                }
+            }
+        });
+    }
     if (startResumeCampBtn) {
         startResumeCampBtn.addEventListener("click", async () => {
             if (isTogglingAdventure) {
@@ -6425,6 +6474,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     return;
                 }
 
+                // Save preferred TTRPG DM Engine if selected before launching
+                const ttrpgModelSel = document.getElementById("rp-ttrpg-model-select");
+                const chosenTtrpgModel = ttrpgModelSel ? ttrpgModelSel.value : null;
+                if (chosenTtrpgModel && window.pywebview && window.pywebview.api && window.pywebview.api.save_ttrpg_model_endpoint) {
+                    await window.pywebview.api.save_ttrpg_model_endpoint(chosenTtrpgModel);
+                }
+
                 // If starting/resuming adventure:
                 // Auto-toggle Target Speaker Filter OFF so all players around the microphone can speak
                 // and put engine in Tabletop Role Play Mode
@@ -6444,7 +6500,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // Call backend to trigger adventure start or resume
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.start_or_resume_ttrpg_campaign) {
-                    const res = await window.pywebview.api.start_or_resume_ttrpg_campaign();
+                    const res = await window.pywebview.api.start_or_resume_ttrpg_campaign(chosenTtrpgModel);
                     if (res && res.error) {
                         console.error("[RolePlay] Error starting/resuming adventure:", res.error);
                         renderRolePlayStoryBubble({ type: "error", content: `⚠️ Failed to resume adventure: ${res.error}` });
