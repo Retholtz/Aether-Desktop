@@ -78,6 +78,59 @@ async function handleToggleFpsMonitoring(e) {
 }
 window.handleToggleFpsMonitoring = handleToggleFpsMonitoring;
 
+function updateTelemetryPillUI(isEnabled) {
+    const btn = document.getElementById('btn-toggle-telemetry');
+    if (!btn) return;
+    if (isEnabled) {
+        btn.classList.add('active');
+        btn.classList.remove('inactive');
+        btn.innerHTML = '<span class="pill-icon">📡</span><span class="pill-text">TELEMETRY: ON</span>';
+        btn.setAttribute('aria-pressed', 'true');
+    } else {
+        btn.classList.add('inactive');
+        btn.classList.remove('active');
+        btn.innerHTML = '<span class="pill-icon">📡</span><span class="pill-text">TELEMETRY: OFF</span>';
+        btn.setAttribute('aria-pressed', 'false');
+    }
+}
+window.updateTelemetryPillUI = updateTelemetryPillUI;
+
+async function handleToggleTelemetry(e) {
+    if (e) {
+        try { if (typeof e.preventDefault === 'function') e.preventDefault(); } catch (_) {}
+        try { if (typeof e.stopPropagation === 'function') e.stopPropagation(); } catch (_) {}
+    }
+
+    const telBtn = document.getElementById('btn-toggle-telemetry');
+    if (!telBtn) return;
+    const targetGameId = getCurrentlySelectedGameId();
+    if (!targetGameId) return;
+
+    const isCurrentlyActive = telBtn.classList.contains('active');
+    const newState = !isCurrentlyActive;
+
+    updateTelemetryPillUI(newState);
+    if (currentGamesData && currentGamesData.profiles && currentGamesData.profiles[targetGameId]) {
+        currentGamesData.profiles[targetGameId].telemetry_enabled = newState;
+    }
+
+    try {
+        if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.toggle_game_telemetry === 'function') {
+            const res = await window.pywebview.api.toggle_game_telemetry(targetGameId, newState);
+            if (res && res.telemetry_enabled !== undefined) {
+                const confirmedState = Boolean(res.telemetry_enabled);
+                if (currentGamesData && currentGamesData.profiles && currentGamesData.profiles[targetGameId]) {
+                    currentGamesData.profiles[targetGameId].telemetry_enabled = confirmedState;
+                }
+                updateTelemetryPillUI(confirmedState);
+            }
+        }
+    } catch (err) {
+        console.error("[TELEMETRY TOGGLE] Error toggling game telemetry:", err);
+    }
+}
+window.handleToggleTelemetry = handleToggleTelemetry;
+
 function escapeGameHtml(str) {
     return String(str == null ? '' : str)
         .replace(/&/g, '&amp;')
@@ -237,6 +290,14 @@ function renderActiveGameDetail() {
         const isFpsEnabled = profile.fps_monitoring !== false;
         updateFpsPillUI(isFpsEnabled);
         fpsBtn.onclick = handleToggleFpsMonitoring;
+    }
+
+    // Telemetry Co-Pilot Pill UI Sync & Click Handler
+    const telBtn = document.getElementById('btn-toggle-telemetry');
+    if (telBtn) {
+        const isTelemetryEnabled = Boolean(profile.telemetry_enabled);
+        updateTelemetryPillUI(isTelemetryEnabled);
+        telBtn.onclick = handleToggleTelemetry;
     }
     if (navSelect) {
         navSelect.value = profile.navigation_mode || 'controller';
@@ -741,12 +802,13 @@ function initGamesTabEvents() {
     // Delete Game button
     document.getElementById('btn-delete-game')?.addEventListener('click', promptDeleteGame);
 
-    // Binds Synchronization (Auto-Detection)
+    // Binds Synchronization (Auto-Detection) & Telemetry Toggle
     const fpsBtnInit = document.getElementById('fps-toggle-btn'); if (fpsBtnInit) { fpsBtnInit.onclick = handleToggleFpsMonitoring; }
+    const telBtnInit = document.getElementById('btn-toggle-telemetry'); if (telBtnInit) { telBtnInit.onclick = handleToggleTelemetry; }
 
-    document.getElementById('btn-sync-game-binds')?.addEventListener('click', async () => {
+    document.getElementById('btn-scan-keybinds')?.addEventListener('click', async () => {
         if (!activeGameId) return;
-        const btn = document.getElementById('btn-sync-game-binds');
+        const btn = document.getElementById('btn-scan-keybinds');
         if (!btn) return;
         btn.disabled = true;
         btn.textContent = 'Scanning files...';

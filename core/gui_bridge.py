@@ -3793,6 +3793,8 @@ class GuiBridge:
 
             "fps_monitoring": bool(prof.get("fps_monitoring", True)) if prof else True,
 
+            "telemetry_enabled": bool(prof.get("telemetry_enabled", False)) if prof else False,
+
             "user_override": self.game_mgr.user_override_game_mode
 
         }
@@ -4233,6 +4235,48 @@ class GuiBridge:
             return {"status": "error", "message": f"Profile '{game_id}' not found."}
 
         return {"status": "success", "game_id": game_id, "fps_monitoring": bool(prof.get("fps_monitoring", True))}
+
+    def toggle_game_telemetry(self, game_id: str, enabled: Any) -> dict:
+        """Toggles real-time game telemetry co-pilot monitoring for a specific game."""
+        logger.info(f"[TELEMETRY] toggle_game_telemetry called for game_id='{game_id}' with enabled={enabled}")
+        if isinstance(enabled, str):
+            enabled_bool = enabled.lower() not in ("false", "0", "off", "")
+        else:
+            enabled_bool = bool(enabled)
+
+        prof = self.game_mgr.get_profile(game_id)
+        if not prof and game_id:
+            alt_id = game_id.replace("_64", "") if "_64" in game_id else f"{game_id}_64"
+            prof = self.game_mgr.get_profile(alt_id)
+            if prof:
+                game_id = alt_id
+
+        if prof is not None:
+            prof["telemetry_enabled"] = enabled_bool
+            if os.environ.get("AETHER_TESTING") != "1":
+                if hasattr(self.game_mgr, "save_profile"):
+                    self.game_mgr.save_profile(game_id)
+                if hasattr(self.game_mgr, "save_profiles"):
+                    self.game_mgr.save_profiles()
+
+        engine = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        telemetry_svc = getattr(engine, "telemetry_service", None) if engine else None
+        if telemetry_svc is None:
+            if not hasattr(self, "_telemetry_service") or self._telemetry_service is None:
+                from core.telemetry.telemetry_service import TelemetryService
+                cb = getattr(engine, "inject_tactical_alert", None) if engine else None
+                self._telemetry_service = TelemetryService(on_copilot_trigger=cb)
+            telemetry_svc = self._telemetry_service
+
+        loop = getattr(engine, "_loop", None) or getattr(self, "_loop", None)
+        telemetry_svc.set_enabled(game_id, enabled_bool, loop=loop)
+
+        return {
+            "status": "success",
+            "success": True,
+            "game_id": game_id,
+            "telemetry_enabled": enabled_bool,
+        }
 
 
 

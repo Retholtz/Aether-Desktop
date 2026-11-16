@@ -3102,6 +3102,80 @@ label {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* Top-Right Stacked Pills & Telemetry Toggle Button */
+.game-banner-col-action .fps-pill-btn,
+.game-banner-col-action .telemetry-pill-btn {
+  margin-left: 0;
+  min-width: 152px;
+}
+
+.telemetry-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 14px;
+  height: 32px;
+  border-radius: 16px;
+  font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  outline: none;
+  user-select: none;
+}
+
+.telemetry-pill-btn * {
+  pointer-events: none;
+}
+
+.telemetry-pill-btn.inactive {
+  background: #1e2530;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  box-shadow: none;
+}
+
+.telemetry-pill-btn.inactive:hover {
+  border-color: #475569;
+  color: #cbd5e1;
+  background: #252e3d;
+}
+
+.telemetry-pill-btn.active {
+  background: rgba(6, 182, 212, 0.15);
+  border: 1px solid #06b6d4;
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
+  color: #22d3ee;
+}
+
+.telemetry-pill-btn.active:hover {
+  background: rgba(6, 182, 212, 0.22);
+  box-shadow: 0 0 16px rgba(6, 182, 212, 0.55);
+}
+
+.card-header-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-header-flex .subtitle {
+  margin: 4px 0 0 0;
+}
+
+.header-action-group.card-header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 
 /* ============================================================
    PROJECTS TAB (LOCAL WORKSPACE & NOTEBOOKLM RAG)

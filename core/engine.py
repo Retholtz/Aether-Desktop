@@ -39,6 +39,7 @@ from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 from core.game_engine import GameEngine
 from core.game_manager import GameManager
+from core.telemetry.telemetry_service import TelemetryService
 from tools.game_tools import register_game_tools
 from core.steam_service import SteamService
 from tools.steam_tools import register_steam_tools
@@ -615,6 +616,7 @@ class AetherEngine:
             on_notify=_engine_on_game_mode_changed
         )
         self.game_mgr = self.game_engine.manager
+        self.telemetry_service = TelemetryService(on_copilot_trigger=self.inject_tactical_alert)
         from core.program_manager import ProgramManager
         self.program_mgr = ProgramManager()
         self.game_engine.start(foreground_interval=2.0)
@@ -2490,6 +2492,68 @@ class AetherEngine:
             self.post_proactive_event(alert_text=text, source="Notification")
         except Exception as e:
             logger.warning(f"[ENGINE] Failed to queue whisper: {e}")
+
+    async def inject_tactical_alert(self, prompt: str) -> None:
+        """
+        Injects a concise co-pilot telemetry directive into the active Flash Live
+        session, falling back to concise TTS feedback when Live is unavailable.
+        """
+        clean_prompt = (prompt or "").strip()
+        if not clean_prompt or not getattr(self, "is_running", False):
+            return
+
+        if getattr(self, "is_speaking", False) or getattr(self, "_is_speaking", False):
+            logger.debug("[TELEMETRY] Deferred tactical alert while assistant is speaking.")
+            return
+
+        active_session = getattr(self, "session", None) or getattr(self, "live_session", None)
+        if active_session is not None and hasattr(active_session, "send_client_content"):
+            try:
+                content = types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=clean_prompt)]
+                )
+                await active_session.send_client_content(turns=[content], turn_complete=True)
+                logger.info(f"[TELEMETRY] Injected tactical directive into Flash Live: {clean_prompt}")
+                return
+            except Exception as live_err:
+                logger.warning(f"[TELEMETRY] Live tactical injection failed, falling back to TTS: {live_err}")
+
+        # Fallback when Live session is not connected (e.g., modular pipeline or standby)
+        callout_text = clean_prompt
+        if callout_text.startswith("Co-pilot alert:"):
+            callout_text = callout_text[len("Co-pilot alert:"):].strip()
+        for suffix in (
+            "Warn the player in 8 words or less.",
+            "Give a brief 6-word tactical warning.",
+            "Warn the pilot immediately in 6 words.",
+            "Warn the player in 6 words.",
+            "Notify the pilot briefly.",
+            "Mention briefly.",
+        ):
+            callout_text = callout_text.replace(suffix, "").strip()
+
+        cli = getattr(self, "client", None) or getattr(self, "genai_client", None)
+        if cli is not None:
+            try:
+                fast_model = self._get_tier1_fast_model()
+                resp = await asyncio.to_thread(
+                    cli.models.generate_content,
+                    model=fast_model,
+                    contents=clean_prompt
+                )
+                generated = (getattr(resp, "text", None) or "").strip()
+                if generated:
+                    callout_text = generated
+            except Exception as gen_err:
+                logger.debug(f"[TELEMETRY] Flash callout generation fallback: {gen_err}")
+
+        if callout_text:
+            try:
+                self.post_proactive_event(alert_text=callout_text, source="Co-Pilot")
+                await self._speak_feedback(callout_text)
+            except Exception as fb_err:
+                logger.warning(f"[TELEMETRY] Tactical fallback speech error: {fb_err}")
 
     def set_desktop_notifications_config(
         self,
@@ -7027,6 +7091,11 @@ class AetherEngine:
                 logger.warning(f"[STOP] Session transcript flush error: {e}")
 
         if not self.is_running:
+            if hasattr(self, "telemetry_service") and self.telemetry_service and self.telemetry_service.enabled:
+                try:
+                    self.telemetry_service.set_enabled(self.telemetry_service.active_game_id or "", False)
+                except Exception:
+                    pass
             if hasattr(self, "game_engine") and self.game_engine:
                 try:
                     self.game_engine.stop()
@@ -7108,6 +7177,12 @@ class AetherEngine:
 
         self._session_resumption_handle = None
         self._last_connected_voice_profile = None
+
+        if hasattr(self, "telemetry_service") and self.telemetry_service and self.telemetry_service.enabled:
+            try:
+                self.telemetry_service.set_enabled(self.telemetry_service.active_game_id or "", False)
+            except Exception as e:
+                logger.warning(f"[STOP] Telemetry service stop warning: {e}")
 
         if hasattr(self, "game_engine") and self.game_engine:
             try:

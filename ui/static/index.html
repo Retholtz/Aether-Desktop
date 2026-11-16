@@ -143,7 +143,7 @@
                 </button>
               </div>
 
-              <!-- Line 2: Process Active/Inactive (left) & Guidance (middle) + FPS Pill (Row 1) -->
+              <!-- Line 2: Process Active/Inactive (left), Guidance (middle), FPS Pill (top-right) -->
               <div class="game-banner-row game-banner-row-2">
                 <div class="game-banner-col-status">
                   <span id="game-process-indicator" class="badge-status badge-offline">Process Inactive</span>
@@ -157,8 +157,9 @@
                       <option value="walkthrough">Walkthrough (Direct)</option>
                     </select>
                   </div>
-
-                  <!-- Inline FPS Monitoring Pill Button (Row 1 beside Guidance) -->
+                </div>
+                <div class="game-banner-col-action">
+                  <!-- Inline FPS Monitoring Pill Button (Top-Right Slot) -->
                   <button type="button" id="fps-toggle-btn" class="fps-pill-btn active" onclick="handleToggleFpsMonitoring(event)" title="Toggle PresentMon FPS tracking for this game">
                     <span class="pill-icon">⚡</span>
                     <span class="pill-text">FPS: ON</span>
@@ -166,7 +167,7 @@
                 </div>
               </div>
 
-              <!-- Line 3: Open Chat/Game Mode (left), Map Nav (middle), Scan/Sync Keybinds (right) -->
+              <!-- Line 3: Open Chat/Game Mode (left), Map Nav (middle), Telemetry Toggle (bottom-right under FPS) -->
               <div class="game-banner-row game-banner-row-3">
                 <div class="game-banner-col-status">
                   <span id="game-mode-indicator" class="badge-status badge-online" style="cursor: pointer;" title="Click to toggle Game Mode focus">🎮 Game Mode: ON</span>
@@ -183,8 +184,9 @@
                   </div>
                 </div>
                 <div class="game-banner-col-action">
-                  <button type="button" id="btn-sync-game-binds" class="btn-secondary-sm" title="Scan local files for keybinds">
-                    <span class="icon">🔍</span> Scan / Sync Keybinds
+                  <button type="button" id="btn-toggle-telemetry" class="telemetry-pill-btn inactive" onclick="handleToggleTelemetry(event)" aria-pressed="false" title="Toggle real-time game telemetry co-pilot alerts">
+                    <span class="pill-icon">📡</span>
+                    <span class="pill-text">TELEMETRY: OFF</span>
                   </button>
                 </div>
               </div>
@@ -203,11 +205,18 @@
             <div id="game-details-content">
               <!-- Keybinds & Voice Triggers Card -->
               <section class="game-card">
-                <div class="game-card-header">
-                  <h3>VOICE MACROS & SCANCODE BINDINGS</h3>
-                  <button type="button" id="btn-add-keybind" class="btn-primary-sm">+ Add Keybind</button>
+                <div class="game-card-header card-header-flex">
+                  <div>
+                    <h3>VOICE MACROS & SCANCODE BINDINGS</h3>
+                    <p class="subtitle field-hint">Voice phrases spoken to Aether that inject DirectInput scancodes directly into the game.</p>
+                  </div>
+                  <div class="header-action-group card-header-actions">
+                    <button type="button" id="btn-scan-keybinds" class="btn-secondary-sm btn-secondary-pill" title="Scan local files for keybinds">
+                      <span class="icon">🔍</span> Scan / Sync Keybinds
+                    </button>
+                    <button type="button" id="btn-add-keybind" class="btn-primary-sm btn-primary-blue">+ Add Keybind</button>
+                  </div>
                 </div>
-                <p class="field-hint">Voice phrases spoken to Aether that inject DirectInput scancodes directly into the game.</p>
                 
                 <table class="game-table" id="table-game-binds">
                   <thead>
