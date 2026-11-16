@@ -696,8 +696,7 @@ class UserMemory:
             )
         else:
             name_display = ", ".join(f"'{n}'" for n in names)
-            sample_name = names[0]
-            sample_nick = names[1] if len(names) > 1 else names[0]
+            sample_name = random.choice(names)
             variation_instruction = (
                 f"- CALLSIGN / NAME VARIATION:\n"
                 f"  * The user has multiple preferred callsigns: {name_display}.\n"

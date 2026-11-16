@@ -814,6 +814,16 @@ class AetherEngine:
         # Dynamic User Memory & Database Initialization
         init_memory_db()
         self.user_memory = UserMemory()
+        try:
+            user_cfg = (self.config.get("user") if isinstance(getattr(self, "config", None), dict) else None) or {}
+            cfg_name = str(user_cfg.get("name", "")).strip()
+            if cfg_name and not self.user_memory.get_user_name(default=""):
+                self.user_memory.set_user_name(cfg_name)
+            cfg_freq = str(user_cfg.get("callsign_frequency", "")).strip().lower()
+            if cfg_freq in ("never", "seldom", "often", "always"):
+                self.user_memory.set_callsign_frequency(cfg_freq)
+        except Exception as e:
+            logger.debug(f"[ENGINE] Initial user identity config sync skipped: {e}")
         self.dispatcher.user_memory = self.user_memory
         self.dispatcher.engine = self
         self.proactive_engine = ProactiveEngine(self.user_memory)
@@ -2275,6 +2285,7 @@ class AetherEngine:
             else:
                 self._base_system_instruction = f"{start_marker}\n{new_directive}{end_marker}\n\n" + self._base_system_instruction
 
+        self._session_resumption_handle = None
         logger.info("[ENGINE] Updated active user identity directive in base system instruction.")
 
     def update_voice_accent_directive(self, new_accent: Optional[str] = None):
@@ -3460,7 +3471,7 @@ class AetherEngine:
                             logger.info(f"[KILL PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio!")
                             self.kill_audio()
                         # Check Game Mode Voice Interception (Mode toggle or Fast-path macro)
-                        elif hasattr(self, "game_engine") and self.game_engine:
+                        elif hasattr(self, "game_engine") and self.game_engine and not getattr(self, "_macro_fired_in_current_turn", False):
                             intercept = await self.game_engine.intercept_voice_turn_async(clean_user_speech, agent_name=agent_name)
                             if intercept.handled:
                                 logger.info(f"[GAME VOICE INTERCEPT] Action: {intercept.action_type} for '{clean_user_speech}'")
@@ -3505,6 +3516,12 @@ class AetherEngine:
                                     if intercept.requires_context_reset:
                                         self.request_live_session_rotation(reason=f"Game Mode Voice: {clean_user_speech}")
                                 elif intercept.action_type == "fast_path_macro":
+                                    self._macro_fired_in_current_turn = True
+                                    self._macro_suppressed_turn = True
+                                    self._suppress_live_turn_audio = True
+                                    self.kill_audio()
+                                    if hasattr(self, "telemetry_service") and self.telemetry_service:
+                                        self.telemetry_service.notify_ui_macro_triggered(clean_user_speech)
                                     self.notify("chat_event", {
                                         "type": "tool",
                                         "name": "Game Macro",
@@ -3560,6 +3577,9 @@ class AetherEngine:
                             if tier_cmd or getattr(self, "_pending_tier_override", None):
                                 self._suppress_live_turn_audio = True
                                 self._deferred_tier_override_prompt = clean_user_speech
+                                self.kill_audio()
+                            elif getattr(self, "_macro_suppressed_turn", False):
+                                self._suppress_live_turn_audio = True
                                 self.kill_audio()
                             else:
                                 self._suppress_live_turn_audio = False
@@ -3642,6 +3662,8 @@ class AetherEngine:
                     if server_content.interrupted:
                         print("\n[USER INTERRUPTED - BARGE-IN]")
                         self._live_wsola_scaler = None
+                        self._macro_suppressed_turn = False
+                        self._macro_fired_in_current_turn = False
                         self.kill_audio()
                         self._in_active_turn = False
                         self._last_live_turn_completed_ts = time.time()
@@ -3664,8 +3686,10 @@ class AetherEngine:
 
                     # 6. Turn Complete
                     if server_content.turn_complete:
-                        was_suppressed = bool(getattr(self, "_suppress_live_turn_audio", False))
+                        was_suppressed = bool(getattr(self, "_suppress_live_turn_audio", False) or getattr(self, "_macro_suppressed_turn", False))
                         self._suppress_live_turn_audio = False
+                        self._macro_suppressed_turn = False
+                        self._macro_fired_in_current_turn = False
                         deferred_override_prompt = getattr(self, "_deferred_tier_override_prompt", None)
                         self._deferred_tier_override_prompt = None
                         scaler = getattr(self, "_live_wsola_scaler", None)
@@ -5578,7 +5602,32 @@ class AetherEngine:
             cfg_now = self.config_getter() if self.config_getter else {}
             api_cfg = cfg_now.get("api", {}) if isinstance(cfg_now, dict) else {}
             agent_name = cfg_now.get("ui", {}).get("agent_name", "Aether") if isinstance(cfg_now, dict) else "Aether"
+            if hasattr(self, "user_memory") and self.user_memory:
+                try:
+                    user_cfg_now = cfg_now.get("user", {}) if isinstance(cfg_now, dict) else {}
+                    cfg_name_now = str(user_cfg_now.get("name", "")).strip()
+                    if cfg_name_now and not self.user_memory.get_user_name(default=""):
+                        self.user_memory.set_user_name(cfg_name_now)
+                    cfg_freq_now = str(user_cfg_now.get("callsign_frequency", "")).strip().lower()
+                    if cfg_freq_now in ("never", "seldom", "often", "always"):
+                        self.user_memory.set_callsign_frequency(cfg_freq_now)
+                    self.update_user_identity_directive()
+                except Exception:
+                    pass
             base_inst = getattr(self, "_base_system_instruction", "") or api_cfg.get("system_instruction") or f"You are {agent_name}, a fast, knowledgeable desktop voice assistant."
+
+            if hasattr(self, "user_memory") and self.user_memory:
+                id_dir = self.user_memory.build_user_identity_directive()
+                if id_dir and "<!-- USER IDENTITY DIRECTIVE START -->" not in base_inst:
+                    base_inst = f"<!-- USER IDENTITY DIRECTIVE START -->\n{id_dir}<!-- USER IDENTITY DIRECTIVE END -->\n\n" + base_inst
+                elif not id_dir:
+                    base_inst = (
+                        "<!-- USER IDENTITY DIRECTIVE START -->\n"
+                        "USER IDENTITY & ADDRESS DIRECTIVE:\n"
+                        "- No user callsign is configured. Do NOT address the user by any title or rank (never say 'Commander', 'Boss', 'Sir', etc.).\n"
+                        "<!-- USER IDENTITY DIRECTIVE END -->\n\n"
+                        + base_inst
+                    )
 
             if DOSSIER_GENERATION_DIRECTIVE.strip() not in base_inst:
                 base_inst = base_inst.rstrip() + "\n\n" + DOSSIER_GENERATION_DIRECTIVE.strip() + "\n"

@@ -66,6 +66,12 @@ class NativeFileTelemetryProvider:
         in_danger = bool(flags & (1 << 30))
 
         vitals["shield_pct"] = 1.0 if shields_up else 0.0
+        if "HullHealth" in data:
+            try:
+                hull_val = float(data["HullHealth"])
+                vitals["hull_pct"] = hull_val / 100.0 if hull_val > 1.0 else hull_val
+            except (TypeError, ValueError):
+                pass
         if not shields_up:
             states.append("shields_offline")
         if overheating:

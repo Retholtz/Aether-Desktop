@@ -3253,6 +3253,10 @@ class GuiBridge:
 
                 self._engine.update_user_identity_directive()
 
+            if hasattr(self._engine, "invalidate_live_session"):
+
+                self._engine.invalidate_live_session(reason="User Callsign Updated")
+
             self._on_engine_event("config_updated", self._config)
 
             return {"success": True, "name": clean}
@@ -3320,6 +3324,10 @@ class GuiBridge:
             if hasattr(self._engine, "update_user_identity_directive"):
 
                 self._engine.update_user_identity_directive()
+
+            if hasattr(self._engine, "invalidate_live_session"):
+
+                self._engine.invalidate_live_session(reason="User Callsign Updated")
 
             self._on_engine_event("config_updated", self._config)
 
@@ -3912,23 +3920,18 @@ class GuiBridge:
 
     def sync_game_bindings(self, game_id: str) -> dict:
 
-        """Scans local directories or retrieves web defaults if files are absent."""
+        """Scans local directories or retrieves web defaults via Hydrogen - Low if files are absent."""
 
-        from core.model_discovery import resolve_model_profile
         client = getattr(self.engine, "client", None) or getattr(self._engine, "client", None)
-
-        model = "gemini-4-hydrogen"
-
-        if hasattr(self, "_config") and isinstance(self._config, dict):
-
-            model = self._config.get("primary_model_endpoint", "gemini-4-hydrogen")
-
-        elif hasattr(self, "engine") and hasattr(self.engine, "config"):
-
-            model = getattr(self.engine.config, "get", lambda k, d: d)("primary_model_endpoint", "gemini-4-hydrogen")
-
-        model = resolve_model_profile(model, default_model="gemini-4-hydrogen")[0]
-        return self.game_mgr.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model)
+        model = "gemini-4-hydrogen:low"
+        res = self.game_mgr.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model)
+        if res.get("success"):
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if eng is not None:
+                eng._reset_context_flag = True
+                if hasattr(eng, "invalidate_live_session"):
+                    eng.invalidate_live_session(reason="Game Keybinds Synced")
+        return res
 
 
 
@@ -3964,7 +3967,12 @@ class GuiBridge:
 
         }
 
-        self.game_mgr._save_profiles(self.game_mgr.data)
+        self.game_mgr._save_profiles(self.game_mgr.data, target_game_id=game_id)
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        if eng is not None:
+            eng._reset_context_flag = True
+            if hasattr(eng, "invalidate_live_session"):
+                eng.invalidate_live_session(reason="Game Keybind Saved")
 
         return {"success": True, "keybinds": profile["keybinds"]}
 
@@ -3980,11 +3988,52 @@ class GuiBridge:
 
             del profile["keybinds"][phrase]
 
-            self.game_mgr._save_profiles(self.game_mgr.data)
+            self.game_mgr._save_profiles(self.game_mgr.data, target_game_id=game_id)
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if eng is not None:
+                eng._reset_context_flag = True
+                if hasattr(eng, "invalidate_live_session"):
+                    eng.invalidate_live_session(reason="Game Keybind Deleted")
 
             return {"success": True, "keybinds": profile["keybinds"]}
 
         return {"success": False, "error": "Binding not found"}
+
+    def get_game_callsign(self, game_id: Optional[str] = None) -> dict:
+        """Returns the configured player callsign(s) and multi-character mode for a game profile."""
+        gid = game_id or self.game_mgr.data.get("active_profile", "")
+        callsign = self.game_mgr.get_callsign(gid) if gid else ""
+        multi = self.game_mgr.get_multiple_main_characters(gid) if gid else False
+        return {"success": True, "game_id": gid, "callsign": callsign, "multiple_main_characters": multi}
+
+    def set_game_callsign(self, game_id: str, callsign: str) -> dict:
+        """Updates the player callsign(s) for a game profile (supports ';' separated list or blank)."""
+        ok = self.game_mgr.set_callsign(game_id, callsign)
+        if not ok:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        saved = self.game_mgr.get_callsign(game_id)
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        if eng is not None:
+            eng._reset_context_flag = True
+            if hasattr(eng, "invalidate_live_session"):
+                eng.invalidate_live_session(reason=f"Game Callsign Updated ({game_id})")
+        return {"success": True, "game_id": game_id, "callsign": saved}
+
+    def set_game_multiple_characters(self, game_id: str, enabled: Any) -> dict:
+        """Toggles vision-matched multiple main character callsign mode for a game profile."""
+        if isinstance(enabled, str):
+            enabled_bool = enabled.lower() not in ("false", "0", "off", "")
+        else:
+            enabled_bool = bool(enabled)
+        ok = self.game_mgr.set_multiple_main_characters(game_id, enabled_bool)
+        if not ok:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        if eng is not None:
+            eng._reset_context_flag = True
+            if hasattr(eng, "invalidate_live_session"):
+                eng.invalidate_live_session(reason=f"Game Multiple Main Characters Updated ({game_id})")
+        return {"success": True, "game_id": game_id, "multiple_main_characters": enabled_bool}
 
 
 

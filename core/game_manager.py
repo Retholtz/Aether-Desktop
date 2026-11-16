@@ -9,6 +9,7 @@ import glob
 import json
 import copy
 import re
+import random
 import time
 import uuid
 import sys
@@ -811,8 +812,8 @@ class GameManager:
         # 5. Co-Pilot Role Directive
         parts.append(
             "CO-PILOT ROLE DIRECTIVE:\n"
-            "You are an active in-game co-pilot. Pay close attention to current telemetry, player surroundings, and past intel.\n"
-            "If the player encounters or approaches a landmark, clue, point of interest, or mission destination that relates to something logged earlier, you may acknowledge or remind the player (e.g., 'Hey, that cave might hold treasure, we should check that out!' or 'Heads up Commander, we have a mission destination in this system.').\n"
+            "You are an active in-game co-pilot and companion. Pay close attention to current telemetry, player surroundings, and past intel.\n"
+            "If the player encounters or approaches a landmark, clue, point of interest, or destination that relates to something logged earlier, you may acknowledge or remind the player (e.g., 'That cave might hold treasure, we should check it out!' or 'We have a marked destination nearby.').\n"
             "CRITICAL NON-PROACTIVE RULE FOR PUZZLES & WALKTHROUGHS:\n"
             "- NEVER PROACTIVELY SPOIL OR VOLUNTEER PUZZLE SOLUTIONS, DUNGEON MECHANICS, OR STEP-BY-STEP WALKTHROUGHS UNPROMPTED.\n"
             "- If the player mentions a destination, quest, or puzzle (e.g., 'We are going there', 'Heading to the ruins', 'Let's check out the cave'), acknowledge the journey in-character, but DO NOT explain how to solve or complete it.\n"
@@ -820,6 +821,9 @@ class GameManager:
             "Use the 'record_copilot_observation' tool whenever you or the player notice a notable landmark, rumor, clue, or hazard worth remembering.\n"
             "Use the 'update_game_scratchpad' tool when the player tells you to note down or remember something on their personal scratchpad."
         )
+
+        # 5b. Per-Game Player Callsign Directive (supports ';' separated random callsigns or blank = no callout)
+        parts.append(self.build_game_callsign_directive(profile, game_id=active_id))
 
         # 6. Strict Game Scope & Search Locking Directive
         game_title = profile.get("display_name", active_id)
@@ -892,7 +896,8 @@ class GameManager:
             "co_pilot_spotter": (
                 "MAP NAVIGATION MODE: CO-PILOT GUIDED SPOTTER (VOICE & VISION)\n"
                 "- Do NOT attempt to blindly move the player's physical mouse cursor.\n"
-                "- Instead, act as an observant human co-pilot/spotter: verbally guide the player on where to look on their map (e.g. 'Open your map and pan northeast past the river towards Silver Wolf Mountain.').\n"
+                "- When the player says 'Open map' (or any bound macro), Aether automatically injects the DirectInput keystroke to open the map. NEVER ask the player to open their map for you.\n"
+                "- When the player asks where a destination is on the map, act as an observant co-pilot/spotter: verbally guide them on where to pan on the open map (e.g. 'Pan northeast past the river towards Silver Wolf Mountain.').\n"
                 "- Use `inspect_screen_context` or `spot_and_guide_map_landmark` to look at their map screen in real time, call out when they are near the destination ('Right there, place your marker near that ruin icon!'), and verify once they place their pin."
             ),
             "search_bar": (
@@ -1122,22 +1127,117 @@ class GameManager:
 
         return discovered
 
-    def fetch_web_default_keybinds(self, game_name: str, client, model_endpoint: str = "gemini-2.5-flash") -> Dict[str, dict]:
+    def get_callsign(self, game_id: str) -> str:
+        """Returns the configured player callsign string (supports ';' separated values or blank)."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return ""
+        if "callsign" in profile and profile["callsign"] is not None:
+            return str(profile["callsign"]).strip()
+        # Default callsign for Elite Dangerous if never explicitly configured
+        if "elite" in (game_id or "").lower() or "elite" in str(profile.get("display_name", "")).lower():
+            return "Commander"
+        return ""
+
+    def set_callsign(self, game_id: str, callsign: str) -> bool:
+        """Sets the player callsign(s) for a game profile (supports ';' separated list or blank)."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return False
+        raw = str(callsign or "").strip()
+        parts = [p.strip() for p in raw.split(";") if p.strip()]
+        clean = "; ".join(parts) if parts else ""
+        profile["callsign"] = clean
+        self._save_profiles(self.data, target_game_id=game_id)
+        return True
+
+    def get_multiple_main_characters(self, game_id: str) -> bool:
+        """Returns True if this game has multiple distinct playable protagonists."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return False
+        return bool(profile.get("multiple_main_characters", False))
+
+    def set_multiple_main_characters(self, game_id: str, enabled: bool) -> bool:
+        """Enables or disables vision-matched multiple protagonist callsigns for a game."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return False
+        profile["multiple_main_characters"] = bool(enabled)
+        self._save_profiles(self.data, target_game_id=game_id)
+        return True
+
+    def build_game_callsign_directive(self, profile: Dict[str, Any], game_id: str = "") -> str:
+        """Builds an explicit directive governing how Aether addresses the player in this game."""
+        if "callsign" in profile and profile["callsign"] is not None:
+            raw = str(profile["callsign"]).strip()
+        elif "elite" in (game_id or "").lower() or "elite" in str(profile.get("display_name", "")).lower():
+            raw = "Commander"
+        else:
+            raw = ""
+
+        callsigns = [c.strip() for c in raw.split(";") if c.strip()]
+        if not callsigns:
+            return (
+                "=== PLAYER CALLSIGN & ADDRESS DIRECTIVE (BLANK / NO CALLSIGN) ===\n"
+                "- The player's callsign for this game is BLANK.\n"
+                "- Do NOT address the player by any name, callsign, rank, or title (NEVER call them 'Commander', 'Pilot', 'Captain', 'Chief', 'Boss', etc.).\n"
+                "- Speak to the player directly and naturally without inserting any name or title."
+            )
+
+        if len(callsigns) == 1:
+            only_name = callsigns[0]
+            return (
+                f"=== PLAYER CALLSIGN & ADDRESS DIRECTIVE ===\n"
+                f"- The player's callsign in this game is '{only_name}'.\n"
+                f"- Address the player naturally as '{only_name}' (roughly every 2 to 3 responses). Never use any other title."
+            )
+
+        formatted_list = ", ".join(f"'{c}'" for c in callsigns)
+        if bool(profile.get("multiple_main_characters", False)):
+            return (
+                f"=== PLAYER CALLSIGN & ADDRESS DIRECTIVE (MULTIPLE MAIN CHARACTERS — VISION MATCHED) ===\n"
+                f"- This game has multiple playable protagonists: {formatted_list}.\n"
+                f"- These are DIFFERENT CHARACTERS, NOT interchangeable nicknames for the same character.\n"
+                f"- ALWAYS inspect the live screen (active character model, HUD portrait/icon, equipment/combat style, or dialogue) to identify which protagonist from {formatted_list} is currently active before addressing them by name.\n"
+                f"- ONLY address the player as the character currently active on screen. Do NOT randomly pick a different protagonist.\n"
+                f"- If the active character is not visible or cannot be determined (e.g., title screen, full-screen map, or loading screen), speak naturally WITHOUT using any character name."
+            )
+
+        chosen = random.choice(callsigns)
+        return (
+            f"=== PLAYER CALLSIGN & ADDRESS DIRECTIVE (MULTIPLE CALLSIGNS) ===\n"
+            f"- The player uses the following callsigns in this game: {formatted_list}.\n"
+            f"- Randomly alternate between {formatted_list} when addressing the player (for example, use '{chosen}' on this turn).\n"
+            f"- Never use more than one callsign in a single response, and NEVER use any title outside {formatted_list}."
+        )
+
+    def fetch_web_default_keybinds(self, game_name: str, client, model_endpoint: str = "gemini-4-hydrogen:low") -> Dict[str, dict]:
         """
         Queries online reference knowledge to retrieve standard PC default
         keyboard and mouse bindings for titles without local XML/INI files.
+        Routes through Gemini 4 Hydrogen - Low by default.
         """
         if not client:
             return {}
 
+        from google.genai import types
+        from core.model_discovery import resolve_model_profile, build_thinking_config
+
+        raw_ep = (model_endpoint or "gemini-4-hydrogen:low").strip()
+        if "live" in raw_ep.lower():
+            raw_ep = "gemini-4-hydrogen:low"
+        base_model, level = resolve_model_profile(raw_ep, default_model="gemini-4-hydrogen", default_level="low")
+        thinking_cfg = build_thinking_config(base_model, thinking_level=level or "low")
+
         prompt = f"""
 Provide the official default PC Keyboard and Mouse keybindings for the game: "{game_name}".
-Focus on essential gameplay, UI, movement, and consumable shortcuts (e.g., call mount, open inventory, map, crouch, quick slots).
+Focus on essential gameplay, UI, movement, combat, and consumable shortcuts (e.g., call mount, open inventory, open map, crouch, dodge, guard, interact, quick slots).
 
 Return ONLY a JSON dictionary where keys are natural trigger phrases in lowercase (e.g. "call mount", "open map", "crouch"):
 {{
     "voice trigger phrase": {{
-        "key": "single key string (e.g. 'h', 'm', 'c', 'space', 'i', 'f1')",
+        "key": "single key string (e.g. 'h', 'm', 'c', 'space', 'i', 'f1', 'mouse_left', 'mouse_right')",
         "modifiers": ["optional list of modifier strings like 'shift', 'ctrl' or empty list"],
         "description": "Short explanation of the action",
         "source": "web_defaults"
@@ -1146,12 +1246,26 @@ Return ONLY a JSON dictionary where keys are natural trigger phrases in lowercas
 Format strictly as valid JSON.
 """
         try:
-            res = client.models.generate_content(
-                model=model_endpoint,
-                contents=prompt,
-                config={"response_mime_type": "application/json"}
+            gen_cfg = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                thinking_config=thinking_cfg,
             )
-            raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
+            res = client.models.generate_content(
+                model=base_model,
+                contents=prompt,
+                config=gen_cfg,
+            )
+            raw_text = ""
+            if res and getattr(res, "candidates", None):
+                cand = res.candidates[0]
+                if cand and getattr(cand, "content", None) and getattr(cand.content, "parts", None):
+                    raw_text = "".join(
+                        p.text for p in cand.content.parts
+                        if getattr(p, "text", None) and getattr(p, "thought", False) is not True
+                    ).strip()
+            if not raw_text and res and hasattr(res, "text") and res.text:
+                raw_text = res.text.strip()
+
             if raw_text.startswith("```"):
                 raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
                 raw_text = re.sub(r"\s*```$", "", raw_text)
@@ -1160,21 +1274,21 @@ Format strictly as valid JSON.
             if isinstance(parsed, dict) and parsed:
                 clean_dict = {}
                 for k, v in parsed.items():
-                    if isinstance(v, dict):
+                    if isinstance(v, dict) and v.get("key"):
                         v["source"] = "web_defaults"
                         v.setdefault("modifiers", [])
                         v.setdefault("description", k)
                         clean_dict[k.lower().strip()] = v
                 return clean_dict
         except Exception as e:
-            print(f"[ERROR] [GAME_MGR] Web keybind ingestion failed: {e}")
+            print(f"[ERROR] [GAME_MGR] Web keybind ingestion failed ({base_model}): {e}")
         return {}
 
-    def sync_game_binds_with_fallback(self, game_id: str, client=None, model_endpoint: str = "gemini-2.5-flash") -> dict:
+    def sync_game_binds_with_fallback(self, game_id: str, client=None, model_endpoint: str = "gemini-4-hydrogen:low") -> dict:
         """
-        1. Tries local XML/INI directory scanning.
-        2. If unavailable, fetches published PC defaults from online references.
-        3. Merges into profile and persists to data/games_profiles.json.
+        1. Tries local XML/INI directory scanning (or built-in profile presets).
+        2. If unavailable, fetches published PC defaults via Hydrogen - Low.
+        3. Merges into profile and persists to data/games/<game_id>.json.
         """
         profile = self.get_profile(game_id)
         if not profile:
@@ -1186,20 +1300,58 @@ Format strictly as valid JSON.
             detected = self.detect_heuristic_config(game_id)
         if detected:
             profile.setdefault("keybinds", {}).update(detected)
-            self._save_profiles(self.data)
+            self._save_profiles(self.data, target_game_id=game_id)
             return {"success": True, "count": len(detected), "source": "local_files", "keybinds": profile["keybinds"]}
 
-        # 2. Web Reference Fallback
+        # 2. Web Reference Fallback (Hydrogen - Low)
         if client:
             web_binds = self.fetch_web_default_keybinds(profile.get("display_name", game_id), client, model_endpoint)
             if web_binds:
                 profile.setdefault("keybinds", {}).update(web_binds)
-                self._save_profiles(self.data)
+                self._save_profiles(self.data, target_game_id=game_id)
                 return {"success": True, "count": len(web_binds), "source": "web_defaults", "keybinds": profile["keybinds"]}
+
+        # 3. Curated Built-in Preset Fallback (when local files and web retrieval are unavailable)
+        builtin_binds = self._get_builtin_default_keybinds(game_id, profile.get("display_name", ""))
+        if builtin_binds:
+            profile.setdefault("keybinds", {}).update(builtin_binds)
+            self._save_profiles(self.data, target_game_id=game_id)
+            return {"success": True, "count": len(builtin_binds), "source": "builtin_defaults", "keybinds": profile["keybinds"]}
 
         return {"success": False, "reason": "No local files found and web retrieval returned no valid bindings."}
 
-    def sync_game_binds(self, game_id: str, client=None, model_endpoint: str = "gemini-2.5-flash") -> dict:
+    def _get_builtin_default_keybinds(self, game_id: str, display_name: str = "") -> Dict[str, dict]:
+        """Returns curated PC default keybindings for known titles when offline or unconfigured."""
+        target = f"{game_id} {display_name}".lower()
+        if "crimson" in target and "desert" in target:
+            return {
+                "open inventory": {"key": "i", "modifiers": [], "description": "Open equipment and inventory screen", "source": "web_defaults"},
+                "open map": {"key": "m", "modifiers": [], "description": "Open world map", "source": "web_defaults"},
+                "move forward": {"key": "w", "modifiers": [], "description": "Move character forward", "source": "web_defaults"},
+                "move backward": {"key": "s", "modifiers": [], "description": "Move character backward", "source": "web_defaults"},
+                "move left": {"key": "a", "modifiers": [], "description": "Move character left", "source": "web_defaults"},
+                "move right": {"key": "d", "modifiers": [], "description": "Move character right", "source": "web_defaults"},
+                "sprint": {"key": "shift", "modifiers": [], "description": "Sprint or dash", "source": "web_defaults"},
+                "jump": {"key": "space", "modifiers": [], "description": "Jump or vault over obstacles", "source": "web_defaults"},
+                "crouch": {"key": "c", "modifiers": [], "description": "Crouch or enter stealth posture", "source": "web_defaults"},
+                "dodge": {"key": "e", "modifiers": [], "description": "Perform an evasive roll or step", "source": "web_defaults"},
+                "primary attack": {"key": "mouse_left", "modifiers": [], "description": "Perform light or primary melee attack", "source": "web_defaults"},
+                "secondary attack": {"key": "mouse_right", "modifiers": [], "description": "Perform heavy attack or special combat action", "source": "web_defaults"},
+                "guard": {"key": "q", "modifiers": [], "description": "Block incoming attacks or ready shield", "source": "web_defaults"},
+                "kick": {"key": "f", "modifiers": [], "description": "Execute a kick to break guard or stagger enemies", "source": "web_defaults"},
+                "interact": {"key": "r", "modifiers": [], "description": "Interact with objects, NPCs, or loot", "source": "web_defaults"},
+                "lock on": {"key": "mouse_middle", "modifiers": [], "description": "Lock camera onto targeted enemy", "source": "web_defaults"},
+                "call mount": {"key": "h", "modifiers": [], "description": "Whistle to call mount", "source": "web_defaults"},
+                "pause menu": {"key": "escape", "modifiers": [], "description": "Open main system menu or pause game", "source": "web_defaults"},
+                "use potion": {"key": "1", "modifiers": [], "description": "Consume primary healing item", "source": "web_defaults"},
+                "quick slot 1": {"key": "1", "modifiers": [], "description": "Use assigned item in quick slot 1", "source": "web_defaults"},
+                "quick slot 2": {"key": "2", "modifiers": [], "description": "Use assigned item in quick slot 2", "source": "web_defaults"},
+                "quick slot 3": {"key": "3", "modifiers": [], "description": "Use assigned item in quick slot 3", "source": "web_defaults"},
+                "quick slot 4": {"key": "4", "modifiers": [], "description": "Use assigned item in quick slot 4", "source": "web_defaults"},
+            }
+        return {}
+
+    def sync_game_binds(self, game_id: str, client=None, model_endpoint: str = "gemini-4-hydrogen:low") -> dict:
         """Attempts local scan or web fallback keybind synchronization."""
         return self.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model_endpoint)
 

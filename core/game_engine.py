@@ -388,7 +388,7 @@ class GameEngine:
                     handled=True,
                     action_type="fast_path_macro",
                     user_message=f"⚡ [In-Game Macro] {ack_msg}",
-                    tts_message=macro_res.get("ack"),
+                    tts_message=None,
                     requires_context_reset=False,
                     skip_llm=True,
                     details=macro_res

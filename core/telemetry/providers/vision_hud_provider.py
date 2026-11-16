@@ -61,7 +61,11 @@ class VisionHudTelemetryProvider:
             vitals = {}
             for bar in self.profile.hud_bars:
                 pct = self._sample_bar_fill(sct, bar, mon_left, mon_top, mon_w, mon_h)
-                vitals[f"{bar.name}_pct"] = round(pct, 3)
+                if pct is not None:
+                    vitals[f"{bar.name}_pct"] = round(pct, 3)
+
+            if not vitals:
+                return None
 
             return TelemetryFrame(
                 game_id=self.profile.game_id,
@@ -79,7 +83,7 @@ class VisionHudTelemetryProvider:
         mon_top: int,
         mon_w: int,
         mon_h: int
-    ) -> float:
+    ) -> Optional[float]:
         x_pct, y_pct, w_pct, h_pct = bar.bbox_pct
         region = {
             "left": int(mon_left + x_pct * mon_w),
@@ -100,4 +104,11 @@ class VisionHudTelemetryProvider:
 
         # Collapse vertically: a column counts as filled if >= 35% of its vertical pixels match the bar color
         col_fill = mask.mean(axis=0) >= 0.35
-        return float(col_fill.mean())
+        fill_ratio = float(col_fill.mean())
+
+        # HUD presence validation: if < 3% of columns match (e.g. Title Screen, Map Screen, or HUD hidden),
+        # treat the HUD bar as not visible rather than 0% health.
+        if fill_ratio < 0.03:
+            return None
+
+        return fill_ratio

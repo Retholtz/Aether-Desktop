@@ -135,9 +135,17 @@
           <main class="games-main-panel">
             <!-- Active Game Status Banner -->
             <div class="game-banner" id="game-active-banner">
-              <!-- Line 1: Game Title (left) & Delete Game (right) -->
+              <!-- Line 1: Game Title (left), Multiple Main Characters + Callsign (middle), & Delete Game (right) -->
               <div class="game-banner-row game-banner-row-1">
                 <h2 id="game-active-title">No Game Selected</h2>
+                <div class="game-callsign-wrap">
+                  <label class="game-multi-char-label" for="chk-game-multiple-characters" title="When ON, Aether uses screen vision to match the active protagonist from your semicolon-separated callsigns instead of picking randomly.">
+                    <input type="checkbox" id="chk-game-multiple-characters" />
+                    <span>Multiple Main Characters</span>
+                  </label>
+                  <label for="input-game-callsign" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign.">Callsign:</label>
+                  <input type="text" id="input-game-callsign" class="hud-select game-callsign-input" placeholder="Blank (none) or e.g. Kliff; Oongka" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign." />
+                </div>
                 <button type="button" id="btn-delete-game" class="btn-danger-sm" title="Delete current game profile">
                   <span class="icon">🗑️</span> Delete Game
                 </button>

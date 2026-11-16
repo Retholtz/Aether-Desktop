@@ -7,6 +7,7 @@
 let currentGamesData = null;
 let activeGameId = null;
 let scratchpadDebounceTimer = null;
+let callsignDebounceTimer = null;
 
 function updateFpsPillUI(isEnabled) {
     const btn = document.getElementById('fps-toggle-btn');
@@ -239,6 +240,19 @@ function renderActiveGameDetail() {
     // Banner
     const titleEl = document.getElementById('game-active-title');
     if (titleEl) titleEl.textContent = profile.display_name || activeGameId;
+
+    const multiCharChk = document.getElementById('chk-game-multiple-characters');
+    if (multiCharChk) {
+        multiCharChk.checked = Boolean(profile.multiple_main_characters);
+    }
+
+    const callsignInput = document.getElementById('input-game-callsign');
+    if (callsignInput) {
+        const defaultCallsign = (profile.callsign !== undefined && profile.callsign !== null)
+            ? String(profile.callsign)
+            : (activeGameId.toLowerCase().includes('elite') ? 'Commander' : '');
+        callsignInput.value = defaultCallsign;
+    }
 
     const indicator = document.getElementById('game-process-indicator');
     if (indicator) {
@@ -828,6 +842,41 @@ function initGamesTabEvents() {
             btn.disabled = false;
             btn.innerHTML = '<span class="icon">🔍</span> Scan / Sync Keybinds';
         }
+    });
+
+    // Per-Game Multiple Main Characters Toggle
+    document.getElementById('chk-game-multiple-characters')?.addEventListener('change', async (e) => {
+        if (!activeGameId) return;
+        const checked = Boolean(e.target.checked);
+        try {
+            if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.set_game_multiple_characters === 'function') {
+                const res = await window.pywebview.api.set_game_multiple_characters(activeGameId, checked);
+                if (res && res.success && currentGamesData?.profiles?.[activeGameId]) {
+                    currentGamesData.profiles[activeGameId].multiple_main_characters = Boolean(res.multiple_main_characters);
+                }
+            }
+        } catch (err) {
+            console.error("Failed saving multiple main characters flag:", err);
+        }
+    });
+
+    // Per-Game Callsign Autosave
+    document.getElementById('input-game-callsign')?.addEventListener('input', (e) => {
+        if (!activeGameId) return;
+        clearTimeout(callsignDebounceTimer);
+        const val = e.target.value;
+        callsignDebounceTimer = setTimeout(async () => {
+            try {
+                if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.set_game_callsign === 'function') {
+                    const res = await window.pywebview.api.set_game_callsign(activeGameId, val);
+                    if (res && res.success && currentGamesData?.profiles?.[activeGameId]) {
+                        currentGamesData.profiles[activeGameId].callsign = res.callsign;
+                    }
+                }
+            } catch (err) {
+                console.error("Failed saving game callsign:", err);
+            }
+        }, 450);
     });
 
     // Scratchpad Autosave

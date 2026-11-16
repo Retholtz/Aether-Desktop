@@ -2,6 +2,7 @@
 core/telemetry/telemetry_service.py - Background Telemetry Polling & Engine Bridge
 """
 import asyncio
+import time
 from typing import Dict, Optional, Callable, Awaitable, Any
 from core.telemetry.schema import GameTelemetryProfile, HudBarRegion
 from core.telemetry.providers.file_provider import NativeFileTelemetryProvider
@@ -19,6 +20,7 @@ DEFAULT_PROFILES: Dict[str, GameTelemetryProfile] = {
         hud_bars=[
             HudBarRegion(name="health", bbox_pct=(0.04, 0.05, 0.18, 0.015), color_profile="red"),
             HudBarRegion(name="stamina", bbox_pct=(0.04, 0.072, 0.15, 0.012), color_profile="green"),
+            HudBarRegion(name="spirit", bbox_pct=(0.04, 0.092, 0.14, 0.012), color_profile="yellow"),
         ]
     ),
     "elite_dangerous_64": GameTelemetryProfile(
@@ -41,6 +43,14 @@ class TelemetryService:
         self.on_copilot_trigger = on_copilot_trigger
         self.gate = CopilotEventGate()
         self._task: Optional[Any] = None
+        self._pause_until_ts: float = 0.0
+
+    def notify_ui_macro_triggered(self, phrase: str = "", pause_sec: float = 8.0) -> None:
+        """Pauses vision HUD telemetry sampling briefly when UI overlays (Map, Inventory, Pause) open."""
+        lower = (phrase or "").lower()
+        if any(tok in lower for tok in ("map", "inventory", "menu", "pause")):
+            self._pause_until_ts = time.time() + pause_sec
+            logger.debug("Paused vision HUD telemetry for %.1fs after UI macro '%s'.", pause_sec, phrase)
 
     def set_enabled(
         self,
@@ -90,6 +100,9 @@ class TelemetryService:
 
         while self.enabled:
             try:
+                if profile.provider_type == "vision_hud" and time.time() < self._pause_until_ts:
+                    await asyncio.sleep(profile.poll_interval_sec)
+                    continue
                 frame = await asyncio.to_thread(provider.poll)
                 if frame:
                     alert = self.gate.evaluate(frame)

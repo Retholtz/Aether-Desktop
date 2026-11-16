@@ -31,10 +31,10 @@ COMPACTOR_PROMPT = """Summarize the active desktop context and conversation stat
 Omit greetings and small talk. Keep it purely operational."""
 
 GAME_COMPACTOR_PROMPT = """Summarize the active in-game co-pilot context and tactical conversation state into the following structured facets (keep each concise and under 25 words):
-- ACTIVE GAME & UNIVERSE: Current game title, universe setting, and player role.
+- ACTIVE GAME & UNIVERSE: Current game title, universe setting, and player role (do NOT invent sci-fi titles like 'Commander' unless explicitly configured for this game).
 - PRIMARY OBJECTIVE: Current quest, mission, or high-level player goal.
 - IMMEDIATE SUB-TASK: The exact action or sub-goal being tackled right now.
-- LOCATION & VESSEL/STATUS: Current coordinates, star system, zone, ship/character health, or vehicle condition.
+- LOCATION & VESSEL/STATUS: Current coordinates, zone, or character/vehicle condition.
 - KEY RECENT DECISIONS & TACTICAL DIRECTIVES: Critical rules, navigation choices, or commands given in the last 10 minutes.
 - NOTABLE DISCOVERIES/INTEL: Landmarks, items, or clues mentioned recently.
 

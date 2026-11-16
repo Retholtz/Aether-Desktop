@@ -79,6 +79,67 @@ class TestAgnosticTelemetryProvider(unittest.TestCase):
         self.assertAlmostEqual(frame.vitals["health_pct"], 0.4, places=2)
         self.assertAlmostEqual(frame.vitals["stamina_pct"], 0.75, places=2)
 
+        # Title screen / Map screen with 0 matching bar pixels returns None instead of 0.0% health
+        empty_img = np.zeros((10, 100, 4), dtype=np.uint8)
+        mock_sct.grab.side_effect = [empty_img, empty_img]
+        self.assertIsNone(provider.poll())
+
+    def test_title_screen_and_map_occlusion_do_not_false_trigger(self):
+        """Verify 0% or uncalibrated readings before baseline (or instant map occlusion) do not false-fire."""
+        gate = CopilotEventGate(global_cooldown_sec=10.0)
+
+        # Turning telemetry ON at Title Screen (0% or 25% noise before any healthy baseline seen) -> Silent
+        self.assertIsNone(gate.evaluate(TelemetryFrame(game_id="crimson_desert", timestamp=10.0, vitals={"health_pct": 0.0})))
+        self.assertIsNone(gate.evaluate(TelemetryFrame(game_id="crimson_desert", timestamp=11.0, vitals={"health_pct": 0.25})))
+
+        # Healthy baseline established (85%) -> Instant drop to 0.02 when opening Map -> Suppressed as UI occlusion
+        self.assertIsNone(gate.evaluate(TelemetryFrame(game_id="crimson_desert", timestamp=20.0, vitals={"health_pct": 0.85})))
+        self.assertIsNone(gate.evaluate(TelemetryFrame(game_id="crimson_desert", timestamp=21.0, vitals={"health_pct": 0.02})))
+
+    def test_per_game_callsign_and_silent_macro(self):
+        """Verify per-game ';' callsign rotation, blank callsign directive, and silent fast-path macro."""
+        from core.game_manager import GameManager
+        from core.game_engine import GameEngine
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pfile = Path(tmpdir) / "profiles.json"
+            mgr = GameManager(profiles_path=str(pfile))
+            mgr.add_game("Crimson Desert", "CrimsonDesert.exe")
+            mgr.set_keybind("crimson_desert", "open map", "m", description="Open world map")
+            mgr.set_active_profile("crimson_desert")
+
+            # Blank callsign -> explicitly forbids calling out 'Commander' or any title
+            mgr.set_callsign("crimson_desert", "")
+            blank_dir = mgr.build_game_callsign_directive(mgr.get_profile("crimson_desert"), "crimson_desert")
+            self.assertIn("BLANK", blank_dir)
+            self.assertIn("NEVER call them 'Commander'", blank_dir)
+
+            # Multiple ';' callsigns with toggle OFF -> random alternation
+            mgr.set_callsign("crimson_desert", "Michael; Mike; Commander; Chief")
+            mgr.set_multiple_main_characters("crimson_desert", False)
+            rand_dir = mgr.build_game_callsign_directive(mgr.get_profile("crimson_desert"), "crimson_desert")
+            self.assertIn("Randomly alternate between", rand_dir)
+            self.assertIn("'Michael', 'Mike', 'Commander', 'Chief'", rand_dir)
+
+            # Multiple ';' callsigns with Multiple Main Characters toggle ON -> vision-matched
+            mgr.set_callsign("crimson_desert", "Kliff; Oongka; Damiane")
+            mgr.set_multiple_main_characters("crimson_desert", True)
+            multi_dir = mgr.build_game_callsign_directive(mgr.get_profile("crimson_desert"), "crimson_desert")
+            self.assertIn("VISION MATCHED", multi_dir)
+            self.assertIn("'Kliff', 'Oongka', 'Damiane'", multi_dir)
+            self.assertIn("Do NOT randomly pick a different protagonist", multi_dir)
+
+            # Fast-path macro is silent (tts_message is None)
+            ge = GameEngine(profiles_path=str(pfile))
+            with patch("core.game_manager.send_directinput_key", create=True), \
+                 patch("core.game_macro_runner.send_directinput_key", create=True):
+                res = ge.intercept_voice_turn("Open map")
+                self.assertTrue(res.handled)
+                self.assertEqual(res.action_type, "fast_path_macro")
+                self.assertIsNone(res.tts_message)
+            ge.stop()
+            mgr.close()
+
     def test_copilot_gate_hysteresis_and_cooldown(self):
         """Verify health threshold fires once below 30% and resets only above 50%."""
         gate = CopilotEventGate(global_cooldown_sec=10.0)
