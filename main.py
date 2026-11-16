@@ -124,14 +124,32 @@ def main():
             else:
                 print(f"[WARN] [ELEVATE] User declined UAC prompt or elevation failed (code: {ret}). Continuing normal startup.")
 
+    # Sweep leftover *.old / _internal.old / _update_staging artifacts from prior auto-updates
+    try:
+        from core.updater import cleanup_old_update_artifacts
+        cleanup_old_update_artifacts(base_dir)
+    except Exception:
+        pass
+
     # Enforce Single-Instance application lock on Windows to prevent duplicate engines/voices
     _single_instance_mutex = None
     if sys.platform == "win32":
         import ctypes
+        import time
         ERROR_ALREADY_EXISTS = 183
         mutex_name = "Local\\AetherDesktop_SingleInstance_Mutex"
-        _single_instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
-        if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        post_update = "--post-update" in sys.argv
+        max_attempts = 25 if post_update else 1
+        for attempt in range(max_attempts):
+            _single_instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+            if ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS:
+                break
+            if attempt + 1 < max_attempts:
+                if _single_instance_mutex:
+                    ctypes.windll.kernel32.CloseHandle(_single_instance_mutex)
+                    _single_instance_mutex = None
+                time.sleep(0.2)
+                continue
             print("[INFO] [SINGLE_INSTANCE] Aether Desktop is already running. Focusing existing window...")
             try:
                 hwnd = ctypes.windll.user32.FindWindowW(None, "Aether Desktop")

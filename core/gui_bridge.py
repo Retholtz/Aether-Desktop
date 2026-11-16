@@ -9090,16 +9090,17 @@ class GuiBridge:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def download_and_install_update(self, download_url: str = "") -> Dict[str, Any]:
+    def download_and_install_update(self, download_url: str = "", expected_sha256: str = "") -> Dict[str, Any]:
         """
-        Downloads and stages the release .zip on a background thread, pushes progress
-        events ('update_progress') to the UI, launches the .bat replacer, and exits cleanly.
+        Downloads, SHA-256 verifies, and stages the release .zip on a background thread,
+        pushes progress events ('update_progress') to the UI, performs an atomic
+        pure-Python .old rename swap, relaunches AetherDesktop.exe, and exits cleanly.
         """
         from core.paths import is_frozen
         from core.updater import (
+            apply_staged_update_and_relaunch,
             check_for_updates as _check_updates,
             download_and_stage_update,
-            launch_updater_bat,
         )
 
         if getattr(self, "_update_in_progress", False):
@@ -9113,9 +9114,12 @@ class GuiBridge:
             }
 
         target_url = str(download_url or "").strip()
+        target_sha256 = str(expected_sha256 or "").strip()
         if not target_url:
             check_res = _check_updates()
             target_url = str(check_res.get("download_url") or "").strip()
+            if not target_sha256:
+                target_sha256 = str(check_res.get("expected_sha256") or "").strip()
         if not target_url:
             return {
                 "success": False,
@@ -9152,10 +9156,14 @@ class GuiBridge:
                         self._on_engine_event("update_progress", {
                             "stage": "extracting",
                             "percent": 100,
-                            "message": "Extracting update package...",
+                            "message": "Verifying and extracting update package...",
                         })
 
-                staged = download_and_stage_update(target_url, progress_cb=_on_progress)
+                staged = download_and_stage_update(
+                    target_url,
+                    progress_cb=_on_progress,
+                    expected_sha256=target_sha256,
+                )
                 if not staged.get("success"):
                     self._on_engine_event("update_progress", {
                         "stage": "error",
@@ -9166,18 +9174,19 @@ class GuiBridge:
                 self._on_engine_event("update_progress", {
                     "stage": "applying",
                     "percent": 100,
-                    "message": "Replacing executable and restarting Aether Desktop...",
+                    "message": "Applying update and restarting Aether Desktop...",
                 })
 
-                launched = launch_updater_bat(
+                launched = apply_staged_update_and_relaunch(
                     payload_dir=staged["payload_dir"],
                     stage_dir=staged["stage_dir"],
                     exe_name=staged.get("exe_name", "AetherDesktop.exe"),
+                    app_dir=staged.get("app_dir"),
                 )
                 if not launched.get("success"):
                     self._on_engine_event("update_progress", {
                         "stage": "error",
-                        "message": launched.get("error") or "Failed to launch updater script.",
+                        "message": launched.get("error") or "Failed to apply update.",
                     })
                     return
 

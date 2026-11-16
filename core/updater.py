@@ -1,24 +1,24 @@
 """
-Aether Desktop - GitHub Releases Auto-Updater
-Checks GitHub Releases against the local APP_VERSION, downloads and stages
-release .zip archives safely into %TEMP%, and launches a detached .bat
-replacer script to swap the executable/_internal bundle and reboot the app.
+Aether Desktop - GitHub Releases Auto-Updater (Shell-Free)
+Checks GitHub Releases against the local APP_VERSION, downloads and verifies
+release .zip archives via httpx + SHA-256 into <app_dir>/_update_staging/,
+extracts via Python's built-in zipfile module, performs an atomic Windows
+.old rename swap, and relaunches directly without any shell wrapper.
 """
 
 from __future__ import annotations
 
-import ctypes
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import zipfile
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-import requests
+import httpx
 
 from core.logger import get_logger
 from core.paths import get_app_dir, is_frozen
@@ -33,6 +33,9 @@ from core.version import (
 logger = get_logger("Updater")
 
 EXE_NAME = "AetherDesktop.exe"
+INTERNAL_DIR_NAME = "_internal"
+STAGING_DIR_NAME = "_update_staging"
+PROTECTED_USER_FILES = frozenset({"config.json", ".env"})
 TRUSTED_DOWNLOAD_HOSTS = (
     "github.com",
     "objects.githubusercontent.com",
@@ -42,7 +45,7 @@ TRUSTED_DOWNLOAD_HOSTS = (
 
 
 def extract_version_string(raw: str) -> str:
-    """Extracts a clean dotted numeric version string (e.g. '0.82') from a tag or filename."""
+    """Extracts a clean dotted numeric version string (e.g. '0.83') from a tag or filename."""
     text = str(raw or "").strip()
     if not text:
         return ""
@@ -55,8 +58,8 @@ def extract_version_string(raw: str) -> str:
 
 def parse_version(version_str: str) -> Tuple[int, ...]:
     """
-    Parses a version string like '0.81', 'v0.82', 'Version 0.82', or 'Aether 0.82.zip'
-    into a normalized integer tuple (trailing zeros trimmed so '0.81' == '0.81.0').
+    Parses a version string like '0.82', 'v0.83', 'Version 0.83', or 'Aether 0.83.zip'
+    into a normalized integer tuple (trailing zeros trimmed so '0.83' == '0.83.0').
     """
     clean = extract_version_string(version_str)
     if not clean:
@@ -109,9 +112,17 @@ def is_app_dir_writable(app_dir: Optional[str] = None) -> bool:
         return False
 
 
+def _normalize_sha256(raw: str) -> str:
+    """Normalizes an optional 'sha256:<hex>' digest string to lowercase 64-char hex."""
+    text = str(raw or "").strip().lower()
+    if text.startswith("sha256:"):
+        text = text[7:].strip()
+    return text if re.fullmatch(r"[0-9a-f]{64}", text) else ""
+
+
 def select_release_asset(assets: list) -> Optional[Dict[str, Any]]:
     """
-    Selects the best .zip release asset (e.g. 'Aether 0.82.zip' or 'Aether.0.82.zip').
+    Selects the best .zip release asset (e.g. 'Aether 0.83.zip' or 'Aether.0.83.zip').
     Prefers trusted HTTPS .zip files starting with 'aether', then falls back to any .zip asset.
     """
     if not isinstance(assets, list):
@@ -136,9 +147,46 @@ def select_release_asset(assets: list) -> Optional[Dict[str, Any]]:
     return zip_candidates[0]
 
 
+def _extract_asset_sha256(asset: Optional[Dict[str, Any]], assets: list, timeout: float = 10.0) -> str:
+    """
+    Extracts an expected SHA-256 hex digest from a GitHub release asset's 'digest' field
+    or from a companion .sha256 asset if present.
+    """
+    if isinstance(asset, dict):
+        direct = _normalize_sha256(asset.get("digest") or "")
+        if direct:
+            return direct
+
+    if not isinstance(assets, list) or not isinstance(asset, dict):
+        return ""
+
+    asset_name = str(asset.get("name") or "").strip().lower()
+    for candidate in assets:
+        if not isinstance(candidate, dict):
+            continue
+        cand_name = str(candidate.get("name") or "").strip().lower()
+        cand_url = str(candidate.get("browser_download_url") or "")
+        if not is_trusted_github_url(cand_url):
+            continue
+        if cand_name == f"{asset_name}.sha256" or cand_name in ("sha256sums.txt", "checksums.txt"):
+            try:
+                resp = httpx.get(cand_url, timeout=timeout, follow_redirects=True)
+                if resp.status_code == 200:
+                    for line in resp.text.splitlines():
+                        parts = line.strip().split()
+                        if not parts:
+                            continue
+                        digest = _normalize_sha256(parts[0])
+                        if digest and (len(parts) == 1 or asset_name in line.lower()):
+                            return digest
+            except Exception:
+                pass
+    return ""
+
+
 def check_for_updates(current_version: str = APP_VERSION, timeout: float = 10.0) -> Dict[str, Any]:
     """
-    Queries GitHub Releases (/releases/latest) and compares the release version
+    Queries GitHub Releases (/releases/latest) via httpx and compares the release version
     against current_version. Handles 404 (no releases yet) and rate limits gracefully.
     """
     headers = {
@@ -155,8 +203,8 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 10.0)
     }
 
     try:
-        resp = requests.get(GITHUB_RELEASES_API, headers=headers, timeout=timeout)
-    except requests.RequestException as exc:
+        resp = httpx.get(GITHUB_RELEASES_API, headers=headers, timeout=timeout, follow_redirects=True)
+    except httpx.HTTPError as exc:
         logger.warning(f"[UPDATER] Network error checking for updates: {exc}")
         return {
             **base_info,
@@ -183,7 +231,7 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 10.0)
             "error": "GitHub API rate limit reached. Please try again later.",
         }
 
-    if not resp.ok:
+    if resp.status_code >= 400:
         return {
             **base_info,
             "success": False,
@@ -207,10 +255,12 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 10.0)
     release_url = str(data.get("html_url") or GITHUB_RELEASES_PAGE).strip()
     published_at = str(data.get("published_at") or "").strip()
 
-    asset = select_release_asset(data.get("assets") or [])
+    assets = data.get("assets") or []
+    asset = select_release_asset(assets)
     asset_name = str(asset.get("name") or "") if asset else ""
     download_url = str(asset.get("browser_download_url") or "") if asset else ""
     asset_size = int(asset.get("size") or 0) if asset else 0
+    expected_sha256 = _extract_asset_sha256(asset, assets, timeout=timeout) if asset else ""
 
     remote_ver = (
         extract_version_string(tag_name)
@@ -240,6 +290,7 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 10.0)
         "asset_name": asset_name,
         "download_url": download_url,
         "asset_size": asset_size,
+        "expected_sha256": expected_sha256,
         "message": (
             f"Update available: v{remote_ver}"
             if update_available
@@ -249,9 +300,12 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 10.0)
 
 
 def _safe_extract_zip(zip_path: str, extract_dir: str) -> None:
-    """Extracts a zip archive into extract_dir while guarding against path traversal."""
+    """Verifies archive integrity and extracts a zip archive while guarding against path traversal."""
     abs_extract_dir = os.path.abspath(extract_dir)
     with zipfile.ZipFile(zip_path, "r") as zf:
+        bad_member = zf.testzip()
+        if bad_member is not None:
+            raise zipfile.BadZipFile(f"Corrupted zip entry detected: {bad_member}")
         for member in zf.infolist():
             member_path = os.path.abspath(os.path.join(abs_extract_dir, member.filename))
             if not (member_path == abs_extract_dir or member_path.startswith(abs_extract_dir + os.sep)):
@@ -263,7 +317,7 @@ def _locate_payload_root(extract_dir: str, exe_name: str = EXE_NAME) -> Optional
     """
     Finds the folder containing AetherDesktop.exe inside the extracted archive.
     Supports both flat zips (AetherDesktop.exe at root) and single-folder zips
-    (e.g. AetherDesktop/AetherDesktop.exe or 'Aether 0.82/AetherDesktop.exe').
+    (e.g. AetherDesktop/AetherDesktop.exe or 'Aether 0.83/AetherDesktop.exe').
     """
     if os.path.isfile(os.path.join(extract_dir, exe_name)):
         return extract_dir
@@ -282,10 +336,13 @@ def download_and_stage_update(
     download_url: str,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     timeout: float = 30.0,
+    expected_sha256: str = "",
+    app_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Downloads the release .zip from GitHub into %TEMP%\\aether_desktop_update,
-    extracts it, validates AetherDesktop.exe is present, and strips user config files.
+    Downloads the release .zip from GitHub via httpx into <app_dir>/_update_staging/,
+    verifies its SHA-256 checksum, extracts via zipfile, validates AetherDesktop.exe
+    is present, and strips user config files.
     """
     if not is_trusted_github_url(download_url):
         return {
@@ -293,7 +350,14 @@ def download_and_stage_update(
             "error": "Refusing to download update from untrusted or non-HTTPS URL.",
         }
 
-    stage_dir = os.path.join(tempfile.gettempdir(), "aether_desktop_update")
+    target_app_dir = os.path.abspath(app_dir or get_app_dir())
+    if not is_app_dir_writable(target_app_dir):
+        return {
+            "success": False,
+            "error": f"Application directory is not writable: {target_app_dir}",
+        }
+
+    stage_dir = os.path.join(target_app_dir, STAGING_DIR_NAME)
     zip_path = os.path.join(stage_dir, "update.zip")
     extract_dir = os.path.join(stage_dir, "extracted")
 
@@ -305,25 +369,48 @@ def download_and_stage_update(
         return {"success": False, "error": f"Failed to prepare staging directory: {exc}"}
 
     headers = {"User-Agent": f"Aether-Desktop/{APP_VERSION}"}
+    sha256_hasher = hashlib.sha256()
 
     try:
         if progress_cb:
             progress_cb(0, 0, "downloading")
-        with requests.get(download_url, headers=headers, stream=True, timeout=timeout) as resp:
-            if not resp.ok:
+        with httpx.stream(
+            "GET",
+            download_url,
+            headers=headers,
+            timeout=timeout,
+            follow_redirects=True,
+        ) as resp:
+            if resp.status_code >= 400:
                 return {"success": False, "error": f"Download failed with HTTP {resp.status_code}."}
             total_bytes = int(resp.headers.get("Content-Length") or 0)
             downloaded = 0
             with open(zip_path, "wb") as out_f:
-                for chunk in resp.iter_content(chunk_size=65536):
+                for chunk in resp.iter_bytes(chunk_size=65536):
                     if not chunk:
                         continue
                     out_f.write(chunk)
+                    sha256_hasher.update(chunk)
                     downloaded += len(chunk)
                     if progress_cb:
                         progress_cb(downloaded, total_bytes, "downloading")
     except Exception as exc:
         return {"success": False, "error": f"Download error: {exc}"}
+
+    actual_sha256 = sha256_hasher.hexdigest().lower()
+    normalized_expected = _normalize_sha256(expected_sha256)
+    if expected_sha256 and not normalized_expected:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        return {"success": False, "error": "Invalid expected SHA-256 checksum format."}
+    if normalized_expected and actual_sha256 != normalized_expected:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        return {
+            "success": False,
+            "error": (
+                f"SHA-256 checksum mismatch for update archive "
+                f"(expected {normalized_expected}, got {actual_sha256})."
+            ),
+        }
 
     try:
         if progress_cb:
@@ -340,7 +427,7 @@ def download_and_stage_update(
         }
 
     # Never overwrite existing local user secrets/config if accidentally bundled
-    for protected_name in ("config.json", ".env"):
+    for protected_name in PROTECTED_USER_FILES:
         protected_path = os.path.join(payload_dir, protected_name)
         if os.path.isfile(protected_path):
             try:
@@ -350,169 +437,162 @@ def download_and_stage_update(
 
     return {
         "success": True,
+        "app_dir": target_app_dir,
         "stage_dir": stage_dir,
         "payload_dir": payload_dir,
         "exe_name": EXE_NAME,
+        "sha256": actual_sha256,
     }
 
 
-def build_updater_bat_script(
-    old_pid: int,
-    app_dir: str,
-    payload_dir: str,
-    stage_dir: str,
-    exe_name: str = EXE_NAME,
-) -> str:
+def cleanup_old_update_artifacts(app_dir: Optional[str] = None) -> Dict[str, Any]:
     """
-    Builds the Windows .bat script that waits for the running process to exit,
-    deletes the old executable, swaps in the new build, reboots AetherDesktop.exe,
-    and cleans up temporary update files.
+    Sweeps and deletes any leftover *.old files, _internal.old directories,
+    or _update_staging directories from a prior update on application startup.
     """
-    log_path = os.path.join(tempfile.gettempdir(), "aether_update.log")
-    return f"""@echo off
-setlocal enabledelayedexpansion
+    target_dir = os.path.abspath(app_dir or get_app_dir())
+    removed: List[str] = []
+    if not os.path.isdir(target_dir):
+        return {"removed": removed}
 
-set "OLD_PID={int(old_pid)}"
-set "APP_DIR={app_dir}"
-set "PAYLOAD_DIR={payload_dir}"
-set "STAGE_DIR={stage_dir}"
-set "EXE_NAME={exe_name}"
-set "LOG_FILE={log_path}"
+    try:
+        entries = os.listdir(target_dir)
+    except OSError:
+        return {"removed": removed}
 
-echo [%DATE% %TIME%] Starting Aether Desktop update > "%LOG_FILE%"
-echo Waiting for PID %OLD_PID% to exit... >> "%LOG_FILE%"
+    for entry in entries:
+        full_path = os.path.join(target_dir, entry)
+        if entry.lower().endswith(".old"):
+            try:
+                if os.path.isdir(full_path):
+                    shutil.rmtree(full_path, ignore_errors=True)
+                else:
+                    os.remove(full_path)
+                if not os.path.exists(full_path):
+                    removed.append(entry)
+            except OSError:
+                pass
+        elif entry == STAGING_DIR_NAME and os.path.isdir(full_path):
+            try:
+                shutil.rmtree(full_path, ignore_errors=True)
+                if not os.path.exists(full_path):
+                    removed.append(entry)
+            except OSError:
+                pass
 
-set /a WAIT_COUNT=0
-:wait_loop
-tasklist /FI "PID eq %OLD_PID%" 2>NUL | find /I "%OLD_PID%" >NUL
-if "%ERRORLEVEL%"=="0" (
-    set /a WAIT_COUNT+=1
-    if !WAIT_COUNT! GEQ 30 (
-        echo PID %OLD_PID% still active after 30s; forcing termination... >> "%LOG_FILE%"
-        taskkill /F /PID %OLD_PID% >NUL 2>&1
-        goto wait_done
-    )
-    timeout /t 1 /nobreak >NUL
-    goto wait_loop
-)
-
-:wait_done
-rem Allow WebView2 child processes a moment to release file handles
-timeout /t 2 /nobreak >NUL
-
-rem Delete old executable with retries
-set /a DEL_TRIES=0
-:del_exe_loop
-if exist "%APP_DIR%\\%EXE_NAME%" (
-    del /F /Q "%APP_DIR%\\%EXE_NAME%" >> "%LOG_FILE%" 2>&1
-    if exist "%APP_DIR%\\%EXE_NAME%" (
-        set /a DEL_TRIES+=1
-        if !DEL_TRIES! LSS 6 (
-            timeout /t 1 /nobreak >NUL
-            goto del_exe_loop
-        )
-        echo ERROR: Could not delete old %EXE_NAME%. >> "%LOG_FILE%"
-        goto cleanup_and_launch
-    )
-)
-
-rem Backup existing _internal bundle if replacing it
-if exist "%PAYLOAD_DIR%\\_internal" (
-    if exist "%APP_DIR%\\_internal_backup" rmdir /S /Q "%APP_DIR%\\_internal_backup" >> "%LOG_FILE%" 2>&1
-    if exist "%APP_DIR%\\_internal" (
-        move /Y "%APP_DIR%\\_internal" "%APP_DIR%\\_internal_backup" >> "%LOG_FILE%" 2>&1
-    )
-)
-
-rem Copy new executable and updated bundle into APP_DIR (preserves config.json, .env, data, logs, profile, scripts)
-robocopy "%PAYLOAD_DIR%" "%APP_DIR%" /E /IS /IT /R:5 /W:1 >> "%LOG_FILE%" 2>&1
-set "RC=%ERRORLEVEL%"
-if %RC% GEQ 8 (
-    echo ERROR: robocopy failed with exit code %RC%. Restoring backup... >> "%LOG_FILE%"
-    if exist "%APP_DIR%\\_internal_backup" (
-        if exist "%APP_DIR%\\_internal" rmdir /S /Q "%APP_DIR%\\_internal" >> "%LOG_FILE%" 2>&1
-        move /Y "%APP_DIR%\\_internal_backup" "%APP_DIR%\\_internal" >> "%LOG_FILE%" 2>&1
-    )
-) else (
-    echo Update files copied successfully (robocopy code %RC%). >> "%LOG_FILE%"
-    if exist "%APP_DIR%\\_internal_backup" rmdir /S /Q "%APP_DIR%\\_internal_backup" >> "%LOG_FILE%" 2>&1
-)
-
-:cleanup_and_launch
-if exist "%APP_DIR%\\%EXE_NAME%" (
-    echo Launching updated %EXE_NAME%... >> "%LOG_FILE%"
-    start "" /D "%APP_DIR%" "%APP_DIR%\\%EXE_NAME%"
-) else (
-    echo CRITICAL: %EXE_NAME% missing after update attempt! >> "%LOG_FILE%"
-)
-
-if exist "%STAGE_DIR%" rmdir /S /Q "%STAGE_DIR%" >> "%LOG_FILE%" 2>&1
-(goto) 2>nul & del /F /Q "%~f0"
-"""
+    if removed:
+        logger.info(f"[UPDATER] Cleaned up prior update artifacts: {', '.join(removed)}")
+    return {"removed": removed}
 
 
-def launch_updater_bat(
+def _merge_extra_payload_entries(payload_dir: str, app_dir: str, exe_name: str) -> None:
+    """Moves any additional top-level payload entries (excluding exe, _internal, and user configs) into app_dir."""
+    skip_names = {exe_name, INTERNAL_DIR_NAME, *PROTECTED_USER_FILES}
+    for entry in os.listdir(payload_dir):
+        if entry in skip_names:
+            continue
+        src = os.path.join(payload_dir, entry)
+        dst = os.path.join(app_dir, entry)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            os.replace(src, dst)
+
+
+def apply_staged_update_and_relaunch(
     payload_dir: str,
-    stage_dir: str,
+    stage_dir: Optional[str] = None,
     exe_name: str = EXE_NAME,
+    app_dir: Optional[str] = None,
+    relaunch: bool = True,
+    allow_dev_mode: bool = False,
 ) -> Dict[str, Any]:
     """
-    Writes the update .bat script to %TEMP% and launches it detached so it can
-    replace AetherDesktop.exe after this process exits.
+    Performs an atomic pure-Python Windows rename swap:
+      1. Renames running AetherDesktop.exe -> AetherDesktop.exe.old and _internal -> _internal.old
+      2. Moves staged AetherDesktop.exe and _internal into app_dir
+      3. Relaunches AetherDesktop.exe directly with shell=False (zero .bat/cmd/PowerShell)
     """
-    if sys.platform != "win32":
+    if sys.platform != "win32" and not allow_dev_mode:
         return {"success": False, "error": "Self-update restart is only supported on Windows."}
 
-    if not is_frozen():
+    if not is_frozen() and not allow_dev_mode:
         return {
             "success": False,
             "dev_mode": True,
-            "error": "Self-update is disabled when running from Python source. Pull the latest changes via Git or run the packaged executable.",
+            "error": (
+                "Self-update is disabled when running from Python source. "
+                "Pull the latest changes via Git or run the packaged executable."
+            ),
         }
 
-    app_dir = get_app_dir()
-    bat_path = os.path.join(tempfile.gettempdir(), "aether_apply_update.bat")
-    script_content = build_updater_bat_script(
-        old_pid=os.getpid(),
-        app_dir=app_dir,
-        payload_dir=payload_dir,
-        stage_dir=stage_dir,
-        exe_name=exe_name,
-    )
+    target_app_dir = os.path.abspath(app_dir or get_app_dir())
+    staged_exe = os.path.join(payload_dir, exe_name)
+    staged_internal = os.path.join(payload_dir, INTERNAL_DIR_NAME)
+
+    if not os.path.isfile(staged_exe):
+        return {"success": False, "error": f"Staged executable not found: {staged_exe}"}
+
+    current_exe = os.path.join(target_app_dir, exe_name)
+    old_exe = os.path.join(target_app_dir, f"{exe_name}.old")
+    current_internal = os.path.join(target_app_dir, INTERNAL_DIR_NAME)
+    old_internal = os.path.join(target_app_dir, f"{INTERNAL_DIR_NAME}.old")
+
+    # Remove any stale .old artifacts before renaming
+    for stale_path in (old_exe, old_internal):
+        if os.path.exists(stale_path):
+            try:
+                if os.path.isdir(stale_path):
+                    shutil.rmtree(stale_path, ignore_errors=True)
+                else:
+                    os.remove(stale_path)
+            except OSError:
+                pass
+
+    renamed_exe = False
+    renamed_internal = False
 
     try:
-        with open(bat_path, "w", encoding="utf-8", newline="\r\n") as f:
-            f.write(script_content)
+        if os.path.exists(current_exe):
+            os.replace(current_exe, old_exe)
+            renamed_exe = True
+
+        if os.path.isdir(current_internal) and os.path.isdir(staged_internal):
+            os.replace(current_internal, old_internal)
+            renamed_internal = True
+
+        shutil.move(staged_exe, current_exe)
+        if os.path.isdir(staged_internal):
+            shutil.move(staged_internal, current_internal)
+
+        _merge_extra_payload_entries(payload_dir, target_app_dir, exe_name)
     except Exception as exc:
-        return {"success": False, "error": f"Failed to write updater batch script: {exc}"}
+        # Roll back live files if anything failed during swap
+        try:
+            if renamed_exe and os.path.exists(old_exe) and not os.path.exists(current_exe):
+                os.replace(old_exe, current_exe)
+            if renamed_internal and os.path.isdir(old_internal) and not os.path.exists(current_internal):
+                os.replace(old_internal, current_internal)
+        except Exception:
+            pass
+        return {"success": False, "error": f"Atomic update swap failed: {exc}"}
 
-    try:
-        if is_app_dir_writable(app_dir):
-            creation_flags = (
-                getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-            )
+    if stage_dir and os.path.isdir(stage_dir):
+        shutil.rmtree(stage_dir, ignore_errors=True)
+
+    if relaunch:
+        try:
             subprocess.Popen(
-                ["cmd.exe", "/c", bat_path],
-                cwd=tempfile.gettempdir(),
-                creationflags=creation_flags,
+                [os.path.abspath(current_exe), "--post-update"],
+                cwd=target_app_dir,
+                shell=False,
                 close_fds=True,
             )
-        else:
-            # App is likely in a protected directory like C:\Program Files; request UAC elevation
-            ret = ctypes.windll.shell32.ShellExecuteW(
-                None,
-                "runas",
-                "cmd.exe",
-                f'/c "{bat_path}"',
-                tempfile.gettempdir(),
-                0,
-            )
-            if ret <= 32:
-                return {
-                    "success": False,
-                    "error": f"Administrator permission is required to update files in {app_dir} (ShellExecute code {ret}).",
-                }
-        return {"success": True, "bat_path": bat_path}
-    except Exception as exc:
-        return {"success": False, "error": f"Failed to launch updater script: {exc}"}
+        except Exception as exc:
+            return {"success": False, "error": f"Update applied, but relaunch failed: {exc}"}
+
+    return {
+        "success": True,
+        "exe_path": os.path.abspath(current_exe),
+        "relaunched": relaunch,
+    }
