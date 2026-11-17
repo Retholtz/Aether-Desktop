@@ -404,7 +404,7 @@ class SessionLifecycleManager:
             self.raw_transcript = []
             return old_id
 
-    def reset_metrics(self):
+    def reset_metrics(self, clear_rotation_lock: bool = False):
         """Resets turn count, elapsed time, and tool chars after successful silent reconnect."""
         with self._lock:
             # Ensure any unpersisted transcript turns are flushed to disk before resetting
@@ -417,7 +417,8 @@ class SessionLifecycleManager:
             # Retain last 2 turns to bridge the prompt continuity (sanitized of any refusals)
             self.turn_history = sanitize_turn_history(self.turn_history[-2:])
             self.total_rotations += 1
-            self.rotation_in_progress = False
+            if clear_rotation_lock:
+                self.rotation_in_progress = False
             logger.info(f"[LIFECYCLE] Metrics reset. Total lifetime rotations: {self.total_rotations}")
 
 

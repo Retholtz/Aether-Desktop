@@ -783,11 +783,23 @@ function initProjectChatUI() {
     const chatForm = document.getElementById('projectChatForm');
     const chatInput = document.getElementById('projectChatInput');
     if (chatForm && chatInput) {
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                chatInput.blur();
+                if (window.pywebview?.api?.set_input_focused) {
+                    window.pywebview.api.set_input_focused(false);
+                }
+            }
+        });
         chatForm.onsubmit = async (e) => {
             e.preventDefault();
             const text = chatInput.value.trim();
             if (!text || !activeProjectId) return;
             chatInput.value = '';
+            chatInput.blur();
+            if (window.pywebview?.api?.set_input_focused) {
+                window.pywebview.api.set_input_focused(false);
+            }
 
             try {
                 if (window.pywebview && window.pywebview.api) {

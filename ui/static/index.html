@@ -2051,8 +2051,35 @@
             </div>
             <div class="card-body">
               <p class="input-hint" style="margin: 0 0 14px 0; line-height: 1.45;">
-                Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can check your inbox, search messages, draft emails, and read your calendar directly. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
+                Sign in with your <strong>Google</strong> or <strong>Microsoft (Outlook / Hotmail / Live)</strong> account so Aether can monitor incoming email in the background, summarize unread mail, and read your calendar/contacts. When you ask to <em>open or view</em> an email, Aether opens Chrome, Edge, or Outlook on screen. Your sign-in tokens stay encrypted locally on your PC via Windows DPAPI.
               </p>
+
+              <!-- Background Email Monitoring Controls -->
+              <div style="background: var(--bg-deep); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <strong style="color: var(--text-main); font-size: 0.9rem;">Background Email Monitoring</strong>
+                  <span id="emailMonitorStatusBadge" class="step-status-pill done">ACTIVE</span>
+                </div>
+                <div style="margin-top: 8px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                  <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-secondary); font-size: 0.82rem; user-select: none;">
+                    <input type="checkbox" id="chkEmailMonitorEnabled" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                    <span>Monitor Connected Inboxes</span>
+                  </label>
+                  <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text-secondary); font-size: 0.82rem; user-select: none;">
+                    <input type="checkbox" id="chkEmailMonitorVerbal" checked style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: pointer;" />
+                    <span>Speak New Email Alerts</span>
+                  </label>
+                  <div style="display: inline-flex; align-items: center; gap: 6px;">
+                    <span style="color: var(--text-muted); font-size: 0.82rem;">Check Every:</span>
+                    <select id="emailMonitorPollInterval" class="hud-select" style="padding: 2px 8px; font-size: 0.78rem; height: 26px; border-radius: 4px; background: var(--bg-deep); border: 1px solid rgba(56, 189, 248, 0.25); color: var(--text-main); cursor: pointer;">
+                      <option value="30">30s</option>
+                      <option value="60" selected>60s (Default)</option>
+                      <option value="120">2m</option>
+                      <option value="300">5m</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
 
               <!-- 1. Google (Gmail, Calendar & Contacts) - 1-Click Sign In -->
               <div style="background: var(--bg-deep); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">

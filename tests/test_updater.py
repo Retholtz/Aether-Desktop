@@ -17,6 +17,7 @@ from core.gui_bridge import GuiBridge
 from core.updater import (
     EXE_NAME,
     apply_staged_update_and_relaunch,
+    apply_update_from_helper_cli,
     check_for_updates,
     cleanup_old_update_artifacts,
     download_and_stage_update,
@@ -42,7 +43,7 @@ def _make_mock_stream(zip_bytes: bytes, status_code: int = 200):
 
 class TestVersionAndAssetHelpers(unittest.TestCase):
     def test_extract_and_parse_versions(self):
-        self.assertEqual(APP_VERSION, "0.84.2")
+        self.assertRegex(APP_VERSION, r"^\d+(?:\.\d+)+$")
         self.assertEqual(extract_version_string("Version 0.83"), "0.83")
         self.assertEqual(extract_version_string("v0.83"), "0.83")
         self.assertEqual(extract_version_string("Aether 0.83.zip"), "0.83")
@@ -251,12 +252,16 @@ class TestAtomicSwapCleanupAndBridgeIntegration(unittest.TestCase):
 
     @patch("core.updater.subprocess.Popen")
     def test_atomic_rename_swap_and_shell_free_relaunch(self, mock_popen):
-        # Create current live files
+        # Create current live files including base_library.zip and user config
         with open(os.path.join(self.test_dir, EXE_NAME), "wb") as f:
             f.write(b"OLD_EXE")
+        with open(os.path.join(self.test_dir, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"agent_name": "KeepMe"}, f)
         os.makedirs(os.path.join(self.test_dir, "_internal"), exist_ok=True)
         with open(os.path.join(self.test_dir, "_internal", "lib.dll"), "wb") as f:
             f.write(b"OLD_DLL")
+        with open(os.path.join(self.test_dir, "_internal", "base_library.zip"), "wb") as f:
+            f.write(b"OLD_BASE_LIB")
 
         # Create staged update payload
         stage_dir = os.path.join(self.test_dir, "_update_staging")
@@ -266,6 +271,8 @@ class TestAtomicSwapCleanupAndBridgeIntegration(unittest.TestCase):
             f.write(b"NEW_EXE")
         with open(os.path.join(payload_dir, "_internal", "lib.dll"), "wb") as f:
             f.write(b"NEW_DLL")
+        with open(os.path.join(payload_dir, "_internal", "base_library.zip"), "wb") as f:
+            f.write(b"NEW_BASE_LIB")
 
         res = apply_staged_update_and_relaunch(
             payload_dir=payload_dir,
@@ -274,23 +281,75 @@ class TestAtomicSwapCleanupAndBridgeIntegration(unittest.TestCase):
             app_dir=self.test_dir,
             relaunch=True,
             allow_dev_mode=True,
+            use_staged_helper=False,
         )
         self.assertTrue(res["success"])
         with open(os.path.join(self.test_dir, EXE_NAME), "rb") as f:
             self.assertEqual(f.read(), b"NEW_EXE")
         with open(os.path.join(self.test_dir, "_internal", "lib.dll"), "rb") as f:
             self.assertEqual(f.read(), b"NEW_DLL")
+        with open(os.path.join(self.test_dir, "_internal", "base_library.zip"), "rb") as f:
+            self.assertEqual(f.read(), b"NEW_BASE_LIB")
         with open(os.path.join(self.test_dir, f"{EXE_NAME}.old"), "rb") as f:
             self.assertEqual(f.read(), b"OLD_EXE")
-        with open(os.path.join(self.test_dir, "_internal", "lib.dll.old"), "rb") as f:
-            self.assertEqual(f.read(), b"OLD_DLL")
+        with open(os.path.join(self.test_dir, "config.json"), "r", encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["agent_name"], "KeepMe")
         self.assertFalse(os.path.exists(stage_dir))
 
         mock_popen.assert_called_once()
         call_args, call_kwargs = mock_popen.call_args
         self.assertEqual(call_args[0][0], os.path.abspath(os.path.join(self.test_dir, EXE_NAME)))
+        self.assertEqual(call_args[0][1], "--post-update")
         self.assertFalse(call_kwargs["shell"])
         self.assertTrue(call_kwargs["close_fds"])
+
+    @patch("core.updater.subprocess.Popen")
+    def test_staged_helper_launch_and_cli_swap(self, mock_popen):
+        # 1. Verify use_staged_helper=True spawns staged_exe --apply-update (shell=False)
+        stage_dir = os.path.join(self.test_dir, "_update_staging")
+        payload_dir = os.path.join(stage_dir, "extracted", "AetherDesktop")
+        os.makedirs(os.path.join(payload_dir, "_internal"), exist_ok=True)
+        staged_exe = os.path.join(payload_dir, EXE_NAME)
+        with open(staged_exe, "wb") as f:
+            f.write(b"NEW_EXE")
+        with open(os.path.join(payload_dir, "_internal", "base_library.zip"), "wb") as f:
+            f.write(b"NEW_BASE_LIB")
+
+        res = apply_staged_update_and_relaunch(
+            payload_dir=payload_dir,
+            stage_dir=stage_dir,
+            exe_name=EXE_NAME,
+            app_dir=self.test_dir,
+            relaunch=True,
+            allow_dev_mode=True,
+            use_staged_helper=True,
+        )
+        self.assertTrue(res["success"])
+        self.assertTrue(res["helper_launched"])
+        cmd = mock_popen.call_args[0][0]
+        self.assertEqual(cmd[0], os.path.abspath(staged_exe))
+        self.assertEqual(cmd[1], "--apply-update")
+        self.assertIn("--target-dir", cmd)
+        self.assertIn("--old-pid", cmd)
+        self.assertFalse(mock_popen.call_args[1]["shell"])
+
+        # 2. Verify apply_update_from_helper_cli swaps files and relaunches --post-update
+        with open(os.path.join(self.test_dir, EXE_NAME), "wb") as f:
+            f.write(b"OLD_EXE")
+        os.makedirs(os.path.join(self.test_dir, "_internal"), exist_ok=True)
+        with open(os.path.join(self.test_dir, "_internal", "base_library.zip"), "wb") as f:
+            f.write(b"OLD_BASE_LIB")
+
+        mock_popen.reset_mock()
+        with patch("core.updater.sys.executable", staged_exe):
+            rc = apply_update_from_helper_cli(["--target-dir", self.test_dir, "--old-pid", "0"])
+        self.assertEqual(rc, 0)
+        with open(os.path.join(self.test_dir, EXE_NAME), "rb") as f:
+            self.assertEqual(f.read(), b"NEW_EXE")
+        with open(os.path.join(self.test_dir, "_internal", "base_library.zip"), "rb") as f:
+            self.assertEqual(f.read(), b"NEW_BASE_LIB")
+        relaunch_cmd = mock_popen.call_args[0][0]
+        self.assertEqual(relaunch_cmd, [os.path.abspath(os.path.join(self.test_dir, EXE_NAME)), "--post-update"])
 
     def test_apply_staged_update_refuses_in_dev_mode(self):
         res = apply_staged_update_and_relaunch(self.test_dir, self.test_dir)

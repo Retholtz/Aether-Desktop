@@ -5321,6 +5321,8 @@ class GuiBridge:
 
         res["desktop_notifications"] = self.get_desktop_notifications_status()
 
+        res["email_monitoring"] = self.get_email_monitor_status()
+
         res["streaming"] = self.get_streaming_status()
 
         res["replay_capture"] = self.get_replay_capture_config()
@@ -5856,6 +5858,110 @@ class GuiBridge:
             watcher.clear_history()
 
         return {"success": True, "message": "Notification history cleared."}
+
+    def get_email_monitor_status(self) -> dict:
+
+        """Returns configuration and operational status of background OAuth/IMAP email monitoring."""
+
+        from core.config import load_settings
+
+        settings = load_settings()
+
+        email_cfg = settings.get("integrations", {}).get("email_monitoring", {})
+
+        enabled = bool(email_cfg.get("enabled", True))
+
+        verbal = bool(email_cfg.get("verbal_announcement", True))
+
+        poll_interval = float(email_cfg.get("poll_interval_seconds", 60.0))
+
+        monitor = getattr(self._engine, "email_monitor", None) if hasattr(self, "_engine") and self._engine else None
+
+        running = bool(monitor and getattr(monitor, "_running", False))
+
+        return {
+
+            "enabled": enabled,
+
+            "verbal_announcement": verbal,
+
+            "poll_interval_seconds": poll_interval,
+
+            "running": running,
+
+        }
+
+    def save_email_monitor_config(
+
+        self,
+
+        enabled: bool = True,
+
+        verbal_announcement: bool = True,
+
+        poll_interval_seconds: float = 60.0,
+
+    ) -> dict:
+
+        """Updates and persists background OAuth/IMAP email monitoring settings."""
+
+        from core.config import load_settings, save_settings
+
+        settings = load_settings()
+
+        email_cfg = settings.setdefault("integrations", {}).setdefault("email_monitoring", {})
+
+        email_cfg["enabled"] = bool(enabled)
+
+        email_cfg["verbal_announcement"] = bool(verbal_announcement)
+
+        email_cfg["poll_interval_seconds"] = max(15.0, float(poll_interval_seconds or 60.0))
+
+        save_settings(settings)
+
+        if hasattr(self, "_engine") and self._engine and hasattr(self._engine, "set_email_monitor_config"):
+
+            self._engine.set_email_monitor_config(
+
+                enabled=email_cfg["enabled"],
+
+                verbal_announcement=email_cfg["verbal_announcement"],
+
+                poll_interval_seconds=email_cfg["poll_interval_seconds"],
+
+            )
+
+        status = self.get_email_monitor_status()
+
+        self.notify("oauth_status_updated", self.get_oauth_status())
+
+        return status
+
+    def get_recent_email_alerts(self, limit: int = 10) -> dict:
+
+        """Returns recently captured background email monitor alerts."""
+
+        monitor = getattr(self._engine, "email_monitor", None) if hasattr(self, "_engine") and self._engine else None
+
+        if not monitor:
+
+            return {"success": True, "count": 0, "alerts": []}
+
+        alerts = monitor.get_recent(limit=int(limit or 10))
+
+        return {"success": True, "count": len(alerts), "alerts": alerts}
+
+    def clear_email_alerts(self) -> dict:
+
+        """Clears recent background email alert history."""
+
+        monitor = getattr(self._engine, "email_monitor", None) if hasattr(self, "_engine") and self._engine else None
+
+        if monitor:
+
+            monitor.clear_history()
+
+        return {"success": True, "message": "Email alert history cleared."}
 
 
 

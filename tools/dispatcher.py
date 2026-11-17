@@ -1687,7 +1687,15 @@ class ToolDispatcher:
         try:
             result = await self._dispatch_internal(fn_name, args)
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            st = result.get("status", "success") if isinstance(result, dict) else "success"
+            if isinstance(result, dict):
+                if "status" in result:
+                    st = result.get("status", "success")
+                elif result.get("success") is False:
+                    st = "error"
+                else:
+                    st = "success"
+            else:
+                st = "success"
             if st == "error":
                 err_msg = result.get("message") or result.get("error") or "Unknown error"
                 logger.warning(f"[TOOL RESULT] {fn_name} | Duration: {elapsed_ms:.1f}ms | Status: {st} | Error: {err_msg}")

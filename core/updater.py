@@ -8,12 +8,14 @@ extracts via Python's built-in zipfile module, performs an atomic Windows
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -504,7 +506,7 @@ def cleanup_old_update_artifacts(app_dir: Optional[str] = None) -> Dict[str, Any
 
 
 def _merge_extra_payload_entries(payload_dir: str, app_dir: str, exe_name: str) -> None:
-    """Moves any additional top-level payload entries (excluding exe, _internal, and user configs) into app_dir."""
+    """Copies any additional top-level payload entries (excluding exe, _internal, and user configs) into app_dir."""
     skip_names = {exe_name, INTERNAL_DIR_NAME, *PROTECTED_USER_FILES}
     for entry in os.listdir(payload_dir):
         if entry in skip_names:
@@ -514,37 +516,69 @@ def _merge_extra_payload_entries(payload_dir: str, app_dir: str, exe_name: str) 
         if os.path.isdir(src):
             shutil.copytree(src, dst, dirs_exist_ok=True)
         else:
+            shutil.copy2(src, dst)
+
+
+def _wait_for_pid_exit(pid: int, timeout_seconds: float = 30.0) -> bool:
+    """
+    Waits for a Windows process ID to exit so all file locks on _internal\\base_library.zip
+    and loaded DLLs are released before swapping files.
+    """
+    if pid <= 0 or sys.platform != "win32":
+        return True
+    SYNCHRONIZE = 0x00100000
+    WAIT_OBJECT_0 = 0x00000000
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+    if not handle:
+        return True
+    try:
+        timeout_ms = max(0, int(timeout_seconds * 1000))
+        res = kernel32.WaitForSingleObject(handle, timeout_ms)
+        # Brief grace period for WebView2 / child processes to release file handles
+        time.sleep(0.5)
+        return res == WAIT_OBJECT_0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _replace_with_retries(src: str, dst: str, attempts: int = 15, delay: float = 0.4) -> None:
+    """Retries os.replace when Windows / Defender / WebView2 holds a transient lock."""
+    last_exc: Optional[Exception] = None
+    for idx in range(max(1, attempts)):
+        try:
             os.replace(src, dst)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            if idx + 1 < attempts:
+                time.sleep(delay)
+        except OSError as exc:
+            # WinError 32 (sharing violation) or WinError 5 (access denied)
+            if getattr(exc, "winerror", None) in (5, 32) and idx + 1 < attempts:
+                last_exc = exc
+                time.sleep(delay)
+            else:
+                raise
+    if last_exc is not None:
+        raise last_exc
 
 
-def apply_staged_update_and_relaunch(
+def _swap_live_files_from_payload(
     payload_dir: str,
-    stage_dir: Optional[str] = None,
+    target_app_dir: str,
     exe_name: str = EXE_NAME,
-    app_dir: Optional[str] = None,
+    old_pid: int = 0,
     relaunch: bool = True,
-    allow_dev_mode: bool = False,
 ) -> Dict[str, Any]:
     """
-    Performs an atomic pure-Python Windows rename swap:
-      1. Renames running AetherDesktop.exe -> AetherDesktop.exe.old and _internal -> _internal.old
-      2. Moves staged AetherDesktop.exe and _internal into app_dir
-      3. Relaunches AetherDesktop.exe directly with shell=False (zero .bat/cmd/PowerShell)
+    Replaces AetherDesktop.exe and _internal/ inside target_app_dir using files from
+    payload_dir (via copy, never moving the running helper's own files), with full
+    .old rollback protection, then relaunches target_app_dir\\AetherDesktop.exe.
     """
-    if sys.platform != "win32" and not allow_dev_mode:
-        return {"success": False, "error": "Self-update restart is only supported on Windows."}
+    if old_pid > 0:
+        _wait_for_pid_exit(old_pid, timeout_seconds=30.0)
 
-    if not is_frozen() and not allow_dev_mode:
-        return {
-            "success": False,
-            "dev_mode": True,
-            "error": (
-                "Self-update is disabled when running from Python source. "
-                "Pull the latest changes via Git or run the packaged executable."
-            ),
-        }
-
-    target_app_dir = os.path.abspath(app_dir or get_app_dir())
     staged_exe = os.path.join(payload_dir, exe_name)
     staged_internal = os.path.join(payload_dir, INTERNAL_DIR_NAME)
 
@@ -556,7 +590,6 @@ def apply_staged_update_and_relaunch(
     current_internal = os.path.join(target_app_dir, INTERNAL_DIR_NAME)
     old_internal = os.path.join(target_app_dir, f"{INTERNAL_DIR_NAME}.old")
 
-    # Remove any stale .old artifacts before renaming
     for stale_path in (old_exe, old_internal):
         if os.path.exists(stale_path):
             try:
@@ -568,42 +601,48 @@ def apply_staged_update_and_relaunch(
                 pass
 
     renamed_exe = False
+    renamed_internal_dir = False
     swapped_internal_files: List[Tuple[str, str]] = []
 
     try:
         if os.path.exists(current_exe):
-            os.replace(current_exe, old_exe)
+            _replace_with_retries(current_exe, old_exe)
             renamed_exe = True
 
-        shutil.move(staged_exe, current_exe)
+        shutil.copy2(staged_exe, current_exe)
 
-        # Swap _internal file-by-file so Windows never hits WinError 5 on renaming
-        # a directory that has open DLL/WebView2 handles.
         if os.path.isdir(staged_internal):
             if not os.path.isdir(current_internal):
-                shutil.move(staged_internal, current_internal)
+                shutil.copytree(staged_internal, current_internal)
             else:
-                for root, _, files in os.walk(staged_internal):
-                    rel_root = os.path.relpath(root, staged_internal)
-                    dst_root = current_internal if rel_root == "." else os.path.join(current_internal, rel_root)
-                    os.makedirs(dst_root, exist_ok=True)
-                    for fname in files:
-                        src_file = os.path.join(root, fname)
-                        dst_file = os.path.join(dst_root, fname)
-                        old_file = f"{dst_file}.old"
-                        if os.path.exists(dst_file):
-                            if os.path.exists(old_file):
-                                try:
-                                    os.remove(old_file)
-                                except OSError:
-                                    pass
-                            os.replace(dst_file, old_file)
-                            swapped_internal_files.append((dst_file, old_file))
-                        shutil.move(src_file, dst_file)
+                # Try whole-directory rename first now that the old process has exited
+                # so removed/obsolete files from older releases do not linger.
+                try:
+                    _replace_with_retries(current_internal, old_internal, attempts=10, delay=0.4)
+                    renamed_internal_dir = True
+                    shutil.copytree(staged_internal, current_internal)
+                except OSError:
+                    # Fallback to file-by-file swap with retries if directory rename was blocked
+                    for root, _, files in os.walk(staged_internal):
+                        rel_root = os.path.relpath(root, staged_internal)
+                        dst_root = current_internal if rel_root == "." else os.path.join(current_internal, rel_root)
+                        os.makedirs(dst_root, exist_ok=True)
+                        for fname in files:
+                            src_file = os.path.join(root, fname)
+                            dst_file = os.path.join(dst_root, fname)
+                            old_file = f"{dst_file}.old"
+                            if os.path.exists(dst_file):
+                                if os.path.exists(old_file):
+                                    try:
+                                        os.remove(old_file)
+                                    except OSError:
+                                        pass
+                                _replace_with_retries(dst_file, old_file)
+                                swapped_internal_files.append((dst_file, old_file))
+                            shutil.copy2(src_file, dst_file)
 
         _merge_extra_payload_entries(payload_dir, target_app_dir, exe_name)
     except Exception as exc:
-        # Roll back live files if anything failed during swap
         try:
             if renamed_exe and os.path.exists(old_exe):
                 if os.path.exists(current_exe):
@@ -612,6 +651,10 @@ def apply_staged_update_and_relaunch(
                     except OSError:
                         pass
                 os.replace(old_exe, current_exe)
+            if renamed_internal_dir and os.path.exists(old_internal):
+                if os.path.exists(current_internal):
+                    shutil.rmtree(current_internal, ignore_errors=True)
+                os.replace(old_internal, current_internal)
             for dst_file, old_file in reversed(swapped_internal_files):
                 if os.path.exists(old_file):
                     if os.path.exists(dst_file):
@@ -623,9 +666,6 @@ def apply_staged_update_and_relaunch(
         except Exception:
             pass
         return {"success": False, "error": f"Atomic update swap failed: {exc}"}
-
-    if stage_dir and os.path.isdir(stage_dir):
-        shutil.rmtree(stage_dir, ignore_errors=True)
 
     if relaunch:
         try:
@@ -643,3 +683,123 @@ def apply_staged_update_and_relaunch(
         "exe_path": os.path.abspath(current_exe),
         "relaunched": relaunch,
     }
+
+
+def apply_update_from_helper_cli(argv: List[str]) -> int:
+    """
+    Entrypoint invoked by the staged AetherDesktop.exe (--apply-update) after the old
+    installed process exits, avoiding Windows WinError 32 locks on _internal\\base_library.zip.
+    """
+    target_dir = ""
+    old_pid = 0
+    idx = 0
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--target-dir" and idx + 1 < len(argv):
+            target_dir = argv[idx + 1]
+            idx += 2
+        elif arg == "--old-pid" and idx + 1 < len(argv):
+            try:
+                old_pid = int(argv[idx + 1])
+            except ValueError:
+                old_pid = 0
+            idx += 2
+        else:
+            idx += 1
+
+    if not target_dir:
+        logger.error("[UPDATER] --apply-update invoked without --target-dir.")
+        return 1
+
+    payload_dir = os.path.dirname(os.path.abspath(sys.executable))
+    res = _swap_live_files_from_payload(
+        payload_dir=payload_dir,
+        target_app_dir=os.path.abspath(target_dir),
+        exe_name=EXE_NAME,
+        old_pid=old_pid,
+        relaunch=True,
+    )
+    if not res.get("success"):
+        logger.error(f"[UPDATER] Helper update failed: {res.get('error')}")
+        return 1
+    return 0
+
+
+def apply_staged_update_and_relaunch(
+    payload_dir: str,
+    stage_dir: Optional[str] = None,
+    exe_name: str = EXE_NAME,
+    app_dir: Optional[str] = None,
+    relaunch: bool = True,
+    allow_dev_mode: bool = False,
+    use_staged_helper: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """
+    Applies a staged update without any shell/batch wrapper:
+      - In packaged (frozen) builds, launches the staged AetherDesktop.exe with
+        `--apply-update --target-dir <app_dir> --old-pid <pid>` so the currently
+        running process can exit first and release all Windows file locks on
+        `_internal\\base_library.zip` and DLLs.
+      - When `use_staged_helper=False` (used in unit tests), swaps directly.
+    """
+    if sys.platform != "win32" and not allow_dev_mode:
+        return {"success": False, "error": "Self-update restart is only supported on Windows."}
+
+    if not is_frozen() and not allow_dev_mode:
+        return {
+            "success": False,
+            "dev_mode": True,
+            "error": (
+                "Self-update is disabled when running from Python source. "
+                "Pull the latest changes via Git or run the packaged executable."
+            ),
+        }
+
+    target_app_dir = os.path.abspath(app_dir or get_app_dir())
+    staged_exe = os.path.join(payload_dir, exe_name)
+
+    if not os.path.isfile(staged_exe):
+        return {"success": False, "error": f"Staged executable not found: {staged_exe}"}
+
+    spawn_helper = is_frozen() if use_staged_helper is None else bool(use_staged_helper)
+    if spawn_helper:
+        try:
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = (
+                    getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+                )
+            subprocess.Popen(
+                [
+                    os.path.abspath(staged_exe),
+                    "--apply-update",
+                    "--target-dir",
+                    target_app_dir,
+                    "--old-pid",
+                    str(os.getpid()),
+                ],
+                cwd=os.path.abspath(payload_dir),
+                shell=False,
+                close_fds=True,
+                creationflags=creation_flags,
+            )
+            return {
+                "success": True,
+                "helper_launched": True,
+                "exe_path": os.path.abspath(os.path.join(target_app_dir, exe_name)),
+                "relaunched": relaunch,
+            }
+        except Exception as exc:
+            return {"success": False, "error": f"Failed to launch staged updater helper: {exc}"}
+
+    res = _swap_live_files_from_payload(
+        payload_dir=payload_dir,
+        target_app_dir=target_app_dir,
+        exe_name=exe_name,
+        old_pid=0,
+        relaunch=relaunch,
+    )
+    if res.get("success") and stage_dir and os.path.isdir(stage_dir):
+        shutil.rmtree(stage_dir, ignore_errors=True)
+    return res

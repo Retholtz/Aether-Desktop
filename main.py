@@ -33,6 +33,12 @@ def strip_mark_of_the_web(target_dir: Path) -> int:
 if getattr(sys, "frozen", False):
     strip_mark_of_the_web(Path(sys.executable).resolve().parent)
 
+# Fast-path staged self-updater helper mode (--apply-update): runs outside the live
+# install directory without initializing WebView2, audio, or the single-instance mutex.
+if "--apply-update" in sys.argv:
+    from core.updater import apply_update_from_helper_cli
+    sys.exit(apply_update_from_helper_cli(sys.argv[1:]))
+
 from core.screen_stream import ensure_thread_desktop, init_dpi_awareness
 init_dpi_awareness()
 ensure_thread_desktop()
@@ -151,6 +157,15 @@ def main():
     try:
         from core.updater import cleanup_old_update_artifacts
         cleanup_old_update_artifacts(base_dir)
+        if "--post-update" in sys.argv:
+            def _deferred_cleanup():
+                import time
+                time.sleep(2.5)
+                try:
+                    cleanup_old_update_artifacts(base_dir)
+                except Exception:
+                    pass
+            threading.Thread(target=_deferred_cleanup, daemon=True).start()
     except Exception:
         pass
 
@@ -199,20 +214,6 @@ def main():
 
     print("=" * 60)
     print("           AETHER DESKTOP - MODULAR ARCHITECTURE")
-    # Check Windows runtime prerequisites (WebView2 & .NET) before launching GUI
-    if sys.platform == "win32":
-        try:
-            from core.runtime_prereqs import check_windows_prerequisites, prompt_missing_prerequisites
-            prereq_status = check_windows_prerequisites()
-            if not prereq_status.get("ok", True):
-                print(f"[WARN] [PREREQS] Missing runtime(s): {', '.join(prereq_status.get('missing', []))}")
-                if not prompt_missing_prerequisites(prereq_status):
-                    sys.exit(1)
-        except SystemExit:
-            raise
-        except Exception as exc:
-            print(f"[WARN] [PREREQS] Could not verify Windows runtimes: {exc}")
-
     print("=" * 60)
 
     # 0. Fire-and-forget background cache maintenance (prunes scripts > 7 days old)
