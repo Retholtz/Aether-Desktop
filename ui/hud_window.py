@@ -503,6 +503,8 @@ class HudWindow:
         self.min_height = min_height
         self.on_init = on_init
         self._is_closing_permanently = False
+        self._close_all_lock = threading.Lock()
+        self._close_all_done = False
         if hasattr(self.bridge, "set_hud_window"):
             self.bridge.set_hud_window(self)
 
@@ -605,7 +607,7 @@ class HudWindow:
         # 3. Wire window close, minimize, and restore events
         def on_closing():
             if getattr(self, "_is_closing_permanently", False) or _is_windows_shutting_down():
-                self._is_closing_permanently = True
+                self._cleanup_before_window_close(destroy_main=False)
                 return True
             cfg = self.bridge.get_raw_config().get("ui", {})
             if cfg.get("minimize_to_tray", True):
@@ -615,7 +617,7 @@ class HudWindow:
                     self.bridge.show_overlay()
                 return False  # Cancels window destruction to keep running in tray
             else:
-                self.close_all()
+                self._cleanup_before_window_close(destroy_main=False)
                 return True
 
         def on_minimized():
@@ -704,9 +706,17 @@ class HudWindow:
         except Exception as e:
             print(f"[HUD] Could not attach SystemEvents.SessionEnding hook: {e}")
 
-    def close_all(self):
-        """Cleanly closes all windows and stops tray."""
+    def _cleanup_before_window_close(self, destroy_main: bool = True):
+        """Idempotently tears down tray, overlay, timers, and optionally destroys the main window."""
+        with self._close_all_lock:
+            if self._close_all_done:
+                return
+            self._close_all_done = True
+
         self._is_closing_permanently = True
+        if hasattr(self.bridge, "_is_shutting_down"):
+            self.bridge._is_shutting_down = True
+
         if getattr(self, "_session_ending_handler", None) is not None:
             try:
                 from Microsoft.Win32 import SystemEvents
@@ -734,11 +744,16 @@ class HudWindow:
                 self.overlay_window.destroy()
         except Exception:
             pass
-        try:
-            if self.window:
-                self.window.destroy()
-        except Exception:
-            pass
+        if destroy_main:
+            try:
+                if self.window:
+                    self.window.destroy()
+            except Exception:
+                pass
+
+    def close_all(self):
+        """Cleanly closes all windows and stops tray."""
+        self._cleanup_before_window_close(destroy_main=True)
 
     def start(self, debug: bool = False):
         """Starts the PyWebView main GUI event loop and system tray."""
@@ -747,5 +762,7 @@ class HudWindow:
         try:
             webview.start(self._on_started, debug=debug)
         finally:
+            if hasattr(self.bridge, "_is_shutting_down"):
+                self.bridge._is_shutting_down = True
             self.tray.stop()
 

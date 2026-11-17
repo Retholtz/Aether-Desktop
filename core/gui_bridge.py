@@ -479,6 +479,7 @@ class GuiBridge:
         self._current_hud_mode = "normal"
 
         self._js_lock = threading.Lock()
+        self._is_shutting_down = False
 
         self._config_lock = threading.RLock()
 
@@ -1038,6 +1039,9 @@ class GuiBridge:
 
         """Pushes events to both the Main Window and Floating Overlay JavaScript runtimes."""
 
+        if getattr(self, "_is_shutting_down", False):
+            return
+
         try:
 
             if event_type == "hud_cycle_mode":
@@ -1071,7 +1075,11 @@ class GuiBridge:
             payload = json.dumps({"type": event_type, "data": data})
 
             def _dispatch():
+                if getattr(self, "_is_shutting_down", False):
+                    return
                 with self._js_lock:
+                    if getattr(self, "_is_shutting_down", False):
+                        return
                     # Dispatch to Main Window
                     if self._is_window_ready(self._window):
                         try:

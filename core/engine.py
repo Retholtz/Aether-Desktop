@@ -1449,12 +1449,12 @@ class AetherEngine:
 
         if old_session:
             try:
-                await old_session.close()
+                await asyncio.wait_for(old_session.close(), timeout=1.0)
             except Exception as e:
                 logger.debug(f"[LIVE ON-DEMAND] Old session close: {e}")
         if old_cm:
             try:
-                await old_cm.__aexit__(None, None, None)
+                await asyncio.wait_for(old_cm.__aexit__(None, None, None), timeout=1.0)
             except Exception:
                 pass
 
@@ -7128,8 +7128,14 @@ class AetherEngine:
                                 getattr(self.session_lifecycle, "session_id", None)
                                 or getattr(self.session_manager, "active_session_id", "campaign")
                             )
-                            self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=sid)
-                            self.notify("ttrpg_state_updated", {"status": "success", "session_id": sid})
+                            turns_snapshot = list(raw_turns)
+                            def _bg_summarize():
+                                try:
+                                    self.ttrpg_service.auto_summarize_session_to_journal(turns_snapshot, session_id=sid)
+                                    self.notify("ttrpg_state_updated", {"status": "success", "session_id": sid})
+                                except Exception as e_bg:
+                                    logger.warning(f"[STOP] TTRPG background auto session notes error: {e_bg}")
+                            threading.Thread(target=_bg_summarize, daemon=True, name="Aether-TTRPGSummarize").start()
                     except Exception as e_rp:
                         logger.warning(f"[STOP] TTRPG auto session notes error: {e_rp}")
 
@@ -7153,8 +7159,25 @@ class AetherEngine:
             return
         self.is_running = False
         self._stop_requested = True
+        audio_ref = self.audio
+        self.audio = None
+        if audio_ref:
+            # Mark inactive immediately so background audio hotplug watchdog does not reinit PortAudio mid-stop
+            audio_ref._running = False
         self.stop_connection_watchdog()
         self.kill_audio()
+
+        if self._optimizer_task and not self._optimizer_task.done():
+            self._optimizer_task.cancel()
+
+        if self._main_task and not self._main_task.done():
+            self._main_task.cancel()
+
+        # Wake up any blocked queues immediately so event loop task begins unwinding in parallel
+        try:
+            self._text_queue.put_nowait("")
+        except Exception:
+            pass
 
         loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
         if loop and loop.is_running():
@@ -7180,8 +7203,6 @@ class AetherEngine:
         except Exception as e:
             logger.warning(f"[STOP] Hotkey manager stop warning: {e}")
 
-        audio_ref = self.audio
-        self.audio = None
         if audio_ref:
             try:
                 audio_ref.stop()
@@ -7199,18 +7220,6 @@ class AetherEngine:
             except Exception as e:
                 logger.warning(f"[STOP] Optimizer stop warning: {e}")
 
-        if self._optimizer_task and not self._optimizer_task.done():
-            self._optimizer_task.cancel()
-
-        if self._main_task and not self._main_task.done():
-            self._main_task.cancel()
-
-        # Wake up any blocked queues so event loop task exits cleanly
-        try:
-            self._text_queue.put_nowait("")
-        except Exception:
-            pass
-
         # Wait briefly for _run()'s finally teardown when stop() is called from outside the event loop
         if self._main_task and not self._main_task.done():
             try:
@@ -7220,7 +7229,7 @@ class AetherEngine:
                 except RuntimeError:
                     current_loop = None
                 if current_loop is None or current_loop is not getattr(self, "_loop", None):
-                    self._main_task.result(timeout=1.5)
+                    self._main_task.result(timeout=0.75)
             except Exception:
                 pass
 
