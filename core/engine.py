@@ -140,8 +140,8 @@ MANDATORY TIER 2 & TIER 3 DELEGATION RULES:
    - Whenever invoking `delegate_moderate_task` (for multi-step workflows) or `delegate_heavy_task`, ALWAYS speak a brief 1-sentence verbal check-in so the user hears immediate confirmation that work is actively underway.
 5. NEVER TYPE DOCUMENTS LINE-BY-LINE VIA `type_text`:
    - NEVER use `type_text` to type out multi-paragraph guides, manuals, or documents line-by-line into editors. Always use `paste_to_document` (via rich HTML clipboard) after verifying the target canvas is focused.
-6. CONCISE VERBAL RESPONSE AFTER VERIFIED COMPLETION:
-   - When Hydrogen or Argon finishes a task or places content into an app/email compose window, speak ONLY a crisp 1-to-2 sentence confirmation summarizing the verified outcome (or exact blocker if a step was blocked).
+6. ADAPTIVE VERBAL RESPONSE AFTER VERIFIED COMPLETION:
+   - When Hydrogen or Argon finishes a task or places content into an app/email compose window, summarize the verified outcome (or exact blocker if a step was blocked) concisely—do not read an entire multi-page document aloud verbatim unless the user asks you to.
 
 ### CONNECTED EMAIL, CALENDAR & CONTACTS (OAUTH 2.0) DIRECTIVE:
 - Whenever the user asks to check their email, search their inbox, read an email thread, draft/send an email, check their upcoming calendar schedule, or look up a contact's email address:
@@ -3462,10 +3462,13 @@ class AetherEngine:
                         # Check Stop Listening Phrase ("Aether stop listening")
                         if self.audio and getattr(self.audio, "wake_detector", None) and self.audio.wake_detector.matches_sleep_phrase(clean_user_speech):
                             logger.info(f"[SLEEP PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio & entering Standby!")
+                            self._suppress_live_turn_audio = True
+                            self.current_user_speech = ""
                             self.kill_audio()
                             self.audio.wake_word_enabled = True
                             self.audio.config["wake_word_enabled"] = True
                             self.audio.wake_detector.check_sleep_transcript(clean_user_speech)
+                            self.request_live_session_disconnect(reason="Sleep phrase detected")
                         # Check Voice Playback Kill Phrase
                         elif self._is_kill_command(clean_user_speech, kill_phrase, agent_name):
                             logger.info(f"[KILL PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio!")
@@ -3947,191 +3950,9 @@ class AetherEngine:
         temperature = float(api_cfg.get("temperature", 1.0))
 
         # System instructions with strict identity directive and [Agent Name] template support
-        raw_instruction = api_cfg.get("system_instruction") or (
-            "You are [Agent Name], a fast, knowledgeable desktop voice assistant. "
-            "You have Google Search available to check real-time facts, weather, news, and details. "
-            "When asked for live information, search the web and answer conversationally and concisely. "
-            "If the user says 'stop', '[Agent Name] stop', or tells you to stop speaking, halt immediately. "
-            "Always keep answers brief (1-3 sentences) unless asked to elaborate."
-        )
-        templated_instruction = (
-            raw_instruction
-            .replace("[Agent Name]", agent_name)
-            .replace("[agent name]", agent_name)
-            .replace("[AGENT NAME]", agent_name)
-            .replace("{agent_name}", agent_name)
-            .replace("{Agent Name}", agent_name)
-        )
+        system_instruction_text = self.rebuild_base_system_instruction()
 
-        strict_identity = (
-            f"CRITICAL SYSTEM DIRECTIVE ON IDENTITY:\n"
-            f"Your name is {agent_name}. You are {agent_name}.\n"
-            f"Under NO circumstances should you ever call yourself 'Aether', 'Gemini', or any name other than '{agent_name}'.\n"
-            f"Whenever asked about your identity, name, or who you are, you must ALWAYS explicitly state that your name is {agent_name}.\n\n"
-        )
-        skills_summary = self.dispatcher.skill_library.get_manifest_summary()
-
-        desktop_tools_directive = (
-            "DESKTOP VISION, DETERMINISTIC WIN32 CONTROL & AUTONOMOUS SCRIPT AUTOMATION:\n"
-            "You have real-time vision of the user's desktop screen and powerful tools to interact directly with applications:\n"
-            "- Real-Time Vision: You continuously receive video frames of the user's desktop (with multi-monitor tracking). You can see open windows, buttons, search bars, and text on screen.\n"
-            "- Atomic Reflex Tools (Low-Latency): Use built-in tools for instant actions:\n"
-            "  * `launch_application(app_name, target, profile)`: Launches allowed desktop apps and browser profiles directly.\n"
-            "  * `focus_window(app_name)`, `maximize_window(app_name)`, `minimize_window(app_name)`, `restore_window(app_name)`: Fast Win32 window management.\n"
-            "  * `navigate_browser(query_or_url, app_name='chrome')`: Deterministic browser search and URL navigation via omnibox.\n"
-            "  * `find_and_click_element(target_description, app_name)`: Visual grounding element locator and clicker.\n"
-            "  * `type_text(text, app_name, press_enter)`: Foreground window typing with formatting.\n"
-            "  * `press_key(key_combo)`: Keyboard hotkeys and shortcuts.\n"
-            "  * `mouse_click(x, y, app_name)`: 0-1000 normalized desktop coordinate clicks.\n"
-            "  * `inspect_screen_context(target='active_window')`: On-demand visual grounding of the focused active window or full primary display. Call this whenever the user says 'look at my screen', 'what error is this', 'read this code', 'summarize the document open in my browser', or refers to anything currently visible.\n"
-            "  * `capture_screen_snapshot(monitor)`: High-detail screen capture.\n"
-            "  * `control_media_playback(action)`: Universal background media transport controls ('play', 'pause', 'toggle', 'next', 'previous') for YouTube Music, Spotify, VLC, and browsers via Windows SMTC.\n"
-            "  * `get_current_playing_media()`: Inspects currently playing track title, artist, and playback status.\n"
-            "  * `read_saved_skill(skill_name)`: Inspects and returns full source code of any saved skill from library.\n\n"
-            "UNIVERSAL MEDIA PLAYBACK & VERIFICATION DIRECTIVE:\n"
-            "- Whenever the user asks to pause, resume, play, skip, or go to the previous song, or asks what song/track is playing:\n"
-            "  * ALWAYS invoke `control_media_playback(action=...)` or `get_current_playing_media()`.\n"
-            "  * NEVER bring browser or media player windows to the foreground, and NEVER use `find_and_click_element` or mouse clicks to pause, play, or skip songs. The media controller executes in the background seamlessly without clicks.\n"
-            "- CLOSED-LOOP PLAYBACK VERIFICATION (MANDATORY DOUBLE-CHECK):\n"
-            "  * When asked to play a specific song, artist, album, or video (e.g. 'Play Sting on YouTube', 'Put on Alan Walker'):\n"
-            "    1. Navigate or launch the artist/song page.\n"
-            "    2. Click the top track/song result or press Enter.\n"
-            "    3. DOUBLE-CHECK: Call `get_current_playing_media()` immediately to verify that the track is actively playing.\n"
-            "    4. If `get_current_playing_media()` returns status 'idle' or the track title does not match, auto-retry by clicking the first song item row or pressing Space/Enter.\n"
-            "    5. Do NOT report success or conclude your turn until `get_current_playing_media()` confirms the track is actively playing.\n"
-            "- SYSTEM SOUND SAFETY RULE:\n"
-            "  * NEVER launch, open, or click Windows Sound Control Panel (`mmsys.cpl`), `control.exe mmsys.cpl`, Windows Audio Troubleshooter (`control.exe /name Microsoft.Troubleshooting`, `msdt.exe`), or Device Manager (`devmgmt.msc`). Modifying Windows Sound endpoints or running troubleshooters restarts the Windows Audio Service and terminates active hardware audio output.\n\n"
-            "PERMANENT SKILL LIBRARY (REUSABLE AUTOMATIONS):\n"
-            "You possess a persistent, version-controlled library of tested automation scripts. Before writing new code from scratch, ALWAYS check if a matching skill is available and invoke `run_saved_script(skill_name, args)`. If you need to see how a saved skill was implemented, invoke `read_saved_skill(skill_name)`:\n"
-            f"{skills_summary}\n\n"
-            "CRITICAL RULE FOR CREATING TABLES & DOCUMENT COMPARISONS:\n"
-            "- When asked to create, compare, or insert a table into an open document (e.g. 'Within this document, create a table comparing X and Y', 'Create a comparison table in Google Docs / Word', 'Compare these items with pros and cons in a table'):\n"
-            "  1. Do NOT type queries, headers, or titles into the document or browser with `type_text`.\n"
-            "  2. Synthesize or look up the required comparison facts, specs, and pros/cons.\n"
-            "  3. Immediately invoke `run_saved_script(skill_name='create_table_google_docs', args={'headers': ['Feature / Spec', 'Vehicle A', 'Vehicle B'], 'rows': [['Pros', '...', '...'], ['Cons', '...', '...']], 'title': 'Comparison Title'})` for Google Docs (or `create_table_word` for Word).\n"
-            "  4. The saved skill automatically loads the clipboard with formatted HTML and pastes it cleanly into the active document.\n\n"
-            "DYNAMIC EXECUTION & SELF-EXTENDING LEARNING (CORTEX):\n"
-            "- Dynamic Python Generation ('Figure It Out' On-The-Fly): For ANY novel, multi-step, file/dossier lookup, document, spreadsheet, data processing (pandas), Microsoft Office COM (Word/Excel via win32com.client), or window layout task without a pre-existing built-in tool or skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
-            "- Workspace Data & Internal Python Helper APIs Available in `execute_automation_script`:\n"
-            "  * `data/dossiers/` — Directory containing all previously generated Markdown guides and dossiers (`YYYYMMDD_HHMMSS_Title.md`).\n"
-            "  * `data/scratchpad/latest_dossier.md` — The most recently generated dossier.\n"
-            "  * `data/chats/` — Raw JSON conversation session transcripts.\n"
-            "  * `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html` — Converts any Markdown string/file into styled HTML + plain text on the Windows clipboard and pastes it into Google Docs, Word, or an active editor.\n"
-            "  * `from tools.os_controls import bring_hwnd_to_foreground, focus_window` — Reliable Win32 foreground window focus.\n"
-            "- Self-Correction on Error: If a script fails, you will receive the full Python stack trace / traceback in the tool response. Inspect the error, adjust your script or logic, and retry.\n"
-            "- Learning & Memory: Once you have dynamically generated and verified a successful parameterized script for a task that might be reused (e.g. searching and pasting a saved dossier, formatting a report, manipulating files, custom layouts), save it permanently to the Skill Library via `save_script_to_library(skill_name, description, script_code, parameters)`. This persists it to disk and syncs it via Git so you never have to generate it again!\n"
-            "- ANTI-INTROSPECTION & CODE INTEGRITY DIRECTIVE (CRITICAL):\n"
-            "  * Do NOT execute scripts to modify or inspect Aether's internal engine source code (`core/`, `security/`) or internal Python classes (`inspect.getsource`). Scanning and reading user files or workspace data folders (`data/dossiers/`, `data/scratchpad/`, `Documents`, `Downloads`) via `os.listdir` / `glob` / `open` IS explicitly permitted and encouraged.\n"
-            "  * If you need to see how an existing skill handles a task (e.g. images, tables, formatting), simply call `read_saved_skill(skill_name)` to view its code instantly in a single step.\n"
-            "  * In dynamic scripts, NEVER call bare `win32gui.SetForegroundWindow(hwnd)` directly (which Windows blocks with a lock timeout error); instead, always import and use `from tools.os_controls import bring_hwnd_to_foreground`.\n"
-            "- WEB EDITORS & GOOGLE DOCS CANVAS STABILITY:\n"
-            "  * When opening or interacting with web-based editors like Google Docs (`https://docs.new`), Sheets, or Office 365, web applications take 3–5 seconds to initialize WebAssembly/Canvas components and autofocus the editing surface.\n"
-            "  * Web editor canvases often do not have active input focus on initial load. Before pasting or typing, ensure the document body is focused by clicking into the white document canvas using `find_and_click_element(target_description='document canvas')`.\n\n"
-            "CLOSED-LOOP OUTCOME VERIFICATION & AUTONOMOUS SELF-CORRECTION (MANDATORY & CRITICAL):\n"
-            "- The Closed-Loop Execution Rule:\n"
-            "  * A script or tool returning exit code 0 or 'success' ONLY indicates keystrokes or commands were dispatched. It does NOT guarantee that the application, web document, or canvas received, registered, or rendered the input.\n"
-            "  * Web editors (Google Docs, Sheets, Word Online, Notion) and desktop apps frequently drop keystrokes if the editing surface is not actively focused.\n"
-            "- Mandatory Visual Outcome Verification:\n"
-            "  * Whenever drafting, pasting, writing, or inserting content into documents, spreadsheets, text editors, email composers, or web forms (e.g. Google Docs, Word, Sheets, Notepad, web fields):\n"
-            "    1. You MUST call `capture_screen_snapshot` immediately following the paste or text entry step to visually inspect the actual result on screen.\n"
-            "    2. Inspect the captured snapshot image: evaluate whether the expected text, letter, table, or content is clearly visible in the target document or canvas.\n"
-            "    3. Distinguish Success vs. Failure:\n"
-            "       - SUCCESS: The text/content is visibly rendered in the document editing area as intended.\n"
-            "       - FAILURE: The document canvas or target area is blank, empty, unedited, or text ended up in the wrong element (e.g. address bar or title input).\n"
-            "- Autonomous Self-Correction Loop ('Keep Trying Until It Succeeds'):\n"
-            "  * When visual failure is detected, NEVER end your turn and NEVER tell the user that the action succeeded!\n"
-            "  * Autonomously execute corrective actions within your tool loop:\n"
-            "    Step 1 (Re-assert Window Focus): Bring the target application window to the foreground (`bring_hwnd_to_foreground` or `launch_application`).\n"
-            "    Step 2 (Click Editable Canvas): Explicitly click into the document canvas or editable text area using `find_and_click_element(app_name=..., target_description='document canvas')` or click the central document area.\n"
-            "    Step 3 (Re-dispatch Input): Re-send the paste sequence (`press_key('ctrl+v')`) or re-execute the clipboard paste.\n"
-            "    Step 4 (Re-verify): Call `capture_screen_snapshot` to inspect the canvas again.\n"
-            "  * Continue this autonomous self-correction cycle (up to 3 retries) until you visually confirm the text is rendered.\n"
-            "- User Confirmation Protocol:\n"
-            "  * Only provide verbal confirmation to the user once you have visually confirmed that the content is actually on screen.\n"
-            "  * If after repeated retries an unresolvable barrier exists (e.g. user authentication required, modal blocking interaction), truthfully describe the specific obstacle encountered instead of falsely claiming success.\n\n"
-            "SECURITY WHITELIST & EASY-BUTTON PERMISSION PROTOCOL (CRITICAL):\n"
-            "- Desktop applications and processes are governed by the user's security whitelist.\n"
-            "- When you call `launch_application` or `close_application` and it returns `status: 'blocked'`:\n"
-            "  1. STOP IMMEDIATELY. Do NOT call any further tools, and NEVER attempt workaround hacks (such as pressing Win+E, Alt+F4, hotkey shortcuts, or running arbitrary scripts) to bypass the whitelist block.\n"
-            "  2. Adding the program to the whitelist with user permission is the 'EASY BUTTON'. Immediately inform the user verbally in one clear, concise sentence that the program is not in their allowed whitelist, and ask if they would like you to add it:\n"
-            "     Example: 'File Explorer is not currently on your allowed whitelist. Would you like me to add it so I can open it for you?'\n"
-            "  3. When the user confirms (e.g. 'Yes', 'Yes please', 'Add it', 'Sure', 'Go ahead', 'Allow it'):\n"
-            "     * Immediately call `add_to_whitelist(app_name=...)`.\n"
-            "     * In the same turn, call `launch_application(app_name=..., target=...)` to seamlessly fulfill their original request without making them ask again!\n"
-            "     * Give a brief, pleasant verbal confirmation: 'I've added File Explorer to your whitelist and opened your documents.'\n\n"
-            "DETERMINISTIC DIRECT NAVIGATION PREFERENCE (SPEED & ACCURACY):\n"
-            "- Always prefer direct URL navigation or direct OS commands over multi-turn visual clicking:\n"
-            "  * To create a new Google Doc, Sheet, or Slide, directly navigate to `https://docs.new`, `https://sheets.new`, or `https://slides.new` via `navigate_browser` or `launch_application` (instant 50ms) instead of hunting for template buttons.\n"
-            "  * To open standard folders, pass the target directly (e.g. `shell:Personal` for Documents, `shell:My Pictures\\Screenshots` for Screenshots) to `launch_application(app_name='explorer', target=...)`.\n"
-            "  * For pure read-only queries or background tasks (e.g. system status, checking files), snapshots are not needed; but for document/UI modifications, follow the Closed-Loop Outcome Verification protocol.\n\n"
-            "- Whitelist: If an app is blocked by the security whitelist and the user asks to add or allow it, call `add_to_whitelist(app_name)`.\n"
-            "- After executing actions, provide a brief, polite verbal confirmation (1-2 sentences). You can chain multiple actions smoothly.\n\n"
-            "ATOMIC NAVIGATION & COMMAND ISOLATION (CRITICAL):\n"
-            "- Treat standalone application navigation commands (e.g. 'Open Gmail', 'Open Chrome', 'Open Word', 'Open YouTube', 'Go to Google Docs') as fresh, generic actions. Always navigate to the default clean home page or root inbox (e.g. https://mail.google.com). NEVER inject keywords, queries, search terms, or filters from previous tasks into a generic navigation command.\n"
-            "- Only carry over search terms or context if the user explicitly uses referential words such as 'those', 'them', 'that search', 'it', 'again', or 'continue'.\n"
-            "- When the user switches topics or applications, completely purge prior task context.\n\n"
-            "MULTI-STEP WORKFLOW AUTONOMY:\n"
-            "- When given a multi-step instruction (e.g. 'Find X in Gmail, calculate the total, and export it into a table in Google Docs'), do NOT stop prematurely after the first step to ask if you should proceed. Autonomously continue executing subsequent steps through to the final deliverable unless you encounter an unresolvable error or need user credentials.\n\n"
-        )
-        user_identity_directive = self.user_memory.build_user_identity_directive()
-        user_name_directive = f"<!-- USER IDENTITY DIRECTIVE START -->\n{user_identity_directive}<!-- USER IDENTITY DIRECTIVE END -->\n\n" if user_identity_directive else ""
-
-        # Time-sensitive startup alerts flagged by ProactiveEngine (lean, no full database dump)
-        try:
-            startup_alerts = self.proactive_engine.evaluate_candidates()
-            alerts_directive = ""
-            if startup_alerts:
-                alert_lines = [f"- {a['description']}" for a in startup_alerts[:3]]
-                alerts_directive = "TIME-SENSITIVE STARTUP ALERTS:\n" + "\n".join(alert_lines) + "\n\n"
-        except Exception:
-            alerts_directive = ""
-
-        # Layer C: Dynamic On-Demand Knowledge Retrieval Directive
-        user_memory_directive = (
-            "USER PROFILE & PERSONAL KNOWLEDGE RETRIEVAL (MEMORY HYGIENE):\n"
-            "- You have a persistent local database of user facts, family details, dates, preferences, and projects. "
-            "If the user refers to personal context, family members, or past setups not currently present in your active conversation, "
-            "call `query_user_memory` with a concise keyword to inspect their profile before answering.\n"
-            "- If `query_user_memory` or `search_past_sessions` returns no matching records for a person, name, or topic, do NOT stop or state you have no record. IMMEDIATELY call `google_search` in the same turn to locate public records and external information.\n"
-            "- PROACTIVE MEMORY LEARNING DIRECTIVE:\n"
-            "  * When the user shares personal facts, details about family, spouse, children, birthdays, anniversaries, hobbies, vehicles, or requests 'remember this' / 'remember that' (e.g. 'My wife\\'s birthday is 5-1-1977. Her name is Traci, please remember it'):\n"
-            "    1. Immediately invoke `remember_user_fact` for each distinct fact revealed in their message.\n"
-            "    2. For calendar dates (birthdays, anniversaries), always convert to standard ISO 'YYYY-MM-DD' format (e.g. '1977-05-01') under category 'dates' with data_type='date'.\n"
-            "    3. For family and relationship names, store under category 'family' (e.g. key='wife_name', value='Traci').\n"
-            "    4. After executing the tool(s), confirm warmly and concisely in 1 sentence that you have saved their facts.\n"
-            "  * If the user asks you to forget or delete information, invoke `forget_user_fact`.\n\n"
-        )
-
-        session_manifest_directive = (
-            "HISTORICAL SESSION MEMORY & CONVERSATION RETRIEVAL:\n"
-            "- You have access to historical session manifest cards via `search_past_sessions`.\n"
-            "- If the user asks about prior conversations, past decisions, earlier research, tasks from earlier sessions, "
-            "or asks 'did we work on X before?' or 'what did we discuss yesterday?', invoke `search_past_sessions(query=...)` to retrieve the relevant historical context.\n"
-            "- If `query_user_memory` or `search_past_sessions` returns no matching records for a person, name, or topic, do NOT stop or state you have no record. IMMEDIATELY call `google_search` in the same turn to locate public records and external information.\n\n"
-        )
-
-        system_instruction_text = (
-            strict_identity
-            + user_name_directive
-            + alerts_directive
-            + desktop_tools_directive
-            + user_memory_directive
-            + session_manifest_directive
-            + RESEARCH_AND_GENEALOGY_DIRECTIVE.strip()
-            + "\n\n"
-            + DOSSIER_GENERATION_DIRECTIVE.strip()
-            + "\n\n"
-            + templated_instruction
-        )
-        # Layer D: Custom User Lexicon & Phonetic Pronunciation Guide (STT/TTS Biasing)
-        lexicon_directive = self.user_memory.build_lexicon_instruction()
-        if lexicon_directive:
-            system_instruction_text += "\n" + lexicon_directive
-
-        system_instruction_text = self._inject_temporal_anchor(system_instruction_text)
-
-        # Store pristine base system instruction without hardcoded accent
-        self._base_system_instruction = system_instruction_text
+        audio_mode = audio_cfg.get("mode", "always_on")
 
         audio_mode = audio_cfg.get("mode", "always_on")
         kill_phrase = audio_cfg.get("safe_phrase", f"{agent_name} stop").strip()
@@ -5555,6 +5376,223 @@ class AetherEngine:
         else:
             return f"{instruction.rstrip()}\n\n{anchor_block}\n"
 
+    def _resolve_templated_personality(self, raw_instruction: str, agent_name: str) -> str:
+        return (
+            raw_instruction
+            .replace("[Agent Name]", agent_name)
+            .replace("[agent name]", agent_name)
+            .replace("[AGENT NAME]", agent_name)
+            .replace("{agent_name}", agent_name)
+            .replace("{Agent Name}", agent_name)
+        )
+
+    def _get_user_personality_instruction(self) -> str:
+        """Returns the user-configured Personality & Instructions from config, if any."""
+        cfg = self.config_getter() if callable(getattr(self, "config_getter", None)) else {}
+        if not isinstance(cfg, dict):
+            return ""
+        api_cfg = cfg.get("api", {}) if isinstance(cfg.get("api"), dict) else {}
+        agent_name = str(api_cfg.get("agent_name") or cfg.get("agent_name") or "Aether").strip() or "Aether"
+        raw = str(api_cfg.get("system_instruction") or "").strip()
+        if not raw:
+            return ""
+        return self._resolve_templated_personality(raw, agent_name)
+
+    def rebuild_base_system_instruction(self) -> str:
+        """
+        Builds and caches `_base_system_instruction` from the latest config, memory,
+        lexicon, and desktop directives so runtime Settings updates apply immediately.
+        """
+        config = self.config_getter() if callable(getattr(self, "config_getter", None)) else {}
+        if not isinstance(config, dict):
+            config = {}
+        api_cfg = config.get("api", {}) if isinstance(config.get("api"), dict) else {}
+        agent_name = str(api_cfg.get("agent_name") or config.get("agent_name") or "Aether").strip() or "Aether"
+
+        user_custom = str(api_cfg.get("system_instruction") or "").strip()
+        raw_instruction = user_custom or (
+            "You are [Agent Name], a fast, knowledgeable desktop voice assistant. "
+            "You have Google Search available to check real-time facts, weather, news, and details. "
+            "When asked for live information, search the web and answer conversationally. "
+            "If the user says 'stop', '[Agent Name] stop', or tells you to stop speaking, halt immediately. "
+            "Match your response length to the request: keep simple answers and quick confirmations brief, "
+            "and give thorough, well-paced detail whenever the question, explanation, or conversation calls for it."
+        )
+        templated_instruction = self._resolve_templated_personality(raw_instruction, agent_name)
+        if user_custom:
+            personality_block = (
+                "USER-CONFIGURED PERSONALITY & INSTRUCTIONS (Adopt this tone and persona consistently in your replies):\n"
+                + templated_instruction
+            )
+        else:
+            personality_block = templated_instruction
+
+        strict_identity = (
+            f"CRITICAL SYSTEM DIRECTIVE ON IDENTITY:\n"
+            f"Your name is {agent_name}. You are {agent_name}.\n"
+            f"Under NO circumstances should you ever call yourself 'Aether', 'Gemini', or any name other than '{agent_name}'.\n"
+            f"Whenever asked about your identity, name, or who you are, you must ALWAYS explicitly state that your name is {agent_name}.\n\n"
+        )
+        skills_summary = self.dispatcher.skill_library.get_manifest_summary()
+
+        desktop_tools_directive = (
+            "DESKTOP VISION, DETERMINISTIC WIN32 CONTROL & AUTONOMOUS SCRIPT AUTOMATION:\n"
+            "You have real-time vision of the user's desktop screen and powerful tools to interact directly with applications:\n"
+            "- Real-Time Vision: You continuously receive video frames of the user's desktop (with multi-monitor tracking). You can see open windows, buttons, search bars, and text on screen.\n"
+            "- Atomic Reflex Tools (Low-Latency): Use built-in tools for instant actions:\n"
+            "  * `launch_application(app_name, target, profile)`: Launches allowed desktop apps and browser profiles directly.\n"
+            "  * `focus_window(app_name)`, `maximize_window(app_name)`, `minimize_window(app_name)`, `restore_window(app_name)`: Fast Win32 window management.\n"
+            "  * `navigate_browser(query_or_url, app_name='chrome')`: Deterministic browser search and URL navigation via omnibox.\n"
+            "  * `find_and_click_element(target_description, app_name)`: Visual grounding element locator and clicker.\n"
+            "  * `type_text(text, app_name, press_enter)`: Foreground window typing with formatting.\n"
+            "  * `press_key(key_combo)`: Keyboard hotkeys and shortcuts.\n"
+            "  * `mouse_click(x, y, app_name)`: 0-1000 normalized desktop coordinate clicks.\n"
+            "  * `inspect_screen_context(target='active_window')`: On-demand visual grounding of the focused active window or full primary display. Call this whenever the user says 'look at my screen', 'what error is this', 'read this code', 'summarize the document open in my browser', or refers to anything currently visible.\n"
+            "  * `capture_screen_snapshot(monitor)`: High-detail screen capture.\n"
+            "  * `control_media_playback(action)`: Universal background media transport controls ('play', 'pause', 'toggle', 'next', 'previous') for YouTube Music, Spotify, VLC, and browsers via Windows SMTC.\n"
+            "  * `get_current_playing_media()`: Inspects currently playing track title, artist, and playback status.\n"
+            "  * `read_saved_skill(skill_name)`: Inspects and returns full source code of any saved skill from library.\n\n"
+            "UNIVERSAL MEDIA PLAYBACK & VERIFICATION DIRECTIVE:\n"
+            "- Whenever the user asks to pause, resume, play, skip, or go to the previous song, or asks what song/track is playing:\n"
+            "  * ALWAYS invoke `control_media_playback(action=...)` or `get_current_playing_media()`.\n"
+            "  * NEVER bring browser or media player windows to the foreground, and NEVER use `find_and_click_element` or mouse clicks to pause, play, or skip songs. The media controller executes in the background seamlessly without clicks.\n"
+            "- CLOSED-LOOP PLAYBACK VERIFICATION (MANDATORY DOUBLE-CHECK):\n"
+            "  * When asked to play a specific song, artist, album, or video (e.g. 'Play Sting on YouTube', 'Put on Alan Walker'):\n"
+            "    1. Navigate or launch the artist/song page.\n"
+            "    2. Click the top track/song result or press Enter.\n"
+            "    3. DOUBLE-CHECK: Call `get_current_playing_media()` immediately to verify that the track is actively playing.\n"
+            "    4. If `get_current_playing_media()` returns status 'idle' or the track title does not match, auto-retry by clicking the first song item row or pressing Space/Enter.\n"
+            "    5. Do NOT report success or conclude your turn until `get_current_playing_media()` confirms the track is actively playing.\n"
+            "- SYSTEM SOUND SAFETY RULE:\n"
+            "  * NEVER launch, open, or click Windows Sound Control Panel (`mmsys.cpl`), `control.exe mmsys.cpl`, Windows Audio Troubleshooter (`control.exe /name Microsoft.Troubleshooting`, `msdt.exe`), or Device Manager (`devmgmt.msc`). Modifying Windows Sound endpoints or running troubleshooters restarts the Windows Audio Service and terminates active hardware audio output.\n\n"
+            "PERMANENT SKILL LIBRARY (REUSABLE AUTOMATIONS):\n"
+            "You possess a persistent, version-controlled library of tested automation scripts. Before writing new code from scratch, ALWAYS check if a matching skill is available and invoke `run_saved_script(skill_name, args)`. If you need to see how a saved skill was implemented, invoke `read_saved_skill(skill_name)`:\n"
+            f"{skills_summary}\n\n"
+            "CRITICAL RULE FOR CREATING TABLES & DOCUMENT COMPARISONS:\n"
+            "- When asked to create, compare, or insert a table into an open document (e.g. 'Within this document, create a table comparing X and Y', 'Create a comparison table in Google Docs / Word', 'Compare these items with pros and cons in a table'):\n"
+            "  1. Do NOT type queries, headers, or titles into the document or browser with `type_text`.\n"
+            "  2. Synthesize or look up the required comparison facts, specs, and pros/cons.\n"
+            "  3. Immediately invoke `run_saved_script(skill_name='create_table_google_docs', args={'headers': ['Feature / Spec', 'Vehicle A', 'Vehicle B'], 'rows': [['Pros', '...', '...'], ['Cons', '...', '...']], 'title': 'Comparison Title'})` for Google Docs (or `create_table_word` for Word).\n"
+            "  4. The saved skill automatically loads the clipboard with formatted HTML and pastes it cleanly into the active document.\n\n"
+            "DYNAMIC EXECUTION & SELF-EXTENDING LEARNING (CORTEX):\n"
+            "- Dynamic Python Generation ('Figure It Out' On-The-Fly): For ANY novel, multi-step, file/dossier lookup, document, spreadsheet, data processing (pandas), Microsoft Office COM (Word/Excel via win32com.client), or window layout task without a pre-existing built-in tool or skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
+            "- Workspace Data & Internal Python Helper APIs Available in `execute_automation_script`:\n"
+            "  * `data/dossiers/` — Directory containing all previously generated Markdown guides and dossiers (`YYYYMMDD_HHMMSS_Title.md`).\n"
+            "  * `data/scratchpad/latest_dossier.md` — The most recently generated dossier.\n"
+            "  * `data/chats/` — Raw JSON conversation session transcripts.\n"
+            "  * `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html` — Converts any Markdown string/file into styled HTML + plain text on the Windows clipboard and pastes it into Google Docs, Word, or an active editor.\n"
+            "  * `from tools.os_controls import bring_hwnd_to_foreground, focus_window` — Reliable Win32 foreground window focus.\n"
+            "- Self-Correction on Error: If a script fails, you will receive the full Python stack trace / traceback in the tool response. Inspect the error, adjust your script or logic, and retry.\n"
+            "- Learning & Memory: Once you have dynamically generated and verified a successful parameterized script for a task that might be reused (e.g. searching and pasting a saved dossier, formatting a report, manipulating files, custom layouts), save it permanently to the Skill Library via `save_script_to_library(skill_name, description, script_code, parameters)`. This persists it to disk and syncs it via Git so you never have to generate it again!\n"
+            "- ANTI-INTROSPECTION & CODE INTEGRITY DIRECTIVE (CRITICAL):\n"
+            "  * Do NOT execute scripts to modify or inspect Aether's internal engine source code (`core/`, `security/`) or internal Python classes (`inspect.getsource`). Scanning and reading user files or workspace data folders (`data/dossiers/`, `data/scratchpad/`, `Documents`, `Downloads`) via `os.listdir` / `glob` / `open` IS explicitly permitted and encouraged.\n"
+            "  * If you need to see how an existing skill handles a task (e.g. images, tables, formatting), simply call `read_saved_skill(skill_name)` to view its code instantly in a single step.\n"
+            "  * In dynamic scripts, NEVER call bare `win32gui.SetForegroundWindow(hwnd)` directly (which Windows blocks with a lock timeout error); instead, always import and use `from tools.os_controls import bring_hwnd_to_foreground`.\n"
+            "- WEB EDITORS & GOOGLE DOCS CANVAS STABILITY:\n"
+            "  * When opening or interacting with web-based editors like Google Docs (`https://docs.new`), Sheets, or Office 365, web applications take 3–5 seconds to initialize WebAssembly/Canvas components and autofocus the editing surface.\n"
+            "  * Web editor canvases often do not have active input focus on initial load. Before pasting or typing, ensure the document body is focused by clicking into the white document canvas using `find_and_click_element(target_description='document canvas')`.\n\n"
+            "CLOSED-LOOP OUTCOME VERIFICATION & AUTONOMOUS SELF-CORRECTION (MANDATORY & CRITICAL):\n"
+            "- The Closed-Loop Execution Rule:\n"
+            "  * A script or tool returning exit code 0 or 'success' ONLY indicates keystrokes or commands were dispatched. It does NOT guarantee that the application, web document, or canvas received, registered, or rendered the input.\n"
+            "  * Web editors (Google Docs, Sheets, Word Online, Notion) and desktop apps frequently drop keystrokes if the editing surface is not actively focused.\n"
+            "- Mandatory Visual Outcome Verification:\n"
+            "  * Whenever drafting, pasting, writing, or inserting content into documents, spreadsheets, text editors, email composers, or web forms (e.g. Google Docs, Word, Sheets, Notepad, web fields):\n"
+            "    1. You MUST call `capture_screen_snapshot` immediately following the paste or text entry step to visually inspect the actual result on screen.\n"
+            "    2. Inspect the captured snapshot image: evaluate whether the expected text, letter, table, or content is clearly visible in the target document or canvas.\n"
+            "    3. Distinguish Success vs. Failure:\n"
+            "       - SUCCESS: The text/content is visibly rendered in the document editing area as intended.\n"
+            "       - FAILURE: The document canvas or target area is blank, empty, unedited, or text ended up in the wrong element (e.g. address bar or title input).\n"
+            "- Autonomous Self-Correction Loop ('Keep Trying Until It Succeeds'):\n"
+            "  * When visual failure is detected, NEVER end your turn and NEVER tell the user that the action succeeded!\n"
+            "  * Autonomously execute corrective actions within your tool loop:\n"
+            "    Step 1 (Re-assert Window Focus): Bring the target application window to the foreground (`bring_hwnd_to_foreground` or `launch_application`).\n"
+            "    Step 2 (Click Editable Canvas): Explicitly click into the document canvas or editable text area using `find_and_click_element(app_name=..., target_description='document canvas')` or click the central document area.\n"
+            "    Step 3 (Re-dispatch Input): Re-send the paste sequence (`press_key('ctrl+v')`) or re-execute the clipboard paste.\n"
+            "    Step 4 (Re-verify): Call `capture_screen_snapshot` to inspect the canvas again.\n"
+            "  * Continue this autonomous self-correction cycle (up to 3 retries) until you visually confirm the text is rendered.\n"
+            "- User Confirmation Protocol:\n"
+            "  * Only provide verbal confirmation to the user once you have visually confirmed that the content is actually on screen.\n"
+            "  * If after repeated retries an unresolvable barrier exists (e.g. user authentication required, modal blocking interaction), truthfully describe the specific obstacle encountered instead of falsely claiming success.\n\n"
+            "SECURITY WHITELIST & EASY-BUTTON PERMISSION PROTOCOL (CRITICAL):\n"
+            "- Desktop applications and processes are governed by the user's security whitelist.\n"
+            "- When you call `launch_application` or `close_application` and it returns `status: 'blocked'`:\n"
+            "  1. STOP IMMEDIATELY. Do NOT call any further tools, and NEVER attempt workaround hacks (such as pressing Win+E, Alt+F4, hotkey shortcuts, or running arbitrary scripts) to bypass the whitelist block.\n"
+            "  2. Adding the program to the whitelist with user permission is the 'EASY BUTTON'. Immediately inform the user verbally in one clear, concise sentence that the program is not in their allowed whitelist, and ask if they would like you to add it:\n"
+            "     Example: 'File Explorer is not currently on your allowed whitelist. Would you like me to add it so I can open it for you?'\n"
+            "  3. When the user confirms (e.g. 'Yes', 'Yes please', 'Add it', 'Sure', 'Go ahead', 'Allow it'):\n"
+            "     * Immediately call `add_to_whitelist(app_name=...)`.\n"
+            "     * In the same turn, call `launch_application(app_name=..., target=...)` to seamlessly fulfill their original request without making them ask again!\n"
+            "     * Give a brief, pleasant verbal confirmation: 'I've added File Explorer to your whitelist and opened your documents.'\n\n"
+            "DETERMINISTIC DIRECT NAVIGATION PREFERENCE (SPEED & ACCURACY):\n"
+            "- Always prefer direct URL navigation or direct OS commands over multi-turn visual clicking:\n"
+            "  * To create a new Google Doc, Sheet, or Slide, directly navigate to `https://docs.new`, `https://sheets.new`, or `https://slides.new` via `navigate_browser` or `launch_application` (instant 50ms) instead of hunting for template buttons.\n"
+            "  * To open standard folders, pass the target directly (e.g. `shell:Personal` for Documents, `shell:My Pictures\\Screenshots` for Screenshots) to `launch_application(app_name='explorer', target=...)`.\n"
+            "  * For pure read-only queries or background tasks (e.g. system status, checking files), snapshots are not needed; but for document/UI modifications, follow the Closed-Loop Outcome Verification protocol.\n\n"
+            "- Whitelist: If an app is blocked by the security whitelist and the user asks to add or allow it, call `add_to_whitelist(app_name)`.\n"
+            "- Match response length naturally to the task: keep routine action confirmations brief, while expanding freely for substantive questions, summaries, explanations, or conversational banter in your configured persona. You can chain multiple actions smoothly.\n\n"
+            "ATOMIC NAVIGATION & COMMAND ISOLATION (CRITICAL):\n"
+            "- Treat standalone application navigation commands (e.g. 'Open Gmail', 'Open Chrome', 'Open Word', 'Open YouTube', 'Go to Google Docs') as fresh, generic actions. Always navigate to the default clean home page or root inbox (e.g. https://mail.google.com). NEVER inject keywords, queries, search terms, or filters from previous tasks into a generic navigation command.\n"
+            "- Only carry over search terms or context if the user explicitly uses referential words such as 'those', 'them', 'that search', 'it', 'again', or 'continue'.\n"
+            "- When the user switches topics or applications, completely purge prior task context.\n\n"
+            "MULTI-STEP WORKFLOW AUTONOMY:\n"
+            "- When given a multi-step instruction (e.g. 'Find X in Gmail, calculate the total, and export it into a table in Google Docs'), do NOT stop prematurely after the first step to ask if you should proceed. Autonomously continue executing subsequent steps through to the final deliverable unless you encounter an unresolvable error or need user credentials.\n\n"
+        )
+        user_identity_directive = self.user_memory.build_user_identity_directive()
+        user_name_directive = f"<!-- USER IDENTITY DIRECTIVE START -->\n{user_identity_directive}<!-- USER IDENTITY DIRECTIVE END -->\n\n" if user_identity_directive else ""
+
+        try:
+            startup_alerts = self.proactive_engine.evaluate_candidates()
+            alerts_directive = ""
+            if startup_alerts:
+                alert_lines = [f"- {a['description']}" for a in startup_alerts[:3]]
+                alerts_directive = "TIME-SENSITIVE STARTUP ALERTS:\n" + "\n".join(alert_lines) + "\n\n"
+        except Exception:
+            alerts_directive = ""
+
+        user_memory_directive = (
+            "USER PROFILE & PERSONAL KNOWLEDGE RETRIEVAL (MEMORY HYGIENE):\n"
+            "- You have a persistent local database of user facts, family details, dates, preferences, and projects. "
+            "If the user refers to personal context, family members, or past setups not currently present in your active conversation, "
+            "call `query_user_memory` with a concise keyword to inspect their profile before answering.\n"
+            "- If `query_user_memory` or `search_past_sessions` returns no matching records for a person, name, or topic, do NOT stop or state you have no record. IMMEDIATELY call `google_search` in the same turn to locate public records and external information.\n"
+            "- PROACTIVE MEMORY LEARNING DIRECTIVE:\n"
+            "  * When the user shares personal facts, details about family, spouse, children, birthdays, anniversaries, hobbies, vehicles, or requests 'remember this' / 'remember that' (e.g. 'My wife\\'s birthday is 5-1-1977. Her name is Traci, please remember it'):\n"
+            "    1. Immediately invoke `remember_user_fact` for each distinct fact revealed in their message.\n"
+            "    2. For calendar dates (birthdays, anniversaries), always convert to standard ISO 'YYYY-MM-DD' format (e.g. '1977-05-01') under category 'dates' with data_type='date'.\n"
+            "    3. For family and relationship names, store under category 'family' (e.g. key='wife_name', value='Traci').\n"
+            "    4. After executing the tool(s), confirm warmly and concisely in 1 sentence that you have saved their facts.\n"
+            "  * If the user asks you to forget or delete information, invoke `forget_user_fact`.\n\n"
+        )
+
+        session_manifest_directive = (
+            "HISTORICAL SESSION MEMORY & CONVERSATION RETRIEVAL:\n"
+            "- You have access to historical session manifest cards via `search_past_sessions`.\n"
+            "- If the user asks about prior conversations, past decisions, earlier research, tasks from earlier sessions, "
+            "or asks 'did we work on X before?' or 'what did we discuss yesterday?', invoke `search_past_sessions(query=...)` to retrieve the relevant historical context.\n"
+            "- If `query_user_memory` or `search_past_sessions` returns no matching records for a person, name, or topic, do NOT stop or state you have no record. IMMEDIATELY call `google_search` in the same turn to locate public records and external information.\n\n"
+        )
+
+        system_instruction_text = (
+            strict_identity
+            + user_name_directive
+            + alerts_directive
+            + desktop_tools_directive
+            + user_memory_directive
+            + session_manifest_directive
+            + RESEARCH_AND_GENEALOGY_DIRECTIVE.strip()
+            + "\n\n"
+            + DOSSIER_GENERATION_DIRECTIVE.strip()
+            + "\n\n"
+            + personality_block
+        )
+        lexicon_directive = self.user_memory.build_lexicon_instruction()
+        if lexicon_directive:
+            system_instruction_text += "\n" + lexicon_directive
+
+        system_instruction_text = self._inject_temporal_anchor(system_instruction_text)
+        self._base_system_instruction = system_instruction_text
+        return system_instruction_text
+
     def _build_system_instruction(self) -> str:
         """
         Returns the active system instruction for Cortex turn generation based on the active mode:
@@ -5566,10 +5604,12 @@ class AetherEngine:
            Default mode for desktop tasks, questions, voice control.
         """
         base_inst = ""
+        is_special_mode = False
 
         # MODE 1: Tabletop Role Play Mode (Live Game Master / DM)
         # Strictly exclusive to an active adventure session or campaign workspace!
         if self.is_ttrpg_session_active() or getattr(self, "active_workspace_type", "") == "campaign":
+            is_special_mode = True
             if hasattr(self, "ttrpg_service") and self.ttrpg_service:
                 try:
                     gm_ctx = self.ttrpg_service.build_gm_context_prompt()
@@ -5588,14 +5628,26 @@ class AetherEngine:
         # MODE 2: Video Game Companion Mode (e.g. Crimson Desert, Steam, etc.)
         if not base_inst:
             if hasattr(self, "game_engine") and self.game_engine and self.game_engine.is_game_mode_active():
+                is_special_mode = True
                 hk_display = getattr(self, "hotkey_manager", None) and getattr(self.hotkey_manager, "game_mode_display", "Ctrl+Shift+G") or "Ctrl+Shift+G"
                 game_instruction = self.game_engine.build_system_instruction(hotkey_display=hk_display)
                 if game_instruction:
                     base_inst = game_instruction
             elif hasattr(self, "game_mgr") and self.game_mgr and self.game_mgr.is_game_mode_active():
+                is_special_mode = True
                 game_context = self.game_mgr.get_active_game_context()
                 if game_context:
                     base_inst = game_context
+
+        if is_special_mode and base_inst:
+            custom_persona = self._get_user_personality_instruction() if hasattr(self, "_get_user_personality_instruction") else ""
+            if isinstance(custom_persona, str) and custom_persona.strip():
+                base_inst = (
+                    base_inst.rstrip()
+                    + "\n\nUSER-CONFIGURED PERSONALITY & INSTRUCTIONS (Apply in-character as it applies to this mode):\n"
+                    + custom_persona.strip()
+                    + "\n"
+                )
 
         # MODE 3: Desktop Agent Mode (Default Voice Assistant)
         if not base_inst:
@@ -7022,6 +7074,174 @@ class AetherEngine:
         finally:
             self.session_lifecycle.rotation_in_progress = False
 
+    async def _transcribe_wav_for_wake(
+        self,
+        wav_bytes: bytes,
+        api_key: str,
+        preferred_language: str,
+        agent_name: str,
+        wake_phrase: str,
+        sleep_phrase: str,
+        kill_phrase: str,
+    ) -> str:
+        """Runs lightweight REST STT on a Standby speech burst to check for the wake phrase."""
+        from core.stt_service import resolve_stt_model_endpoint
+
+        client = getattr(self, "client", None) or getattr(self, "genai_client", None)
+        if client is None:
+            key = api_key
+            if not key and callable(getattr(self, "config_getter", None)):
+                api_cfg = (self.config_getter() or {}).get("api", {})
+                enc_key = api_cfg.get("api_key_encrypted", "")
+                key = unprotect_secret(enc_key) if enc_key else os.environ.get("GEMINI_API_KEY", "")
+            if not key:
+                return ""
+            client = genai.Client(api_key=key)
+            self.genai_client = client
+            if hasattr(self, "dispatcher") and self.dispatcher:
+                self.dispatcher.genai_client = client
+
+        cfg = self.config_getter() if callable(getattr(self, "config_getter", None)) else {}
+        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+        raw_stt = (
+            api_cfg.get("stt_model_id")
+            or api_cfg.get("stt_endpoint")
+            or cfg.get("stt_model_endpoint")
+            or cfg.get("stt_endpoint")
+            or "primary_flash"
+        )
+        stt_model = resolve_stt_model_endpoint(raw_stt, fallback="gemini-3.5-transcribe")
+        stt_cfg_kwargs: Dict[str, Any] = {
+            "temperature": 0.0,
+            "automatic_function_calling": types.AutomaticFunctionCallingConfig(disable=True),
+            "safety_settings": get_permissive_safety_settings(),
+        }
+        if "transcribe" not in str(stt_model).lower():
+            stt_cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+
+        stt_prompt = (
+            f"You are a verbatim speech-to-text transcriber for {preferred_language}. "
+            f"Transcribe only clear, audible speech spoken in {preferred_language}. "
+            f"Output only the verbatim spoken words without commentary. "
+            f"The user's AI assistant is named '{agent_name}'. "
+            f"Expected assistant phrases include: '{wake_phrase}', '{sleep_phrase}', and '{kill_phrase}'. "
+            f"If the user says a greeting followed by a word sounding like '{agent_name}' "
+            f"(such as 'Hey Aker', 'Hey Ether', 'Hey Arthur', 'Hey Asher'), transcribe it as '{wake_phrase}'. "
+            f"If the audio contains background chatter, noise, sighs, breathing, non-speech vocalizations, "
+            f"or speech in another language, output NOTHING (empty string). Do not guess or translate."
+        )
+        stt_resp = await self._generate_content_resilient(
+            client=client,
+            model=stt_model,
+            contents=[
+                types.Part.from_bytes(data=wav_bytes, mime_type="audio/wav"),
+                stt_prompt,
+            ],
+            config=types.GenerateContentConfig(**stt_cfg_kwargs),
+        )
+        transcript = ""
+        if stt_resp and getattr(stt_resp, "candidates", None):
+            parts = getattr(getattr(stt_resp.candidates[0], "content", None), "parts", None) or []
+            for part in parts:
+                if getattr(part, "audio_transcription", None) and getattr(part.audio_transcription, "text", None):
+                    transcript += part.audio_transcription.text
+                elif getattr(part, "text", None):
+                    transcript += part.text
+        return transcript.strip()
+
+    async def _live_wake_word_watcher(self, api_key: str = ""):
+        """
+        Consumes finalized VAD utterances in Live pipeline mode:
+        - When Wake Word gating is IDLE_LISTENING (Standby), transcribes locally to detect the wake phrase,
+          opens the gate + connects Gemini Live, and forwards any trailing command in the same utterance.
+        - When active, open-mic, or PTT, drains utterance_queue to keep memory bounded.
+        """
+        filler_words = {"hmm", "hmmm", "uh", "um", "ah", "uhm", "huh", "mhm"}
+        try:
+            while self.is_running:
+                audio = self.audio
+                if not audio or not getattr(audio, "utterance_queue", None):
+                    await asyncio.sleep(0.1)
+                    continue
+
+                try:
+                    wav_bytes = await asyncio.wait_for(audio.utterance_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+
+                if not self.is_running:
+                    break
+
+                is_wake_idle = (
+                    getattr(audio, "mode", "always_on") != "ptt"
+                    and bool(audio.config.get("wake_word_enabled", getattr(audio, "wake_word_enabled", False)))
+                    and getattr(audio, "wake_detector", None) is not None
+                    and audio.wake_detector.state == AudioGateState.IDLE_LISTENING
+                )
+                if not is_wake_idle or not wav_bytes or len(wav_bytes) < 1000:
+                    continue
+
+                cfg = self.config_getter() if callable(getattr(self, "config_getter", None)) else {}
+                audio_cfg = cfg.get("audio", {}) if isinstance(cfg, dict) else {}
+                api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+                agent_name = str(api_cfg.get("agent_name") or cfg.get("agent_name") or "Aether").strip() or "Aether"
+                preferred_language = audio_cfg.get("preferred_language", "en-US")
+                kill_phrase = cfg.get("kill_phrase") or audio_cfg.get("safe_phrase") or f"{agent_name} stop"
+
+                bio_cfg = audio_cfg.get("voice_biometrics", {}) if isinstance(audio_cfg, dict) else {}
+                if bio_cfg.get("enabled", False) and hasattr(self, "voice_verifier") and self.voice_verifier.is_enrolled():
+                    thresh = float(bio_cfg.get("threshold", 0.40))
+                    is_user, score = await asyncio.to_thread(self.voice_verifier.verify, wav_bytes, thresh)
+                    if not is_user:
+                        logger.info(f"[VOICE GATE] Standby utterance discarded: non-user voice (score: {score:.3f} < {thresh:.2f})")
+                        continue
+
+                try:
+                    transcript = await self._transcribe_wav_for_wake(
+                        wav_bytes=wav_bytes,
+                        api_key=api_key,
+                        preferred_language=preferred_language,
+                        agent_name=agent_name,
+                        wake_phrase=audio.wake_detector.wake_phrase,
+                        sleep_phrase=audio.wake_detector.sleep_phrase,
+                        kill_phrase=kill_phrase,
+                    )
+                except Exception as wake_stt_err:
+                    logger.debug(f"[WAKE_WORD] Live standby STT check failed: {wake_stt_err}")
+                    continue
+
+                if not transcript:
+                    continue
+                if preferred_language.lower().startswith("en") and re.search(
+                    r'[\u0600-\u06FF\u0900-\u097F\u0A00-\u0A7F\u4E00-\u9FFF\u3040-\u30FF]', transcript
+                ):
+                    continue
+                cleaned_lower = "".join(c for c in transcript.lower() if c.isalnum() or c.isspace()).strip()
+                if cleaned_lower in filler_words or len(cleaned_lower) <= 1:
+                    continue
+
+                matched, remainder = audio.wake_detector.matches_wake_phrase(transcript)
+                if not matched:
+                    logger.info(
+                        f"[WAKE_WORD] Suppressed ambient speech in IDLE_LISTENING "
+                        f"(wake phrase '{audio.wake_detector.wake_phrase}' not detected): '{transcript}'"
+                    )
+                    continue
+
+                audio.wake_detector.transition_to_active()
+                rem_clean = (remainder or "").strip()
+                if len(rem_clean) >= 2:
+                    await self.send_text(rem_clean)
+                else:
+                    self.notify("chat_event", {
+                        "type": "system",
+                        "content": f"🎙️ Microphone toggled to Listening (\"{audio.wake_detector.wake_phrase}\"). Listening for your commands..."
+                    })
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[WAKE_WORD] Live wake watcher error: {e}", exc_info=True)
+
     async def _run_live_pipeline(
         self,
         api_key: str,
@@ -7041,8 +7261,9 @@ class AetherEngine:
 
         accent_info = f", Accent: {voice_accent}" if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", "") else ""
 
-        # Perpetual send loop for the lifetime of the live pipeline
+        # Perpetual send loop and wake-word Standby watcher for the lifetime of the live pipeline
         send_task = asyncio.create_task(self._send_loop())
+        wake_task = asyncio.create_task(self._live_wake_word_watcher(api_key=api_key))
 
         try:
             if not self.is_on_demand_mode():
@@ -7067,6 +7288,8 @@ class AetherEngine:
         except asyncio.CancelledError:
             pass
         finally:
+            if wake_task and not wake_task.done():
+                wake_task.cancel()
             if send_task and not send_task.done():
                 send_task.cancel()
             await self._disconnect_live_session(reason="Pipeline shutdown")
@@ -7159,6 +7382,7 @@ class AetherEngine:
             return
         self.is_running = False
         self._stop_requested = True
+        self._ptt_active = False
         audio_ref = self.audio
         self.audio = None
         if audio_ref:

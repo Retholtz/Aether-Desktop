@@ -201,6 +201,9 @@ class HotkeyManager:
 
         self._is_key_down = False
         self._input_focused = False
+        self._cached_child_pids: Set[int] = set()
+        self._last_pid_cache_time: float = 0.0
+        self._pid_refresh_in_progress: bool = False
         self._hook_handle = None
         self._hook_thread_id = None
         self._thread: Optional[threading.Thread] = None
@@ -294,14 +297,38 @@ class HotkeyManager:
             if self.on_ptt_change:
                 self._dispatch_callback(self.on_ptt_change, False)
 
-    def _dispatch_callback(self, fn: Callable, *args):
+    def _dispatch_callback(self, fn: Optional[Callable], *args, log_msg: Optional[str] = None):
         """Dispatches a hotkey callback off the low-level Win32 hook thread so WH_KEYBOARD_LL returns immediately."""
         def _runner():
-            try:
-                fn(*args)
-            except Exception as cb_err:
-                logger.error(f"[HOTKEY CALLBACK ERROR] {cb_err}")
+            if fn:
+                try:
+                    fn(*args)
+                except Exception as cb_err:
+                    logger.error(f"[HOTKEY CALLBACK ERROR] {cb_err}")
+            if log_msg:
+                logger.info(log_msg)
         threading.Thread(target=_runner, daemon=True).start()
+
+    def _refresh_child_pids_async(self):
+        """Refreshes cached child PIDs (e.g. WebView2 renderers) off the WH_KEYBOARD_LL hook thread."""
+        if psutil is None or getattr(self, "_pid_refresh_in_progress", False):
+            return
+        self._pid_refresh_in_progress = True
+
+        def _worker():
+            try:
+                cached_set: Set[int] = set()
+                cur_proc = psutil.Process(os.getpid())
+                for child in cur_proc.children(recursive=True):
+                    cached_set.add(child.pid)
+                self._cached_child_pids = cached_set
+                self._last_pid_cache_time = time.monotonic()
+            except Exception:
+                pass
+            finally:
+                self._pid_refresh_in_progress = False
+
+        threading.Thread(target=_worker, name="Hotkey-PIDCache", daemon=True).start()
 
     def _is_aether_foreground(self) -> bool:
         """
@@ -320,19 +347,10 @@ class HotkeyManager:
             current_pid = os.getpid()
             if pid.value == current_pid:
                 return True
-            # Check cached child PIDs to prevent blocking the low-level hook with psutil process inspection
+            # Refresh child PID cache asynchronously so WH_KEYBOARD_LL never blocks on process enumeration
             now = time.monotonic()
-            if not hasattr(self, "_cached_child_pids") or (now - getattr(self, "_last_pid_cache_time", 0.0)) > 5.0:
-                self._last_pid_cache_time = now
-                cached_set = set()
-                if psutil is not None:
-                    try:
-                        cur_proc = psutil.Process(current_pid)
-                        for child in cur_proc.children(recursive=True):
-                            cached_set.add(child.pid)
-                    except Exception:
-                        pass
-                self._cached_child_pids = cached_set
+            if (now - getattr(self, "_last_pid_cache_time", 0.0)) > 5.0:
+                self._refresh_child_pids_async()
             return pid.value in getattr(self, "_cached_child_pids", set())
         except Exception:
             return False
@@ -379,9 +397,10 @@ class HotkeyManager:
                         if self._check_modifiers(self.hud_mode_modifiers):
                             if not self._is_hud_key_down:
                                 self._is_hud_key_down = True
-                                logger.info("[HUD HOTKEY] Key down -> Cycle HUD Mode")
-                                if self.on_hud_mode_cycle:
-                                    self._dispatch_callback(self.on_hud_mode_cycle)
+                                self._dispatch_callback(
+                                    self.on_hud_mode_cycle,
+                                    log_msg="[HUD HOTKEY] Key down -> Cycle HUD Mode",
+                                )
                     elif is_up:
                         self._is_hud_key_down = False
 
@@ -391,9 +410,10 @@ class HotkeyManager:
                         if self._check_modifiers(self.game_mode_modifiers):
                             if not self._is_game_mode_key_down:
                                 self._is_game_mode_key_down = True
-                                logger.info("[GAME MODE HOTKEY] Key down -> Toggle Game Mode")
-                                if self.on_game_mode_toggle:
-                                    self._dispatch_callback(self.on_game_mode_toggle)
+                                self._dispatch_callback(
+                                    self.on_game_mode_toggle,
+                                    log_msg="[GAME MODE HOTKEY] Key down -> Toggle Game Mode",
+                                )
                     elif is_up:
                         self._is_game_mode_key_down = False
 
@@ -410,26 +430,34 @@ class HotkeyManager:
 
                     if is_typing_suppressed:
                         if is_down and not self._is_key_down:
-                            logger.info("[PTT] Hotkey ignored: typing safeguard active in Aether text field")
+                            self._dispatch_callback(
+                                None,
+                                log_msg="[PTT] Hotkey ignored: typing safeguard active in Aether text field",
+                            )
                     elif is_down:
                         if self._check_modifiers(self.target_modifiers):
                             if not self._is_key_down:
                                 self._is_key_down = True
                                 if self.ptt_type == "hold":
-                                    logger.info("[PTT] Hotkey pressed -> Hold Speak ON")
-                                    if self.on_ptt_change:
-                                        self._dispatch_callback(self.on_ptt_change, True)
+                                    self._dispatch_callback(
+                                        self.on_ptt_change,
+                                        True,
+                                        log_msg="[PTT] Hotkey pressed -> Hold Speak ON",
+                                    )
                                 elif self.ptt_type == "toggle":
-                                    logger.info("[PTT] Hotkey pressed -> Toggle Mic")
-                                    if self.on_ptt_toggle:
-                                        self._dispatch_callback(self.on_ptt_toggle)
+                                    self._dispatch_callback(
+                                        self.on_ptt_toggle,
+                                        log_msg="[PTT] Hotkey pressed -> Toggle Mic",
+                                    )
                     elif is_up:
                         if self._is_key_down:
                             self._is_key_down = False
                             if self.ptt_type == "hold":
-                                logger.info("[PTT] Hotkey released -> Hold Speak OFF")
-                                if self.on_ptt_change:
-                                    self._dispatch_callback(self.on_ptt_change, False)
+                                self._dispatch_callback(
+                                    self.on_ptt_change,
+                                    False,
+                                    log_msg="[PTT] Hotkey released -> Hold Speak OFF",
+                                )
             except Exception as ex:
                 logger.error(f"[HOTKEY PROC ERROR] {ex}")
 
@@ -488,6 +516,22 @@ class HotkeyManager:
         """Starts the global keyboard listener in a dedicated background worker thread."""
         if self._running or sys.platform != "win32":
             return
+
+        # Reload latest config and restore enabled state (stop() sets self.enabled = False)
+        try:
+            cfg = self.config_getter() if callable(self.config_getter) else {}
+            if cfg:
+                self._load_from_config()
+            else:
+                self.enabled = (self.audio_mode == "ptt")
+        except Exception:
+            self.enabled = (self.audio_mode == "ptt")
+
+        self._is_key_down = False
+        self._is_hud_key_down = False
+        self._is_game_mode_key_down = False
+        self._input_focused = False
+        self._refresh_child_pids_async()
 
         self._running = True
         self._ready_event.clear()

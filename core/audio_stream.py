@@ -226,6 +226,7 @@ class AudioPipeline:
         # Near-field speaker dominance tracking (ensures loud speaker is separated from room noise)
         self._utterance_peak_rms = 0.0
         self._was_ptt_utterance = False
+        self._streamed_to_input_queue = False
 
     def _queue_put(self, q, item):
         """Thread-safe and event-loop-state agnostic enqueue helper."""
@@ -309,7 +310,7 @@ class AudioPipeline:
 
         # 2. Wake Word Gating (bypassed in PTT mode or while PTT key is active)
         is_ptt = (self.mode == "ptt" or self.ptt_active)
-        if not is_ptt and self.config.get("wake_word_enabled", True):
+        if not is_ptt and self.config.get("wake_word_enabled", self.wake_word_enabled):
             should_route = self.wake_detector.process_frame(in_data)
             if not should_route:
                 # Suppressed: Assistant is idling in standby mode
@@ -337,6 +338,7 @@ class AudioPipeline:
             self._was_ptt_utterance = True
             for pf in self._preroll_frames:
                 self._queue_put(self.input_queue, pf)
+                self._streamed_to_input_queue = True
             if not self._is_in_speech:
                 self._is_in_speech = True
                 self._speech_frames = list(self._preroll_frames)
@@ -450,8 +452,17 @@ class AudioPipeline:
 
         pcm16 = (np.clip(resampled, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 
-        # Refresh active conversation timer while assistant is speaking so >8.0s timeout starts after speech finishes
-        if speaker_active and hasattr(self, "wake_detector") and self.wake_detector:
+        # Refresh active conversation timer while assistant is speaking or executing a turn/tool
+        # so >8.0s wake-word idle timeout only starts once the turn finishes
+        engine_busy = bool(
+            self.engine
+            and (
+                getattr(self.engine, "is_tool_executing", False)
+                or getattr(self.engine, "_in_active_turn", False)
+                or getattr(self.engine, "is_speaking", False)
+            )
+        )
+        if (speaker_active or engine_busy) and hasattr(self, "wake_detector") and self.wake_detector:
             self.wake_detector.record_active_turn()
 
         # Check PTT condition & direct speech ingestion
@@ -467,6 +478,7 @@ class AudioPipeline:
                 self._is_in_speech = True
                 for pf in self._preroll_frames:
                     self._queue_put(self.input_queue, pf)
+                    self._streamed_to_input_queue = True
                 self._speech_frames = list(self._preroll_frames)
                 self._preroll_frames.clear()
                 self._utterance_peak_rms = rms
@@ -478,6 +490,7 @@ class AudioPipeline:
             self._speech_frames.append(pcm16)
             if not (self.software_gate and speaker_active):
                 self._queue_put(self.input_queue, pcm16)
+                self._streamed_to_input_queue = True
             if rms > self._utterance_peak_rms:
                 self._utterance_peak_rms = rms
             # Failsafe: max ~30 seconds continuous PTT hold guard
@@ -492,6 +505,7 @@ class AudioPipeline:
             should_route_live = self.wake_detector.process_frame(pcm16)
             if should_route_live and not (self.software_gate and speaker_active):
                 self._queue_put(self.input_queue, pcm16)
+                self._streamed_to_input_queue = True
 
         # Adaptive noise floor tracking (exponential moving average over non-speech when assistant is silent)
         if not self._is_in_speech and not speaker_active:
@@ -560,6 +574,7 @@ class AudioPipeline:
                 if not is_wake_enabled and not (self.software_gate and speaker_active):
                     for pf in self._preroll_frames:
                         self._queue_put(self.input_queue, pf)
+                        self._streamed_to_input_queue = True
                 self._utterance_peak_rms = rms
                 if should_route_live or self.is_speaking or not is_wake_enabled:
                     if self.on_vad_speech_detected:
@@ -575,6 +590,7 @@ class AudioPipeline:
             self._speech_frames.append(pcm16)
             if not is_wake_enabled and not (self.software_gate and speaker_active):
                 self._queue_put(self.input_queue, pcm16)
+                self._streamed_to_input_queue = True
             self._silence_count = 0
             if rms > self._utterance_peak_rms:
                 self._utterance_peak_rms = rms
@@ -586,11 +602,13 @@ class AudioPipeline:
             self._speech_frames.append(pcm16)
             if not is_wake_enabled and not (self.software_gate and speaker_active):
                 self._queue_put(self.input_queue, pcm16)
+                self._streamed_to_input_queue = True
             self._silence_count += 1
         elif vad_state == "TURN_COMPLETE":
             self._speech_frames.append(pcm16)
             if not is_wake_enabled and not (self.software_gate and speaker_active):
                 self._queue_put(self.input_queue, pcm16)
+                self._streamed_to_input_queue = True
             self._silence_count += 1
             self._finalize_utterance()
         else:  # IDLE
@@ -610,6 +628,9 @@ class AudioPipeline:
             and self.wake_detector
             and self.wake_detector.state == AudioGateState.IDLE_LISTENING
         )
+        was_streamed = bool(getattr(self, "_streamed_to_input_queue", False))
+        self._streamed_to_input_queue = False
+
         if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
             self.vad_turn_detector.is_speech_active = False
             self.vad_turn_detector.silence_start_time = None
@@ -617,6 +638,8 @@ class AudioPipeline:
             self._is_in_speech = False
             self._silence_count = 0
             self._utterance_peak_rms = 0.0
+            if was_streamed:
+                self._queue_put(self.input_queue, b"__END_OF_TURN__")
             if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
@@ -637,6 +660,8 @@ class AudioPipeline:
                 self._is_in_speech = False
                 self._silence_count = 0
                 self._utterance_peak_rms = 0.0
+                if was_streamed:
+                    self._queue_put(self.input_queue, b"__END_OF_TURN__")
                 if self.on_speech_state and not is_wake_idle:
                     try:
                         self.on_speech_state("speech_idle")
@@ -667,7 +692,7 @@ class AudioPipeline:
         min_bytes = 2400 if is_ptt_turn else 11200
         if len(total_pcm) < min_bytes:
             logger.info(f"[VAD GATE] Utterance too short ({len(total_pcm)} bytes < {min_bytes}), discarding.")
-            self._queue_put(self.input_queue, b"__DISCARD_TURN__")
+            self._queue_put(self.input_queue, b"__END_OF_TURN__" if was_streamed else b"__DISCARD_TURN__")
             if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
@@ -678,7 +703,7 @@ class AudioPipeline:
         # Dead microphone safeguard for PTT
         if is_ptt_turn and peak_rms < 0.0008:
             logger.warning(f"[AUDIO] Discarded PTT utterance: no audio signal detected (peak RMS: {peak_rms:.5f})")
-            self._queue_put(self.input_queue, b"__DISCARD_TURN__")
+            self._queue_put(self.input_queue, b"__END_OF_TURN__" if was_streamed else b"__DISCARD_TURN__")
             if self.on_speech_state and not is_wake_idle:
                 try:
                     self.on_speech_state("speech_idle")
@@ -705,7 +730,8 @@ class AudioPipeline:
             f"({num_frames} frames, ~{len(total_pcm)/32000:.2f}s, peak RMS: {peak_rms:.4f}, PTT: {is_ptt_turn})"
         )
         self._queue_put(self.utterance_queue, wav_bytes)
-        self._queue_put(self.input_queue, b"__END_OF_TURN__")
+        if not is_wake_idle or was_streamed:
+            self._queue_put(self.input_queue, b"__END_OF_TURN__")
         return True
 
     def _output_callback(self, outdata, frames, time_info, status):
@@ -832,6 +858,7 @@ class AudioPipeline:
         self._is_in_speech = False
         self._silence_count = 0
         self._utterance_peak_rms = 0.0
+        self._streamed_to_input_queue = False
         if hasattr(self, "vad_turn_detector") and self.vad_turn_detector:
             self.vad_turn_detector.is_speech_active = False
             self.vad_turn_detector.silence_start_time = None

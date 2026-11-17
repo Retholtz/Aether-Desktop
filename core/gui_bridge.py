@@ -1705,9 +1705,20 @@ class GuiBridge:
 
                 if self._engine:
 
+                    audio_mode = self._config["audio"].get("mode", "always_on")
+
+                    if audio_mode != "ptt" and (
+                        getattr(self._engine, "_ptt_active", False)
+                        or (self._engine.audio and getattr(self._engine.audio, "ptt_active", False))
+                    ):
+                        try:
+                            self._engine.set_ptt(False)
+                        except Exception:
+                            pass
+
                     if self._engine.audio:
 
-                        self._engine.audio.set_mode(self._config["audio"].get("mode", "always_on"))
+                        self._engine.audio.set_mode(audio_mode)
 
                         self._engine.audio.set_software_gate(self._config["audio"].get("software_gate", False))
 
@@ -1741,7 +1752,17 @@ class GuiBridge:
 
                                 ag_name = self._config.get("api", {}).get("agent_name", "Aether").strip() or "Aether"
 
-                                if wake_en and self._engine.audio.wake_detector.state.value == "IDLE_LISTENING":
+                                if audio_mode == "ptt":
+
+                                    self._on_engine_event("status", {
+
+                                        "state": "standby",
+
+                                        "message": f"{ag_name} is ready (Push-to-Talk)."
+
+                                    })
+
+                                elif wake_en and self._engine.audio.wake_detector.state.value == "IDLE_LISTENING":
 
                                     self._on_engine_event("status", {
 
@@ -1760,6 +1781,10 @@ class GuiBridge:
                                         "message": f"{ag_name} is listening..."
 
                                     })
+
+                                    if not self._engine.is_on_demand_mode():
+
+                                        self._engine.request_live_session_connect(reason="Switched to Always-On Open Mic")
 
                         new_in = self._config["audio"].get("input_device_index")
 
@@ -1891,6 +1916,16 @@ class GuiBridge:
                 if hasattr(engine_ref, "update_voice_accent_directive"):
 
                     engine_ref.update_voice_accent_directive(new_accent)
+
+                if prompt_changed:
+
+                    if hasattr(engine_ref, "rebuild_base_system_instruction"):
+
+                        engine_ref.rebuild_base_system_instruction()
+
+                    if getattr(engine_ref, "_active_pipeline_mode", "live") == "modular":
+
+                        engine_ref._reset_context_flag = True
 
                 if live_config_changed:
 
@@ -2155,12 +2190,18 @@ class GuiBridge:
                 ("is_tool_running", False),
                 ("is_speaking", False),
                 ("is_audio_streaming", False),
+                ("_ptt_active", False),
             ):
                 if hasattr(self._engine, attr):
                     try:
                         setattr(self._engine, attr, val)
                     except Exception:
                         pass
+            if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
+                try:
+                    self._engine.hotkey_manager.set_input_focused(False)
+                except Exception:
+                    pass
 
             if getattr(self._engine, "is_running", False):
                 try:
@@ -3057,7 +3098,7 @@ class GuiBridge:
 
     def toggle_mic_mute(self) -> dict:
 
-        """Toggles microphone mute state."""
+        """Toggles microphone mute state by switching between Hands-Free (always_on) and Push-to-Talk (ptt)."""
 
         try:
 
@@ -3065,9 +3106,44 @@ class GuiBridge:
 
                 new_mode = "ptt" if self._engine.audio.mode == "always_on" else "always_on"
 
+                if new_mode != "ptt" and (
+                    getattr(self._engine, "_ptt_active", False)
+                    or getattr(self._engine.audio, "ptt_active", False)
+                ):
+                    self._engine.set_ptt(False)
+
                 self._engine.audio.set_mode(new_mode)
+                self._config["mode"] = new_mode
+                self._config.setdefault("audio", {})["mode"] = new_mode
+
+                if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
+                    self._engine.hotkey_manager.update_config(
+                        self._config.get("audio", {}),
+                        self._config.get("ui", {}),
+                    )
 
                 muted = (new_mode == "ptt")
+                ag_name = self._config.get("api", {}).get("agent_name", "Aether").strip() or "Aether"
+                if muted:
+                    self._on_engine_event("status", {
+                        "state": "standby",
+                        "message": f"{ag_name} is ready (Push-to-Talk)."
+                    })
+                else:
+                    wake_en = bool(self._engine.audio.config.get("wake_word_enabled", self._engine.audio.wake_word_enabled))
+                    wd = getattr(self._engine.audio, "wake_detector", None)
+                    if wake_en and wd and getattr(wd.state, "value", "") == "IDLE_LISTENING":
+                        self._on_engine_event("status", {
+                            "state": "standby",
+                            "message": f"Standby — Say '{wd.wake_phrase}' to wake {ag_name}."
+                        })
+                    else:
+                        self._on_engine_event("status", {
+                            "state": "listening",
+                            "message": f"{ag_name} is listening..."
+                        })
+                        if self._engine.is_running and not self._engine.is_on_demand_mode():
+                            self._engine.request_live_session_connect(reason="Mic unmuted (Always-On)")
 
                 self._on_engine_event("mic_muted", {"muted": muted})
 

@@ -3532,7 +3532,7 @@ Respond in JSON with schema:
 
         lines.append(
             "\n[DIALOGUE STYLE & ANTI-REPETITION DIRECTIVES]\n"
-            "* BE CONCISE & PUNCHY: Keep narrations to 2-4 immersive sentences per turn. Avoid walls of text.\n"
+            "* ADAPTIVE PACING: Match narration length to the moment—keep routine turns brisk and punchy, and expand naturally for major reveals, NPC dialogue, lore, or dramatic scenes without meandering.\n"
             "* NO REDUNDANT RECAP: Do not repeat back what the player just said. If Eric declares 'I attack the goblin', do not recite 'Eric decides to attack the goblin with his sword'. Jump directly into the swing and outcome.\n"
             "* NO ROBOTIC MENUS: Never list 'Option 1: ... Option 2: ... Option 3: ...' when a player has already declared an action. Only offer brief, organic suggestions if a player explicitly asks what they can do or is visibly stuck.\n"
             "* IMMERSIVE GM VOICE: Never mention system tools, JSON, meters, or 'Aether'. Speak as an evocative, living Dungeon Master."

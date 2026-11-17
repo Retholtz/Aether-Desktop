@@ -111,6 +111,46 @@ class TestPushToTalkPipeline(unittest.TestCase):
                     mgr._low_level_keyboard_proc(0, WM_KEYUP, lParam)
                     self.assertEqual(ptt_events, [True, False])
 
+    def test_hotkey_manager_restores_enabled_on_restart_after_stop(self):
+        """Tests that HotkeyManager.start() restores enabled=True in PTT mode after stop() cleared it."""
+        mgr = HotkeyManager(config_getter=lambda: self.config)
+        self.assertTrue(mgr.enabled)
+
+        def fake_hook_loop():
+            mgr._ready_event.set()
+
+        with patch.object(mgr, "_run_hook_loop", side_effect=fake_hook_loop):
+            with patch.object(mgr, "_refresh_child_pids_async"):
+                with patch("core.hotkey_manager.sys.platform", "win32"):
+                    mgr.start()
+                    self.assertTrue(mgr.enabled)
+
+                    mgr._input_focused = True
+                    mgr._is_key_down = True
+                    mgr.stop()
+                    self.assertFalse(mgr.enabled)
+                    self.assertFalse(mgr._running)
+
+                    # Restarting (e.g. via refresh_connection or send_text auto-start) must restore enabled
+                    mgr.start()
+                    self.assertTrue(mgr.enabled)
+                    self.assertFalse(mgr._input_focused)
+                    self.assertFalse(mgr._is_key_down)
+                    mgr.stop()
+
+    def test_is_aether_foreground_does_not_block_hook_with_psutil(self):
+        """Tests that _is_aether_foreground schedules async PID refresh instead of blocking the LL hook."""
+        mgr = HotkeyManager(config_getter=lambda: self.config)
+        mgr._last_pid_cache_time = 0.0
+        mgr._cached_child_pids = {99999}
+
+        with patch("core.hotkey_manager.sys.platform", "win32"):
+            with patch("ctypes.windll.user32.GetForegroundWindow", return_value=1234):
+                with patch("ctypes.windll.user32.GetWindowThreadProcessId", side_effect=lambda hwnd, pid_ptr: setattr(pid_ptr._obj, "value", 99999)):
+                    with patch.object(mgr, "_refresh_child_pids_async") as mock_refresh:
+                        self.assertTrue(mgr._is_aether_foreground())
+                        mock_refresh.assert_called_once()
+
     def test_audio_pipeline_ptt_captures_and_bypasses_vad_ambient_gate(self):
         """
         Tests that AudioPipeline captures speech while PTT is held, and bypasses

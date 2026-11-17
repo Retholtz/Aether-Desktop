@@ -42,7 +42,7 @@ def _make_mock_stream(zip_bytes: bytes, status_code: int = 200):
 
 class TestVersionAndAssetHelpers(unittest.TestCase):
     def test_extract_and_parse_versions(self):
-        self.assertEqual(APP_VERSION, "0.84")
+        self.assertEqual(APP_VERSION, "0.84.2")
         self.assertEqual(extract_version_string("Version 0.83"), "0.83")
         self.assertEqual(extract_version_string("v0.83"), "0.83")
         self.assertEqual(extract_version_string("Aether 0.83.zip"), "0.83")
@@ -282,7 +282,8 @@ class TestAtomicSwapCleanupAndBridgeIntegration(unittest.TestCase):
             self.assertEqual(f.read(), b"NEW_DLL")
         with open(os.path.join(self.test_dir, f"{EXE_NAME}.old"), "rb") as f:
             self.assertEqual(f.read(), b"OLD_EXE")
-        self.assertTrue(os.path.isdir(os.path.join(self.test_dir, "_internal.old")))
+        with open(os.path.join(self.test_dir, "_internal", "lib.dll.old"), "rb") as f:
+            self.assertEqual(f.read(), b"OLD_DLL")
         self.assertFalse(os.path.exists(stage_dir))
 
         mock_popen.assert_called_once()

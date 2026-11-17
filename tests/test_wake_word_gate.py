@@ -301,6 +301,134 @@ class TestWakeWordGate(unittest.TestCase):
         self.assertEqual(detector.state, AudioGateState.IDLE_LISTENING)
         self.assertEqual(events[-1], "standby")
 
+    def test_live_wake_word_watcher_wakes_and_forwards_trailing_command(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+        from core.engine import AetherEngine
+
+        loop = asyncio.new_event_loop()
+        try:
+            engine = AetherEngine(config_getter=lambda: {
+                "api": {"agent_name": "Aether"},
+                "audio": {"mode": "always_on", "always_on_mode": "wake_word", "wake_word_enabled": True},
+            })
+            engine._loop = loop
+            engine.is_running = True
+            pipeline = AudioPipeline(
+                mode="always_on",
+                always_on_mode="wake_word",
+                wake_word_enabled=True,
+                loop=loop,
+            )
+            engine.audio = pipeline
+            self.assertEqual(pipeline.wake_detector.state, AudioGateState.IDLE_LISTENING)
+
+            async def _run_test():
+                engine.send_text = AsyncMock()
+                transcripts = iter(["just background noise", "Hey Aether, what is on my screen?"])
+                engine._transcribe_wav_for_wake = AsyncMock(side_effect=lambda **kw: next(transcripts))
+
+                watcher = asyncio.create_task(engine._live_wake_word_watcher(api_key="test"))
+                await pipeline.utterance_queue.put(b"RIFF" + b"\x00" * 2000)
+                await asyncio.sleep(0.05)
+                self.assertEqual(pipeline.wake_detector.state, AudioGateState.IDLE_LISTENING)
+                engine.send_text.assert_not_awaited()
+
+                await pipeline.utterance_queue.put(b"RIFF" + b"\x00" * 2000)
+                await asyncio.sleep(0.05)
+                self.assertEqual(pipeline.wake_detector.state, AudioGateState.ACTIVE_CONVERSATION)
+                engine.send_text.assert_awaited_once_with("what is on my screen?")
+
+                engine.is_running = False
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+
+            loop.run_until_complete(_run_test())
+        finally:
+            loop.close()
+
+    def test_wake_timeout_refreshed_while_engine_executing_tool(self):
+        import numpy as np
+        fake_engine = MagicMock()
+        fake_engine.is_tool_executing = True
+        fake_engine._in_active_turn = False
+        fake_engine.is_speaking = False
+
+        pipeline = AudioPipeline(
+            mode="always_on",
+            always_on_mode="wake_word",
+            wake_word_enabled=True,
+            idle_timeout_seconds=0.2,
+            engine=fake_engine,
+        )
+        pipeline.target_input_rate = 16000
+        pipeline.hw_in_rate = 16000
+        pipeline._running = True
+        pipeline.wake_detector.transition_to_active()
+        pipeline.wake_detector.last_speech_time -= 0.15
+
+        silent = np.zeros(800, dtype=np.float32)
+        pipeline._input_callback(silent, 800, None, None)
+        self.assertGreater(time.time() - pipeline.wake_detector.last_speech_time, -0.1)
+        self.assertLess(time.time() - pipeline.wake_detector.last_speech_time, 0.05)
+        self.assertEqual(pipeline.wake_detector.state, AudioGateState.ACTIVE_CONVERSATION)
+
+    def test_open_mic_short_burst_emits_end_of_turn_and_wake_idle_skips_end_of_turn(self):
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            # 1. Open mic streamed frames -> short discard must emit __END_OF_TURN__
+            open_pipe = AudioPipeline(mode="always_on", always_on_mode="always_on", wake_word_enabled=False, loop=loop)
+            open_pipe._streamed_to_input_queue = True
+            open_pipe._speech_frames = [b"\x01\x02" * 800]  # < 11200 min_bytes
+            open_pipe._utterance_peak_rms = 0.05
+            open_pipe._finalize_utterance()
+            self.assertEqual(open_pipe.input_queue.get_nowait(), b"__END_OF_TURN__")
+
+            # 1b. Open mic streamed frames discarded by ambient noise gate -> must also emit __END_OF_TURN__
+            open_pipe._streamed_to_input_queue = True
+            open_pipe._speech_frames = [b"\x01\x02" * 6000]
+            open_pipe._utterance_peak_rms = 0.001
+            open_pipe._finalize_utterance()
+            self.assertEqual(open_pipe.input_queue.get_nowait(), b"__END_OF_TURN__")
+
+            # 2. Wake-idle Standby -> emitted WAV must NOT push spurious __END_OF_TURN__ to input_queue
+            wake_pipe = AudioPipeline(mode="always_on", always_on_mode="wake_word", wake_word_enabled=True, loop=loop)
+            wake_pipe._speech_frames = [b"\x01\x02" * 6000]  # 24000 bytes >= 11200
+            wake_pipe._utterance_peak_rms = 0.05
+            wake_pipe._finalize_utterance()
+            self.assertFalse(wake_pipe.utterance_queue.empty())
+            self.assertTrue(wake_pipe.input_queue.empty())
+        finally:
+            loop.close()
+
+    def test_toggle_mic_mute_syncs_config_and_hotkey_manager(self):
+        import asyncio
+        from core.gui_bridge import GUIBridge
+
+        loop = asyncio.new_event_loop()
+        try:
+            bridge = GUIBridge(loop=loop)
+            bridge._config["mode"] = "always_on"
+            bridge._config.setdefault("audio", {})["mode"] = "always_on"
+            bridge._engine.audio = AudioPipeline(mode="always_on", wake_word_enabled=False, loop=loop)
+
+            res_mute = bridge.toggle_mic_mute()
+            self.assertTrue(res_mute["success"])
+            self.assertTrue(res_mute["muted"])
+            self.assertEqual(bridge._engine.audio.mode, "ptt")
+            self.assertEqual(bridge._config["audio"]["mode"], "ptt")
+            self.assertTrue(bridge._engine.hotkey_manager.enabled)
+
+            res_unmute = bridge.toggle_mic_mute()
+            self.assertTrue(res_unmute["success"])
+            self.assertFalse(res_unmute["muted"])
+            self.assertEqual(bridge._engine.audio.mode, "always_on")
+            self.assertEqual(bridge._config["audio"]["mode"], "always_on")
+            self.assertFalse(bridge._engine.hotkey_manager.enabled)
+        finally:
+            loop.close()
+
 
 if __name__ == '__main__':
     unittest.main()

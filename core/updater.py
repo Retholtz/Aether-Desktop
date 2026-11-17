@@ -467,8 +467,9 @@ def download_and_stage_update(
 
 def cleanup_old_update_artifacts(app_dir: Optional[str] = None) -> Dict[str, Any]:
     """
-    Sweeps and deletes any leftover *.old files, _internal.old directories,
-    or _update_staging directories from a prior update on application startup.
+    Sweeps and deletes any leftover *.old files (including inside _internal/),
+    _internal.old directories, or _update_staging directories from a prior update
+    on application startup.
     """
     target_dir = os.path.abspath(app_dir or get_app_dir())
     removed: List[str] = []
@@ -476,32 +477,29 @@ def cleanup_old_update_artifacts(app_dir: Optional[str] = None) -> Dict[str, Any
         return {"removed": removed}
 
     try:
-        entries = os.listdir(target_dir)
+        for root, dirs, files in os.walk(target_dir, topdown=False):
+            for fname in files:
+                if fname.lower().endswith(".old"):
+                    full_path = os.path.join(root, fname)
+                    try:
+                        os.remove(full_path)
+                        removed.append(os.path.relpath(full_path, target_dir))
+                    except OSError:
+                        pass
+            for dname in dirs:
+                if dname.lower().endswith(".old") or dname == STAGING_DIR_NAME:
+                    full_path = os.path.join(root, dname)
+                    try:
+                        shutil.rmtree(full_path, ignore_errors=True)
+                        if not os.path.exists(full_path):
+                            removed.append(os.path.relpath(full_path, target_dir))
+                    except OSError:
+                        pass
     except OSError:
         return {"removed": removed}
 
-    for entry in entries:
-        full_path = os.path.join(target_dir, entry)
-        if entry.lower().endswith(".old"):
-            try:
-                if os.path.isdir(full_path):
-                    shutil.rmtree(full_path, ignore_errors=True)
-                else:
-                    os.remove(full_path)
-                if not os.path.exists(full_path):
-                    removed.append(entry)
-            except OSError:
-                pass
-        elif entry == STAGING_DIR_NAME and os.path.isdir(full_path):
-            try:
-                shutil.rmtree(full_path, ignore_errors=True)
-                if not os.path.exists(full_path):
-                    removed.append(entry)
-            except OSError:
-                pass
-
     if removed:
-        logger.info(f"[UPDATER] Cleaned up prior update artifacts: {', '.join(removed)}")
+        logger.info(f"[UPDATER] Cleaned up prior update artifacts: {', '.join(removed[:20])}")
     return {"removed": removed}
 
 
@@ -570,29 +568,58 @@ def apply_staged_update_and_relaunch(
                 pass
 
     renamed_exe = False
-    renamed_internal = False
+    swapped_internal_files: List[Tuple[str, str]] = []
 
     try:
         if os.path.exists(current_exe):
             os.replace(current_exe, old_exe)
             renamed_exe = True
 
-        if os.path.isdir(current_internal) and os.path.isdir(staged_internal):
-            os.replace(current_internal, old_internal)
-            renamed_internal = True
-
         shutil.move(staged_exe, current_exe)
+
+        # Swap _internal file-by-file so Windows never hits WinError 5 on renaming
+        # a directory that has open DLL/WebView2 handles.
         if os.path.isdir(staged_internal):
-            shutil.move(staged_internal, current_internal)
+            if not os.path.isdir(current_internal):
+                shutil.move(staged_internal, current_internal)
+            else:
+                for root, _, files in os.walk(staged_internal):
+                    rel_root = os.path.relpath(root, staged_internal)
+                    dst_root = current_internal if rel_root == "." else os.path.join(current_internal, rel_root)
+                    os.makedirs(dst_root, exist_ok=True)
+                    for fname in files:
+                        src_file = os.path.join(root, fname)
+                        dst_file = os.path.join(dst_root, fname)
+                        old_file = f"{dst_file}.old"
+                        if os.path.exists(dst_file):
+                            if os.path.exists(old_file):
+                                try:
+                                    os.remove(old_file)
+                                except OSError:
+                                    pass
+                            os.replace(dst_file, old_file)
+                            swapped_internal_files.append((dst_file, old_file))
+                        shutil.move(src_file, dst_file)
 
         _merge_extra_payload_entries(payload_dir, target_app_dir, exe_name)
     except Exception as exc:
         # Roll back live files if anything failed during swap
         try:
-            if renamed_exe and os.path.exists(old_exe) and not os.path.exists(current_exe):
+            if renamed_exe and os.path.exists(old_exe):
+                if os.path.exists(current_exe):
+                    try:
+                        os.remove(current_exe)
+                    except OSError:
+                        pass
                 os.replace(old_exe, current_exe)
-            if renamed_internal and os.path.isdir(old_internal) and not os.path.exists(current_internal):
-                os.replace(old_internal, current_internal)
+            for dst_file, old_file in reversed(swapped_internal_files):
+                if os.path.exists(old_file):
+                    if os.path.exists(dst_file):
+                        try:
+                            os.remove(dst_file)
+                        except OSError:
+                            pass
+                    os.replace(old_file, dst_file)
         except Exception:
             pass
         return {"success": False, "error": f"Atomic update swap failed: {exc}"}

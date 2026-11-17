@@ -229,6 +229,79 @@ class TestVoiceAccents(unittest.TestCase):
         engine.update_voice_accent_directive("Cockney")
         self.assertIsNone(engine._session_resumption_handle)
 
+    def test_rebuild_base_system_instruction_updates_runtime_personality_and_confirmation_rule(self):
+        cfg = {
+            "api": {
+                "agent_name": "Aether",
+                "system_instruction": "Polite helper",
+                "voice_accent": "default",
+            },
+            "ui": {},
+            "audio": {},
+        }
+        engine = Engine(config_getter=lambda: cfg)
+        inst1 = engine.rebuild_base_system_instruction()
+        self.assertIn("Polite helper", inst1)
+        self.assertIn("Match response length naturally to the task", inst1)
+        self.assertNotIn("polite verbal confirmation", inst1)
+        self.assertNotIn("1-3 sentences", inst1)
+
+        cfg["api"]["system_instruction"] = "Sassy, hates administration and government"
+        inst2 = engine.rebuild_base_system_instruction()
+        self.assertIn("Sassy, hates administration and government", inst2)
+        self.assertNotIn("Polite helper", inst2)
+        self.assertIn("Sassy, hates administration and government", engine._build_system_instruction())
+
+    def test_gui_bridge_rebuilds_base_system_instruction_on_prompt_change(self):
+        mock_engine = MagicMock()
+        mock_engine.is_running = True
+        mock_engine._active_pipeline_mode = "live"
+        mock_engine.conn_mgr.state = ConnectionState.CONNECTED
+
+        bridge = GuiBridge(engine=mock_engine)
+        bridge._config = {
+            "voice_accent": "British",
+            "tts_voice": "Sulafat",
+            "api": {"voice_accent": "British", "voice_name": "Sulafat", "system_instruction": "Old"},
+            "ui": {},
+            "audio": {},
+        }
+
+        with patch("core.gui_bridge.save_config_atomic"):
+            res = bridge.save_config({"api": {"system_instruction": "Sassy, hates administration and government"}})
+            self.assertTrue(res["success"])
+            mock_engine.rebuild_base_system_instruction.assert_called_once()
+            mock_engine.invalidate_live_session.assert_called_once()
+
+    def test_personality_applies_to_game_mode_and_ttrpg_but_not_tier2_orchestrator(self):
+        from core.orchestrator import ORCHESTRATOR_SYSTEM_INSTRUCTION
+
+        persona = "Sassy, hates administration and government"
+        cfg = {
+            "api": {"agent_name": "Aether", "system_instruction": persona, "voice_accent": "default"},
+            "ui": {},
+            "audio": {},
+        }
+        engine = Engine(config_getter=lambda: cfg)
+        mock_ge = MagicMock()
+        mock_ge.is_game_mode_active.return_value = True
+        mock_ge.build_system_instruction.return_value = "GAME MODE BASE"
+        engine.game_engine = mock_ge
+
+        game_inst = engine._build_system_instruction()
+        self.assertIn("GAME MODE BASE", game_inst)
+        self.assertIn(persona, game_inst)
+
+        mock_ttrpg = MagicMock()
+        mock_ttrpg.build_gm_context_prompt.return_value = "TTRPG GM BASE"
+        engine.ttrpg_service = mock_ttrpg
+        engine.set_ttrpg_session_active(True)
+        rp_inst = engine._build_system_instruction()
+        self.assertIn("TTRPG GM BASE", rp_inst)
+        self.assertIn(persona, rp_inst)
+
+        self.assertNotIn(persona, ORCHESTRATOR_SYSTEM_INSTRUCTION)
+
 
 if __name__ == "__main__":
     unittest.main()

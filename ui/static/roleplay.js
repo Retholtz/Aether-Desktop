@@ -4780,6 +4780,14 @@ function initRolePlayStoryChatUI() {
     const storyForm = document.getElementById('rpStoryChatForm');
     const storyInput = document.getElementById('rpStoryChatInput');
     if (storyForm && storyInput) {
+        storyInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                storyInput.blur();
+                if (window.pywebview?.api?.set_input_focused) {
+                    window.pywebview.api.set_input_focused(false);
+                }
+            }
+        });
         storyForm.onsubmit = async (e) => {
             e.preventDefault();
             const text = storyInput.value.trim();
@@ -4795,6 +4803,10 @@ function initRolePlayStoryChatUI() {
                 return;
             }
             storyInput.value = '';
+            storyInput.blur();
+            if (window.pywebview?.api?.set_input_focused) {
+                window.pywebview.api.set_input_focused(false);
+            }
 
             try {
                 if (window.pywebview && window.pywebview.api) {
