@@ -172,7 +172,7 @@ function renderGamesSidebar() {
 
     if (gameIds.length === 0) {
         listEl.innerHTML = `
-            <div style="padding: 16px; color: #7d8597; font-size: 0.82rem; text-align: center;">
+            <div style="padding: 16px; color: var(--text-muted); font-size: 0.82rem; text-align: center;">
                 No games linked.<br>Click <strong>+ Add</strong> above.
             </div>
         `;
@@ -336,7 +336,7 @@ function renderActiveGameDetail() {
         const phrases = Object.keys(keybinds);
 
         if (phrases.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #7d8597; padding: 20px;">No voice macros configured yet. Click <strong>+ Add Keybind</strong> or <strong>Scan / Sync</strong>.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No voice macros configured yet. Click <strong>+ Add Keybind</strong> or <strong>Scan / Sync</strong>.</td></tr>`;
         } else {
             phrases.forEach(phrase => {
                 const bind = keybinds[phrase];
@@ -395,7 +395,7 @@ function renderCopilotLog(entries) {
 
     if (list.length === 0) {
         listEl.innerHTML = `
-            <div style="padding: 24px 12px; text-align: center; color: #64748b; font-size: 0.8rem;">
+            <div style="padding: 24px 12px; text-align: center; color: var(--text-dim); font-size: 0.8rem;">
                 No co-pilot observations logged yet.<br>
                 Aether records landmarks, clues, and milestones as you explore.
             </div>
@@ -421,7 +421,7 @@ function renderCopilotLog(entries) {
                     ${locText ? `<span class="copilot-entry-loc">${locText}</span>` : ''}
                 </div>
                 <div class="copilot-entry-right" style="display: flex; align-items: center; gap: 6px;">
-                    <span style="font-size: 0.68rem; color: #64748b;">${timeText}</span>
+                    <span style="font-size: 0.68rem; color: var(--text-dim);">${timeText}</span>
                 </div>
             </div>
             <div class="copilot-entry-summary">${escapeGameHtml(entry.summary || '')}</div>
@@ -542,7 +542,7 @@ async function toggleRunningProcesses() {
 async function loadRunningProcesses() {
     const list = document.getElementById('list-running-processes');
     if (!list) return;
-    list.innerHTML = '<div style="padding: 12px; text-align: center; color: #64748b; font-size: 0.8rem;">Scanning running processes...</div>';
+    list.innerHTML = '<div style="padding: 12px; text-align: center; color: var(--text-dim); font-size: 0.8rem;">Scanning running processes...</div>';
     try {
         const res = await window.pywebview.api.get_running_processes();
         cachedRunningProcesses = res;
@@ -565,7 +565,7 @@ function renderRunningProcessesList(data, filterText = '') {
     const filteredProcs = procs.filter(p => !q || p.toLowerCase().includes(q));
 
     if (filteredApps.length === 0 && filteredProcs.length === 0) {
-        list.innerHTML = '<div style="padding: 12px; text-align: center; color: #64748b; font-size: 0.8rem;">No matching processes found.</div>';
+        list.innerHTML = '<div style="padding: 12px; text-align: center; color: var(--text-dim); font-size: 0.8rem;">No matching processes found.</div>';
         return;
     }
 
@@ -591,7 +591,7 @@ function renderRunningProcessesList(data, filterText = '') {
     // 2. All running processes
     if (filteredProcs.length > 0) {
         const sectionHeader = document.createElement('div');
-        sectionHeader.style.cssText = 'padding: 6px 10px; background: rgba(255, 255, 255, 0.03); font-size: 0.72rem; color: #94a3b8; font-weight: 700;';
+        sectionHeader.style.cssText = 'padding: 6px 10px; background: var(--bg-panel); font-size: 0.72rem; color: var(--text-muted); font-weight: 700;';
         sectionHeader.textContent = 'ALL RUNNING PROCESSES';
         list.appendChild(sectionHeader);
 
@@ -599,7 +599,7 @@ function renderRunningProcessesList(data, filterText = '') {
             const item = document.createElement('div');
             item.className = 'proc-item';
             item.innerHTML = `
-                <span class="proc-item-title" style="color: #cbd5e1;">⚡ ${escapeGameHtml(pname)}</span>
+                <span class="proc-item-title" style="color: var(--text-secondary);">⚡ ${escapeGameHtml(pname)}</span>
                 <span class="proc-item-exe">${escapeGameHtml(pname)}</span>
             `;
             item.onclick = () => selectRunningProcess(pname);

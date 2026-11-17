@@ -25,6 +25,7 @@ from core.updater import (
     is_trusted_github_url,
     parse_version,
     select_release_asset,
+    strip_mark_of_the_web,
 )
 from core.version import APP_VERSION
 
@@ -41,7 +42,7 @@ def _make_mock_stream(zip_bytes: bytes, status_code: int = 200):
 
 class TestVersionAndAssetHelpers(unittest.TestCase):
     def test_extract_and_parse_versions(self):
-        self.assertEqual(APP_VERSION, "0.83")
+        self.assertEqual(APP_VERSION, "0.84")
         self.assertEqual(extract_version_string("Version 0.83"), "0.83")
         self.assertEqual(extract_version_string("v0.83"), "0.83")
         self.assertEqual(extract_version_string("Aether 0.83.zip"), "0.83")
@@ -232,6 +233,21 @@ class TestAtomicSwapCleanupAndBridgeIntegration(unittest.TestCase):
         self.assertFalse(os.path.exists(old_internal))
         self.assertFalse(os.path.exists(old_staging))
         self.assertTrue(os.path.isfile(keep_exe))
+
+    def test_strip_mark_of_the_web_removes_zone_identifier(self):
+        if os.name != "nt":
+            return
+        dll_path = os.path.join(self.test_dir, "Microsoft.Web.WebView2.Core.dll")
+        with open(dll_path, "wb") as f:
+            f.write(b"MZ_FAKE_DLL")
+        ads_path = f"{dll_path}:Zone.Identifier"
+        with open(ads_path, "w", encoding="utf-8") as f:
+            f.write("[ZoneTransfer]\nZoneId=3\n")
+        self.assertTrue(os.path.exists(ads_path))
+        cleared = strip_mark_of_the_web(self.test_dir)
+        self.assertEqual(cleared, 1)
+        self.assertFalse(os.path.exists(ads_path))
+        self.assertTrue(os.path.isfile(dll_path))
 
     @patch("core.updater.subprocess.Popen")
     def test_atomic_rename_swap_and_shell_free_relaunch(self, mock_popen):

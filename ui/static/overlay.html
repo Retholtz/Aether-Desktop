@@ -5,12 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aether HUD Overlay</title>
   <style>
-    :root {
+    :root,
+    :root[data-theme="dark"] {
+      color-scheme: dark;
       --bg-glass: rgba(18, 22, 32, 0.88);
       --border-glass: rgba(255, 255, 255, 0.14);
+      --bg-input: #1f1f1f;
+      --bg-hover: #383838;
+      --bg-code: rgba(10, 14, 22, 0.85);
+      --border-input: #3d3d3d;
       --accent: #00d2ff;
       --accent-glow: rgba(0, 210, 255, 0.35);
       --text-main: #f0f4f8;
+      --text-secondary: #cbd5e1;
       --text-muted: #8e9bb0;
       --status-listening: #00d2ff;
       --status-hearing: #ffd166;
@@ -19,6 +26,38 @@
       --status-speaking: #06d6a0;
       --status-error: #ef476f;
       --current-status-color: #00d2ff;
+    }
+
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg-glass: rgba(248, 250, 252, 0.96);
+      --border-glass: rgba(15, 23, 42, 0.18);
+      --bg-input: #ffffff;
+      --bg-hover: #e2e8f0;
+      --bg-code: #f1f5f9;
+      --border-input: #cbd5e1;
+      --accent: #0078d4;
+      --accent-glow: rgba(0, 120, 212, 0.22);
+      --text-main: #0f172a;
+      --text-secondary: #1e293b;
+      --text-muted: #475569;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        color-scheme: light;
+        --bg-glass: rgba(248, 250, 252, 0.96);
+        --border-glass: rgba(15, 23, 42, 0.18);
+        --bg-input: #ffffff;
+        --bg-hover: #e2e8f0;
+        --bg-code: #f1f5f9;
+        --border-input: #cbd5e1;
+        --accent: #0078d4;
+        --accent-glow: rgba(0, 120, 212, 0.22);
+        --text-main: #0f172a;
+        --text-secondary: #1e293b;
+        --text-muted: #475569;
+      }
     }
 
     * {
@@ -155,7 +194,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: 100%;
-      color: #e2e8f0;
+      color: var(--text-main);
       transition: color 0.3s ease;
     }
 
@@ -458,7 +497,7 @@
     }
 
     .exchange-body.user-text {
-      color: #cbd5e1;
+      color: var(--text-secondary);
       font-style: italic;
       max-height: 36px;
       white-space: pre-wrap;
@@ -468,7 +507,7 @@
       flex: 1;
       min-height: 0;
       max-height: none;
-      color: #f8fafc;
+      color: var(--text-main);
       padding-right: 4px;
     }
 
@@ -493,12 +532,12 @@
     }
 
     .formatted-content strong {
-      color: #ffffff;
+      color: var(--text-main);
       font-weight: 700;
     }
 
     .formatted-content em {
-      color: #e2e8f0;
+      color: var(--text-secondary);
       font-style: italic;
     }
 
@@ -534,8 +573,8 @@
     }
 
     .hud-code-block {
-      background: rgba(10, 14, 22, 0.85);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: var(--bg-code);
+      border: 1px solid var(--border-glass);
       border-radius: 6px;
       margin: 6px 0;
       overflow-x: auto;
@@ -546,8 +585,8 @@
     }
 
     .hud-code-header {
-      background: rgba(255, 255, 255, 0.05);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--bg-hover);
+      border-bottom: 1px solid var(--border-glass);
       padding: 2px 8px;
       font-size: 10px;
       font-weight: 600;
@@ -559,7 +598,7 @@
     .hud-code-block code {
       display: block;
       padding: 8px;
-      color: #e2e8f0;
+      color: var(--text-main);
       white-space: pre;
     }
 
@@ -720,9 +759,9 @@
     .hud-chat-input {
       flex: 1;
       min-width: 0;
-      background: #1f1f1f;
-      border: 1px solid #3d3d3d;
-      color: var(--text-main, #ffffff);
+      background: var(--bg-input);
+      border: 1px solid var(--border-input);
+      color: var(--text-main);
       font-family: inherit;
       font-size: 13px;
       padding: 8px 12px;
@@ -734,7 +773,7 @@
     }
 
     .hud-chat-input::placeholder {
-      color: #767676;
+      color: var(--text-muted);
     }
 
     .hud-chat-input:focus {
@@ -742,9 +781,9 @@
     }
 
     .hud-chat-send-btn {
-      background: #1f1f1f;
-      border: 1px solid #3d3d3d;
-      color: #a6a6a6;
+      background: var(--bg-input);
+      border: 1px solid var(--border-input);
+      color: var(--text-main);
       font-family: inherit;
       font-size: 11px;
       font-weight: 600;
@@ -757,8 +796,8 @@
     }
 
     .hud-chat-send-btn:hover {
-      background: #383838;
-      color: #ffffff;
+      background: var(--bg-hover);
+      color: var(--text-main);
       border-color: var(--accent, #0078d4);
     }
 
@@ -828,13 +867,13 @@
     }
 
     body.status-standby .mini-title-label {
-      color: #94a3b8 !important;
-      opacity: 0.85;
+      color: var(--text-muted) !important;
+      opacity: 0.9;
     }
 
     body.status-standby .overlay-card {
-      border-color: rgba(255, 255, 255, 0.09);
-      filter: saturate(0.65);
+      border-color: var(--border-glass);
+      filter: saturate(0.75);
     }
   </style>
 </head>
@@ -2044,6 +2083,12 @@
         }
       });
 
+      window.applyOverlayTheme = function(resolvedTheme) {
+        const mode = resolvedTheme === "light" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", mode);
+        document.documentElement.style.colorScheme = mode;
+      };
+
       // Query initial configuration & theme upon pywebview ready
       let _hasInitializedOverlay = false;
       async function initOverlay() {
@@ -2051,15 +2096,22 @@
         if (!window.pywebview || !window.pywebview.api) return;
         _hasInitializedOverlay = true;
 
+        let windowsIsDark = true;
         try {
           if (window.pywebview.api.get_windows_theme) {
             const theme = await window.pywebview.api.get_windows_theme();
-            if (theme && theme.accent_color) {
-              document.documentElement.style.setProperty("--accent", theme.accent_color);
+            if (theme) {
+              if (typeof theme.is_dark === "boolean") windowsIsDark = theme.is_dark;
+              if (theme.accent_color) {
+                document.documentElement.style.setProperty("--accent", theme.accent_color);
+              }
             }
           }
           if (window.pywebview.api.get_overlay_config) {
             const oCfg = await window.pywebview.api.get_overlay_config();
+            const pref = String(oCfg?.theme || "system").toLowerCase();
+            const resolved = (pref === "light" || pref === "dark") ? pref : (windowsIsDark ? "dark" : "light");
+            window.applyOverlayTheme(resolved);
             if (oCfg && oCfg.state) {
               setStatus(oCfg.state);
             } else {

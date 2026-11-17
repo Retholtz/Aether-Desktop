@@ -90,6 +90,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,  # Set to True if you want a console window for stdout debugging
+    uac_admin=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

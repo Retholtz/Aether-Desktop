@@ -299,6 +299,23 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 10.0)
     }
 
 
+def strip_mark_of_the_web(target_dir: str) -> int:
+    """Removes NTFS Zone.Identifier alternate data streams from extracted binaries."""
+    if os.name != "nt" or not target_dir or not os.path.exists(target_dir):
+        return 0
+    cleared = 0
+    for root, _, files in os.walk(target_dir):
+        for filename in files:
+            ads_path = f"{os.path.join(root, filename)}:Zone.Identifier"
+            try:
+                if os.path.exists(ads_path):
+                    os.remove(ads_path)
+                    cleared += 1
+            except OSError:
+                pass
+    return cleared
+
+
 def _safe_extract_zip(zip_path: str, extract_dir: str) -> None:
     """Verifies archive integrity and extracts a zip archive while guarding against path traversal."""
     abs_extract_dir = os.path.abspath(extract_dir)
@@ -416,6 +433,9 @@ def download_and_stage_update(
         if progress_cb:
             progress_cb(100, 100, "extracting")
         _safe_extract_zip(zip_path, extract_dir)
+        cleared_ads = strip_mark_of_the_web(stage_dir)
+        if cleared_ads:
+            logger.info(f"[UPDATER] Cleared {cleared_ads} Zone.Identifier stream(s) from staged update.")
     except Exception as exc:
         return {"success": False, "error": f"Failed to extract update archive: {exc}"}
 

@@ -181,6 +181,7 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     ui_cfg = cfg.setdefault("ui", {})
     ui_cfg.setdefault("floating_overlay", "on_minimize")
     ui_cfg.setdefault("minimize_to_tray", True)
+    ui_cfg.setdefault("theme", "system")
     hud_mode = ui_cfg.get("hud_mode") or cfg.get("hud_mode") or "normal"
     ui_cfg["hud_mode"] = hud_mode
     cfg["hud_mode"] = hud_mode

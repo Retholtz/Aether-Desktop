@@ -2353,6 +2353,18 @@ class GuiBridge:
 
         }
 
+    def set_overlay_theme(self, theme: str) -> dict:
+        """Pushes the resolved Light/Dark theme to the floating HUD overlay window."""
+        mode = "light" if str(theme).lower() == "light" else "dark"
+        if getattr(self, "_overlay_window", None) is not None:
+            try:
+                self._overlay_window.evaluate_js(
+                    f"window.applyOverlayTheme && window.applyOverlayTheme({json.dumps(mode)})"
+                )
+            except Exception:
+                pass
+        return {"success": True, "theme": mode}
+
 
 
     # =========================================================================

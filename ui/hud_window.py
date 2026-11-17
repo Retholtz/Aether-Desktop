@@ -240,11 +240,13 @@ class HUDBridge:
         cfg = self._bridge.get_raw_config()
         agent_name = cfg.get("api", {}).get("agent_name", "Aether")
         hud_mode = cfg.get("ui", {}).get("hud_mode", "normal")
+        ui_theme = cfg.get("ui", {}).get("theme", "system")
         is_running = getattr(self._bridge._engine, "is_running", False) if self._bridge._engine else False
         return {
             "success": True,
             "agent_name": agent_name,
             "hud_mode": hud_mode,
+            "theme": ui_theme,
             "is_running": is_running,
             "state": "listening" if is_running else "standby",
         }
@@ -717,6 +719,11 @@ class HudWindow:
         if hasattr(self.bridge, "_is_shutting_down"):
             self.bridge._is_shutting_down = True
 
+        # Guarantee process termination even if WinForms/WebView2 blocks Application.Exit
+        watchdog = threading.Timer(2.5, os._exit, args=(0,))
+        watchdog.daemon = True
+        watchdog.start()
+
         if getattr(self, "_session_ending_handler", None) is not None:
             try:
                 from Microsoft.Win32 import SystemEvents
@@ -750,6 +757,12 @@ class HudWindow:
                     self.window.destroy()
             except Exception:
                 pass
+            if sys.platform == "win32":
+                try:
+                    from System.Windows.Forms import Application
+                    Application.Exit()
+                except Exception:
+                    pass
 
     def close_all(self):
         """Cleanly closes all windows and stops tray."""
@@ -757,12 +770,29 @@ class HudWindow:
 
     def start(self, debug: bool = False):
         """Starts the PyWebView main GUI event loop and system tray."""
+        import logging
+        import traceback
+
+        logging.getLogger("pywebview").setLevel(logging.DEBUG)
         print(f"[HUD] Launching pywebview window from {self.html_path}...")
         self.tray.start()
         try:
             webview.start(self._on_started, debug=debug)
+        except Exception as exc:
+            err_trace = traceback.format_exc()
+            logging.getLogger("Aether").critical("PyWebView failed to initialize:\n%s", err_trace)
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    ctypes.windll.user32.MessageBoxW(
+                        0,
+                        f"Aether UI failed to start. Please ensure Microsoft Edge WebView2 Runtime is installed.\n\nError: {exc}",
+                        "Aether Desktop Startup Error",
+                        0x10,
+                    )
+                except Exception:
+                    pass
+            raise
         finally:
-            if hasattr(self.bridge, "_is_shutting_down"):
-                self.bridge._is_shutting_down = True
-            self.tray.stop()
+            self._cleanup_before_window_close(destroy_main=False)
 

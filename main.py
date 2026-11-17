@@ -8,7 +8,30 @@ import asyncio
 import os
 import sys
 import threading
+from pathlib import Path
 from typing import Any, Optional
+
+
+def strip_mark_of_the_web(target_dir: Path) -> int:
+    """Removes NTFS Zone.Identifier alternate data streams from extracted binaries."""
+    if os.name != "nt" or not target_dir.exists():
+        return 0
+    cleared = 0
+    for root, _, files in os.walk(target_dir):
+        for filename in files:
+            ads_path = f"{os.path.join(root, filename)}:Zone.Identifier"
+            try:
+                if os.path.exists(ads_path):
+                    os.remove(ads_path)
+                    cleared += 1
+            except OSError:
+                pass
+    return cleared
+
+
+# Run immediately on frozen builds before pythonnet / pywebview loads .NET DLLs
+if getattr(sys, "frozen", False):
+    strip_mark_of_the_web(Path(sys.executable).resolve().parent)
 
 from core.screen_stream import ensure_thread_desktop, init_dpi_awareness
 init_dpi_awareness()
@@ -160,8 +183,36 @@ def main():
                 pass
             sys.exit(0)
 
+    # Check Windows runtime prerequisites (WebView2 & .NET) before launching GUI
+    if sys.platform == "win32":
+        try:
+            from core.runtime_prereqs import check_windows_prerequisites, prompt_missing_prerequisites
+            prereq_status = check_windows_prerequisites()
+            if not prereq_status.get("ok", True):
+                print(f"[WARN] [PREREQS] Missing runtime(s): {', '.join(prereq_status.get('missing', []))}")
+                if not prompt_missing_prerequisites(prereq_status):
+                    sys.exit(1)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            print(f"[WARN] [PREREQS] Could not verify Windows runtimes: {exc}")
+
     print("=" * 60)
     print("           AETHER DESKTOP - MODULAR ARCHITECTURE")
+    # Check Windows runtime prerequisites (WebView2 & .NET) before launching GUI
+    if sys.platform == "win32":
+        try:
+            from core.runtime_prereqs import check_windows_prerequisites, prompt_missing_prerequisites
+            prereq_status = check_windows_prerequisites()
+            if not prereq_status.get("ok", True):
+                print(f"[WARN] [PREREQS] Missing runtime(s): {', '.join(prereq_status.get('missing', []))}")
+                if not prompt_missing_prerequisites(prereq_status):
+                    sys.exit(1)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            print(f"[WARN] [PREREQS] Could not verify Windows runtimes: {exc}")
+
     print("=" * 60)
 
     # 0. Fire-and-forget background cache maintenance (prunes scripts > 7 days old)
@@ -196,6 +247,9 @@ def main():
         hud.start(debug=False)
     finally:
         print("\n[SHUTDOWN] Window closed. Stopping assistant engine...")
+        shutdown_watchdog = threading.Timer(2.5, os._exit, args=(0,))
+        shutdown_watchdog.daemon = True
+        shutdown_watchdog.start()
         try:
             bridge.stop_audio_watcher()
         except Exception:

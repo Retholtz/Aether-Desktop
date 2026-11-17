@@ -53,7 +53,7 @@ function renderProjectsSidebar() {
 
     if (projectIds.length === 0) {
         listEl.innerHTML = `
-            <div style="padding: 16px; color: #7d8597; font-size: 0.82rem; text-align: center;">
+            <div style="padding: 16px; color: var(--text-muted); font-size: 0.82rem; text-align: center;">
                 No projects linked.<br>Click <strong>+ Add</strong> above to create a workspace.
             </div>
         `;
@@ -117,7 +117,7 @@ async function renderActiveProjectWorkspace() {
         if (filesBody) {
             filesBody.innerHTML = `
                 <tr>
-                    <td colspan="5" style="text-align: center; color: #7d8597; padding: 24px;">
+                    <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">
                         Create or select a project on the left to manage documents, scrape web URLs, and enable Cloud Sync.
                     </td>
                 </tr>
@@ -180,7 +180,7 @@ async function refreshProjectFilesList() {
         if (!files || files.length === 0) {
             filesBody.innerHTML = `
                 <tr>
-                    <td colspan="5" style="text-align: center; color: #7d8597; padding: 20px;">
+                    <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">
                         No documents in this project yet. Drag & drop files above or import a Web URL.
                     </td>
                 </tr>

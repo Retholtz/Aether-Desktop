@@ -1,0 +1,52 @@
+{
+  "agent_name": "Aether",
+  "wake_phrase": "Hey Aether",
+  "kill_phrase": "Aether stop",
+  "tts_endpoint": "gemini-live-voice-stream",
+  "tts_voice": "Achernar",
+  "tts_speed": 1.0,
+  "voice_accent": "Default (Native / Standard)",
+  "api_key_encrypted": "",
+  "primary_model_endpoint": "gemini-3.8-live",
+  "tier2_moderate_model": "gemini-4-hydrogen:medium",
+  "ttrpg_model_endpoint": "gemini-4-hydrogen:medium",
+  "tier3_heavy_model": "gemini-4-argon:medium",
+  "tier2_heavy_model": "gemini-4-argon:medium",
+  "tier2_thinking_level": "medium",
+  "stt_model_endpoint": "gemini_live_audio",
+  "tts_model_endpoint": "gemini-live-voice-stream",
+  "creativity_temperature": 0.7,
+  "wake_word_enabled": true,
+  "idle_timeout_seconds": 8.0,
+  "boot_on_startup": false,
+  "start_minimized": false,
+  "models": {
+    "primary_options": [
+      { "id": "gemini-3.8-live", "label": "Gemini 3.8 Live (Default)" },
+      { "id": "gemini-4-hydrogen:instant", "label": "Gemini 4.0 Hydrogen Instant (Modular)" },
+      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (Modular High Speed)" }
+    ],
+    "tier2_moderate_options": [
+      { "id": "gemini-4-hydrogen:low", "label": "Gemini 4.0 Hydrogen Low" },
+      { "id": "gemini-4-hydrogen:medium", "label": "Gemini 4.0 Hydrogen Medium (Default)" },
+      { "id": "gemini-4-hydrogen:high", "label": "Gemini 4.0 Hydrogen High" },
+      { "id": "gemini-4-hydrogen:xhigh", "label": "Gemini 4.0 Hydrogen Extra" }
+    ],
+    "tier2_options": [
+      { "id": "gemini-4-argon:low", "label": "Gemini 4.0 Argon Low" },
+      { "id": "gemini-4-argon:medium", "label": "Gemini 4.0 Argon Medium (Default)" },
+      { "id": "gemini-4-argon:high", "label": "Gemini 4.0 Argon High" }
+    ],
+    "stt_options": [
+      { "id": "gemini_live_audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)" },
+      { "id": "primary_flash_stt", "label": "Gemini Flash Multimodal Audio (REST One-Shot Fallback)" }
+    ],
+    "tts_options": [
+      { "id": "gemini-live-voice-stream", "label": "Gemini Live Multimodal Voice Stream (~0.5s Realtime WebSocket - Recommended)" },
+      { "id": "gemini-3.8-flash-tts", "label": "Gemini 3.8 Flash TTS (Streaming Cloud Speech)" },
+      { "id": "edge-neural-tts", "label": "Edge Neural TTS (300+ Regional & Accent Voices)" },
+      { "id": "windows-sapi5", "label": "Windows Native SAPI5 / Local Voices (Instantaneous Offline)" },
+      { "id": "local-tts", "label": "Local TTS Server (Kokoro / OpenAI / FastTTS)" }
+    ]
+  }
+}

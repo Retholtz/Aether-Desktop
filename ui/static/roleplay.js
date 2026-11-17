@@ -522,7 +522,7 @@ function renderCampaignDocuments() {
     listEl.innerHTML = "";
     if (docNames.length === 0) {
         listEl.innerHTML = `
-            <div style="text-align: center; color: #64748b; font-size: 11px; padding: 6px 4px;">
+            <div style="text-align: center; color: var(--text-dim); font-size: 11px; padding: 6px 4px;">
                 No adventure modules, rulesets, or notes loaded yet.
             </div>
         `;
@@ -616,9 +616,9 @@ function renderInitiativeLadder() {
 
             if (hp !== undefined && hp <= 0) {
                 if (dsStatus === "dead" || ds?.failures >= 3 || item.status === "Dead") {
-                    hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(100, 116, 139, 0.35); color: #94a3b8; border: 1px solid #64748b;" title="Player is Dead">💀 Dead</span>`;
+                    hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(100, 116, 139, 0.35); color: var(--text-muted); border: 1px solid var(--text-dim);" title="Player is Dead">💀 Dead</span>`;
                 } else if (dsStatus === "stable" || ds?.successes >= 3 || item.status?.includes("Stable")) {
-                    hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(14, 165, 233, 0.3); color: #38bdf8; border: 1px solid #0284c7;" title="Player is Stable at 0 HP">🩹 Stable (0 HP)</span>`;
+                    hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(14, 165, 233, 0.3); color: var(--accent-cyan); border: 1px solid #0284c7;" title="Player is Stable at 0 HP">🩹 Stable (0 HP)</span>`;
                 } else {
                     hpDisplay = `<span class="ladder-hp-pill" style="background: rgba(239, 68, 68, 0.35); color: #f87171; border: 1px solid #ef4444;" title="Player is Dying: Death Saves: ${ds?.successes || 0}S / ${ds?.failures || 0}F">💀 Dying (0 HP)</span>`;
                 }
@@ -876,10 +876,10 @@ function renderCardSpellsSection(char) {
   const isOverPrepared = (maxPrepAllowed > 0 && prepLeveledCount > maxPrepAllowed);
   const statusBadgeHtml = isOverPrepared
     ? `<span class="badge-count" style="color: #f87171; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); padding: 1px 6px; border-radius: 4px; font-size: 9.5px; font-weight: 700; cursor: pointer;" title="Character is over spell preparation limit! Click to edit character and unprepare spells." onclick="handleOpenEditCharacterModal('${escapeRpJs(String(charId))}')">⚠️ OVER LIMIT: ${prepLeveledCount}/${maxPrepAllowed}</span>`
-    : `<span class="badge-count" style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${activeSpells.length} ACTIVE</span>`;
+    : `<span class="badge-count" style="color: var(--text-muted); font-size: 9.5px; font-weight: 600;">${activeSpells.length} ACTIVE</span>`;
 
   return `
-    <div class="card-section spells-section char-spells-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 6px 8px;">
+    <div class="card-section spells-section char-spells-shelf" style="margin-top: 8px; background: var(--bg-elevated); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 6px 8px;">
       <div class="section-header" style="font-size: 10px; font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
         <span class="section-title">✨ SPELLS &amp; CANTRIPS</span>
         <div style="display: flex; gap: 6px; align-items: center;">
@@ -889,7 +889,7 @@ function renderCardSpellsSection(char) {
       </div>
       ${slotsBarHtml}
       <div class="active-spells-list">
-        ${activeSpellsHtml.length ? activeSpellsHtml : '<div class="empty-state" style="font-size: 10.5px; color: #64748b; font-style: italic; padding: 2px 0;">No spells prepared for today.</div>'}
+        ${activeSpellsHtml.length ? activeSpellsHtml : '<div class="empty-state" style="font-size: 10.5px; color: var(--text-dim); font-style: italic; padding: 2px 0;">No spells prepared for today.</div>'}
       </div>
       ${unpreparedDrawerHtml}
     </div>
@@ -1072,7 +1072,7 @@ function renderPartyRoster() {
                 <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 0.78rem;">
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                         <span style="font-weight: 700; color: #f87171;">⚠️ Confiscated Gear &amp; World Items (${storedItems.length}):</span>
-                        <span style="color: #cbd5e1; display: inline-flex; flex-wrap: wrap; gap: 4px;">
+                        <span style="color: var(--text-secondary); display: inline-flex; flex-wrap: wrap; gap: 4px;">
                             ${storedItems.map(si => {
                                 const isDestroyed = (si.status === 'destroyed' || si.salvageable === false);
                                 const isInside = (si.status === 'inside_creature');
@@ -1098,9 +1098,9 @@ function renderPartyRoster() {
                                     locLabel = `Held at: ${si.storage_location || 'Evidence Cache'}${si.discovery_clue ? ' • ' + si.discovery_clue : ''}`;
                                 }
 
-                                return `<span style="background: rgba(15, 23, 42, 0.65); padding: 3px 8px; border-radius: 4px; border: 1px solid ${badgeColor}; display: inline-block;">
+                                return `<span style="background: var(--bg-deep); padding: 3px 8px; border-radius: 4px; border: 1px solid ${badgeColor}; display: inline-block;">
                                     <span>${badgeIcon} <strong>${escapeRpHtml(si.original_owner || 'Party')}</strong>: <span style="${extraStyle}">${escapeRpHtml(si.name)}</span></span>
-                                    <em style="color: ${isDestroyed ? '#f87171' : (isInside ? '#fbbf24' : (isUnknown ? '#94a3b8' : '#38bdf8'))}; font-size: 0.7rem; margin-left: 4px;">[${escapeRpHtml(locLabel)}]</em>
+                                    <em style="color: ${isDestroyed ? '#f87171' : (isInside ? '#fbbf24' : (isUnknown ? 'var(--text-muted)' : '#38bdf8'))}; font-size: 0.7rem; margin-left: 4px;">[${escapeRpHtml(locLabel)}]</em>
                                 </span>`;
                             }).join("")}
                         </span>
@@ -1116,9 +1116,9 @@ function renderPartyRoster() {
     gridEl.innerHTML = "";
     if (charIds.length === 0) {
         gridEl.innerHTML = `
-            <div style="flex: 1; text-align: center; padding: 48px 20px; color: #64748b;">
+            <div style="flex: 1; text-align: center; padding: 48px 20px; color: var(--text-dim);">
                 <div style="font-size: 2.2rem; margin-bottom: 10px;">🎲</div>
-                <div style="font-size: 0.95rem; color: #cbd5e1; font-weight: 600; margin-bottom: 4px;">No Characters in Party Roster</div>
+                <div style="font-size: 0.95rem; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">No Characters in Party Roster</div>
                 <div style="font-size: 0.82rem;">Click <strong>+ Add Character</strong> above or upload a <strong>Character Sheet</strong> in the DM Library for Aether to import.</div>
             </div>
         `;
@@ -1224,10 +1224,10 @@ function renderPartyRoster() {
 
             if (unknown.length > 0) {
                 sections.push(`
-                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(239, 68, 68, 0.08); border: 1px dashed rgba(239, 68, 68, 0.35); border-radius: 4px; font-size: 9.5px; color: #fca5a5;">
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(239, 68, 68, 0.08); border: 1px dashed rgba(239, 68, 68, 0.35); border-radius: 4px; font-size: 9.5px; color: var(--accent-rose);">
                         <div style="font-weight: 600;">🔒 Confiscated Gear (Location Unknown):</div>
-                        <div style="color: #cbd5e1; margin-top: 2px;">${unknown.map(s => escapeRpHtml(s.name)).join(", ")}</div>
-                        <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px; font-style: italic;">Taken upon arrest • Location not yet discovered</div>
+                        <div style="color: var(--text-secondary); margin-top: 2px;">${unknown.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 2px; font-style: italic;">Taken upon arrest • Location not yet discovered</div>
                     </div>
                 `);
             }
@@ -1236,10 +1236,10 @@ function renderPartyRoster() {
                 const locSummary = known[0].storage_location || "Guard Barracks";
                 const clueSummary = known[0].discovery_clue ? ` • ${known[0].discovery_clue}` : "";
                 sections.push(`
-                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 4px; font-size: 9.5px; color: #38bdf8;">
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(56, 189, 248, 0.08); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 4px; font-size: 9.5px; color: var(--accent-cyan);">
                         <div style="font-weight: 600;">📍 Confiscated Gear (Location Known):</div>
-                        <div style="color: #cbd5e1; margin-top: 2px;">${known.map(s => escapeRpHtml(s.name)).join(", ")}</div>
-                        <div style="font-size: 8.5px; color: #94a3b8; margin-top: 2px;">Held at: <strong style="color: #e2e8f0;">${escapeRpHtml(locSummary)}</strong>${escapeRpHtml(clueSummary)}</div>
+                        <div style="color: var(--text-secondary); margin-top: 2px;">${known.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="font-size: 8.5px; color: var(--text-muted); margin-top: 2px;">Held at: <strong style="color: var(--text-main);">${escapeRpHtml(locSummary)}</strong>${escapeRpHtml(clueSummary)}</div>
                     </div>
                 `);
             }
@@ -1247,9 +1247,9 @@ function renderPartyRoster() {
             if (inside.length > 0) {
                 const beastName = inside[0].holder_or_creature || "Creature";
                 sections.push(`
-                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(245, 158, 11, 0.08); border: 1px dashed rgba(245, 158, 11, 0.35); border-radius: 4px; font-size: 9.5px; color: #fbbf24;">
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(245, 158, 11, 0.08); border: 1px dashed rgba(245, 158, 11, 0.35); border-radius: 4px; font-size: 9.5px; color: var(--accent-amber);">
                         <div style="font-weight: 600;">🐉 Swallowed Gear (Inside ${escapeRpHtml(beastName)}):</div>
-                        <div style="color: #cbd5e1; margin-top: 2px;">${inside.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="color: var(--text-secondary); margin-top: 2px;">${inside.map(s => escapeRpHtml(s.name)).join(", ")}</div>
                         <div style="font-size: 8.5px; color: #d97706; margin-top: 2px; font-style: italic;">Can be salvaged upon slaying the creature</div>
                     </div>
                 `);
@@ -1258,9 +1258,9 @@ function renderPartyRoster() {
             if (destroyed.length > 0) {
                 const destLoc = destroyed[0].storage_location || "Lava / Acid";
                 sections.push(`
-                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(71, 85, 105, 0.15); border: 1px dashed rgba(100, 116, 139, 0.4); border-radius: 4px; font-size: 9.5px; color: #94a3b8;">
+                    <div style="margin-top: 4px; padding: 4px 7px; background: rgba(71, 85, 105, 0.15); border: 1px dashed rgba(100, 116, 139, 0.4); border-radius: 4px; font-size: 9.5px; color: var(--text-muted);">
                         <div style="font-weight: 600; color: #f87171;">🔥 Destroyed Gear (Lost Forever):</div>
-                        <div style="color: #cbd5e1; margin-top: 2px; text-decoration: line-through;">${destroyed.map(s => escapeRpHtml(s.name)).join(", ")}</div>
+                        <div style="color: var(--text-secondary); margin-top: 2px; text-decoration: line-through;">${destroyed.map(s => escapeRpHtml(s.name)).join(", ")}</div>
                         <div style="font-size: 8.5px; color: #ef4444; margin-top: 2px; font-style: italic;">Destroyed in ${escapeRpHtml(destLoc)} • Cannot be recovered</div>
                     </div>
                 `);
@@ -1269,17 +1269,17 @@ function renderPartyRoster() {
             storedConfiscatedHtml = sections.join("");
         }
         const wpnsHtml = `
-            <div class="char-weapons-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
-                <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
+            <div class="char-weapons-shelf" style="margin-top: 8px; background: var(--bg-elevated); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
+                <div style="font-size: 10px; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
                     <span>⚔️ WEAPONS &amp; ATTACKS</span>
-                    <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35);" onclick="handleOpenAddWeaponModal('${escapeRpJs(ch.name)}')">+ Add Weapon</button>
+                    <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.35);" onclick="handleOpenAddWeaponModal('${escapeRpJs(ch.name)}')">+ Add Weapon</button>
                 </div>
                 ${wpns.length > 0 ? wpns.map(w => `
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--border-subtle);">
                         <div style="font-size: 11px;">
-                            <strong style="color: #f1f5f9;">${escapeRpHtml(w.name)}</strong>
-                            <span style="color: #94a3b8; font-size: 10px; margin-left: 4px;">${escapeRpHtml(w.atk_bonus || "+0")} (${escapeRpHtml(w.damage || "")})</span>
-                            ${w.notes ? `<span style="font-size: 9.5px; color: #64748b; margin-left: 4px;">[${escapeRpHtml(w.notes)}]</span>` : ""}
+                            <strong style="color: var(--text-main);">${escapeRpHtml(w.name)}</strong>
+                            <span style="color: var(--text-muted); font-size: 10px; margin-left: 4px;">${escapeRpHtml(w.atk_bonus || "+0")} (${escapeRpHtml(w.damage || "")})</span>
+                            ${w.notes ? `<span style="font-size: 9.5px; color: var(--text-dim); margin-left: 4px;">[${escapeRpHtml(w.notes)}]</span>` : ""}
                         </div>
                         <div style="display: flex; gap: 4px; align-items: center;">
                             <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px;" title="Roll Attack Check" onclick="handleRollWeaponAttack('${escapeRpJs(ch.name)}', '${escapeRpJs(w.name)}', '${escapeRpJs(w.atk_bonus || "+0")}')">🎲 Atk</button>
@@ -1287,7 +1287,7 @@ function renderPartyRoster() {
                             <button type="button" class="vital-step-btn" style="font-size: 9px; padding: 0 4px; color: #f87171;" title="Remove Weapon" onclick="handleDeleteWeapon('${escapeRpJs(ch.name)}', '${escapeRpJs(w.name)}')">✕</button>
                         </div>
                     </div>
-                `).join("") : `<div style="font-size: 10.5px; color: #64748b; font-style: italic; padding: 2px 0;">No weapons equipped.</div>`}
+                `).join("") : `<div style="font-size: 10.5px; color: var(--text-dim); font-style: italic; padding: 2px 0;">No weapons equipped.</div>`}
                 ${storedConfiscatedHtml}
             </div>
         `;
@@ -1295,12 +1295,12 @@ function renderPartyRoster() {
         // Build Inventory Shelf HTML
         const inv = Array.isArray(ch.inventory) ? ch.inventory : [];
         const invHtml = `
-            <div class="char-inventory-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
-                <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
+            <div class="char-inventory-shelf" style="margin-top: 8px; background: var(--bg-elevated); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
+                <div style="font-size: 10px; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
                     <span>🎒 INVENTORY &amp; GEAR</span>
                     <div style="display: flex; gap: 6px; align-items: center;">
-                        <span style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${inv.length} ITEMS</span>
-                        <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35);" onclick="handleOpenAddInventoryModal('${escapeRpJs(ch.name)}')">+ Add Items</button>
+                        <span style="color: var(--text-muted); font-size: 9.5px; font-weight: 600;">${inv.length} ITEMS</span>
+                        <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 9.5px; background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.35);" onclick="handleOpenAddInventoryModal('${escapeRpJs(ch.name)}')">+ Add Items</button>
                     </div>
                 </div>
                 ${inv.length > 0 ? `
@@ -1312,14 +1312,14 @@ function renderPartyRoster() {
                             const itemNotes = typeof item === "object" ? (item.notes || "") : "";
                             const label = `${itemName}${itemQty && itemQty !== "1" ? ' x' + itemQty : ''}${itemWt ? ' [' + itemWt + ']' : ''}${itemNotes ? ' (' + itemNotes + ')' : ''}`;
                             return `
-                            <span class="rp-gear-badge" style="background: rgba(30, 41, 59, 0.85); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 4px; padding: 2px 7px; font-size: 10px; color: #cbd5e1; display: inline-flex; align-items: center; gap: 4px;">
+                            <span class="rp-gear-badge" style="background: var(--bg-card); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 4px; padding: 2px 7px; font-size: 10px; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px;">
                                 ${escapeRpHtml(label)}
-                                <span style="cursor: pointer; color: #94a3b8; font-size: 9px; margin-left: 2px;" title="Remove Item" onclick="handleDeleteInventoryItem('${escapeRpJs(ch.name)}', '${escapeRpJs(itemName)}')">✕</span>
+                                <span style="cursor: pointer; color: var(--text-muted); font-size: 9px; margin-left: 2px;" title="Remove Item" onclick="handleDeleteInventoryItem('${escapeRpJs(ch.name)}', '${escapeRpJs(itemName)}')">✕</span>
                             </span>
                             `;
                         }).join("")}
                     </div>
-                ` : `<div style="font-size: 10.5px; color: #64748b; font-style: italic;">Inventory empty.</div>`}
+                ` : `<div style="font-size: 10.5px; color: var(--text-dim); font-style: italic;">Inventory empty.</div>`}
             </div>
         `;
 
@@ -1332,21 +1332,21 @@ function renderPartyRoster() {
         let featsHtml = "";
         if (feats.length > 0) {
             featsHtml = `
-                <div class="char-features-shelf" style="margin-top: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
-                    <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
+                <div class="char-features-shelf" style="margin-top: 8px; background: var(--bg-elevated); border: 1px solid rgba(100, 116, 139, 0.2); border-radius: 6px; padding: 6px 8px;">
+                    <div style="font-size: 10px; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">
                         <span>📜 FEATURES &amp; TRAITS</span>
-                        <span style="color: #94a3b8; font-size: 9.5px; font-weight: 600;">${feats.length} TRAITS</span>
+                        <span style="color: var(--text-muted); font-size: 9.5px; font-weight: 600;">${feats.length} TRAITS</span>
                     </div>
-                    <div style="font-size: 10.5px; color: #cbd5e1; line-height: 1.45; max-height: 160px; overflow-y: auto;">
+                    <div style="font-size: 10.5px; color: var(--text-secondary); line-height: 1.45; max-height: 160px; overflow-y: auto;">
                         ${feats.map(f => {
                             const raw = typeof f === "string" ? f : f.name + (f.description ? ": " + f.description : "");
                             const colonIdx = raw.indexOf(":");
                             if (colonIdx !== -1) {
                                 const title = raw.substring(0, colonIdx).trim();
                                 const desc = raw.substring(colonIdx + 1).trim();
-                                return `<div style="margin-bottom: 3px;"><strong style="color: #f1f5f9;">• ${escapeRpHtml(title)}</strong>: <span style="color: #94a3b8; font-size: 10px;">${escapeRpHtml(desc)}</span></div>`;
+                                return `<div style="margin-bottom: 3px;"><strong style="color: var(--text-main);">• ${escapeRpHtml(title)}</strong>: <span style="color: var(--text-muted); font-size: 10px;">${escapeRpHtml(desc)}</span></div>`;
                             }
-                            return `<div style="margin-bottom: 3px;"><strong style="color: #f1f5f9;">• ${escapeRpHtml(raw)}</strong></div>`;
+                            return `<div style="margin-bottom: 3px;"><strong style="color: var(--text-main);">• ${escapeRpHtml(raw)}</strong></div>`;
                         }).join("")}
                     </div>
                 </div>
@@ -1369,16 +1369,16 @@ function renderPartyRoster() {
             acText = `${Number(guard.current)} AC`;
         }
 
-        const initBadge = ch.initiative ? `<span class="char-guard-badge" style="color: #fbbf24; border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.1);" title="Initiative Modifier">⚡ Init ${escapeRpHtml(ch.initiative)}</span>` : "";
-        const speedBadge = ch.speed ? `<span class="char-guard-badge" style="color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); background: rgba(148, 163, 184, 0.1);" title="Movement Speed">🏃 ${escapeRpHtml(ch.speed)}</span>` : "";
-        const defensesBadge = (ch.defenses || ch.resistances) ? `<span class="char-guard-badge" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.1);" title="Defenses & Resistances">🛡️ ${escapeRpHtml(ch.defenses || ch.resistances)}</span>` : "";
+        const initBadge = ch.initiative ? `<span class="char-guard-badge" style="color: var(--accent-amber); border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.1);" title="Initiative Modifier">⚡ Init ${escapeRpHtml(ch.initiative)}</span>` : "";
+        const speedBadge = ch.speed ? `<span class="char-guard-badge" style="color: var(--text-muted); border-color: rgba(148, 163, 184, 0.35); background: rgba(148, 163, 184, 0.1);" title="Movement Speed">🏃 ${escapeRpHtml(ch.speed)}</span>` : "";
+        const defensesBadge = (ch.defenses || ch.resistances) ? `<span class="char-guard-badge" style="color: var(--accent-cyan); border-color: rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.1);" title="Defenses & Resistances">🛡️ ${escapeRpHtml(ch.defenses || ch.resistances)}</span>` : "";
         const sensesBadge = ch.senses ? `<span class="char-guard-badge" style="color: #a78bfa; border-color: rgba(167, 139, 250, 0.35); background: rgba(167, 139, 250, 0.1);" title="Senses & Vision">👁️ ${escapeRpHtml(ch.senses)}</span>` : "";
         const goldVal = ch.currency && typeof ch.currency === "object" ? ch.currency.gp : null;
         let coinBadge = "";
         if (!isCoc) {
             if (isCyber) {
                 const ebVal = ch.currency?.eb ?? 0;
-                coinBadge = `<span class="char-guard-badge" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.1);" title="Eurodollars">💶 ${ebVal} eb</span>`;
+                coinBadge = `<span class="char-guard-badge" style="color: var(--accent-cyan); border-color: rgba(56, 189, 248, 0.35); background: rgba(56, 189, 248, 0.1);" title="Eurodollars">💶 ${ebVal} eb</span>`;
             } else if (goldVal !== null && goldVal !== undefined) {
                 coinBadge = `<span class="char-guard-badge" style="color: #facc15; border-color: rgba(250, 204, 21, 0.35); background: rgba(250, 204, 21, 0.1);" title="Gold Pieces">🪙 ${goldVal} GP</span>`;
             }
@@ -1402,7 +1402,7 @@ function renderPartyRoster() {
             } else if (charXp >= nextLvlXp) {
                 xpBadgeHtml = `<button type="button" class="rp-badge diff-easy" style="cursor: pointer; font-size: 10px; font-weight: bold; background: rgba(34, 197, 94, 0.22); border: 1px solid #22c55e; color: #4ade80; padding: 1px 7px; white-space: nowrap;" onclick="openLevelUpWizard('${escapeRpHtml(ch.name)}', 'campaign', { reason: 'Reached ${Number(charXp).toLocaleString()} XP milestone' })" title="Level Up Ready! Click to open Guided Level-Up Wizard">⭐ LEVEL UP READY (${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()})</button>`;
             } else {
-                xpBadgeHtml = `<span class="rp-badge" style="background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.3); color: #cbd5e1; font-size: 10px; padding: 1px 6px; white-space: nowrap;" title="XP: Current / Next Level">XP: ${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()}</span>`;
+                xpBadgeHtml = `<span class="rp-badge" style="background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.3); color: var(--text-secondary); font-size: 10px; padding: 1px 6px; white-space: nowrap;" title="XP: Current / Next Level">XP: ${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()}</span>`;
             }
         }
 
@@ -1421,9 +1421,9 @@ function renderPartyRoster() {
 
             let statusPill = "";
             if (dsStatus === "dead" || failCount >= 3) {
-                statusPill = `<span style="background: rgba(100, 116, 139, 0.4); color: #cbd5e1; border: 1px solid #64748b; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">💀 DEAD</span>`;
+                statusPill = `<span style="background: rgba(100, 116, 139, 0.4); color: var(--text-secondary); border: 1px solid var(--text-dim); padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">💀 DEAD</span>`;
             } else if (dsStatus === "stable" || succCount >= 3) {
-                statusPill = `<span style="background: rgba(14, 165, 233, 0.25); color: #38bdf8; border: 1px solid #0284c7; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">🩹 STABLE (0 HP)</span>`;
+                statusPill = `<span style="background: rgba(14, 165, 233, 0.25); color: var(--accent-cyan); border: 1px solid #0284c7; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">🩹 STABLE (0 HP)</span>`;
             } else {
                 statusPill = `<span style="background: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid #ef4444; padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px;">💀 DYING (0 HP)</span>`;
             }
@@ -1432,19 +1432,19 @@ function renderPartyRoster() {
             const failPips = [1, 2, 3].map(i => `<span style="color: ${i <= failCount ? '#ef4444' : '#475569'}; font-size: 12px;">${i <= failCount ? '●' : '○'}</span>`).join(" ");
 
             deathSavesHtml = `
-                <div class="death-saves-panel" style="margin-top: 6px; padding: 5px 8px; background: rgba(15, 23, 42, 0.75); border: 1px solid ${dsStatus === 'dead' ? '#64748b' : (dsStatus === 'stable' ? '#0284c7' : '#ef4444')}; border-radius: 5px;">
+                <div class="death-saves-panel" style="margin-top: 6px; padding: 5px 8px; background: var(--bg-deep); border: 1px solid ${dsStatus === 'dead' ? 'var(--text-dim)' : (dsStatus === 'stable' ? '#0284c7' : '#ef4444')}; border-radius: 5px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
-                        <span style="font-size: 10.5px; font-weight: 700; color: #cbd5e1;">💀 Death Saves (DC 10):</span>
+                        <span style="font-size: 10.5px; font-weight: 700; color: var(--text-secondary);">💀 Death Saves (DC 10):</span>
                         ${statusPill}
                     </div>
                     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10px;">
                         <div>
                             <span style="color: #4ade80; font-weight: 600;">Succ:</span> ${succPips}
-                            <span style="color: #64748b; margin: 0 4px;">|</span>
+                            <span style="color: var(--text-dim); margin: 0 4px;">|</span>
                             <span style="color: #f87171; font-weight: 600;">Fail:</span> ${failPips}
                         </div>
                         ${(dsStatus === 'dying' && failCount < 3 && succCount < 3) ? `
-                            <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px; background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5;" onclick="handleRollDeathSave('${escapeRpHtml(ch.name)}')">🎲 Roll Save</button>
+                            <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px; background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: var(--accent-rose);" onclick="handleRollDeathSave('${escapeRpHtml(ch.name)}')">🎲 Roll Save</button>
                         ` : ''}
                     </div>
                 </div>
@@ -1459,7 +1459,7 @@ function renderPartyRoster() {
                             <span class="mic-pulse-indicator" title="Active Single-Mic Speaker">🎙️</span>
                             <h4 class="char-name char-name-title" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeRpHtml(ch.name)}</h4>
                             <span class="caller-crown ${isCaller ? 'active' : ''}" title="Designated Party Caller">👑 CALLER</span>
-                            <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: #38bdf8; font-size: 10px; padding: 1px 6px; white-space: nowrap;">${rulesetBadge}</span>
+                            <span class="rp-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.35); color: var(--accent-cyan); font-size: 10px; padding: 1px 6px; white-space: nowrap;">${rulesetBadge}</span>
                             ${xpBadgeHtml}
                         </div>
                         <div class="card-controls" style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
@@ -1548,14 +1548,14 @@ function renderSessionJournal() {
     // 1. Live Recap / Last Turn Memory
     if (recap) {
         recapBox.innerHTML = `
-            <div style="font-weight: 700; color: #38bdf8; font-size: 0.76rem; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 0.05em; display: flex; align-items: center; gap: 6px;">
+            <div style="font-weight: 700; color: var(--accent-cyan); font-size: 0.76rem; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 0.05em; display: flex; align-items: center; gap: 6px;">
                 <span>📍</span> <span>Last Turn &amp; Session Memory (Preserved across Restarts):</span>
             </div>
-            <div style="color: #f1f5f9; font-size: 0.86rem; line-height: 1.45;">${escapeRpHtml(recap)}</div>
+            <div style="color: var(--text-main); font-size: 0.86rem; line-height: 1.45;">${escapeRpHtml(recap)}</div>
         `;
     } else {
         recapBox.innerHTML = `
-            <div style="color: #64748b; font-size: 0.82rem; font-style: italic;">
+            <div style="color: var(--text-dim); font-size: 0.82rem; font-style: italic;">
                 No session recap recorded yet. As your campaign progresses, Aether automatically records your scene beats, discovered clues, and last turn memory here so they persist when you restart.
             </div>
         `;
@@ -1599,7 +1599,7 @@ function renderSessionJournal() {
 
     // 3. Chronological Journal Entries
     if (journal.length === 0) {
-        entriesList.innerHTML = `<div style="color: #64748b; font-size: 0.78rem; text-align: center; padding: 12px 0;">No journal entries logged yet. Click <strong>+ Add Note</strong> to record your first session beat!</div>`;
+        entriesList.innerHTML = `<div style="color: var(--text-dim); font-size: 0.78rem; text-align: center; padding: 12px 0;">No journal entries logged yet. Click <strong>+ Add Note</strong> to record your first session beat!</div>`;
     } else {
         entriesList.innerHTML = "";
         [...journal].reverse().forEach(ent => {
@@ -1612,10 +1612,10 @@ function renderSessionJournal() {
 
             card.innerHTML = `
                 <div class="entry-meta">
-                    <span style="font-weight: 600; color: #94a3b8;">${escapeRpHtml(ent.location || "Session Beat")}</span>
+                    <span style="font-weight: 600; color: var(--text-muted);">${escapeRpHtml(ent.location || "Session Beat")}</span>
                     <span>${escapeRpHtml(timeStr)}</span>
                 </div>
-                <div style="color: #e2e8f0; font-size: 0.83rem;">${escapeRpHtml(ent.summary || "")}</div>
+                <div style="color: var(--text-main); font-size: 0.83rem;">${escapeRpHtml(ent.summary || "")}</div>
                 ${cluesHtml}
             `;
             entriesList.appendChild(card);
@@ -1660,7 +1660,7 @@ function appendDiceAuditEntry(rollData) {
         entry.dataset.rollId = rollData.roll_id;
     }
     const nowStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    const purposeHtml = rollData.purpose ? `<div style="color: #38bdf8; font-weight: 600; font-size: 11px;">${escapeRpHtml(rollData.purpose)}</div>` : "";
+    const purposeHtml = rollData.purpose ? `<div style="color: var(--accent-cyan); font-weight: 600; font-size: 11px;">${escapeRpHtml(rollData.purpose)}</div>` : "";
 
     const actorName = rollData.character_name || (rollData.purpose && rollData.purpose.match(/^([A-Za-z0-9_'\s]+?)\s+(?:makes|rolls|checks|saves|attacks|athletics|perception|investigation|stealth)/i)?.[1]) || "";
     const isDm = actorName && (actorName.toLowerCase().includes("dm") || actorName.toLowerCase().includes("game master") || actorName.toLowerCase().includes("monster"));
@@ -1889,22 +1889,22 @@ function renderStagedWeapons() {
 
     containers.forEach(cont => {
         if (!stagedCharacterWeapons || stagedCharacterWeapons.length === 0) {
-            cont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No weapons equipped. Click <strong>+ Add Weapon</strong> above to add with structured fields.</div>`;
+            cont.innerHTML = `<div style="font-size: 0.73rem; color: var(--text-dim); font-style: italic; padding: 4px 2px;">No weapons equipped. Click <strong>+ Add Weapon</strong> above to add with structured fields.</div>`;
             return;
         }
         cont.innerHTML = stagedCharacterWeapons.map((w, idx) => `
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 6px; padding: 5px 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-card); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 6px; padding: 5px 8px;">
                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                     <span style="font-size: 0.85rem;">⚔️</span>
-                    <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(w.name)}</strong>
-                    <span style="color: #38bdf8; font-size: 0.74rem; font-weight: 600;">${escapeRpHtml(w.atk_bonus || "+0")}</span>
-                    <span style="color: #cbd5e1; font-size: 0.74rem;">(${escapeRpHtml(w.damage || "1d4")})</span>
-                    ${w.type ? `<span style="color: #94a3b8; font-size: 0.68rem; background: rgba(148, 163, 184, 0.15); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(w.type)}</span>` : ""}
-                    ${w.notes ? `<span style="color: #64748b; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(w.notes)}]</span>` : ""}
+                    <strong style="color: var(--text-main); font-size: 0.8rem;">${escapeRpHtml(w.name)}</strong>
+                    <span style="color: var(--accent-cyan); font-size: 0.74rem; font-weight: 600;">${escapeRpHtml(w.atk_bonus || "+0")}</span>
+                    <span style="color: var(--text-secondary); font-size: 0.74rem;">(${escapeRpHtml(w.damage || "1d4")})</span>
+                    ${w.type ? `<span style="color: var(--text-muted); font-size: 0.68rem; background: rgba(148, 163, 184, 0.15); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(w.type)}</span>` : ""}
+                    ${w.notes ? `<span style="color: var(--text-dim); font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(w.notes)}]</span>` : ""}
                 </div>
                 ${isCurrentModalViewOnly ? "" : `
                 <div style="display: flex; align-items: center; gap: 4px;">
-                    <button type="button" class="vital-step-btn" style="color: #38bdf8; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit weapon" onclick="handleEditStagedWeapon(${idx})">✏️</button>
+                    <button type="button" class="vital-step-btn" style="color: var(--accent-cyan); font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit weapon" onclick="handleEditStagedWeapon(${idx})">✏️</button>
                     <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove weapon" onclick="handleRemoveStagedWeapon(${idx})">✕</button>
                 </div>
                 `}
@@ -1959,7 +1959,7 @@ function renderStagedCustomMeters(isViewOnly = isCurrentModalViewOnly) {
     container.innerHTML = "";
     const entries = Object.entries(stagedCustomMeters || {});
     if (entries.length === 0) {
-        container.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px; grid-column: 1 / -1;">No rest meters active. Click <strong>+ Add Tracker</strong> to track class abilities or magic item uses.</div>`;
+        container.innerHTML = `<div style="font-size: 0.73rem; color: var(--text-dim); font-style: italic; padding: 4px 2px; grid-column: 1 / -1;">No rest meters active. Click <strong>+ Add Tracker</strong> to track class abilities or magic item uses.</div>`;
         return;
     }
 
@@ -2139,7 +2139,7 @@ function renderStagedSpells() {
     if (!activeCont) return;
 
     if (!stagedCharacterSpells || stagedCharacterSpells.length === 0) {
-        activeCont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No spells added. Click <strong>+ Add Spell</strong> above to add with level, damage, DC, and range fields.</div>`;
+        activeCont.innerHTML = `<div style="font-size: 0.73rem; color: var(--text-dim); font-style: italic; padding: 4px 2px;">No spells added. Click <strong>+ Add Spell</strong> above to add with level, damage, DC, and range fields.</div>`;
         updatePreparedSpellsTally();
         return;
     }
@@ -2155,15 +2155,15 @@ function renderStagedSpells() {
         const isAlwaysPrep = Boolean(s && s.is_always_prepared);
         const isPrep = (isCantrip || isAlwaysPrep) ? true : (s && s.prepared === true);
         return `
-            <div class="spell-item-row" data-is-cantrip="${isCantrip ? 'true' : 'false'}" data-is-always-prepared="${isAlwaysPrep ? 'true' : 'false'}" style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 8px;">
+            <div class="spell-item-row" data-is-cantrip="${isCantrip ? 'true' : 'false'}" data-is-always-prepared="${isAlwaysPrep ? 'true' : 'false'}" style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-card); border: 1px solid rgba(168, 85, 247, 0.35); border-radius: 6px; padding: 5px 8px;">
                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                     <span style="font-size: 0.85rem;">✨</span>
-                    <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(sName)}</strong>
+                    <strong style="color: var(--text-main); font-size: 0.8rem;">${escapeRpHtml(sName)}</strong>
                     <span style="color: #c084fc; font-size: 0.68rem; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(sLvl)}</span>
-                    ${sAtk ? `<span style="color: #38bdf8; font-size: 0.74rem; font-weight: 600;">${escapeRpHtml(sAtk)}</span>` : ""}
+                    ${sAtk ? `<span style="color: var(--accent-cyan); font-size: 0.74rem; font-weight: 600;">${escapeRpHtml(sAtk)}</span>` : ""}
                     ${sDmg ? `<span style="color: #f87171; font-size: 0.74rem; font-weight: 600;">(${escapeRpHtml(sDmg)})</span>` : ""}
-                    ${sRange ? `<span style="color: #94a3b8; font-size: 0.7rem;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
-                    ${sNotes ? `<span style="color: #64748b; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(sNotes)}]</span>` : ""}
+                    ${sRange ? `<span style="color: var(--text-muted); font-size: 0.7rem;">📍 ${escapeRpHtml(sRange)}</span>` : ""}
+                    ${sNotes ? `<span style="color: var(--text-dim); font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(sNotes)}]</span>` : ""}
                     <label style="display: inline-flex; align-items: center; gap: 3px; font-size: 0.72rem; color: #a78bfa; cursor: pointer; margin-left: 4px;" title="Prepared Spell for Today">
                         <input type="checkbox" class="spell-prep-checkbox" data-idx="${idx}" ${(isCantrip || isAlwaysPrep) ? 'checked disabled' : (isPrep ? 'checked' : '')} ${isCurrentModalViewOnly ? 'disabled' : ''} onchange="handleToggleStagedSpellPrepared(${idx}, this.checked)" />
                         <span style="font-size: 0.68rem; font-weight: 600; color: #c084fc;">${isCantrip ? 'At-Will' : (isAlwaysPrep ? 'Oath/Domain' : 'Prep')}</span>
@@ -2251,7 +2251,7 @@ function renderStagedCyberware() {
     if (!cont) return;
 
     if (!stagedCharacterCyberware || stagedCharacterCyberware.length === 0) {
-        cont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No cyberware implants installed. Click <strong>+ Add Cyberware</strong> above to install neural links, cyberoptics, or armor.</div>`;
+        cont.innerHTML = `<div style="font-size: 0.73rem; color: var(--text-dim); font-style: italic; padding: 4px 2px;">No cyberware implants installed. Click <strong>+ Add Cyberware</strong> above to install neural links, cyberoptics, or armor.</div>`;
         return;
     }
 
@@ -2261,17 +2261,17 @@ function renderStagedCyberware() {
         const slot = typeof cw === "object" ? (cw.slot || "") : "";
         const det = typeof cw === "object" ? (cw.details || "") : "";
         return `
-            <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 5px 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-card); border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 6px; padding: 5px 8px;">
                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                     <span style="font-size: 0.85rem;">🦾</span>
-                    <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(name)}</strong>
-                    ${cat ? `<span style="color: #38bdf8; font-size: 0.68rem; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(cat)}</span>` : ""}
+                    <strong style="color: var(--text-main); font-size: 0.8rem;">${escapeRpHtml(name)}</strong>
+                    ${cat ? `<span style="color: var(--accent-cyan); font-size: 0.68rem; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(cat)}</span>` : ""}
                     ${slot ? `<span style="color: #a78bfa; font-size: 0.7rem; font-weight: 500;">[${escapeRpHtml(slot)}]</span>` : ""}
-                    ${det ? `<span style="color: #94a3b8; font-size: 0.7rem; font-style: italic;">${escapeRpHtml(det)}</span>` : ""}
+                    ${det ? `<span style="color: var(--text-muted); font-size: 0.7rem; font-style: italic;">${escapeRpHtml(det)}</span>` : ""}
                 </div>
                 ${isCurrentModalViewOnly ? "" : `
                 <div style="display: flex; align-items: center; gap: 4px;">
-                    <button type="button" class="vital-step-btn" style="color: #38bdf8; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit cyberware" onclick="handleEditStagedCyberware(${idx})">✏️</button>
+                    <button type="button" class="vital-step-btn" style="color: var(--accent-cyan); font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit cyberware" onclick="handleEditStagedCyberware(${idx})">✏️</button>
                     <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove cyberware" onclick="handleRemoveStagedCyberware(${idx})">✕</button>
                 </div>
                 `}
@@ -2298,7 +2298,7 @@ function updateCyberwareLivePreview() {
 
     let parts = [`<strong>${escapeRpHtml(name)}</strong> (${escapeRpHtml(cat)})`];
     if (slot) parts.push(`<span style="color: #a78bfa;">[${escapeRpHtml(slot)}]</span>`);
-    if (details) parts.push(`<span style="color: #94a3b8; font-style: italic;">${escapeRpHtml(details)}</span>`);
+    if (details) parts.push(`<span style="color: var(--text-muted); font-style: italic;">${escapeRpHtml(details)}</span>`);
 
     previewEl.innerHTML = parts.join(" • ");
 }
@@ -2567,7 +2567,7 @@ function renderStagedInventory() {
 
     containers.forEach(cont => {
         if (!stagedCharacterInventory || stagedCharacterInventory.length === 0) {
-            cont.innerHTML = `<div style="font-size: 0.73rem; color: #64748b; font-style: italic; padding: 4px 2px;">No items in inventory. Click <strong>+ Add Item</strong> above to add gear, loot, potions, or supplies.</div>`;
+            cont.innerHTML = `<div style="font-size: 0.73rem; color: var(--text-dim); font-style: italic; padding: 4px 2px;">No items in inventory. Click <strong>+ Add Item</strong> above to add gear, loot, potions, or supplies.</div>`;
             return;
         }
 
@@ -2578,7 +2578,7 @@ function renderStagedInventory() {
             const cat = typeof item === "object" ? (item.category || "Gear") : "Gear";
             const notes = typeof item === "object" ? (item.notes || "") : "";
 
-            let catColor = "#94a3b8";
+            let catColor = "var(--text-muted)";
             let catBg = "rgba(148, 163, 184, 0.15)";
             if (cat === "Consumable") { catColor = "#34d399"; catBg = "rgba(52, 211, 153, 0.15)"; }
             else if (cat === "Armor") { catColor = "#60a5fa"; catBg = "rgba(96, 165, 250, 0.15)"; }
@@ -2587,18 +2587,18 @@ function renderStagedInventory() {
             else if (cat === "Tool") { catColor = "#c084fc"; catBg = "rgba(192, 132, 252, 0.15)"; }
 
             return `
-                <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(30, 41, 59, 0.65); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 6px; padding: 5px 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-card); border: 1px solid rgba(100, 116, 139, 0.35); border-radius: 6px; padding: 5px 8px;">
                     <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                         <span style="font-size: 0.85rem;">🎒</span>
-                        <strong style="color: #f1f5f9; font-size: 0.8rem;">${escapeRpHtml(name)}</strong>
-                        ${qty && qty !== "1" ? `<span style="color: #fbbf24; font-size: 0.72rem; font-weight: 700; background: rgba(251, 191, 36, 0.15); padding: 1px 5px; border-radius: 3px;">x${escapeRpHtml(qty)}</span>` : ""}
-                        ${wt ? `<span style="color: #cbd5e1; font-size: 0.7rem; font-weight: 600; background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.3); padding: 1px 5px; border-radius: 3px;" title="Item Weight">⚖️ ${escapeRpHtml(wt)}</span>` : ""}
+                        <strong style="color: var(--text-main); font-size: 0.8rem;">${escapeRpHtml(name)}</strong>
+                        ${qty && qty !== "1" ? `<span style="color: var(--accent-amber); font-size: 0.72rem; font-weight: 700; background: rgba(251, 191, 36, 0.15); padding: 1px 5px; border-radius: 3px;">x${escapeRpHtml(qty)}</span>` : ""}
+                        ${wt ? `<span style="color: var(--text-secondary); font-size: 0.7rem; font-weight: 600; background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.3); padding: 1px 5px; border-radius: 3px;" title="Item Weight">⚖️ ${escapeRpHtml(wt)}</span>` : ""}
                         ${cat ? `<span style="color: ${catColor}; font-size: 0.68rem; background: ${catBg}; border: 1px solid ${catColor}44; padding: 1px 5px; border-radius: 3px;">${escapeRpHtml(cat)}</span>` : ""}
-                        ${notes ? `<span style="color: #94a3b8; font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(notes)}]</span>` : ""}
+                        ${notes ? `<span style="color: var(--text-muted); font-size: 0.7rem; font-style: italic;">[${escapeRpHtml(notes)}]</span>` : ""}
                     </div>
                     ${isCurrentModalViewOnly ? "" : `
                     <div class="staged-item-controls" style="display: flex; align-items: center; gap: 4px;">
-                        <button type="button" class="vital-step-btn" style="color: #38bdf8; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit item" onclick="handleEditStagedInventory(${idx})">✏️</button>
+                        <button type="button" class="vital-step-btn" style="color: var(--accent-cyan); font-size: 0.75rem; padding: 1px 6px; border-color: rgba(56, 189, 248, 0.3);" title="Edit item" onclick="handleEditStagedInventory(${idx})">✏️</button>
                         <button type="button" class="vital-step-btn" style="color: #f87171; font-size: 0.75rem; padding: 1px 6px; border-color: rgba(248, 113, 113, 0.3);" title="Remove item" onclick="handleRemoveStagedInventory(${idx})">✕</button>
                     </div>
                     `}
@@ -2626,10 +2626,10 @@ function updateItemLivePreview() {
     const notes = (document.getElementById("input-item-notes")?.value || "").trim();
 
     let parts = [`<strong>${escapeRpHtml(name)}</strong>`];
-    if (qty && qty !== "1") parts.push(`<span style="color: #fbbf24; font-weight: 700;">x${escapeRpHtml(qty)}</span>`);
-    if (wt) parts.push(`<span style="color: #cbd5e1; font-weight: 600;">⚖️ ${escapeRpHtml(wt)}</span>`);
-    if (cat) parts.push(`<span style="color: #38bdf8;">(${escapeRpHtml(cat)})</span>`);
-    if (notes) parts.push(`<span style="color: #94a3b8; font-style: italic;">[${escapeRpHtml(notes)}]</span>`);
+    if (qty && qty !== "1") parts.push(`<span style="color: var(--accent-amber); font-weight: 700;">x${escapeRpHtml(qty)}</span>`);
+    if (wt) parts.push(`<span style="color: var(--text-secondary); font-weight: 600;">⚖️ ${escapeRpHtml(wt)}</span>`);
+    if (cat) parts.push(`<span style="color: var(--accent-cyan);">(${escapeRpHtml(cat)})</span>`);
+    if (notes) parts.push(`<span style="color: var(--text-muted); font-style: italic;">[${escapeRpHtml(notes)}]</span>`);
 
     previewEl.innerHTML = parts.join(" • ");
 }
@@ -2748,12 +2748,12 @@ function updateSpellLivePreview() {
     const range = (document.getElementById("input-spell-range")?.value || "").trim();
 
     let parts = [`<strong>${escapeRpHtml(name)}</strong> (${escapeRpHtml(lvl)})`];
-    if (atk) parts.push(`<span style="color: #38bdf8;">${escapeRpHtml(atk)}</span>`);
+    if (atk) parts.push(`<span style="color: var(--accent-cyan);">${escapeRpHtml(atk)}</span>`);
     if (dmg) {
         const fullDmg = dmgType && !dmg.toLowerCase().includes(dmgType.toLowerCase()) ? `${dmg} ${dmgType}` : dmg;
         parts.push(`<span style="color: #f87171;">(${escapeRpHtml(fullDmg)})</span>`);
     }
-    if (range) parts.push(`<span style="color: #94a3b8;">${escapeRpHtml(range)}</span>`);
+    if (range) parts.push(`<span style="color: var(--text-muted);">${escapeRpHtml(range)}</span>`);
 
     previewEl.innerHTML = parts.join(" • ");
 }
@@ -3314,12 +3314,12 @@ function renderDndSkillsGrid(skillsObj) {
         }
 
         return `
-            <label class="dnd-skill-item" style="display: flex; align-items: center; gap: 5px; background: rgba(30, 41, 59, 0.55); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 4px; padding: 3px 6px; cursor: pointer; font-size: 11px;">
+            <label class="dnd-skill-item" style="display: flex; align-items: center; gap: 5px; background: var(--bg-card); border: 1px solid rgba(100, 116, 139, 0.25); border-radius: 4px; padding: 3px 6px; cursor: pointer; font-size: 11px;">
                 <input type="checkbox" class="dnd-skill-chk" data-skill="${escapeRpHtml(s.name)}" data-stat="${s.stat}" ${isProf ? 'checked' : ''} />
-                <span style="color: #cbd5e1; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeRpHtml(s.name)} (${s.stat.toUpperCase()})">
-                    ${escapeRpHtml(s.name)} <span style="font-size: 9px; color: #64748b;">${s.stat.toUpperCase()}</span>
+                <span style="color: var(--text-secondary); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeRpHtml(s.name)} (${s.stat.toUpperCase()})">
+                    ${escapeRpHtml(s.name)} <span style="font-size: 9px; color: var(--text-dim);">${s.stat.toUpperCase()}</span>
                 </span>
-                <span id="val-dnd-skill-${cleanKey}" style="margin-left: auto; font-weight: 700; font-size: 10.5px; color: ${isProf ? '#4ade80' : '#94a3b8'};">+0</span>
+                <span id="val-dnd-skill-${cleanKey}" style="margin-left: auto; font-weight: 700; font-size: 10.5px; color: ${isProf ? '#4ade80' : 'var(--text-muted)'};">+0</span>
             </label>
         `;
     }).join("");
@@ -3368,7 +3368,7 @@ function updateDndCalculations() {
             const isProf = Boolean(chk && chk.checked);
             const total = mod + (isProf ? profBonus : 0);
             valEl.textContent = formatMod(total);
-            valEl.style.color = isProf ? "#4ade80" : (total >= 0 ? "#94a3b8" : "#f87171");
+            valEl.style.color = isProf ? "#4ade80" : (total >= 0 ? "var(--text-muted)" : "#f87171");
         }
     }
 
@@ -3390,7 +3390,7 @@ function updateDndCalculations() {
                 const statMod = mods[s.stat] || 0;
                 const total = statMod + (isProf ? profBonus : 0);
                 valEl.textContent = formatMod(total);
-                valEl.style.color = isProf ? "#4ade80" : (total >= 0 ? "#94a3b8" : "#f87171");
+                valEl.style.color = isProf ? "#4ade80" : (total >= 0 ? "var(--text-muted)" : "#f87171");
             }
         });
     }
@@ -3526,11 +3526,11 @@ function renderCocSkillsGrid(skillsObj = {}) {
         const isUpgraded = val > s.def;
 
         return `
-            <div class="coc-skill-item" style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; background: rgba(15, 23, 42, 0.45); border-radius: 4px; border: 1px solid ${isUpgraded ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255, 255, 255, 0.05)'};">
-                <span style="font-size: 0.72rem; color: ${isUpgraded ? '#f1f5f9' : '#94a3b8'}; font-weight: ${isUpgraded ? '600' : '400'};" title="${escapeRpHtml(s.name)} (Base: ${s.def}%)">${escapeRpHtml(s.name)}</span>
+            <div class="coc-skill-item" style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; background: var(--bg-elevated); border-radius: 4px; border: 1px solid ${isUpgraded ? 'rgba(56, 189, 248, 0.3)' : 'var(--border-subtle)'};">
+                <span style="font-size: 0.72rem; color: ${isUpgraded ? 'var(--text-main)' : 'var(--text-muted)'}; font-weight: ${isUpgraded ? '600' : '400'};" title="${escapeRpHtml(s.name)} (Base: ${s.def}%)">${escapeRpHtml(s.name)}</span>
                 <div style="display: flex; align-items: center; gap: 4px;">
-                    <input type="number" id="input-coc-skill-${cleanKey}" data-skill="${escapeRpHtml(s.name)}" class="modal-input coc-skill-input" value="${val}" min="0" max="99" style="width: 44px; padding: 2px 4px; font-size: 0.75rem; text-align: center; font-weight: 700; ${isUpgraded ? 'color: #38bdf8;' : ''}" />
-                    <span style="font-size: 0.65rem; color: #64748b;"><span id="half-coc-skill-${cleanKey}" style="color: #38bdf8;">${half}</span>/<span id="fifth-coc-skill-${cleanKey}" style="color: #eab308;">${fifth}</span></span>
+                    <input type="number" id="input-coc-skill-${cleanKey}" data-skill="${escapeRpHtml(s.name)}" class="modal-input coc-skill-input" value="${val}" min="0" max="99" style="width: 44px; padding: 2px 4px; font-size: 0.75rem; text-align: center; font-weight: 700; ${isUpgraded ? 'color: var(--accent-cyan);' : ''}" />
+                    <span style="font-size: 0.65rem; color: var(--text-dim);"><span id="half-coc-skill-${cleanKey}" style="color: var(--accent-cyan);">${half}</span>/<span id="fifth-coc-skill-${cleanKey}" style="color: #eab308;">${fifth}</span></span>
                 </div>
             </div>
         `;
@@ -3795,13 +3795,13 @@ async function handleOpenEditCharacterModal(charId, source = "campaign", isViewO
         const rpMax = document.getElementById("label-rp-char-xp-max");
         if (dndMax) {
             dndMax.textContent = maxText;
-            dndMax.style.color = isReady ? "#4ade80" : "#94a3b8";
+            dndMax.style.color = isReady ? "#4ade80" : "var(--text-muted)";
             dndMax.style.fontWeight = isReady ? "700" : "600";
             dndMax.title = isReady ? `Level Up Ready for Level ${lvl + 1}!` : `Next Level at ${nextReq.toLocaleString()} XP`;
         }
         if (rpMax) {
             rpMax.textContent = maxText;
-            rpMax.style.color = isReady ? "#4ade80" : "#94a3b8";
+            rpMax.style.color = isReady ? "#4ade80" : "var(--text-muted)";
             rpMax.style.fontWeight = isReady ? "700" : "600";
             rpMax.title = isReady ? `Level Up Ready for Level ${lvl + 1}!` : `Next Level at ${nextReq.toLocaleString()} XP`;
         }
@@ -7369,7 +7369,7 @@ async function refreshVaultModalUI() {
     if (filtered.length === 0) {
         const label = activeVaultTab === "all" ? "Vault" : getRulesetDisplayLabel(activeVaultTab);
         container.innerHTML = `
-            <div style="text-align: center; color: #64748b; font-size: 12px; padding: 24px 8px;">
+            <div style="text-align: center; color: var(--text-dim); font-size: 12px; padding: 24px 8px;">
                 No ${escapeRpHtml(label)} characters in the vault yet.<br>Click <strong>➕ New Hero</strong>, <strong>📄 Upload Sheet</strong>, or switch tabs above.
             </div>
         `;
@@ -7384,19 +7384,19 @@ async function refreshVaultModalUI() {
         const rulesetLabel = c.ruleset_label || getRulesetDisplayLabel(rulesetKey);
         const genreLabel = SYSTEM_PRESET_LABELS[c.native_genre] || c.native_genre || "Heroic Fantasy";
         const currentGenreLabel = c.current_genre ? (SYSTEM_PRESET_LABELS[c.current_genre] || c.current_genre) : genreLabel;
-        const parentHint = (!isRoot && c.parent_id) ? `<span style="font-size: 10px; color: #94a3b8; margin-left: 6px;">(Branch from: ${escapeRpHtml(c.parent_id)})</span>` : "";
+        const parentHint = (!isRoot && c.parent_id) ? `<span style="font-size: 10px; color: var(--text-muted); margin-left: 6px;">(Branch from: ${escapeRpHtml(c.parent_id)})</span>` : "";
 
         return `
             <div class="vault-char-card" data-char-id="${escapeRpHtml(c.id)}">
                 <div style="display: flex; flex-direction: column; gap: 4px;">
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                        <span style="font-weight: 700; color: #f1f5f9; font-size: 13.5px;">${escapeRpHtml(c.name)}</span>
+                        <span style="font-weight: 700; color: var(--text-main); font-size: 13.5px;">${escapeRpHtml(c.name)}</span>
                         <span class="${badgeClass}">${escapeRpHtml(badgeText)}</span>
-                        <span class="rp-badge ruleset-badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 600;">📜 ${escapeRpHtml(rulesetLabel)}</span>
+                        <span class="rp-badge ruleset-badge" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.35); font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 600;">📜 ${escapeRpHtml(rulesetLabel)}</span>
                         ${parentHint}
                     </div>
-                    <div style="font-size: 11px; color: #94a3b8;">
-                        Lv. ${c.level || 1} ${escapeRpHtml(c.archetype || "Hero")} • Ruleset: <span style="color: #38bdf8; font-weight: 600;">${escapeRpHtml(rulesetLabel)}</span>
+                    <div style="font-size: 11px; color: var(--text-muted);">
+                        Lv. ${c.level || 1} ${escapeRpHtml(c.archetype || "Hero")} • Ruleset: <span style="color: var(--accent-cyan); font-weight: 600;">${escapeRpHtml(rulesetLabel)}</span>
                         ${!isRoot ? ` • Active Setting: <span style="color: #c084fc;">${escapeRpHtml(currentGenreLabel)}</span>` : ""}
                     </div>
                 </div>
@@ -7404,13 +7404,13 @@ async function refreshVaultModalUI() {
                     <button type="button" class="cyber-btn-small btn-vault-import" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);" title="Import into active campaign">
                         📥 Import
                     </button>
-                    <button type="button" class="cyber-btn-small btn-vault-view" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(148, 163, 184, 0.15); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4);" title="View character sheet">
+                    <button type="button" class="cyber-btn-small btn-vault-view" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(148, 163, 184, 0.15); color: var(--text-secondary); border: 1px solid rgba(148, 163, 184, 0.4);" title="View character sheet">
                         👁️ View
                     </button>
-                    <button type="button" class="cyber-btn-small btn-vault-edit" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="Edit character sheet in Character Editor">
+                    <button type="button" class="cyber-btn-small btn-vault-edit" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.4);" title="Edit character sheet in Character Editor">
                         ✏️ Edit
                     </button>
-                    <button type="button" class="cyber-btn-small btn-vault-levelup" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="Level up hero">
+                    <button type="button" class="cyber-btn-small btn-vault-levelup" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.4);" title="Level up hero">
                         ⬆️ Level
                     </button>
                     <button type="button" class="cyber-btn-small btn-vault-delete" data-char-id="${escapeRpHtml(c.id)}" style="background: rgba(239, 68, 68, 0.12); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35);" title="Delete from vault">
@@ -7509,7 +7509,7 @@ function openCrossoverAdjudicationModal(charData, targetGenre) {
 
     if (allItems.length === 0) {
         container.innerHTML = `
-            <div style="color: #64748b; font-size: 12px; padding: 12px 4px; text-align: center;">
+            <div style="color: var(--text-dim); font-size: 12px; padding: 12px 4px; text-align: center;">
                 No physical items requiring cross-genre adjudication.
             </div>
         `;
@@ -7518,11 +7518,11 @@ function openCrossoverAdjudicationModal(charData, targetGenre) {
             const itName = item.name;
             const icon = item.type === "Weapon" ? "⚔️" : "🎒";
             return `
-                <div class="adjudication-row" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); gap: 10px;">
+                <div class="adjudication-row" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 4px; border-bottom: 1px solid var(--border-subtle); gap: 10px;">
                     <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                         <span style="font-size: 0.85rem;">${icon}</span>
-                        <span class="item-name" style="font-weight: 600; color: #f1f5f9; font-size: 0.82rem;">${escapeRpHtml(itName)}</span>
-                        <span style="font-size: 0.68rem; color: #94a3b8; background: rgba(148, 163, 184, 0.15); padding: 1px 5px; border-radius: 3px;">${item.type}</span>
+                        <span class="item-name" style="font-weight: 600; color: var(--text-main); font-size: 0.82rem;">${escapeRpHtml(itName)}</span>
+                        <span style="font-size: 0.68rem; color: var(--text-muted); background: rgba(148, 163, 184, 0.15); padding: 1px 5px; border-radius: 3px;">${item.type}</span>
                     </div>
                     <select class="cyber-dropdown select-item-adjudication" data-item-name="${escapeRpHtml(itName)}" style="max-width: 280px; font-size: 0.78rem;">
                         <option value="quarantine">Move to Quarantined Stash (Dormant)</option>
@@ -7831,19 +7831,19 @@ function renderWbStagedLocations() {
     if (!container) return;
     const locs = tempByocState.locations || [];
     if (locs.length === 0) {
-        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No locations configured yet.</span>`;
+        container.innerHTML = `<span style="font-size: 0.72rem; color: var(--text-dim); font-style: italic;">No locations configured yet.</span>`;
         return;
     }
     container.innerHTML = locs.map((loc, idx) => `
         <div class="byoc-item-card" style="padding: 8px 10px;">
             <div class="byoc-item-header">
                 <div style="display: flex; align-items: center; gap: 6px;">
-                    <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(loc.name)}</span>
+                    <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-main);">${escapeRpHtml(loc.name)}</span>
                     <span class="system-tag" style="font-size: 0.6rem; padding: 1px 4px;">${escapeRpHtml((loc.type || "node").toUpperCase())}</span>
                 </div>
                 <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedLocation(${idx})">✕</button>
             </div>
-            ${loc.description ? `<div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25; margin-top: 3px;">${escapeRpHtml(loc.description)}</div>` : ""}
+            ${loc.description ? `<div style="font-size: 0.7rem; color: var(--text-muted); line-height: 1.25; margin-top: 3px;">${escapeRpHtml(loc.description)}</div>` : ""}
             ${loc.hazards && loc.hazards.length ? `<div style="font-size: 0.68rem; color: #f87171; margin-top: 2px;">⚠️ ${escapeRpHtml(Array.isArray(loc.hazards) ? loc.hazards.join(", ") : loc.hazards)}</div>` : ""}
         </div>
     `).join("");
@@ -7860,7 +7860,7 @@ function renderWbStagedFactions() {
     if (!container) return;
     const facs = tempByocState.factions || [];
     if (facs.length === 0) {
-        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No factions configured yet.</span>`;
+        container.innerHTML = `<span style="font-size: 0.72rem; color: var(--text-dim); font-style: italic;">No factions configured yet.</span>`;
         return;
     }
     container.innerHTML = facs.map((fac, idx) => {
@@ -7869,15 +7869,15 @@ function renderWbStagedFactions() {
             <div class="byoc-item-card" style="padding: 8px 10px;">
                 <div class="byoc-item-header">
                     <div style="display: flex; align-items: center; gap: 6px;">
-                        <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(fac.name)}</span>
+                        <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-main);">${escapeRpHtml(fac.name)}</span>
                         <span class="byoc-disp-badge byoc-disp-${disp}">${escapeRpHtml(disp)}</span>
                     </div>
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="font-size: 0.68rem; color: #38bdf8; font-weight: 600;">${fac.influence_score}% Inf</span>
+                        <span style="font-size: 0.68rem; color: var(--accent-cyan); font-weight: 600;">${fac.influence_score}% Inf</span>
                         <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedFaction(${idx})">✕</button>
                     </div>
                 </div>
-                ${fac.agenda ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 3px;"><strong>Agenda:</strong> ${escapeRpHtml(fac.agenda)}</div>` : ""}
+                ${fac.agenda ? `<div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;"><strong>Agenda:</strong> ${escapeRpHtml(fac.agenda)}</div>` : ""}
             </div>
         `;
     }).join("");
@@ -7894,7 +7894,7 @@ function renderWbStagedQuests() {
     if (!container) return;
     const quests = tempByocState.quests || [];
     if (quests.length === 0) {
-        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No quests configured yet.</span>`;
+        container.innerHTML = `<span style="font-size: 0.72rem; color: var(--text-dim); font-style: italic;">No quests configured yet.</span>`;
         return;
     }
     container.innerHTML = quests.map((q, idx) => {
@@ -7902,12 +7902,12 @@ function renderWbStagedQuests() {
         return `
             <div class="byoc-item-card" style="padding: 8px 10px;">
                 <div class="byoc-item-header">
-                    <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(q.title)}</span>
+                    <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-main);">${escapeRpHtml(q.title)}</span>
                     <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedQuest(${idx})">✕</button>
                 </div>
-                ${q.giver_npc ? `<div style="font-size: 0.68rem; color: #64748b;">Giver: ${escapeRpHtml(q.giver_npc)}</div>` : ""}
-                ${q.summary ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;">${escapeRpHtml(q.summary)}</div>` : ""}
-                ${objs ? `<div style="font-size: 0.68rem; color: #38bdf8; margin-top: 2px;">Objectives: ${escapeRpHtml(objs)}</div>` : ""}
+                ${q.giver_npc ? `<div style="font-size: 0.68rem; color: var(--text-dim);">Giver: ${escapeRpHtml(q.giver_npc)}</div>` : ""}
+                ${q.summary ? `<div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">${escapeRpHtml(q.summary)}</div>` : ""}
+                ${objs ? `<div style="font-size: 0.68rem; color: var(--accent-cyan); margin-top: 2px;">Objectives: ${escapeRpHtml(objs)}</div>` : ""}
             </div>
         `;
     }).join("");
@@ -7924,7 +7924,7 @@ function renderWbStagedClues() {
     if (!container) return;
     const clues = tempByocState.clues || [];
     if (clues.length === 0) {
-        container.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No clues configured yet.</span>`;
+        container.innerHTML = `<span style="font-size: 0.72rem; color: var(--text-dim); font-style: italic;">No clues configured yet.</span>`;
         return;
     }
     container.innerHTML = clues.map((c, idx) => `
@@ -7938,7 +7938,7 @@ function renderWbStagedClues() {
                     <button type="button" class="action-btn" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.3);" onclick="window.removeWbStagedClue(${idx})">✕</button>
                 </div>
             </div>
-            ${c.content ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;">${escapeRpHtml(c.content)}</div>` : ""}
+            ${c.content ? `<div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">${escapeRpHtml(c.content)}</div>` : ""}
         </div>
     `).join("");
 }
@@ -8418,21 +8418,21 @@ function renderByocLocations(worldState) {
         activeBox.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; align-items: center; gap: 6px;">
-                    <span style="color: #38bdf8; font-weight: 700; font-size: 0.95rem;">${escapeRpHtml(activeLoc.name)}</span>
+                    <span style="color: var(--accent-cyan); font-weight: 700; font-size: 0.95rem;">${escapeRpHtml(activeLoc.name)}</span>
                     <span class="system-tag" style="font-size: 0.62rem;">${escapeRpHtml((activeLoc.type || "region").toUpperCase())}</span>
                 </div>
                 <span style="font-size: 0.68rem; color: #4ade80; font-weight: 600;">📍 ACTIVE POSITION</span>
             </div>
-            <p style="margin: 2px 0 0 0; font-size: 0.74rem; color: #cbd5e1; line-height: 1.35;">${escapeRpHtml(activeLoc.description || "No description provided.")}</p>
+            <p style="margin: 2px 0 0 0; font-size: 0.74rem; color: var(--text-secondary); line-height: 1.35;">${escapeRpHtml(activeLoc.description || "No description provided.")}</p>
             ${hazardBadges ? `<div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px;">${hazardBadges}</div>` : ""}
-            ${connectionBtns ? `<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; align-items: center;"><span style="font-size: 0.68rem; color: #94a3b8;">Pathways:</span>${connectionBtns}</div>` : ""}
+            ${connectionBtns ? `<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; align-items: center;"><span style="font-size: 0.68rem; color: var(--text-muted);">Pathways:</span>${connectionBtns}</div>` : ""}
         `;
     } else {
-        activeBox.innerHTML = `<span style="font-size: 0.74rem; color: #64748b;">No active location. Click "+ Add Node" to establish your starting location.</span>`;
+        activeBox.innerHTML = `<span style="font-size: 0.74rem; color: var(--text-dim);">No active location. Click "+ Add Node" to establish your starting location.</span>`;
     }
 
     if (locEntries.length === 0) {
-        listEl.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No locations recorded yet.</span>`;
+        listEl.innerHTML = `<span style="font-size: 0.72rem; color: var(--text-dim); font-style: italic;">No locations recorded yet.</span>`;
         return;
     }
 
@@ -8442,13 +8442,13 @@ function renderByocLocations(worldState) {
             <div class="byoc-item-card" style="${isActive ? 'border-color: #0ea5e9;' : ''}">
                 <div class="byoc-item-header">
                     <div style="display: flex; align-items: center; gap: 6px;">
-                        <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(loc.name)}</span>
+                        <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-main);">${escapeRpHtml(loc.name)}</span>
                         <span class="system-tag" style="font-size: 0.6rem; padding: 1px 4px;">${escapeRpHtml((loc.type || "node").toUpperCase())}</span>
                     </div>
-                    ${isActive ? `<span style="font-size: 0.65rem; color: #38bdf8; font-weight: 600;">CURRENT</span>` :
+                    ${isActive ? `<span style="font-size: 0.65rem; color: var(--accent-cyan); font-weight: 600;">CURRENT</span>` :
                         `<button type="button" class="action-btn" onclick="window.handleByocNavigateLocation('${loc.id}')">Travel Here</button>`}
                 </div>
-                ${loc.description ? `<div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25;">${escapeRpHtml(loc.description)}</div>` : ""}
+                ${loc.description ? `<div style="font-size: 0.7rem; color: var(--text-muted); line-height: 1.25;">${escapeRpHtml(loc.description)}</div>` : ""}
                 ${loc.hazards && loc.hazards.length ? `<div style="font-size: 0.68rem; color: #f87171;">⚠️ ${escapeRpHtml(loc.hazards.join(", "))}</div>` : ""}
             </div>
         `;
@@ -8461,7 +8461,7 @@ function renderByocFactions(worldState) {
 
     const factions = Object.values(worldState.factions || {});
     if (factions.length === 0) {
-        listEl.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No regional factions defined. Click "+ Add Faction" to create one.</span>`;
+        listEl.innerHTML = `<span style="font-size: 0.72rem; color: var(--text-dim); font-style: italic;">No regional factions defined. Click "+ Add Faction" to create one.</span>`;
         return;
     }
 
@@ -8471,18 +8471,18 @@ function renderByocFactions(worldState) {
             <div class="byoc-item-card">
                 <div class="byoc-item-header">
                     <div style="display: flex; align-items: center; gap: 6px;">
-                        <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(fac.name)}</span>
+                        <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-main);">${escapeRpHtml(fac.name)}</span>
                         <span class="byoc-disp-badge byoc-disp-${disp}">${escapeRpHtml(disp)}</span>
                     </div>
-                    <span style="font-size: 0.7rem; color: #38bdf8; font-weight: 600;">${fac.influence_score}% Inf</span>
+                    <span style="font-size: 0.7rem; color: var(--accent-cyan); font-weight: 600;">${fac.influence_score}% Inf</span>
                 </div>
                 <div class="byoc-influence-bar-bg">
                     <div class="byoc-influence-fill" style="width: ${Math.max(0, Math.min(100, fac.influence_score))}%;"></div>
                 </div>
-                ${fac.agenda ? `<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 2px;"><strong>Agenda:</strong> ${escapeRpHtml(fac.agenda)}</div>` : ""}
-                ${fac.public_reputation ? `<div style="font-size: 0.68rem; color: #64748b;">${escapeRpHtml(fac.public_reputation)}</div>` : ""}
+                ${fac.agenda ? `<div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;"><strong>Agenda:</strong> ${escapeRpHtml(fac.agenda)}</div>` : ""}
+                ${fac.public_reputation ? `<div style="font-size: 0.68rem; color: var(--text-dim);">${escapeRpHtml(fac.public_reputation)}</div>` : ""}
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-                    <select style="background: #0f172a; border: 1px solid #334155; color: #cbd5e1; font-size: 0.68rem; border-radius: 4px; padding: 2px 4px;"
+                    <select style="background: var(--bg-deep); border: 1px solid #334155; color: var(--text-secondary); font-size: 0.68rem; border-radius: 4px; padding: 2px 4px;"
                             onchange="window.handleByocChangeFactionDisp('${fac.id}', this.value)">
                         <option value="allied" ${disp === 'allied' ? 'selected' : ''}>Allied</option>
                         <option value="friendly" ${disp === 'friendly' ? 'selected' : ''}>Friendly</option>
@@ -8506,7 +8506,7 @@ function renderByocQuests(worldState) {
 
     const quests = Object.values(worldState.quests || {});
     if (quests.length === 0) {
-        listEl.innerHTML = `<span style="font-size: 0.72rem; color: #64748b; font-style: italic;">No quests logged. Click "+ Add Quest" to add an adventure objective.</span>`;
+        listEl.innerHTML = `<span style="font-size: 0.72rem; color: var(--text-dim); font-style: italic;">No quests logged. Click "+ Add Quest" to add an adventure objective.</span>`;
         return;
     }
 
@@ -8526,11 +8526,11 @@ function renderByocQuests(worldState) {
         return `
             <div class="byoc-item-card">
                 <div class="byoc-item-header">
-                    <span style="font-weight: 600; font-size: 0.78rem; color: #f1f5f9;">${escapeRpHtml(q.title)}</span>
+                    <span style="font-weight: 600; font-size: 0.78rem; color: var(--text-main);">${escapeRpHtml(q.title)}</span>
                     <span class="byoc-disp-badge ${badgeClass}">${escapeRpHtml(q.status.toUpperCase())}</span>
                 </div>
-                ${q.giver_npc ? `<div style="font-size: 0.68rem; color: #64748b;">Given by: ${escapeRpHtml(q.giver_npc)}</div>` : ""}
-                ${q.summary ? `<div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25;">${escapeRpHtml(q.summary)}</div>` : ""}
+                ${q.giver_npc ? `<div style="font-size: 0.68rem; color: var(--text-dim);">Given by: ${escapeRpHtml(q.giver_npc)}</div>` : ""}
+                ${q.summary ? `<div style="font-size: 0.7rem; color: var(--text-muted); line-height: 1.25;">${escapeRpHtml(q.summary)}</div>` : ""}
                 <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
                     ${objsHtml}
                 </div>
@@ -8548,7 +8548,7 @@ function renderByocClues(worldState) {
     const revealedClues = clues.filter(c => c.is_revealed);
 
     const secretBanner = `
-        <div style="background: rgba(30, 41, 59, 0.6); border: 1px dashed rgba(148, 163, 184, 0.25); border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; color: #94a3b8; display: flex; justify-content: space-between; align-items: center;">
+        <div style="background: var(--bg-card); border: 1px dashed rgba(148, 163, 184, 0.25); border-radius: 6px; padding: 6px 10px; font-size: 0.72rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
             <span>🔒 Secret GM Partition: <strong>${hiddenClues.length}</strong> hidden</span>
             <span style="font-size: 0.65rem; color: #f59e0b;">Kept secret from player prompt</span>
         </div>
@@ -8557,10 +8557,10 @@ function renderByocClues(worldState) {
     const revealedHtml = revealedClues.map(c => `
         <div class="byoc-item-card" style="border-left: 3px solid #38bdf8;">
             <div class="byoc-item-header">
-                <span style="font-weight: 600; font-size: 0.78rem; color: #38bdf8;">${escapeRpHtml(c.title)}</span>
+                <span style="font-weight: 600; font-size: 0.78rem; color: var(--accent-cyan);">${escapeRpHtml(c.title)}</span>
                 <span class="byoc-disp-badge byoc-disp-friendly" style="font-size: 0.6rem;">DISCOVERED</span>
             </div>
-            <div style="font-size: 0.72rem; color: #cbd5e1; line-height: 1.3;">${escapeRpHtml(c.content)}</div>
+            <div style="font-size: 0.72rem; color: var(--text-secondary); line-height: 1.3;">${escapeRpHtml(c.content)}</div>
         </div>
     `).join("");
 
@@ -8570,7 +8570,7 @@ function renderByocClues(worldState) {
                 <span style="font-weight: 600; font-size: 0.78rem; color: #f59e0b;">🔒 ${escapeRpHtml(c.title)}</span>
                 <button type="button" class="action-btn" onclick="window.handleByocRevealClue('${c.id}')">Reveal to Party</button>
             </div>
-            <div style="font-size: 0.7rem; color: #94a3b8; line-height: 1.25; font-style: italic;">${escapeRpHtml(c.content)}</div>
+            <div style="font-size: 0.7rem; color: var(--text-muted); line-height: 1.25; font-style: italic;">${escapeRpHtml(c.content)}</div>
         </div>
     `).join("");
 
@@ -8892,7 +8892,7 @@ async function refreshCompendiumResults() {
     const edition = homebrewOnly ? "all" : rawEd;
     const filters = buildCompendiumFilters();
 
-    listEl.innerHTML = `<div style="padding: 18px; text-align: center; color: #64748b; font-size: 0.8rem;">Loading ${escapeRpHtml(activeCompendiumTab)}...</div>`;
+    listEl.innerHTML = `<div style="padding: 18px; text-align: center; color: var(--text-dim); font-size: 0.8rem;">Loading ${escapeRpHtml(activeCompendiumTab)}...</div>`;
 
     if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.search_dnd_compendium) {
         listEl.innerHTML = `<div style="padding: 18px; color: #f87171; font-size: 0.8rem;">Compendium backend unavailable.</div>`;
@@ -8912,7 +8912,7 @@ async function refreshCompendiumResults() {
         if (countEl) countEl.textContent = `${compendiumItemsCache.length} entries`;
 
         if (compendiumItemsCache.length === 0) {
-            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #64748b; font-size: 0.82rem;">No matches found. Try clearing filters or creating it in Homebrew Lab!</div>`;
+            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-dim); font-size: 0.82rem;">No matches found. Try clearing filters or creating it in Homebrew Lab!</div>`;
             return;
         }
 
@@ -9100,26 +9100,26 @@ function renderCompendiumDetail(item) {
 
     const extraControls = `
         ${(cat === "items") ? `
-            <div style="display:flex; align-items:center; gap: 12px; flex-wrap:wrap; font-size:0.78rem; color:#cbd5e1;">
+            <div style="display:flex; align-items:center; gap: 12px; flex-wrap:wrap; font-size:0.78rem; color:var(--text-secondary);">
                 <label style="display:flex; align-items:center; gap:5px;">Qty: <input type="number" id="input-comp-grant-qty" class="modal-input" min="1" value="1" style="width:65px; padding:4px 6px;" /></label>
                 ${hasPackContents ? `<label style="display:flex; align-items:center; gap:5px; cursor:pointer;"><input type="checkbox" id="chk-comp-expand-pack" checked /> Unpack bundle into inventory items</label>` : ""}
             </div>
         ` : ""}
         ${(cat === "armor") ? `
-            <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:#cbd5e1; cursor:pointer;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-secondary); cursor:pointer;">
                 <input type="checkbox" id="chk-comp-equip-armor" checked /> Equip immediately &amp; recalculate AC
             </label>
         ` : ""}
         ${(cat === "spells") ? `
             <div style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem;">
-                <div id="comp-spell-eligibility-note" style="font-size:0.75rem; color:#94a3b8; display:flex; flex-direction:column; gap:2px;"></div>
+                <div id="comp-spell-eligibility-note" style="font-size:0.75rem; color:var(--text-muted); display:flex; flex-direction:column; gap:2px;"></div>
                 <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:2px;">
-                    <label style="display:flex; align-items:center; gap:6px; color:#cbd5e1; cursor:pointer;" title="If checked, marks the spell as prepared for today. If unchecked, adds to spellbook/list as unprepared.">
+                    <label style="display:flex; align-items:center; gap:6px; color:var(--text-secondary); cursor:pointer;" title="If checked, marks the spell as prepared for today. If unchecked, adds to spellbook/list as unprepared.">
                         <input type="checkbox" id="chk-comp-prep-spell" checked /> Prepare spell immediately
                     </label>
                 </div>
                 <div id="comp-spell-override-wrap" style="display:none;">
-                    <label style="display:flex; align-items:center; gap:6px; color:#fbbf24; cursor:pointer;">
+                    <label style="display:flex; align-items:center; gap:6px; color: var(--accent-amber); cursor:pointer;">
                         <input type="checkbox" id="chk-comp-bypass-spell-class" /> Allow Out-of-Class grant (Magical Secrets / DM Override)
                     </label>
                 </div>
@@ -9133,7 +9133,7 @@ function renderCompendiumDetail(item) {
             <div class="comp-badges-row">${tags.join("")}</div>
         </div>
         <div class="comp-stat-grid">${statGridHtml}</div>
-        ${bodyHtml || '<div class="comp-desc-box" style="color:#64748b; font-style:italic;">Standard equipment entry.</div>'}
+        ${bodyHtml || '<div class="comp-desc-box" style="color:var(--text-dim); font-style:italic;">Standard equipment entry.</div>'}
 
         <div class="comp-grant-box">
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -9143,7 +9143,7 @@ function renderCompendiumDetail(item) {
                 <button type="button" id="btn-comp-grant-char" class="btn-primary-sm" style="padding: 7px 14px;" ${partyChars.length === 0 ? "disabled" : ""}>🎁 Grant to Hero</button>
             </div>
             ${extraControls}
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; border-top: 1px solid rgba(255,255,255,0.06); padding-top:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; border-top: 1px solid var(--border-subtle); padding-top:8px;">
                 <div style="display:flex; gap:6px;">
                     <button type="button" id="btn-comp-clone-hb" class="cyber-btn-small">🧬 Clone as Homebrew</button>
                     ${item.is_homebrew ? `<button type="button" id="btn-comp-edit-hb" class="cyber-btn-small">✏️ Edit</button>` : ""}
@@ -9200,7 +9200,7 @@ async function updateCompendiumSpellEligibilityUI(item) {
             let noteHtml = "";
             if (res && res.status === "success") {
                 if (res.can_learn) {
-                    noteHtml = `<span style="color:#4ade80;">✅ Eligible for ${escapeRpHtml(charName)}</span> <span style="color:#64748b; font-size:0.72rem;">(${escapeRpHtml(res.matched_via || "Class Spell List")})</span>`;
+                    noteHtml = `<span style="color:#4ade80;">✅ Eligible for ${escapeRpHtml(charName)}</span> <span style="color:var(--text-dim); font-size:0.72rem;">(${escapeRpHtml(res.matched_via || "Class Spell List")})</span>`;
                     overrideWrap.style.display = "none";
                     if (chkOverride) chkOverride.checked = false;
                 } else {
@@ -9220,10 +9220,10 @@ async function updateCompendiumSpellEligibilityUI(item) {
                     if (!isCantrip) {
                         if (leg.prepared_count >= leg.max_prepared) {
                             if (chkPrep) chkPrep.checked = false;
-                            noteHtml += `<span style="color:#fbbf24; font-size:0.72rem;">⚠️ ${escapeRpHtml(charName)} is at max prepared capacity (${leg.prepared_count}/${leg.max_prepared}). Added to spellbook unprepared unless checked.</span>`;
+                            noteHtml += `<span style="color: var(--accent-amber); font-size:0.72rem;">⚠️ ${escapeRpHtml(charName)} is at max prepared capacity (${leg.prepared_count}/${leg.max_prepared}). Added to spellbook unprepared unless checked.</span>`;
                         } else {
                             if (chkPrep) chkPrep.checked = true;
-                            noteHtml += `<span style="color:#94a3b8; font-size:0.72rem;">Capacity: ${leg.prepared_count} / ${leg.max_prepared} prepared.</span>`;
+                            noteHtml += `<span style="color:var(--text-muted); font-size:0.72rem;">Capacity: ${leg.prepared_count} / ${leg.max_prepared} prepared.</span>`;
                         }
                     }
                 }
@@ -9481,7 +9481,7 @@ async function refreshHomebrewList() {
         const res = await window.pywebview.api.list_homebrew_entries(filterCat);
         const entries = (res && Array.isArray(res.entries)) ? res.entries : [];
         if (entries.length === 0) {
-            listEl.innerHTML = `<div style="padding: 16px; text-align:center; color:#64748b; font-size:0.78rem;">No custom homebrew created yet.<br>Fill out the form on the right or click "Clone as Homebrew" on any SRD item!</div>`;
+            listEl.innerHTML = `<div style="padding: 16px; text-align:center; color:var(--text-dim); font-size:0.78rem;">No custom homebrew created yet.<br>Fill out the form on the right or click "Clone as Homebrew" on any SRD item!</div>`;
             return;
         }
         listEl.innerHTML = entries.map((e, i) => `
@@ -9860,7 +9860,7 @@ async function refreshShopList() {
         const heroName = document.getElementById("select-shop-character")?.value || "";
         const hero = getActivePartyCharsForSelect().find(c => c.name === heroName);
         if (!hero) {
-            listEl.innerHTML = `<div style="padding:18px; color:#64748b; text-align:center;">Select an active hero to sell items.</div>`;
+            listEl.innerHTML = `<div style="padding:18px; color:var(--text-dim); text-align:center;">Select an active hero to sell items.</div>`;
             if (countEl) countEl.textContent = "0 owned";
             return;
         }
@@ -9899,7 +9899,7 @@ async function refreshShopList() {
         shopSellCache = sellEntries;
         if (countEl) countEl.textContent = `${sellEntries.length} owned`;
         if (sellEntries.length === 0) {
-            listEl.innerHTML = `<div style="padding:20px; text-align:center; color:#64748b; font-size:0.82rem;">No matching gear or weapons to sell.</div>`;
+            listEl.innerHTML = `<div style="padding:20px; text-align:center; color:var(--text-dim); font-size:0.82rem;">No matching gear or weapons to sell.</div>`;
             return;
         }
         listEl.innerHTML = sellEntries.map((ent, i) => {
@@ -9936,7 +9936,7 @@ async function refreshShopList() {
     const edition = document.getElementById("select-shop-edition")?.value || "2024";
     const includeMagic = Boolean(document.getElementById("chk-shop-include-magic")?.checked);
 
-    listEl.innerHTML = `<div style="padding:18px; text-align:center; color:#64748b; font-size:0.8rem;">Stocking merchant shelves...</div>`;
+    listEl.innerHTML = `<div style="padding:18px; text-align:center; color:var(--text-dim); font-size:0.8rem;">Stocking merchant shelves...</div>`;
     if (!window.pywebview?.api?.get_merchant_catalog) {
         listEl.innerHTML = `<div style="padding:18px; color:#f87171;">Shop backend unavailable.</div>`;
         return;
@@ -9946,7 +9946,7 @@ async function refreshShopList() {
         shopCatalogCache = (res && Array.isArray(res.items)) ? res.items : [];
         if (countEl) countEl.textContent = `${shopCatalogCache.length} wares`;
         if (shopCatalogCache.length === 0) {
-            listEl.innerHTML = `<div style="padding:20px; text-align:center; color:#64748b; font-size:0.82rem;">No matching merchant goods found. Try enabling Magic Items or changing Specialty.</div>`;
+            listEl.innerHTML = `<div style="padding:20px; text-align:center; color:var(--text-dim); font-size:0.82rem;">No matching merchant goods found. Try enabling Magic Items or changing Specialty.</div>`;
             return;
         }
         listEl.innerHTML = shopCatalogCache.map((item, i) => {
@@ -10023,10 +10023,10 @@ function renderShopDetail(item) {
             <div class="comp-desc-box">Selling back to a merchant typically yields <strong>50% of base value</strong> (${escapeRpHtml(item.notes || "Standard equipment")}).</div>
             <div class="comp-grant-box">
                 <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                    <label style="font-size:0.78rem; color:#cbd5e1;">Qty to Sell:
+                    <label style="font-size:0.78rem; color:var(--text-secondary);">Qty to Sell:
                         <input type="number" id="input-shop-sell-qty" class="modal-input" min="1" max="${maxQty}" value="1" style="width:72px; padding:4px 6px;" />
                     </label>
-                    <label style="font-size:0.78rem; color:#cbd5e1;">Sell Rate:
+                    <label style="font-size:0.78rem; color:var(--text-secondary);">Sell Rate:
                         <select id="select-shop-sell-rate" class="modal-input" style="width:130px; padding:4px 6px;">
                             <option value="0.5" selected>50% (Standard)</option>
                             <option value="0.25">25% (Desperate)</option>
@@ -10073,7 +10073,7 @@ function renderShopDetail(item) {
         </div>
         <div class="comp-desc-box">${escapeRpHtml(descParts.join("\n\n") || "Standard PHB / SRD equipment.")}</div>
         <div class="comp-grant-box">
-            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:0.78rem; color:#cbd5e1;">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:0.78rem; color:var(--text-secondary);">
                 <label style="display:flex; align-items:center; gap:5px;">Qty:
                     <input type="number" id="input-shop-buy-qty" class="modal-input" min="1" value="1" style="width:70px; padding:4px 6px;" />
                 </label>
@@ -10320,7 +10320,7 @@ function renderRestHeroWorkspace() {
     if (!bodyEl) return;
     const ch = getActiveRestHero();
     if (!ch) {
-        bodyEl.innerHTML = `<div style="padding:24px; text-align:center; color:#64748b;">No characters in the active party roster.</div>`;
+        bodyEl.innerHTML = `<div style="padding:24px; text-align:center; color:var(--text-dim);">No characters in the active party roster.</div>`;
         return;
     }
     const draft = restDraftByChar[ch.id] || {};
@@ -10340,7 +10340,7 @@ function renderRestHeroWorkspace() {
         <div class="rest-item-row">
             <div>
                 <strong>Spend Hit Dice</strong>
-                <div style="font-size:0.7rem; color:#94a3b8;">Available: ${ch.hit_dice.current}/${ch.hit_dice.max} (${escapeRpHtml(ch.hit_dice.die_str)} ${conSign} CON per die)</div>
+                <div style="font-size:0.7rem; color:var(--text-muted);">Available: ${ch.hit_dice.current}/${ch.hit_dice.max} (${escapeRpHtml(ch.hit_dice.die_str)} ${conSign} CON per die)</div>
             </div>
             <div style="display:flex; align-items:center; gap:6px;">
                 <input type="number" id="rest-hd-spend-input" class="modal-input" min="0" max="${ch.hit_dice.current}" value="${draft.hit_dice_to_spend || 0}" style="width:68px; padding:4px 6px;" ${ch.hit_dice.current <= 0 ? "disabled" : ""} />
@@ -10348,10 +10348,10 @@ function renderRestHeroWorkspace() {
         </div>
         ${isPhysical ? `
             <div class="rest-item-row">
-                <div><strong>Physical Dice HP Gained</strong><div style="font-size:0.7rem; color:#94a3b8;">Roll your physical dice + ${conSign} CON</div></div>
+                <div><strong>Physical Dice HP Gained</strong><div style="font-size:0.7rem; color:var(--text-muted);">Roll your physical dice + ${conSign} CON</div></div>
                 <input type="number" id="rest-manual-hp-input" class="modal-input" min="0" value="${draft.manual_hp_gain || 0}" style="width:82px; padding:4px 6px;" />
             </div>
-        ` : `<div style="font-size:0.72rem; color:#94a3b8;">⚡ Digital dice will automatically roll ${escapeRpHtml(ch.hit_dice.die_str)} ${conSign} per Hit Die spent.</div>`}
+        ` : `<div style="font-size:0.72rem; color:var(--text-muted);">⚡ Digital dice will automatically roll ${escapeRpHtml(ch.hit_dice.die_str)} ${conSign} per Hit Die spent.</div>`}
     `;
 
     // 2. Consumables Card
@@ -10361,16 +10361,16 @@ function renderRestHeroWorkspace() {
         return `
             <div class="rest-item-row">
                 <div>
-                    <strong>${escapeRpHtml(c.name)}</strong> <span style="color:#94a3b8;">(x${c.qty})</span>
+                    <strong>${escapeRpHtml(c.name)}</strong> <span style="color:var(--text-muted);">(x${c.qty})</span>
                     ${c.heal_formula ? `<span class="comp-pill comp-pill-ed" style="margin-left:4px;">+${escapeRpHtml(c.heal_formula)} HP</span>` : ""}
                 </div>
                 <div style="display:flex; align-items:center; gap:5px;">
-                    <span style="font-size:0.7rem; color:#94a3b8;">Use:</span>
+                    <span style="font-size:0.7rem; color:var(--text-muted);">Use:</span>
                     <input type="number" class="modal-input rest-cons-qty-input" data-cons-idx="${idx}" min="0" max="${c.qty}" value="${useCnt}" style="width:60px; padding:3px 6px;" />
                 </div>
             </div>
         `;
-    }).join("") : `<div style="font-size:0.76rem; color:#64748b; font-style:italic;">No potions, rations, or consumables in inventory.</div>`;
+    }).join("") : `<div style="font-size:0.76rem; color:var(--text-dim); font-style:italic;">No potions, rations, or consumables in inventory.</div>`;
 
     // 3. Equipment & Attunement Card
     const armorOptions = [`<option value="">Unarmored (10 + DEX)</option>`].concat(
@@ -10390,7 +10390,7 @@ function renderRestHeroWorkspace() {
                 <span class="comp-pill comp-pill-magic">${escapeRpHtml(att.rarity || "Magic")}</span>
             </label>
         `;
-    }).join("") : `<div style="font-size:0.74rem; color:#64748b; font-style:italic;">No magic items requiring attunement in inventory.</div>`;
+    }).join("") : `<div style="font-size:0.74rem; color:var(--text-dim); font-style:italic;">No magic items requiring attunement in inventory.</div>`;
 
     // 4. Spell Preparation Card
     const sc = ch.spellcasting || {};
@@ -10437,7 +10437,7 @@ function renderRestHeroWorkspace() {
                     <span>✨ Spells &amp; Preparation (${escapeRpHtml(sc.primary_class || "Caster")} • ${escapeRpHtml(ed)} Rules)</span>
                     <span id="rest-spell-cap-badge" style="color:${capColor};">${preparedLeveledCount} / ${maxPrep} Prepared</span>
                 </div>
-                <div style="font-size:0.74rem; color:#94a3b8;">
+                <div style="font-size:0.74rem; color:var(--text-muted);">
                     ${isLong
                         ? (sc.can_swap_from_class_list ? `Your ${escapeRpHtml(sc.primary_class)} knows their full class list—check up to ${maxPrep} leveled spells to prepare today.` : `Toggle prepared leveled spells from your spellbook/sheet.`)
                         : `Short Rest: Pact slots recharge automatically. (Tip: Switch to Long Rest to re-prepare daily spells!)`}
@@ -10455,12 +10455,12 @@ function renderRestHeroWorkspace() {
                             <label class="rest-spell-card ${isChecked ? "prepared" : ""} ${isLocked ? "locked" : ""}">
                                 <input type="checkbox" class="rest-spell-chk" data-spell-name="${escapeRpHtml(sp.name)}" ${isChecked ? "checked" : ""} ${isLocked ? "disabled" : ""} />
                                 <div style="min-width:0;">
-                                    <div style="font-weight:700; color:#f1f5f9;">${escapeRpHtml(sp.name)}</div>
-                                    <div style="font-size:0.68rem; color:#94a3b8;">${lvlTxt} ${escapeRpHtml(sp.school || "")}${sp.is_cantrip ? " • At-Will" : (sp.is_always_prepared ? " • Always Prepared" : "")}</div>
+                                    <div style="font-weight:700; color:var(--text-main);">${escapeRpHtml(sp.name)}</div>
+                                    <div style="font-size:0.68rem; color:var(--text-muted);">${lvlTxt} ${escapeRpHtml(sp.school || "")}${sp.is_cantrip ? " • At-Will" : (sp.is_always_prepared ? " • Always Prepared" : "")}</div>
                                 </div>
                             </label>
                         `;
-                    }).join("") || `<div style="color:#64748b; font-size:0.78rem; padding:10px;">No spells match filter.</div>`}
+                    }).join("") || `<div style="color:var(--text-dim); font-size:0.78rem; padding:10px;">No spells match filter.</div>`}
                 </div>
             </div>
         `;
@@ -10471,11 +10471,11 @@ function renderRestHeroWorkspace() {
             <div class="rest-section-card">
                 <div class="rest-section-title">
                     <span>❤️ Vitals &amp; Hit Dice</span>
-                    <span style="color:#f1f5f9;">${ch.hp.current} / ${ch.hp.max} HP</span>
+                    <span style="color:var(--text-main);">${ch.hp.current} / ${ch.hp.max} HP</span>
                 </div>
                 ${hdHtml}
                 ${(ch.expendable_meters || []).length > 0 ? `
-                    <div style="margin-top:4px; font-size:0.72rem; color:#94a3b8;">
+                    <div style="margin-top:4px; font-size:0.72rem; color:var(--text-muted);">
                         <strong>Class Pools:</strong>
                         ${(ch.expendable_meters || []).map(m => `${escapeRpHtml(m.label)}: ${m.current}/${m.max} (${escapeRpHtml(m.reset_on)})`).join(" • ")}
                     </div>
@@ -10498,11 +10498,11 @@ function renderRestHeroWorkspace() {
                     <label class="modal-label">Body Armor</label>
                     <select id="select-rest-armor" class="modal-input">${armorOptions}</select>
                 </div>
-                <label style="display:flex; align-items:center; gap:7px; font-size:0.78rem; color:#cbd5e1; cursor:pointer;">
+                <label style="display:flex; align-items:center; gap:7px; font-size:0.78rem; color:var(--text-secondary); cursor:pointer;">
                     <input type="checkbox" id="chk-rest-shield" ${draft.shield_equipped ? "checked" : ""} ${!hasShieldInBag ? "disabled" : ""} />
                     Equip Shield (+2 AC)${!hasShieldInBag ? " (none in inventory)" : ""}
                 </label>
-                ${acInfo.warnings.length ? `<div style="font-size:0.72rem; color:#fbbf24;">⚠️ ${escapeRpHtml(acInfo.warnings.join(" • "))}</div>` : ""}
+                ${acInfo.warnings.length ? `<div style="font-size:0.72rem; color: var(--accent-amber);">⚠️ ${escapeRpHtml(acInfo.warnings.join(" • "))}</div>` : ""}
             </div>
 
             <div class="rest-section-card">
@@ -10947,7 +10947,7 @@ function renderLevelUpWizard() {
                 ? `Lv. ${opt.current_class_level} → Lv. ${opt.next_class_level}`
                 : `Multiclass → Lv. 1`;
             const prereqHtml = opt.eligible
-                ? (opt.bypassed ? `<span style="color:#fbbf24; font-size:0.68rem;">🔓 Prereq Overridden</span>` : `<span style="color:#4ade80; font-size:0.68rem;">✅ Eligible • d${opt.hit_die} (+${opt.fixed_hp_gain} HP)</span>`)
+                ? (opt.bypassed ? `<span style="color: var(--accent-amber); font-size:0.68rem;">🔓 Prereq Overridden</span>` : `<span style="color:#4ade80; font-size:0.68rem;">✅ Eligible • d${opt.hit_die} (+${opt.fixed_hp_gain} HP)</span>`)
                 : `<span style="color:#f87171; font-size:0.68rem;">🔒 ${escapeRpHtml((opt.missing_prereqs || []).join("; "))}</span>`;
             const tags = [];
             if (opt.needs_subclass) tags.push(`<span class="comp-pill" style="font-size:0.62rem;">Subclass</span>`);
@@ -10957,7 +10957,7 @@ function renderLevelUpWizard() {
                 <button type="button" class="levelup-class-card ${isSelected ? "selected" : ""} ${locked ? "locked" : ""}" data-lu-class="${escapeRpHtml(opt.name)}">
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; width:100%;">
                         <strong style="font-size:0.84rem; color:#f8fafc;">${escapeRpHtml(opt.name)}</strong>
-                        <span style="font-size:0.72rem; color:#38bdf8; font-weight:600;">${statusText}</span>
+                        <span style="font-size:0.72rem; color: var(--accent-cyan); font-weight:600;">${statusText}</span>
                     </div>
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:4px; flex-wrap:wrap;">
                         ${prereqHtml}
@@ -10968,7 +10968,7 @@ function renderLevelUpWizard() {
         };
 
         let clsHtml = `<div class="levelup-class-group-hdr">Advance Existing Class</div>`;
-        clsHtml += existingOpts.map(renderCard).join("") || `<div style="font-size:0.75rem; color:#64748b; padding:4px;">None</div>`;
+        clsHtml += existingOpts.map(renderCard).join("") || `<div style="font-size:0.75rem; color:var(--text-dim); padding:4px;">None</div>`;
         clsHtml += `<div class="levelup-class-group-hdr" style="margin-top:10px;">Multiclass Into New Class</div>`;
         clsHtml += multiOpts.map(renderCard).join("");
         classListEl.innerHTML = clsHtml;
@@ -10992,7 +10992,7 @@ function renderLevelUpWizard() {
     if (!detailEl) return;
 
     if (!p.can_advance) {
-        detailEl.innerHTML = `<div class="rest-section-card"><div class="rest-section-title">🏆 Maximum Level 20 Reached</div><p style="margin:0; font-size:0.84rem; color:#cbd5e1;">${escapeRpHtml(p.character_name)} is already at D&amp;D 5e Level 20.</p></div>`;
+        detailEl.innerHTML = `<div class="rest-section-card"><div class="rest-section-title">🏆 Maximum Level 20 Reached</div><p style="margin:0; font-size:0.84rem; color:var(--text-secondary);">${escapeRpHtml(p.character_name)} is already at D&amp;D 5e Level 20.</p></div>`;
         if (commitBtn) commitBtn.disabled = true;
         return;
     }
@@ -11006,7 +11006,7 @@ function renderLevelUpWizard() {
 
     // Prereq warning banner if ineligible
     const prereqWarningHtml = !prereqOk ? `
-        <div style="padding:10px 12px; border-radius:7px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; font-size:0.78rem;">
+        <div style="padding:10px 12px; border-radius:7px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color: var(--accent-rose); font-size:0.78rem;">
             <strong>⚠️ Multiclass Prerequisites Not Met:</strong> ${escapeRpHtml((p.selected_prereq?.missing || []).join("; "))}.
             Check <em>"Override Multiclass Prereqs"</em> above if your DM permits this multiclass.
         </div>
@@ -11019,7 +11019,7 @@ function renderLevelUpWizard() {
         hpExtraHtml = `
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
                 <button type="button" id="btn-lu-roll-hp" class="btn-secondary-sm" style="padding:5px 12px;">🎲 Roll d${proj.hitDie}</button>
-                <span style="font-size:0.8rem; color:#e2e8f0;">Rolled Die: <strong style="color:#38bdf8;">${proj.dieResult}</strong> + CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong style="color:#4ade80;">+${proj.levelHpGain} HP</strong></span>
+                <span style="font-size:0.8rem; color:var(--text-main);">Rolled Die: <strong style="color: var(--accent-cyan);">${proj.dieResult}</strong> + CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong style="color:#4ade80;">+${proj.levelHpGain} HP</strong></span>
             </div>
         `;
     } else if (st.hpMode === "manual") {
@@ -11027,12 +11027,12 @@ function renderLevelUpWizard() {
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:4px;">
                 <label class="modal-label" for="input-lu-manual-roll" style="margin:0;">Physical Die Roll (1–${proj.hitDie}):</label>
                 <input type="number" id="input-lu-manual-roll" class="modal-input" min="1" max="${proj.hitDie}" value="${proj.dieResult}" style="width:78px; padding:4px 8px;" />
-                <span style="font-size:0.78rem; color:#94a3b8;">+ CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong id="lu-hp-manual-gain" style="color:#4ade80;">+${proj.levelHpGain} HP</strong></span>
+                <span style="font-size:0.78rem; color:var(--text-muted);">+ CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong id="lu-hp-manual-gain" style="color:#4ade80;">+${proj.levelHpGain} HP</strong></span>
             </div>
         `;
     } else {
         hpExtraHtml = `
-            <div style="font-size:0.78rem; color:#94a3b8; margin-top:4px;">
+            <div style="font-size:0.78rem; color:var(--text-muted); margin-top:4px;">
                 Fixed Average (${fixedAvg} on d${proj.hitDie}) + CON (${proj.newConMod >= 0 ? "+" : ""}${proj.newConMod}) = <strong style="color:#4ade80;">+${proj.levelHpGain} HP</strong>
             </div>
         `;
@@ -11107,7 +11107,7 @@ function renderLevelUpWizard() {
                 <div>
                     <label class="modal-label" for="select-lu-feat">Choose Feat${p.is_epic_boon_level ? " or Epic Boon (Stat Cap 30)" : ""}</label>
                     <select id="select-lu-feat" class="modal-input">${featOpts}</select>
-                    ${selFeatObj ? `<div style="font-size:0.75rem; color:#94a3b8; margin-top:4px;">${escapeRpHtml(selFeatObj.description || "")}</div>` : ""}
+                    ${selFeatObj ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">${escapeRpHtml(selFeatObj.description || "")}</div>` : ""}
                 </div>
                 ${(featBonusAmt > 0 && featChoices.length > 0) ? `
                     <div>
@@ -11150,14 +11150,14 @@ function renderLevelUpWizard() {
         <div class="rest-section-card">
             <div class="rest-section-title">
                 <span>📜 Unlocked Features &amp; Proficiencies</span>
-                <span style="font-size:0.72rem; color:#94a3b8;">Prof Bonus: +${p.old_proficiency_bonus} → +${p.new_proficiency_bonus}</span>
+                <span style="font-size:0.72rem; color:var(--text-muted);">Prof Bonus: +${p.old_proficiency_bonus} → +${p.new_proficiency_bonus}</span>
             </div>
-            ${p.selected_multiclass_proficiencies ? `<div style="font-size:0.76rem; color:#38bdf8;"><strong>Multiclass Proficiencies Gained:</strong> ${escapeRpHtml(p.selected_multiclass_proficiencies)}</div>` : ""}
+            ${p.selected_multiclass_proficiencies ? `<div style="font-size:0.76rem; color: var(--accent-cyan);"><strong>Multiclass Proficiencies Gained:</strong> ${escapeRpHtml(p.selected_multiclass_proficiencies)}</div>` : ""}
             ${gainedFeats.length ? `
                 <div style="display:flex; flex-wrap:wrap; gap:6px;">
-                    ${gainedFeats.map(f => `<span class="comp-pill" style="color:#e2e8f0; border-color:rgba(56,189,248,0.35);">✨ ${escapeRpHtml(f)}</span>`).join("")}
+                    ${gainedFeats.map(f => `<span class="comp-pill" style="color:var(--text-main); border-color:rgba(56,189,248,0.35);">✨ ${escapeRpHtml(f)}</span>`).join("")}
                 </div>
-            ` : `<div style="font-size:0.76rem; color:#64748b;">Spellcasting / HP progression</div>`}
+            ` : `<div style="font-size:0.76rem; color:var(--text-dim);">Spellcasting / HP progression</div>`}
         </div>
     `;
 
@@ -11219,9 +11219,9 @@ function renderLevelUpWizard() {
             const isFull = (selLeveledCount === maxLeveled) && (maxCantrips === 0 || selCantripsCount === maxCantrips);
             quotaBadgeHtml = `<span style="color:${isFull ? '#4ade80' : '#c084fc'}; font-size:0.75rem; font-weight:700;">${parts.join(" • ")} Selected</span>`;
         } else if (p.preparation_type === "prepared_full_list") {
-            quotaBadgeHtml = `<span style="color:#94a3b8; font-size:0.72rem;">Prepares from full class spell list</span>`;
+            quotaBadgeHtml = `<span style="color:var(--text-muted); font-size:0.72rem;">Prepares from full class spell list</span>`;
         } else {
-            quotaBadgeHtml = `<span style="color:#94a3b8; font-size:0.72rem;">No new spells this level</span>`;
+            quotaBadgeHtml = `<span style="color:var(--text-muted); font-size:0.72rem;">No new spells this level</span>`;
         }
 
         spellsSectionHtml = `
@@ -11230,9 +11230,9 @@ function renderLevelUpWizard() {
                     <span>🔮 Spell Slots &amp; Learn New Spells</span>
                     ${quotaBadgeHtml}
                 </div>
-                ${p.spell_selection_reason ? `<div style="font-size:0.73rem; color:#94a3b8; margin:-2px 0 6px 0; font-style:italic;">💡 ${escapeRpHtml(p.spell_selection_reason)}</div>` : ""}
+                ${p.spell_selection_reason ? `<div style="font-size:0.73rem; color:var(--text-muted); margin:-2px 0 6px 0; font-style:italic;">💡 ${escapeRpHtml(p.spell_selection_reason)}</div>` : ""}
                 ${slotBadges.length ? `<div class="levelup-stat-preview-row">${slotBadges.join("")}</div>` : ""}
-                <div id="lu-spells-inline-warning" style="display:none; padding:6px 10px; margin-bottom:6px; background:rgba(239, 68, 68, 0.15); border:1px solid rgba(239, 68, 68, 0.4); border-radius:6px; font-size:0.75rem; color:#fca5a5;"></div>
+                <div id="lu-spells-inline-warning" style="display:none; padding:6px 10px; margin-bottom:6px; background:rgba(239, 68, 68, 0.15); border:1px solid rgba(239, 68, 68, 0.4); border-radius:6px; font-size:0.75rem; color: var(--accent-rose);"></div>
                 ${learnable.length ? `
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
                         <input type="text" id="input-lu-spell-search" class="modal-input" value="${escapeRpHtml(st.spellSearch || "")}" placeholder="Search ${escapeRpHtml(p.selected_class)} spells (Ctrl+F)..." style="flex:1; min-width:160px; padding:5px 9px; font-size:0.78rem;" />
@@ -11258,12 +11258,12 @@ function renderLevelUpWizard() {
                                 <label class="rest-spell-card ${checked ? "prepared" : ""} ${disableUnchecked ? "locked" : ""}" title="${escapeRpHtml(lockReason || sp.description || "")}" style="${disableUnchecked ? "opacity:0.6; cursor:not-allowed;" : ""}">
                                     <input type="checkbox" class="lu-spell-chk" data-spell-name="${escapeRpHtml(sp.name)}" data-is-cantrip="${isCantrip ? "1" : "0"}" ${checked ? "checked" : ""} ${disableUnchecked ? "disabled" : ""} />
                                     <div style="min-width:0;">
-                                        <div style="font-weight:600; color:#f1f5f9;">${escapeRpHtml(sp.name)}${already ? " <span style='color:#38bdf8;font-size:0.65rem;'>(Known)</span>" : ""}</div>
-                                        <div style="font-size:0.68rem; color:#94a3b8;">${escapeRpHtml(sp.level_label)} • ${escapeRpHtml(sp.school)}</div>
+                                        <div style="font-weight:600; color:var(--text-main);">${escapeRpHtml(sp.name)}${already ? " <span style='color: var(--accent-cyan);font-size:0.65rem;'>(Known)</span>" : ""}</div>
+                                        <div style="font-size:0.68rem; color:var(--text-muted);">${escapeRpHtml(sp.level_label)} • ${escapeRpHtml(sp.school)}</div>
                                     </div>
                                 </label>
                             `;
-                        }).join("") || `<div style="padding:10px; color:#64748b; font-size:0.78rem;">No matching spells found.</div>`}
+                        }).join("") || `<div style="padding:10px; color:var(--text-dim); font-size:0.78rem;">No matching spells found.</div>`}
                     </div>
                 ` : ""}
             </div>
@@ -11273,8 +11273,8 @@ function renderLevelUpWizard() {
     detailEl.innerHTML = `
         <div class="levelup-summary-banner">
             <div>
-                <div style="font-size:0.95rem; font-weight:700; color:#f8fafc;">${escapeRpHtml(p.current_class_summary)} → <span style="color:#38bdf8;">${escapeRpHtml(p.next_class_summary)}</span></div>
-                <div style="font-size:0.74rem; color:#cbd5e1;">Total Level ${p.current_total_level} → Level ${p.next_total_level} • Hit Die d${proj.hitDie} • Proficiency +${p.old_proficiency_bonus} → +${p.new_proficiency_bonus}</div>
+                <div style="font-size:0.95rem; font-weight:700; color:#f8fafc;">${escapeRpHtml(p.current_class_summary)} → <span style="color: var(--accent-cyan);">${escapeRpHtml(p.next_class_summary)}</span></div>
+                <div style="font-size:0.74rem; color:var(--text-secondary);">Total Level ${p.current_total_level} → Level ${p.next_total_level} • Hit Die d${proj.hitDie} • Proficiency +${p.old_proficiency_bonus} → +${p.new_proficiency_bonus}</div>
             </div>
             <span id="lu-banner-hp-badge" class="comp-pill comp-pill-ed" style="font-size:0.8rem;">Total HP Gain: +${proj.totalHpGain}</span>
         </div>

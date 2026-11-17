@@ -106,8 +106,32 @@ window.aetherUI = {
   // =========================================================================
   // Windows Theme Integration
   // =========================================================================
+  applyTheme: function(themePref) {
+    const pref = String(themePref || this.currentConfig?.ui?.theme || "system").toLowerCase();
+    let resolved = pref;
+    if (pref !== "light" && pref !== "dark") {
+      if (typeof this._windowsIsDark === "boolean") {
+        resolved = this._windowsIsDark ? "dark" : "light";
+      } else if (window.matchMedia) {
+        resolved = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      } else {
+        resolved = "dark";
+      }
+    }
+    document.documentElement.setAttribute("data-theme", resolved);
+    document.documentElement.style.colorScheme = resolved;
+    if (window.pywebview?.api?.set_overlay_theme) {
+      try {
+        window.pywebview.api.set_overlay_theme(resolved);
+      } catch (e) {}
+    }
+  },
+
   applyWindowsTheme: async function() {
-    if (!window.pywebview || !window.pywebview.api) return;
+    if (!window.pywebview || !window.pywebview.api) {
+      this.applyTheme("system");
+      return;
+    }
     try {
       const theme = await window.pywebview.api.get_windows_theme();
       if (theme) {
@@ -121,6 +145,7 @@ window.aetherUI = {
     } catch (e) {
       console.warn("Could not query Windows theme:", e);
     }
+    this.applyTheme("system");
   },
 
   // =========================================================================
@@ -1737,6 +1762,19 @@ window.aetherUI = {
         const hudModeSel = document.getElementById("defaultHudModeSelect");
         if (hudModeSel) hudModeSel.value = resolvedHudMode;
 
+        const themePref = cfg.ui.theme || "system";
+        const themeSel = document.getElementById("select-ui-theme");
+        if (themeSel) {
+          themeSel.value = themePref;
+          if (!themeSel.dataset.wired) {
+            themeSel.dataset.wired = "1";
+            themeSel.addEventListener("change", () => {
+              this.applyTheme(themeSel.value);
+            });
+          }
+        }
+        this.applyTheme(themePref);
+
         const resolvedHudHotkey = cfg.ui?.hud_mode_hotkey || cfg.hud_mode_hotkey || this.hudModeKey || "Ctrl+Space";
         this.hudModeKey = resolvedHudHotkey;
 
@@ -2012,6 +2050,7 @@ window.aetherUI = {
           require_verbal_confirmation: true
         },
         ui: {
+          theme: document.getElementById("select-ui-theme")?.value || this.currentConfig?.ui?.theme || "system",
           floating_overlay: document.getElementById("floatingOverlayMode")?.value || this.currentConfig?.ui?.floating_overlay || "on_minimize",
           minimize_to_tray: document.getElementById("minimizeToTrayCheck") ? document.getElementById("minimizeToTrayCheck").checked : (this.currentConfig?.ui?.minimize_to_tray ?? true),
           hud_mode: document.getElementById("defaultHudModeSelect")?.value || this.hudMode || this.currentConfig?.ui?.hud_mode || "normal",

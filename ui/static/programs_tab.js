@@ -49,7 +49,7 @@ function renderProgramsSidebar() {
 
     if (programIds.length === 0) {
         listEl.innerHTML = `
-            <div style="padding: 16px; color: #7d8597; font-size: 0.82rem; text-align: center;">
+            <div style="padding: 16px; color: var(--text-muted); font-size: 0.82rem; text-align: center;">
                 No programs whitelisted.<br>Click <strong>+ Add</strong> above.
             </div>
         `;
@@ -345,7 +345,7 @@ async function toggleProgramRunningProcesses(isAddModal = true) {
 async function loadProgramRunningProcessesList(listContainerId, isAddModal = true) {
     const list = document.getElementById(listContainerId);
     if (!list) return;
-    list.innerHTML = '<div style="padding: 10px; text-align: center; color: #64748b; font-size: 0.78rem;">Scanning running processes...</div>';
+    list.innerHTML = '<div style="padding: 10px; text-align: center; color: var(--text-dim); font-size: 0.78rem;">Scanning running processes...</div>';
 
     try {
         const res = await window.pywebview.api.get_running_processes();
@@ -369,7 +369,7 @@ function renderProgramProcsList(containerId, data, filterText = '', isAddModal =
     const filteredProcs = procs.filter(p => !q || p.toLowerCase().includes(q));
 
     if (filteredApps.length === 0 && filteredProcs.length === 0) {
-        list.innerHTML = '<div style="padding: 8px; text-align: center; color: #64748b; font-size: 0.75rem;">No matching processes found.</div>';
+        list.innerHTML = '<div style="padding: 8px; text-align: center; color: var(--text-dim); font-size: 0.75rem;">No matching processes found.</div>';
         return;
     }
 
@@ -393,7 +393,7 @@ function renderProgramProcsList(containerId, data, filterText = '', isAddModal =
 
     if (filteredProcs.length > 0) {
         const header = document.createElement('div');
-        header.style.cssText = 'padding: 4px 8px; background: rgba(255, 255, 255, 0.04); font-size: 0.7rem; color: #94a3b8; font-weight: 700;';
+        header.style.cssText = 'padding: 4px 8px; background: var(--bg-panel); font-size: 0.7rem; color: var(--text-muted); font-weight: 700;';
         header.textContent = 'OTHER RUNNING PROCESSES';
         list.appendChild(header);
 
@@ -401,7 +401,7 @@ function renderProgramProcsList(containerId, data, filterText = '', isAddModal =
             const item = document.createElement('div');
             item.className = 'proc-item';
             item.innerHTML = `
-                <span class="proc-item-title" style="color: #cbd5e1;">⚡ ${escapeProgHtml(pname)}</span>
+                <span class="proc-item-title" style="color: var(--text-secondary);">⚡ ${escapeProgHtml(pname)}</span>
                 <span class="proc-item-exe">${escapeProgHtml(pname)}</span>
             `;
             item.onclick = () => selectProgramRunningProcess(pname, '', isAddModal);
@@ -579,7 +579,7 @@ async function loadInstalledProgramsForSync() {
     const listEl = document.getElementById('list-sync-programs');
     const totalEl = document.getElementById('sync-prog-total-count');
     if (listEl) {
-        listEl.innerHTML = '<div style="padding: 30px; text-align: center; color: #64748b; font-size: 0.85rem;">🔍 Scanning installed Windows programs and shortcuts...</div>';
+        listEl.innerHTML = '<div style="padding: 30px; text-align: center; color: var(--text-dim); font-size: 0.85rem;">🔍 Scanning installed Windows programs and shortcuts...</div>';
     }
 
     try {
@@ -639,13 +639,13 @@ function renderSyncProgramsList() {
     });
 
     if (filtered.length === 0) {
-        listEl.innerHTML = '<div style="padding: 25px; text-align: center; color: #64748b; font-size: 0.82rem;">No matching programs found.</div>';
+        listEl.innerHTML = '<div style="padding: 25px; text-align: center; color: var(--text-dim); font-size: 0.82rem;">No matching programs found.</div>';
         return;
     }
 
     filtered.forEach(item => {
         const row = document.createElement('div');
-        row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 9px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); cursor: pointer; transition: background 0.12s;';
+        row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 9px 14px; border-bottom: 1px solid var(--border-subtle); cursor: pointer; transition: background 0.12s;';
         
         row.onmouseenter = () => { row.style.background = 'rgba(56, 189, 248, 0.08)'; };
         row.onmouseleave = () => { row.style.background = 'transparent'; };
@@ -658,10 +658,10 @@ function renderSyncProgramsList() {
                 <input type="checkbox" class="sync-chk" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} style="accent-color: #38bdf8; width: 16px; height: 16px; cursor: ${isDisabled ? 'not-allowed' : 'pointer'}; flex-shrink: 0;" />
                 <div style="display: flex; flex-direction: column; min-width: 0; overflow: hidden;">
                     <div style="display: flex; align-items: center; gap: 6px; overflow: hidden;">
-                        <span style="font-size: 0.84rem; font-weight: 600; color: ${isDisabled ? '#94a3b8' : '#f1f5f9'}; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeProgHtml(item.name)}</span>
-                        ${item.publisher ? `<span style="font-size: 0.68rem; color: #94a3b8; background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; white-space: nowrap;">${escapeProgHtml(item.publisher)}</span>` : ''}
+                        <span style="font-size: 0.84rem; font-weight: 600; color: ${isDisabled ? 'var(--text-muted)' : 'var(--text-main)'}; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeProgHtml(item.name)}</span>
+                        ${item.publisher ? `<span style="font-size: 0.68rem; color: var(--text-muted); background: var(--bg-panel); padding: 1px 5px; border-radius: 3px; white-space: nowrap;">${escapeProgHtml(item.publisher)}</span>` : ''}
                     </div>
-                    <span style="font-size: 0.72rem; color: #64748b; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;">${escapeProgHtml(item.path || '(Executable path auto-resolved on launch)')}</span>
+                    <span style="font-size: 0.72rem; color: var(--text-dim); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;">${escapeProgHtml(item.path || '(Executable path auto-resolved on launch)')}</span>
                 </div>
             </div>
             ${isDisabled ? `<span class="badge-status badge-online" style="font-size: 0.66rem; padding: 2px 6px; margin-left: 8px; flex-shrink: 0;">WHITELISTED</span>` : ''}
