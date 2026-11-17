@@ -1257,6 +1257,12 @@ class GuiBridge:
 
             old_temp = self._config.get("api", {}).get("temperature")
 
+            old_preferred_language = (
+                (self._config.get("audio") or {}).get("preferred_language")
+                or self._config.get("preferred_language")
+                or "en-US"
+            )
+
 
 
             if new_config is None:
@@ -1609,6 +1615,12 @@ class GuiBridge:
 
 
 
+            if "preferred_language" in new_config and new_config["preferred_language"]:
+
+                self._config.setdefault("audio", {})["preferred_language"] = str(new_config["preferred_language"]).strip()
+
+                self._config["preferred_language"] = self._config["audio"]["preferred_language"]
+
             if "audio" in new_config:
 
                 aud_cfg = new_config["audio"]
@@ -1885,6 +1897,12 @@ class GuiBridge:
 
             new_temp = self._config.get("api", {}).get("temperature")
 
+            new_preferred_language = (
+                (self._config.get("audio") or {}).get("preferred_language")
+                or self._config.get("preferred_language")
+                or "en-US"
+            )
+
 
 
             accent_changed = (old_accent != new_accent)
@@ -1897,9 +1915,11 @@ class GuiBridge:
 
             temp_changed = (old_temp != new_temp)
 
+            language_changed = (str(old_preferred_language).strip() != str(new_preferred_language).strip())
 
 
-            live_config_changed = bool(accent_changed or voice_changed or model_changed or prompt_changed or temp_changed)
+
+            live_config_changed = bool(accent_changed or voice_changed or model_changed or prompt_changed or temp_changed or language_changed)
 
 
 
@@ -1917,7 +1937,7 @@ class GuiBridge:
 
                     engine_ref.update_voice_accent_directive(new_accent)
 
-                if prompt_changed:
+                if prompt_changed or language_changed:
 
                     if hasattr(engine_ref, "rebuild_base_system_instruction"):
 
@@ -1940,6 +1960,8 @@ class GuiBridge:
                     if prompt_changed: changes.append("prompt/name")
 
                     if temp_changed: changes.append("temp")
+
+                    if language_changed: changes.append(f"language: {old_preferred_language} -> {new_preferred_language}")
 
                     reason_str = f"Settings: {', '.join(changes)}"
 
@@ -7296,7 +7318,7 @@ class GuiBridge:
         with self._config_lock:
             self._config["ttrpg_model_endpoint"] = chosen
             self._config.setdefault("api", {})["ttrpg_model_id"] = chosen
-            save_config(self._config)
+            save_config_atomic(self._config, self._config_path)
         eng = getattr(self, "_engine", getattr(self, "engine", None))
         if eng and hasattr(eng, "is_ttrpg_session_active") and eng.is_ttrpg_session_active():
             eng._reset_context_flag = True
@@ -7940,15 +7962,6 @@ class GuiBridge:
         from the persistent session recap and journal notes.
         Auto-starts Aether voice engine if not already running and applies the saved TTRPG Cortex engine.
         """
-        if model_endpoint:
-            self.save_ttrpg_model_endpoint(model_endpoint)
-        self.set_ttrpg_session_active(True)
-        if self._engine.is_running and getattr(self._engine, "_active_pipeline_mode", "live") != "modular":
-            # Switching from fast Live front-end into dedicated TTRPG Modular reasoning engine
-            self._engine.stop()
-            time.sleep(0.15)
-        if not self._engine.is_running:
-            self.start_assistant()
         active_id = self.ttrpg_service.manifest.get("active_campaign")
         if not active_id and self.ttrpg_service.manifest.get("campaigns"):
             active_id = next(iter(self.ttrpg_service.manifest["campaigns"]))
@@ -7958,9 +7971,49 @@ class GuiBridge:
         if not active_id:
             return {"success": False, "error": "No campaign selected or available to resume"}
 
-        # Ensure campaign state is loaded if not already in memory
-        if hasattr(self.ttrpg_service, "load_active_campaign_state") and not self.ttrpg_service.active_state:
+        if model_endpoint:
+            self.save_ttrpg_model_endpoint(model_endpoint)
+
+        # Ensure campaign state and workspace context are bound BEFORE starting/switching the modular DM engine
+        if hasattr(self.ttrpg_service, "load_active_campaign_state"):
             self.ttrpg_service.load_active_campaign_state()
+
+        self.set_ttrpg_session_active(True)
+        eng = getattr(self, "_engine", None)
+        if eng and hasattr(eng, "set_active_workspace"):
+            if (
+                getattr(eng, "active_workspace_type", "") != "campaign"
+                or getattr(eng, "active_workspace_context_id", "") != active_id
+            ):
+                eng.set_active_workspace("campaign", active_id)
+
+        if eng and eng.is_running and getattr(eng, "_active_pipeline_mode", None) == "live":
+            # Switching from fast Live front-end into dedicated TTRPG Modular reasoning engine
+            eng.stop()
+            deadline_stop = time.monotonic() + 1.5
+            while eng.is_running and time.monotonic() < deadline_stop:
+                time.sleep(0.05)
+
+        if eng and not eng.is_running:
+            start_res = self.start_assistant()
+            if isinstance(start_res, dict) and not start_res.get("success", True):
+                self.set_ttrpg_session_active(False)
+                return start_res
+
+        if eng:
+            # Wait briefly for the Modular DM pipeline to finish audio init and open its Cortex chat session
+            deadline_ready = time.monotonic() + 8.0
+            while eng.is_running and time.monotonic() < deadline_ready:
+                conn_state = str(getattr(getattr(getattr(eng, "conn_mgr", None), "state", None), "value", "")).upper()
+                if (
+                    getattr(eng, "_active_pipeline_mode", None) == "modular"
+                    and (conn_state == "CONNECTED" or getattr(eng, "chat", None) is not None)
+                ):
+                    break
+                time.sleep(0.05)
+            if not eng.is_running:
+                self.set_ttrpg_session_active(False)
+                return {"success": False, "error": "Assistant engine failed to start. Check API key and audio devices."}
 
         # Synchronize location and recap from recent session turns if available so resume location is never stale
         eng = getattr(self, "_engine", None)

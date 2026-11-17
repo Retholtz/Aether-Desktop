@@ -370,6 +370,81 @@ def resolve_accent_language_code(accent: Optional[str]) -> Optional[str]:
     return ACCENT_LANGUAGE_CODES.get(clean_key)
 
 
+LANGUAGE_START_MARKER = "<!-- SPOKEN LANGUAGE LOCK DIRECTIVE START -->"
+LANGUAGE_END_MARKER = "<!-- SPOKEN LANGUAGE LOCK DIRECTIVE END -->"
+
+PREFERRED_LANGUAGE_NAMES: Dict[str, str] = {
+    "en-US": "English (United States)",
+    "en-GB": "English (United Kingdom)",
+    "es-ES": "Spanish",
+    "fr-FR": "French",
+    "de-DE": "German",
+    "it-IT": "Italian",
+    "pt-BR": "Portuguese",
+    "ja-JP": "Japanese",
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "ja": "Japanese",
+}
+
+
+def resolve_preferred_language_code(cfg: Optional[dict]) -> str:
+    """Resolves the configured BCP-47 preferred spoken/STT language code (defaulting to 'en-US')."""
+    if not isinstance(cfg, dict):
+        return "en-US"
+    audio_cfg = cfg.get("audio")
+    raw = (
+        (audio_cfg.get("preferred_language") if isinstance(audio_cfg, dict) else None)
+        or cfg.get("preferred_language")
+        or "en-US"
+    )
+    clean = str(raw).strip()
+    return clean or "en-US"
+
+
+def build_language_directive(preferred_language: Optional[str]) -> str:
+    """Builds a spoken language and audio interpretation lock directive."""
+    lang_code = str(preferred_language or "").strip() or "en-US"
+    lang_name = (
+        PREFERRED_LANGUAGE_NAMES.get(lang_code)
+        or PREFERRED_LANGUAGE_NAMES.get(lang_code.split("-")[0].lower())
+        or lang_code
+    )
+    return (
+        f"{LANGUAGE_START_MARKER}\n"
+        f"SPOKEN LANGUAGE & AUDIO INTERPRETATION LOCK:\n"
+        f"- MANDATORY LANGUAGE: The user's configured preferred language is {lang_name} ({lang_code}).\n"
+        f"- ALWAYS interpret the user's spoken audio as {lang_name} ({lang_code}), even if the audio is brief, soft, noisy, or acoustically ambiguous.\n"
+        f"- ALWAYS formulate and speak every response exclusively in {lang_name} ({lang_code}) unless the user explicitly asks you to translate or speak in another language.\n"
+        f"- NEVER switch into another unrequested language on your own.\n"
+        f"{LANGUAGE_END_MARKER}"
+    )
+
+
+def strip_language_directive(instruction: str) -> str:
+    """Removes any existing spoken language lock directive from instruction text."""
+    if not instruction:
+        return ""
+    if LANGUAGE_START_MARKER in instruction and LANGUAGE_END_MARKER in instruction:
+        prefix = instruction.split(LANGUAGE_START_MARKER)[0]
+        suffix = instruction.split(LANGUAGE_END_MARKER)[1]
+        instruction = f"{prefix.rstrip()}\n\n{suffix.lstrip()}".strip()
+    return instruction.strip()
+
+
+def apply_language_directive(base_instruction: str, preferred_language: Optional[str]) -> str:
+    """Strips any existing language directive and prepends the active preferred_language lock."""
+    clean_base = strip_language_directive(base_instruction)
+    directive = build_language_directive(preferred_language)
+    if clean_base:
+        return f"{directive}\n\n{clean_base}"
+    return directive
+
+
 def build_live_accent_anchor_turns(accent: Optional[str]) -> List[types.Content]:
     """
     Constructs a pre-seeded 2-turn conversational persona lock (turn_complete=False)
@@ -1346,20 +1421,16 @@ class AetherEngine:
                 use_resumption=use_resumption
             )
 
-            try:
-                cm = client.aio.live.connect(model=model_id, config=live_config)
-                self._active_cm = cm
-                session = await cm.__aenter__()
-            except Exception as conn_err:
-                if getattr(self, "_session_resumption_handle", None) and any(kw in str(conn_err).lower() for kw in ("handle", "resumption", "expired")):
-                    logger.warning(f"[LIVE ON-DEMAND] Resumption handle rejected ({conn_err}). Retrying fresh connection...")
-                    self._session_resumption_handle = None
-                    live_config = self._build_live_config(self._build_system_instruction(), voice_name, temperature, use_resumption=False)
-                    cm = client.aio.live.connect(model=model_id, config=live_config)
-                    self._active_cm = cm
-                    session = await cm.__aenter__()
-                else:
-                    raise
+            cm, session = await self._open_live_session_with_fallback(
+                client=client,
+                model_id=model_id,
+                system_instruction_text=self._build_system_instruction(),
+                voice_name=voice_name,
+                temperature=temperature,
+                use_resumption=use_resumption,
+                live_config=live_config,
+            )
+            self._active_cm = cm
 
             self.session = session
             self.live_session = session
@@ -1791,7 +1862,13 @@ class AetherEngine:
                     final_prompt = f"{hud}\n\nActor: {actor_name}\nDeclared Action: {stashed_action}"
 
                     resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
-                    self.notify("chat_event", {"type": "agent", "content": resp_text})
+                    self.notify("chat_event", {
+                        "type": "assistant",
+                        "agent_name": "Aether",
+                        "content": resp_text,
+                        "workspace_type": getattr(self, "active_workspace_type", "campaign"),
+                        "context_id": getattr(self, "active_workspace_context_id", "")
+                    })
                     await self.speak_tts(resp_text)
                     return True
                 else:
@@ -1821,7 +1898,13 @@ class AetherEngine:
                     f"Address {caller_name} as the party caller to confirm or describe the outcome."
                 )
                 resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
-                self.notify("chat_event", {"type": "agent", "content": resp_text})
+                self.notify("chat_event", {
+                    "type": "assistant",
+                    "agent_name": "Aether",
+                    "content": resp_text,
+                    "workspace_type": getattr(self, "active_workspace_type", "campaign"),
+                    "context_id": getattr(self, "active_workspace_context_id", "")
+                })
                 await self.speak_tts(resp_text)
                 return True
 
@@ -1833,7 +1916,13 @@ class AetherEngine:
             hud = self.ttrpg_service.generate_scene_hud(active_actor_name=parsed.actor_name)
             final_prompt = f"{hud}\n\nActor: {parsed.actor_name or 'Unspecified Hero'}\nAction: {parsed.clean_action_text}"
             resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
-            self.notify("chat_event", {"type": "agent", "content": resp_text})
+            self.notify("chat_event", {
+                "type": "assistant",
+                "agent_name": "Aether",
+                "content": resp_text,
+                "workspace_type": getattr(self, "active_workspace_type", "campaign"),
+                "context_id": getattr(self, "active_workspace_context_id", "")
+            })
             await self.speak_tts(resp_text)
             return True
         return False
@@ -3191,7 +3280,10 @@ class AetherEngine:
         cfg_now = self.config_getter() if callable(self.config_getter) else {}
         api_now = cfg_now.get("api", {}) if isinstance(cfg_now, dict) else {}
         pipeline_mode = str(api_now.get("pipeline_mode") or cfg_now.get("pipeline_mode") or "live").strip().lower()
-        effective_mode = getattr(self, "_active_pipeline_mode", None) or ("modular" if (pipeline_mode == "modular" or self.is_ttrpg_session_active()) else "live")
+        if pipeline_mode == "modular" or self.is_ttrpg_session_active():
+            effective_mode = "modular"
+        else:
+            effective_mode = getattr(self, "_active_pipeline_mode", None) or "live"
         if effective_mode != "modular" and (self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED):
             await self._ensure_live_connected(reason="Typed text sent")
         await self._text_queue.put(clean_text)
@@ -4177,6 +4269,15 @@ class AetherEngine:
         in_name = audio_cfg.get("input_device_name", "")
         out_name = audio_cfg.get("output_device_name", "")
 
+        pipeline_mode = (
+            api_cfg.get("pipeline_mode")
+            or config.get("pipeline_mode")
+            or self.config_getter().get("pipeline_mode")
+            or "live"
+        ).lower()
+        effective_mode = "modular" if (pipeline_mode == "modular" or self.is_ttrpg_session_active()) else "live"
+        self._active_pipeline_mode = effective_mode
+
         # Validate and resolve to available devices in case configured device was unplugged or invalid
         in_idx, out_idx = resolve_valid_audio_devices(in_idx, out_idx, in_name, out_name)
 
@@ -4240,17 +4341,13 @@ class AetherEngine:
             self.notify("status", {"state": "error", "message": err_msg})
             self.notify("chat_event", {"type": "error", "content": err_msg})
             self.is_running = False
+            self._active_pipeline_mode = None
             return
 
         if kill_phrase:
             system_instruction_text += f"\nImportant: If the user says '{kill_phrase}' or 'stop', halt speaking immediately."
 
-        pipeline_mode = (
-            api_cfg.get("pipeline_mode")
-            or config.get("pipeline_mode")
-            or self.config_getter().get("pipeline_mode")
-            or "live"
-        ).lower()
+        # Re-evaluate in case TTRPG mode was toggled while audio devices opened
         effective_mode = "modular" if (pipeline_mode == "modular" or self.is_ttrpg_session_active()) else "live"
         self._active_pipeline_mode = effective_mode
 
@@ -4293,6 +4390,7 @@ class AetherEngine:
                     pass
             self.session = None
             self.is_running = False
+            self._active_pipeline_mode = None
             self.notify("status", {"state": "disconnected", "message": "Assistant stopped."})
 
     async def _run_modular_pipeline(
@@ -4450,59 +4548,60 @@ class AetherEngine:
             )
         asyncio.create_task(self._prewarm_tts_live_session(client, voice_name, voice_accent))
 
-        # Proactive Startup Briefing Evaluation
-        try:
-            current_user_name = self.user_memory.get_random_user_name(default="User")
-            briefing_res = await self.proactive_engine.check_proactive_briefing(
-                user_name=current_user_name,
-                client=client,
-                model_id=cortex_model,
-                agent_name=agent_name
-            )
-            briefing_text = briefing_res.get("greeting_text") if isinstance(briefing_res, dict) else (briefing_res or "")
-            if briefing_text and self.is_running:
-                logger.info(f"[PROACTIVE] Triggering startup briefing: '{briefing_text}'")
-                self.notify("chat_event", {
-                    "type": "assistant",
-                    "agent_name": agent_name,
-                    "content": briefing_text
-                })
-                stop_briefing_event = asyncio.Event()
+        # Proactive Startup Briefing Evaluation (skip when launching directly into a TTRPG DM session)
+        if not self.is_ttrpg_session_active():
+            try:
+                current_user_name = self.user_memory.get_random_user_name(default="User")
+                briefing_res = await self.proactive_engine.check_proactive_briefing(
+                    user_name=current_user_name,
+                    client=client,
+                    model_id=cortex_model,
+                    agent_name=agent_name
+                )
+                briefing_text = briefing_res.get("greeting_text") if isinstance(briefing_res, dict) else (briefing_res or "")
+                if briefing_text and self.is_running:
+                    logger.info(f"[PROACTIVE] Triggering startup briefing: '{briefing_text}'")
+                    self.notify("chat_event", {
+                        "type": "assistant",
+                        "agent_name": agent_name,
+                        "content": briefing_text
+                    })
+                    stop_briefing_event = asyncio.Event()
 
-                def _on_briefing_chunk(chunk: bytes):
-                    if not self._kill_playback_flag and not stop_briefing_event.is_set():
-                        if chunk and self.audio and self.is_running:
-                            self.audio.write_output_chunk(chunk)
+                    def _on_briefing_chunk(chunk: bytes):
+                        if not self._kill_playback_flag and not stop_briefing_event.is_set():
+                            if chunk and self.audio and self.is_running:
+                                self.audio.write_output_chunk(chunk)
 
-                self.notify("status", {
-                    "state": "speaking",
-                    "message": f"{agent_name} is delivering briefing...",
-                    "user_prompt": ""
-                })
-                self.is_speaking = True
-                try:
-                    await self._stream_synthesize_speech(
-                        text=briefing_text,
-                        tts_engine=tts_model,
-                        voice_name=voice_name,
-                        client=client,
-                        on_pcm_chunk=_on_briefing_chunk,
-                        stop_event=stop_briefing_event,
-                        voice_accent=voice_accent,
-                        voice_speed=voice_speed
-                    )
-                    if self.audio:
-                        self.audio.flush_output()
-                    while self.audio and not self.audio.is_output_empty() and self.is_running:
-                        if self._kill_playback_flag:
-                            break
-                        await asyncio.sleep(0.04)
-                finally:
-                    self.is_speaking = False
+                    self.notify("status", {
+                        "state": "speaking",
+                        "message": f"{agent_name} is delivering briefing...",
+                        "user_prompt": ""
+                    })
+                    self.is_speaking = True
+                    try:
+                        await self._stream_synthesize_speech(
+                            text=briefing_text,
+                            tts_engine=tts_model,
+                            voice_name=voice_name,
+                            client=client,
+                            on_pcm_chunk=_on_briefing_chunk,
+                            stop_event=stop_briefing_event,
+                            voice_accent=voice_accent,
+                            voice_speed=voice_speed
+                        )
+                        if self.audio:
+                            self.audio.flush_output()
+                        while self.audio and not self.audio.is_output_empty() and self.is_running:
+                            if self._kill_playback_flag:
+                                break
+                            await asyncio.sleep(0.04)
+                    finally:
+                        self.is_speaking = False
 
-                self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
-        except Exception as proactive_err:
-            logger.warning(f"[PROACTIVE BRIEFING ERROR] {proactive_err}")
+                    self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
+            except Exception as proactive_err:
+                logger.warning(f"[PROACTIVE BRIEFING ERROR] {proactive_err}")
 
         turn_counter = 0
         while self.is_running:
@@ -4859,7 +4958,9 @@ class AetherEngine:
                     self.notify("chat_event", {
                         "type": "user",
                         "content": user_prompt,
-                        "source": source
+                        "source": source,
+                        "workspace_type": getattr(self, "active_workspace_type", "general"),
+                        "context_id": getattr(self, "active_workspace_context_id", "default"),
                     })
 
                 tier_handled = await self._maybe_handle_tier_control(user_prompt, agent_name=agent_name, speak_result=True)
@@ -4966,8 +5067,14 @@ class AetherEngine:
                     chat_game_mode_state = current_gm_active
                     logger.info(f"[SESSION] Recreated Cortex chat session before turn ({chat_cortex_profile}). Game Mode Active: {current_gm_active}")
 
-                # Single-Mic Tabletop Voice Attribution & Clarification Engine
-                if self.active_workspace_type == "campaign" and hasattr(self, "ttrpg_service") and self.ttrpg_service:
+                # Single-Mic Tabletop Voice Attribution & Clarification Engine (spoken player turns only)
+                if (
+                    source == "voice"
+                    and self.active_workspace_type == "campaign"
+                    and self.is_ttrpg_session_active()
+                    and hasattr(self, "ttrpg_service")
+                    and self.ttrpg_service
+                ):
                     self.chat = chat
                     handled = await self._handle_voice_transcript(user_prompt)
                     if handled:
@@ -5115,7 +5222,9 @@ class AetherEngine:
                             self.notify("chat_event", {
                                 "type": "tool",
                                 "name": fn_name,
-                                "content": f"Executing: {fn_name}({json.dumps(fn_args, default=str)})"
+                                "content": f"Executing: {fn_name}({json.dumps(fn_args, default=str)})",
+                                "workspace_type": getattr(self, "active_workspace_type", "general"),
+                                "context_id": getattr(self, "active_workspace_context_id", "default"),
                             })
                             self.notify("status", {
                                 "state": "executing",
@@ -5304,7 +5413,9 @@ class AetherEngine:
                     self.notify("chat_event", {
                         "type": "assistant",
                         "agent_name": agent_name,
-                        "content": assistant_text
+                        "content": assistant_text,
+                        "workspace_type": getattr(self, "active_workspace_type", "general"),
+                        "context_id": getattr(self, "active_workspace_context_id", "default"),
                     })
 
                     # 5. Synthesize & Stream Cohesive Speech on Pre-Warmed Clean TTS Session
@@ -5911,7 +6022,9 @@ class AetherEngine:
         cfg = self.config_getter() if self.config_getter else {}
         api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
         accent = api_cfg.get("voice_accent") or cfg.get("voice_accent") or "default"
+        preferred_language = resolve_preferred_language_code(cfg)
 
+        base_inst = apply_language_directive(base_inst, preferred_language)
         return apply_accent_directive(base_inst, accent)
 
     def _filter_tools_for_workspace(self, declarations: List[dict]) -> List[dict]:
@@ -6257,7 +6370,8 @@ class AetherEngine:
             tts_text += f"\n{tts_lexicon}"
 
         chosen_voice = voice_name or "Aoede"
-        tts_lang_code = resolve_accent_language_code(clean_acc)
+        cfg_tts = self.config_getter() if callable(self.config_getter) else {}
+        tts_lang_code = resolve_accent_language_code(clean_acc) or resolve_preferred_language_code(cfg_tts)
         config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             speech_config=types.SpeechConfig(
@@ -6947,7 +7061,8 @@ class AetherEngine:
         system_instruction_text: Optional[str] = None,
         voice_name: Optional[str] = None,
         temperature: Optional[float] = None,
-        use_resumption: bool = True
+        use_resumption: bool = True,
+        use_transcription_language_codes: bool = True,
     ) -> types.LiveConnectConfig:
         """Constructs types.LiveConnectConfig with Google Search, tool declarations, voice, and session resumption."""
         api_cfg = self.config_getter().get("api", {})
@@ -6961,8 +7076,9 @@ class AetherEngine:
             voice_name = api_cfg.get("voice_name") or cfg.get("tts_voice") or "Aoede"
         if temperature is None:
             temperature = float(api_cfg.get("temperature", 1.0))
+        preferred_language = resolve_preferred_language_code(cfg)
         live_accent = api_cfg.get("voice_accent") or (cfg.get("voice_accent") if isinstance(cfg, dict) else None) or "default"
-        live_lang_code = resolve_accent_language_code(live_accent)
+        live_lang_code = resolve_accent_language_code(live_accent) or preferred_language
 
         resumption_config = None
         if use_resumption:
@@ -6973,6 +7089,12 @@ class AetherEngine:
                 else types.SessionResumptionConfig()
             )
 
+        transcription_cfg = (
+            types.AudioTranscriptionConfig(language_codes=[preferred_language])
+            if use_transcription_language_codes and preferred_language
+            else types.AudioTranscriptionConfig()
+        )
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             temperature=temperature,
@@ -6981,8 +7103,8 @@ class AetherEngine:
                 types.Tool(google_search=types.GoogleSearch()),
                 types.Tool(function_declarations=live_tools)
             ],
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
+            input_audio_transcription=transcription_cfg,
+            output_audio_transcription=transcription_cfg,
             speech_config=types.SpeechConfig(
                 language_code=live_lang_code,
                 voice_config=types.VoiceConfig(
@@ -6995,6 +7117,62 @@ class AetherEngine:
                 parts=[types.Part.from_text(text=system_instruction_text)]
             )
         )
+
+    async def _open_live_session_with_fallback(
+        self,
+        client: genai.Client,
+        model_id: str,
+        system_instruction_text: str,
+        voice_name: Optional[str],
+        temperature: Optional[float],
+        use_resumption: bool = True,
+        live_config: Optional[types.LiveConnectConfig] = None,
+    ):
+        """
+        Opens a Gemini Live WebSocket session, falling back gracefully if the endpoint
+        rejects a stale resumption handle or AudioTranscriptionConfig.language_codes.
+        """
+        cfg_to_try = live_config or self._build_live_config(
+            system_instruction_text,
+            voice_name,
+            temperature,
+            use_resumption=use_resumption,
+            use_transcription_language_codes=True,
+        )
+        try:
+            cm = client.aio.live.connect(model=model_id, config=cfg_to_try)
+            session = await cm.__aenter__()
+            return cm, session
+        except Exception as conn_err:
+            err_lower = str(conn_err).lower()
+            retry_resumption = use_resumption
+            retry_lang_codes = True
+
+            if getattr(self, "_session_resumption_handle", None) and any(
+                kw in err_lower for kw in ("handle", "resumption", "expired")
+            ):
+                logger.warning(f"[LIVE ON-DEMAND] Resumption handle rejected ({conn_err}). Retrying fresh connection...")
+                self._session_resumption_handle = None
+                retry_resumption = False
+            elif any(kw in err_lower for kw in ("language_code", "language_codes", "transcription")):
+                logger.warning(
+                    f"[LIVE ON-DEMAND] Endpoint rejected transcription language_codes ({conn_err}). "
+                    "Retrying with unconstrained AudioTranscriptionConfig."
+                )
+                retry_lang_codes = False
+            else:
+                raise
+
+            fallback_cfg = self._build_live_config(
+                system_instruction_text,
+                voice_name,
+                temperature,
+                use_resumption=retry_resumption,
+                use_transcription_language_codes=retry_lang_codes,
+            )
+            cm = client.aio.live.connect(model=model_id, config=fallback_cfg)
+            session = await cm.__aenter__()
+            return cm, session
 
     def invalidate_live_session(self, reason: str = "Settings Updated"):
         """
@@ -7178,8 +7356,15 @@ class AetherEngine:
 
             # 4. Open new WebSocket connection
             logger.info(f"[ROTATION] Connecting new live session ({model_id})...")
-            new_cm = client.aio.live.connect(model=model_id, config=new_config)
-            new_session = await new_cm.__aenter__()
+            new_cm, new_session = await self._open_live_session_with_fallback(
+                client=client,
+                model_id=model_id,
+                system_instruction_text=new_instruction,
+                voice_name=voice_name,
+                temperature=temperature,
+                use_resumption=False,
+                live_config=new_config,
+            )
 
             # 5. Critical Safeguard: Ensure the old session has completely finished speaking,
             # tool execution has settled, and the audio hardware buffer has drained before swapping or closing.
@@ -7519,6 +7704,28 @@ class AetherEngine:
         self.is_running = True
         self._stop_requested = False
         self._loop = loop
+        try:
+            cfg = self.config_getter() if callable(self.config_getter) else {}
+            api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+            pipeline_mode = str(api_cfg.get("pipeline_mode") or cfg.get("pipeline_mode") or "live").lower()
+            self._active_pipeline_mode = "modular" if (pipeline_mode == "modular" or self.is_ttrpg_session_active()) else "live"
+        except Exception:
+            self._active_pipeline_mode = "modular" if self.is_ttrpg_session_active() else "live"
+        # Drain any stale empty sentinel items left over from a prior stop()
+        if hasattr(self, "_text_queue") and self._text_queue is not None:
+            requeue = []
+            while not self._text_queue.empty():
+                try:
+                    item = self._text_queue.get_nowait()
+                    if item and str(item).strip():
+                        requeue.append(item)
+                except Exception:
+                    break
+            for item in requeue:
+                try:
+                    self._text_queue.put_nowait(item)
+                except Exception:
+                    break
         agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether") if callable(self.config_getter) else "Aether"
         self.notify("status", {"state": "standby" if self.is_on_demand_mode() else "listening", "message": f"{agent_name} is active."})
         self.hotkey_manager.start()
@@ -7606,6 +7813,7 @@ class AetherEngine:
         self.is_running = False
         self._stop_requested = True
         self._ptt_active = False
+        self._active_pipeline_mode = None
         audio_ref = self.audio
         self.audio = None
         if audio_ref:

@@ -504,6 +504,31 @@ function renderOAuthStatus(statusMap) {
     pollInterval.disabled = !steamConnected;
   }
 
+  // Background Email Monitoring Status
+  const emailMonInfo = statusMap.email_monitoring || {};
+  const emailMonBadge = document.getElementById('emailMonitorStatusBadge');
+  const chkEmailMonEn = document.getElementById('chkEmailMonitorEnabled');
+  const chkEmailMonVerb = document.getElementById('chkEmailMonitorVerbal');
+  const emailMonPoll = document.getElementById('emailMonitorPollInterval');
+  if (emailMonBadge && emailMonInfo.enabled !== undefined) {
+    if (emailMonInfo.enabled) {
+      emailMonBadge.textContent = emailMonInfo.running ? 'MONITORING' : 'ACTIVE';
+      emailMonBadge.className = 'step-status-pill done';
+    } else {
+      emailMonBadge.textContent = 'DISABLED';
+      emailMonBadge.className = 'step-status-pill pending';
+    }
+  }
+  if (chkEmailMonEn && emailMonInfo.enabled !== undefined) {
+    chkEmailMonEn.checked = Boolean(emailMonInfo.enabled);
+  }
+  if (chkEmailMonVerb && emailMonInfo.verbal_announcement !== undefined) {
+    chkEmailMonVerb.checked = Boolean(emailMonInfo.verbal_announcement);
+  }
+  if (emailMonPoll && emailMonInfo.poll_interval_seconds !== undefined) {
+    emailMonPoll.value = String(emailMonInfo.poll_interval_seconds);
+  }
+
   // Desktop Notifications Status (Discord, Slack, Teams, etc.)
   const notifInfo = statusMap.desktop_notifications || {};
   const notifBadge = document.getElementById('discordNotifStatusBadge');
@@ -1025,6 +1050,28 @@ function wireOAuthAccountButtons() {
     const drawer = document.getElementById('discordNotifConfigDrawer');
     if (drawer) drawer.style.display = 'none';
   });
+
+  const saveEmailMonitorSettings = async () => {
+    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_email_monitor_config) return;
+    const enabled = Boolean(document.getElementById('chkEmailMonitorEnabled')?.checked);
+    const verbal = Boolean(document.getElementById('chkEmailMonitorVerbal')?.checked);
+    const pollInterval = parseFloat(document.getElementById('emailMonitorPollInterval')?.value || '60') || 60;
+    try {
+      const res = await window.pywebview.api.save_email_monitor_config(enabled, verbal, pollInterval);
+      renderOAuthStatus({ email_monitoring: res });
+      showOAuthFeedback('Background email monitoring settings saved.');
+    } catch (e) {
+      showOAuthFeedback(`Error saving email monitoring settings: ${e.message || e}`, true);
+    }
+  };
+
+  for (const elId of ['chkEmailMonitorEnabled', 'chkEmailMonitorVerbal', 'emailMonitorPollInterval']) {
+    const el = document.getElementById(elId);
+    if (el && !el.dataset.wired) {
+      el.dataset.wired = '1';
+      el.addEventListener('change', saveEmailMonitorSettings);
+    }
+  }
 
   const saveDiscordNotifSettings = async () => {
     if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.save_desktop_notifications_config) return;

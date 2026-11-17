@@ -17,7 +17,9 @@ function getActiveSpellsContainer() {
 
 function isKnownCasterClass(clsStr) {
   const c = String(clsStr || window.activeCharacterClass || document.getElementById('input-rp-char-archetype')?.value || '').toLowerCase();
-  return c.includes('warlock') || c.includes('sorcerer') || c.includes('bard');
+  const hasKnown = c.includes('warlock') || c.includes('sorcerer') || c.includes('bard');
+  const hasPrepared = c.includes('paladin') || c.includes('wizard') || c.includes('cleric') || c.includes('druid') || c.includes('artificer');
+  return hasKnown && !hasPrepared && !c.includes('/');
 }
 
 function setupSpellPreparationHandlers(maxAllowed, classStr) {
@@ -131,18 +133,29 @@ function updatePreparedBadge() {
   const badge = document.getElementById('prep-spells-tally') || document.querySelector('.prep-counter-pill strong');
   if (badge) {
     const count = getCheckedLeveledCount();
+    const maxAllowed = (typeof activeMaxPreparedSpells === 'number' && activeMaxPreparedSpells >= 0) ? activeMaxPreparedSpells : 0;
     if (isKnownCasterClass()) {
-      if (labelSpan) labelSpan.innerText = 'Spells Known: ';
-      badge.innerText = `${count}`;
-      badge.style.color = '#2ecc71';
+      if (labelSpan) labelSpan.innerText = 'Spells Known / Prepped: ';
+      if (maxAllowed > 0) {
+        if (count > maxAllowed) {
+          badge.innerText = `${count} / ${maxAllowed} (OVER LIMIT)`;
+          badge.style.color = '#f87171';
+        } else {
+          badge.innerText = `${count} / ${maxAllowed}`;
+          badge.style.color = (count === maxAllowed) ? '#2ecc71' : '#00F3FF';
+        }
+      } else {
+        badge.innerText = `${count}`;
+        badge.style.color = '#2ecc71';
+      }
     } else {
       if (labelSpan) labelSpan.innerText = 'Prepared Leveled Spells: ';
-      if (count > activeMaxPreparedSpells) {
-        badge.innerText = `${count} / ${activeMaxPreparedSpells} (OVER LIMIT)`;
+      if (count > maxAllowed) {
+        badge.innerText = `${count} / ${maxAllowed} (OVER LIMIT)`;
         badge.style.color = '#f87171';
       } else {
-        badge.innerText = `${count} / ${activeMaxPreparedSpells}`;
-        badge.style.color = (count === activeMaxPreparedSpells) ? '#2ecc71' : '#00F3FF';
+        badge.innerText = `${count} / ${maxAllowed}`;
+        badge.style.color = (count === maxAllowed) ? '#2ecc71' : '#00F3FF';
       }
     }
   }

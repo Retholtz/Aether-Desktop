@@ -869,14 +869,47 @@ function renderCardSpellsSection(char) {
     const isAlwaysPrep = Boolean(s.is_always_prepared);
     return !isCantrip && !isAlwaysPrep && Boolean(s.prepared);
   }).length;
-  const maxPrepAllowed = (typeof char.max_prepared_leveled_spells === "number")
+  let maxPrepAllowed = (typeof char.max_prepared_leveled_spells === "number" && char.max_prepared_leveled_spells > 0)
     ? char.max_prepared_leveled_spells
-    : (native.max_prepared_leveled_spells || 0);
+    : ((typeof native.max_prepared_leveled_spells === "number" && native.max_prepared_leveled_spells > 0)
+        ? native.max_prepared_leveled_spells
+        : 0);
+
+  if (maxPrepAllowed <= 0 && (allSpells.length > 0 || hasSlots)) {
+    const clsStr = String(char.class_and_level || char.archetype || native.class_level || "");
+    const clsLow = clsStr.toLowerCase();
+    const attrs = char.attributes || native.abilities || {};
+    const mLvl = clsStr.match(/\d+/);
+    const lvlNum = mLvl ? (parseInt(mLvl[0], 10) || 1) : (parseInt(char.level, 10) || 1);
+    const modOf = (val) => Math.floor(((parseInt(val, 10) || 10) - 10) / 2);
+    const intMod = modOf(attrs.Intelligence ?? attrs.INT ?? 10);
+    const wisMod = modOf(attrs.Wisdom ?? attrs.WIS ?? 10);
+    const chaMod = modOf(attrs.Charisma ?? attrs.CHA ?? 10);
+    if (clsLow.includes("druid") || clsLow.includes("cleric")) {
+      maxPrepAllowed = Math.max(1, wisMod + lvlNum);
+    } else if (clsLow.includes("wizard")) {
+      maxPrepAllowed = Math.max(1, intMod + lvlNum);
+    } else if (clsLow.includes("paladin")) {
+      maxPrepAllowed = Math.max(1, chaMod + Math.floor(lvlNum / 2));
+    } else if (clsLow.includes("artificer")) {
+      maxPrepAllowed = Math.max(1, intMod + Math.floor(lvlNum / 2));
+    } else if (clsLow.includes("ranger")) {
+      maxPrepAllowed = Math.max(1, wisMod + Math.floor(lvlNum / 2));
+    } else if (clsLow.includes("sorcerer") || clsLow.includes("bard") || clsLow.includes("warlock")) {
+      maxPrepAllowed = Math.max(1, lvlNum + 1);
+    }
+  }
 
   const isOverPrepared = (maxPrepAllowed > 0 && prepLeveledCount > maxPrepAllowed);
-  const statusBadgeHtml = isOverPrepared
-    ? `<span class="badge-count" style="color: #f87171; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); padding: 1px 6px; border-radius: 4px; font-size: 9.5px; font-weight: 700; cursor: pointer;" title="Character is over spell preparation limit! Click to edit character and unprepare spells." onclick="handleOpenEditCharacterModal('${escapeRpJs(String(charId))}')">⚠️ OVER LIMIT: ${prepLeveledCount}/${maxPrepAllowed}</span>`
-    : `<span class="badge-count" style="color: var(--text-muted); font-size: 9.5px; font-weight: 600;">${activeSpells.length} ACTIVE</span>`;
+  let statusBadgeHtml;
+  if (isOverPrepared) {
+    statusBadgeHtml = `<span class="badge-count" style="color: #f87171; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); padding: 1px 6px; border-radius: 4px; font-size: 9.5px; font-weight: 700; cursor: pointer;" title="Character is over spell preparation limit! Click to edit character and unprepare spells." onclick="handleOpenEditCharacterModal('${escapeRpJs(String(charId))}')">⚠️ OVER LIMIT: ${prepLeveledCount}/${maxPrepAllowed} PREPPED</span>`;
+  } else if (maxPrepAllowed > 0) {
+    const prepColor = (prepLeveledCount === maxPrepAllowed) ? "#2ecc71" : "#00F3FF";
+    statusBadgeHtml = `<span class="badge-count" style="color: ${prepColor}; background: rgba(0, 243, 255, 0.08); border: 1px solid rgba(168, 85, 247, 0.3); padding: 1px 6px; border-radius: 4px; font-size: 9.5px; font-weight: 700;" title="Prepared leveled spells / Max allowed (excluding cantrips &amp; always-prepared spells)">${prepLeveledCount}/${maxPrepAllowed} PREPPED</span>`;
+  } else {
+    statusBadgeHtml = `<span class="badge-count" style="color: var(--text-muted); font-size: 9.5px; font-weight: 600;">${activeSpells.length} ACTIVE</span>`;
+  }
 
   return `
     <div class="card-section spells-section char-spells-shelf" style="margin-top: 8px; background: var(--bg-elevated); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 6px; padding: 6px 8px;">
@@ -5543,8 +5576,12 @@ document.addEventListener("DOMContentLoaded", () => {
             if (typeof window.renderSpellSlotInputs === "function") {
                 window.renderSpellSlotInputs({});
             }
-            const tallyEl = document.getElementById("prep-spells-tally");
-            if (tallyEl) tallyEl.textContent = "0 / 0";
+            if (typeof window.setupSpellPreparationHandlers === "function") {
+                window.setupSpellPreparationHandlers(3, "");
+            } else {
+                const tallyEl = document.getElementById("prep-spells-tally");
+                if (tallyEl) tallyEl.textContent = "0 / 3";
+            }
 
             // Reset Weight, Encumbrance, Appearance, Roleplay Anchors, and Backstory/Notes
             const weightCarriedEl = document.getElementById("input-dnd-weight-carried");
@@ -6493,33 +6530,46 @@ document.addEventListener("DOMContentLoaded", () => {
                     await window.pywebview.api.save_ttrpg_model_endpoint(chosenTtrpgModel);
                 }
 
-                // If starting/resuming adventure:
-                // Auto-toggle Target Speaker Filter OFF so all players around the microphone can speak
-                // and put engine in Tabletop Role Play Mode
-                if (window.pywebview && window.pywebview.api && window.pywebview.api.set_ttrpg_session_active) {
-                    await window.pywebview.api.set_ttrpg_session_active(true);
-                }
-
-                // If assistant is not running, start Aether by default!
-                if (uiApp && !uiApp.isAssistantRunning && typeof uiApp.toggleAssistant === "function") {
-                    await uiApp.toggleAssistant();
-                    // Brief delay for connection establishment
-                    await new Promise(r => setTimeout(r, 800));
-                }
-
-                isAdventureActive = true;
-                updateAdventureButtonState(true);
-
-                // Call backend to trigger adventure start or resume
+                // Call backend to start/switch into Modular TTRPG DM mode, connect, and send opening/resume prompt
+                let startedOk = false;
+                let startErrMsg = "";
                 if (window.pywebview && window.pywebview.api && window.pywebview.api.start_or_resume_ttrpg_campaign) {
                     const res = await window.pywebview.api.start_or_resume_ttrpg_campaign(chosenTtrpgModel);
-                    if (res && res.error) {
-                        console.error("[RolePlay] Error starting/resuming adventure:", res.error);
-                        renderRolePlayStoryBubble({ type: "error", content: `⚠️ Failed to resume adventure: ${res.error}` });
+                    if (res && (res.error || res.success === false)) {
+                        startErrMsg = res.error || "Unknown error starting adventure.";
+                    } else {
+                        startedOk = true;
                     }
+                } else {
+                    if (window.pywebview && window.pywebview.api && window.pywebview.api.set_ttrpg_session_active) {
+                        await window.pywebview.api.set_ttrpg_session_active(true);
+                    }
+                    if (uiApp && !uiApp.isAssistantRunning && typeof uiApp.toggleAssistant === "function") {
+                        await uiApp.toggleAssistant();
+                    }
+                    startedOk = true;
+                }
+
+                if (startedOk) {
+                    if (uiApp) {
+                        uiApp.isAssistantRunning = true;
+                        if (typeof uiApp.updateAssistantButtonState === "function") {
+                            uiApp.updateAssistantButtonState(true);
+                        }
+                    }
+                    isAdventureActive = true;
+                    updateAdventureButtonState(true);
+                } else {
+                    console.error("[RolePlay] Error starting/resuming adventure:", startErrMsg);
+                    isAdventureActive = false;
+                    updateAdventureButtonState(false);
+                    renderRolePlayStoryBubble({ type: "error", content: `⚠️ Failed to start/resume adventure: ${startErrMsg}` });
                 }
             } catch (err) {
                 console.error("[RolePlay] Error starting/stopping adventure:", err);
+                isAdventureActive = false;
+                updateAdventureButtonState(false);
+                renderRolePlayStoryBubble({ type: "error", content: `⚠️ Error starting/stopping adventure: ${err.message || err}` });
             } finally {
                 isTogglingAdventure = false;
                 startResumeCampBtn.disabled = false;
@@ -7036,8 +7086,12 @@ document.addEventListener("DOMContentLoaded", () => {
             if (typeof window.renderSpellSlotInputs === "function") {
                 window.renderSpellSlotInputs({});
             }
-            const tallyEl = document.getElementById("prep-spells-tally");
-            if (tallyEl) tallyEl.textContent = "0 / 0";
+            if (typeof window.setupSpellPreparationHandlers === "function") {
+                window.setupSpellPreparationHandlers(3, "");
+            } else {
+                const tallyEl = document.getElementById("prep-spells-tally");
+                if (tallyEl) tallyEl.textContent = "0 / 3";
+            }
 
             // Reset Weight, Encumbrance, Appearance, Roleplay Anchors, and Backstory/Notes
             const weightCarriedEl = document.getElementById("input-dnd-weight-carried");
