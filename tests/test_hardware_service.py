@@ -42,14 +42,19 @@ class TestHardwareService(unittest.TestCase):
         mock_mem.used = 12 * (1024 ** 3)
         mock_mem.total = 16 * (1024 ** 3)
         mock_nvml.nvmlDeviceGetMemoryInfo.return_value = mock_mem
+        mock_nvml.nvmlDeviceGetClockInfo.side_effect = [2520, 14000]
+        mock_nvml.nvmlDeviceGetPowerUsage.return_value = 215400
+        mock_sensor_core = MagicMock(target=1, currentTemp=68)
+        mock_sensor_hotspot = MagicMock(target=1, currentTemp=79)
+        mock_nvml.nvmlDeviceGetThermalSettings.return_value = [mock_sensor_core, mock_sensor_hotspot]
 
-        # Mock CPU Backend
+        # Mock CPU Backend (user-mode returns None for temp_c)
         with patch.object(self.service._cpu_backend, "query", return_value={
-            "cpu_name": "Intel Core Ultra 9 275HX",
-            "temp_c": 72,
+            "cpu_name": "Intel(R) Core(TM) Ultra 9 275HX",
+            "temp_c": None,
             "load_pct": 25.5,
             "clock_ghz": 4.8,
-            "power_w": 28.5
+            "power_w": None
         }):
             # Mock Rolling Frametimes (average 16.66ms -> 60 FPS)
             self.service._frame_times.extend([16.66] * 60)
@@ -57,12 +62,17 @@ class TestHardwareService(unittest.TestCase):
 
             snap = self.service.get_snapshot()
 
-            self.assertEqual(snap.cpu_name, "Intel Core Ultra 9 275HX")
-            self.assertEqual(snap.cpu_temp_c, 72)
+            self.assertEqual(snap.cpu_name, "Intel(R) Core(TM) Ultra 9 275HX")
+            self.assertIsNone(snap.cpu_temp_c)
+            self.assertEqual(snap.to_dict()["cpu_temp_display"], "N/A")
             self.assertEqual(snap.cpu_clock_ghz, 4.8)
-            self.assertEqual(snap.cpu_power_w, 28.5)
+            self.assertIsNone(snap.cpu_power_w)
             self.assertEqual(snap.gpu_temp_c, 68)
+            self.assertEqual(snap.gpu_hotspot_temp_c, 79)
             self.assertEqual(snap.gpu_utilization_pct, 88)
+            self.assertEqual(snap.gpu_clock_mhz, 2520)
+            self.assertEqual(snap.gpu_mem_clock_mhz, 14000)
+            self.assertAlmostEqual(snap.gpu_power_w, 215.4, places=1)
             self.assertAlmostEqual(snap.vram_used_gb, 12.0, places=1)
             self.assertAlmostEqual(snap.vram_pct, 75.0, places=1)
             self.assertEqual(snap.fps_avg, 60)
@@ -280,8 +290,82 @@ class TestHardwareService(unittest.TestCase):
         data = cpu.query()
         self.assertIn("cpu_name", data)
         self.assertIn("load_pct", data)
+        self.assertIsNone(data["temp_c"])
+        self.assertIsNone(data["power_w"])
         self.assertIsInstance(data["load_pct"], float)
         cpu.close()
+
+    def test_user_mode_startup_logging_and_no_kernel_driver_payloads(self):
+        import os
+        import tempfile
+        import glob
+
+        # Verify startup verification log for NVML / DXGI-PDH
+        with patch("core.hardware_service.PYNVML_AVAILABLE", True), \
+             patch("core.hardware_service.pynvml") as mock_nvml, \
+             patch("core.hardware_service.logger") as mock_logger:
+            mock_nvml.nvmlDeviceGetName.return_value = b"NVIDIA GeForce RTX 5080"
+            svc = HardwareService(presentmon_path="assets/bin/PresentMon.exe")
+            info_msgs = [str(call.args[0]) for call in mock_logger.info.call_args_list]
+            self.assertIn(
+                "[HARDWARE] User-mode telemetry active (Provider: NVML / DXGI-PDH). Kernel driver disabled.",
+                info_msgs,
+            )
+            mock_logger.warning.assert_not_called()
+            svc.close()
+
+        # Verify startup verification log for DXGI-PDH (e.g., Intel Arc) without fallback warning
+        with patch("core.hardware_service.PYNVML_AVAILABLE", False), \
+             patch("core.hardware_service.AmdAdlBackend") as mock_adl_cls, \
+             patch("core.hardware_service.WindowsGpuFallback") as mock_win_cls, \
+             patch("core.hardware_service.logger") as mock_logger:
+            mock_adl_cls.return_value.initialized = False
+            mock_win_inst = mock_win_cls.return_value
+            mock_win_inst.gpu_name = "Intel(R) Arc(TM) A770 Graphics"
+            mock_win_inst.vram_total_gb = 16.0
+            mock_win_inst.vram_shared_total_gb = 16.0
+            mock_win_inst._pdh_available = True
+            mock_win_inst.query.return_value = {
+                "vram_used_gb": 4.2,
+                "vram_shared_used_gb": 0.5,
+                "vram_total_gb": 16.0,
+                "util_pct": 45,
+            }
+            svc = HardwareService(presentmon_path="assets/bin/PresentMon.exe")
+            info_msgs = [str(call.args[0]) for call in mock_logger.info.call_args_list]
+            self.assertIn(
+                "[HARDWARE] User-mode telemetry active (Provider: DXGI-PDH). Kernel driver disabled.",
+                info_msgs,
+            )
+            mock_logger.warning.assert_not_called()
+            snap = svc.get_snapshot()
+            self.assertEqual(snap.telemetry_provider, "DXGI-PDH")
+            self.assertEqual(snap.gpu_name, "Intel(R) Arc(TM) A770 Graphics")
+            self.assertEqual(snap.gpu_utilization_pct, 45)
+            self.assertAlmostEqual(snap.vram_used_gb, 4.2, places=1)
+            self.assertAlmostEqual(snap.vram_shared_used_gb, 0.5, places=1)
+            self.assertIsNone(snap.cpu_temp_c)
+            svc.close()
+
+        # Verify zero kernel driver binaries / references remain in repo or %TEMP%
+        self.assertFalse(os.path.exists("assets/bin/LibreHardwareMonitorLib.dll"))
+        with open("aether_desktop.spec", "r", encoding="utf-8") as f:
+            spec_text = f.read()
+        self.assertNotIn("LibreHardwareMonitorLib", spec_text)
+        self.assertNotIn("WinRing0", spec_text)
+        with open("core/hardware_service.py", "r", encoding="utf-8") as f:
+            svc_text = f.read()
+        self.assertNotIn("LibreHardwareMonitor", svc_text)
+        self.assertNotIn("OpenHardwareMonitor", svc_text)
+        self.assertNotIn("AddReference", svc_text)
+
+        temp_dir = tempfile.gettempdir()
+        before_sys = set(glob.glob(os.path.join(temp_dir, "*.sys")))
+        svc_live = HardwareService(presentmon_path="assets/bin/PresentMon.exe")
+        _ = svc_live.get_snapshot()
+        svc_live.close()
+        after_sys = set(glob.glob(os.path.join(temp_dir, "*.sys")))
+        self.assertEqual(after_sys - before_sys, set())
 
     @patch("subprocess.Popen")
     @patch("os.path.exists", return_value=True)
@@ -324,12 +408,14 @@ class TestHardwareService(unittest.TestCase):
             alerts_enabled=True,
             cpu_temp_threshold_c=95,
             gpu_temp_threshold_c=88,
-            vram_threshold_pct=96
+            vram_threshold_pct=96,
+            sustained_seconds=7.5  # 3 polls at 2.5s cadence
         )
         self.assertTrue(self.service.alerts_enabled)
         self.assertEqual(self.service.cpu_temp_alert_threshold_c, 95.0)
         self.assertEqual(self.service.gpu_temp_alert_threshold_c, 88.0)
         self.assertEqual(self.service.vram_alert_threshold_pct, 96.0)
+        self.assertEqual(self.service.alert_sustained_seconds, 7.5)
 
         # Simulate transient 96C spike (2 polls) followed by 80C recovery -> should NOT fire alert
         snaps = [
@@ -359,6 +445,50 @@ class TestHardwareService(unittest.TestCase):
 
         self.assertEqual(len(received), 1)
         self.assertIn("CPU temperature is high at 96°C (Threshold: 95°C)", received[0])
+
+    def test_sustained_duration_scaling_and_gui_bridge_save(self):
+        received = []
+        self.service.alert_callback = lambda msg: received.append(msg)
+        # 15s sustained -> requires 6 polls (at 2.5s cadence); 5 consecutive hot polls followed by cooldown must NOT alert
+        self.service.update_alert_settings(
+            alerts_enabled=True,
+            gpu_temp_threshold_c=85,
+            sustained_seconds=15
+        )
+        snaps_15s = (
+            [HardwareSnapshot(gpu_temp_c=89, vram_pct=50.0)] * 5
+            + [HardwareSnapshot(gpu_temp_c=72, vram_pct=50.0)]
+            + [HardwareSnapshot(gpu_temp_c=90, vram_pct=50.0)] * 6
+        )
+        idx = {"i": 0}
+
+        def next_snap():
+            i = idx["i"]
+            idx["i"] += 1
+            if i >= len(snaps_15s) - 1:
+                self.service._alert_running = False
+            return snaps_15s[min(i, len(snaps_15s) - 1)]
+
+        self.service._alert_running = True
+        with patch.object(self.service, "get_snapshot", side_effect=next_snap):
+            asyncio.run(self.service._poll_hardware_alerts(0.001))
+
+        self.assertEqual(len(received), 1)
+        self.assertIn("GPU temperature is high at 90°C", received[0])
+
+        from core.gui_bridge import GuiBridge
+        with patch.object(GuiBridge, "_load_config", return_value={}), \
+             patch("core.gui_bridge.AetherEngine"), \
+             patch("core.gui_bridge.save_config_atomic"), \
+             patch("core.config.save_settings"):
+            mock_engine = MagicMock()
+            mock_engine.settings = {}
+            mock_engine.hardware_service = self.service
+            bridge = GuiBridge(config_path="config.json", engine=mock_engine)
+            res = bridge.save_hardware_telemetry_settings(True, 95, 85, 95, 25)
+            self.assertTrue(res["success"])
+            self.assertEqual(res["hardware_telemetry"]["alert_sustained_seconds"], 25)
+            self.assertEqual(self.service.alert_sustained_seconds, 25.0)
 
 
 if __name__ == "__main__":

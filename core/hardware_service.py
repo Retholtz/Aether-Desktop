@@ -5,6 +5,7 @@ Collects GPU thermals, VRAM allocations, and frametimes across NVIDIA, AMD, and 
 import asyncio
 import ctypes
 from ctypes import wintypes
+import math
 import os
 import subprocess
 import sys
@@ -131,14 +132,17 @@ class AmdAdlBackend:
 
 
 class WindowsGpuFallback:
-    """Universal Windows fallback using DXGI 1.1 and Performance Data Helper (PDH)."""
+    """Universal Windows user-mode GPU provider using DXGI 1.1 and Performance Data Helper (PDH)."""
     def __init__(self):
         self.gpu_name = "Universal Windows Graphics"
         self.vram_total_gb = 0.0
+        self.vram_shared_total_gb = 0.0
+        self._adapter_luid_tag: Optional[str] = None
         self._pdh_available = False
         self._pdh = None
         self._query = None
         self._vram_counter = None
+        self._shared_vram_counter = None
         self._engine_counter = None
         if os.name == "nt":
             self._init_dxgi()
@@ -148,6 +152,8 @@ class WindowsGpuFallback:
         try:
             class GUID(ctypes.Structure):
                 _fields_ = [('Data1', wintypes.DWORD), ('Data2', wintypes.WORD), ('Data3', wintypes.WORD), ('Data4', ctypes.c_ubyte * 8)]
+            class LUID(ctypes.Structure):
+                _fields_ = [('LowPart', wintypes.DWORD), ('HighPart', wintypes.LONG)]
             class DXGI_ADAPTER_DESC1(ctypes.Structure):
                 _fields_ = [
                     ('Description', wintypes.WCHAR * 128),
@@ -158,23 +164,48 @@ class WindowsGpuFallback:
                     ('DedicatedVideoMemory', ctypes.c_size_t),
                     ('DedicatedSystemMemory', ctypes.c_size_t),
                     ('SharedSystemMemory', ctypes.c_size_t),
-                    ('AdapterLuid', wintypes.LARGE_INTEGER),
+                    ('AdapterLuid', LUID),
                     ('Flags', wintypes.UINT)
                 ]
             dxgi = ctypes.windll.dxgi
             factory = ctypes.c_void_p()
             iid_factory1 = GUID(0x770aae78, 0xf26f, 0x4dba, (ctypes.c_ubyte * 8)(0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87))
-            if dxgi.CreateDXGIFactory1(ctypes.byref(iid_factory1), ctypes.byref(factory)) == 0:
+            if dxgi.CreateDXGIFactory1(ctypes.byref(iid_factory1), ctypes.byref(factory)) == 0 and factory.value:
                 vtable = ctypes.cast(ctypes.cast(factory.value, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
                 enum_adapters1_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p))(vtable[12])
-                adapter = ctypes.c_void_p()
-                if enum_adapters1_fn(factory, 0, ctypes.byref(adapter)) == 0:
-                    amethods = ctypes.cast(ctypes.cast(adapter.value, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
-                    get_desc1_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(DXGI_ADAPTER_DESC1))(amethods[10])
-                    desc = DXGI_ADAPTER_DESC1()
-                    if get_desc1_fn(adapter, ctypes.byref(desc)) == 0:
-                        self.gpu_name = desc.Description
-                        self.vram_total_gb = desc.DedicatedVideoMemory / (1024 ** 3)
+                release_factory_fn = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtable[2])
+
+                best_desc = None
+                idx = 0
+                try:
+                    while True:
+                        adapter = ctypes.c_void_p()
+                        if enum_adapters1_fn(factory, idx, ctypes.byref(adapter)) != 0 or not adapter.value:
+                            break
+                        amethods = ctypes.cast(ctypes.cast(adapter.value, ctypes.POINTER(ctypes.c_void_p))[0], ctypes.POINTER(ctypes.c_void_p))
+                        get_desc1_fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(DXGI_ADAPTER_DESC1))(amethods[10])
+                        release_adapter_fn = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(amethods[2])
+                        desc = DXGI_ADAPTER_DESC1()
+                        try:
+                            if get_desc1_fn(adapter, ctypes.byref(desc)) == 0:
+                                is_software = bool(desc.Flags & 2) or desc.VendorId == 0x1414
+                                if not is_software:
+                                    if best_desc is None or desc.DedicatedVideoMemory > best_desc.DedicatedVideoMemory:
+                                        best_desc = desc
+                        finally:
+                            release_adapter_fn(adapter)
+                        idx += 1
+                finally:
+                    release_factory_fn(factory)
+
+                if best_desc is not None:
+                    self.gpu_name = best_desc.Description
+                    self.vram_total_gb = best_desc.DedicatedVideoMemory / (1024 ** 3)
+                    self.vram_shared_total_gb = best_desc.SharedSystemMemory / (1024 ** 3)
+                    self._adapter_luid_tag = (
+                        f"luid_0x{best_desc.AdapterLuid.HighPart & 0xFFFFFFFF:08x}"
+                        f"_0x{best_desc.AdapterLuid.LowPart:08x}"
+                    )
         except Exception:
             pass
 
@@ -184,37 +215,62 @@ class WindowsGpuFallback:
             self._query = ctypes.c_void_p()
             if self._pdh.PdhOpenQueryW(None, 0, ctypes.byref(self._query)) == 0:
                 self._vram_counter = ctypes.c_void_p()
+                self._shared_vram_counter = ctypes.c_void_p()
                 self._engine_counter = ctypes.c_void_p()
                 self._pdh.PdhAddEnglishCounterW(self._query, r'\GPU Adapter Memory(*)\Dedicated Usage', 0, ctypes.byref(self._vram_counter))
+                self._pdh.PdhAddEnglishCounterW(self._query, r'\GPU Adapter Memory(*)\Shared Usage', 0, ctypes.byref(self._shared_vram_counter))
                 self._pdh.PdhAddEnglishCounterW(self._query, r'\GPU Engine(*engtype_3D)\Utilization Percentage', 0, ctypes.byref(self._engine_counter))
                 self._pdh.PdhCollectQueryData(self._query)
                 self._pdh_available = True
         except Exception:
             self._pdh_available = False
 
+    def _read_pdh_memory_gb(self, counter) -> float:
+        if not counter or not self._pdh or not self._query:
+            return 0.0
+
+        class PDH_FMT_COUNTERVALUE_LARGE(ctypes.Structure):
+            _fields_ = [('CStatus', wintypes.DWORD), ('largeValue', ctypes.c_int64)]
+
+        class PDH_FMT_COUNTERVALUE_ITEM_W(ctypes.Structure):
+            _fields_ = [('szName', wintypes.LPWSTR), ('FmtValue', PDH_FMT_COUNTERVALUE_LARGE)]
+
+        buf_size = wintypes.DWORD(0)
+        item_count = wintypes.DWORD(0)
+        self._pdh.PdhGetFormattedCounterArrayW(counter, 0x00000400, ctypes.byref(buf_size), ctypes.byref(item_count), None)
+        if buf_size.value <= 0:
+            return 0.0
+
+        buf = ctypes.create_string_buffer(buf_size.value)
+        if self._pdh.PdhGetFormattedCounterArrayW(counter, 0x00000400, ctypes.byref(buf_size), ctypes.byref(item_count), buf) != 0:
+            return 0.0
+
+        items = ctypes.cast(buf, ctypes.POINTER(PDH_FMT_COUNTERVALUE_ITEM_W))
+        luid_tag = self._adapter_luid_tag
+        matched_max = 0
+        overall_max = 0
+        has_luid_match = False
+        for i in range(item_count.value):
+            val = max(0, int(items[i].FmtValue.largeValue))
+            if val > overall_max:
+                overall_max = val
+            name = (items[i].szName or "").lower()
+            if luid_tag and luid_tag in name:
+                has_luid_match = True
+                if val > matched_max:
+                    matched_max = val
+        chosen = matched_max if has_luid_match else overall_max
+        return chosen / (1024 ** 3)
+
     def query(self) -> Dict[str, Any]:
         vram_used_gb = 0.0
+        vram_shared_used_gb = 0.0
         util_pct = 0.0
         if self._pdh_available and self._query:
             try:
                 self._pdh.PdhCollectQueryData(self._query)
-                class PDH_FMT_COUNTERVALUE_LARGE(ctypes.Structure):
-                    _fields_ = [('CStatus', wintypes.DWORD), ('largeValue', ctypes.c_int64)]
-                class PDH_FMT_COUNTERVALUE_ITEM_W(ctypes.Structure):
-                    _fields_ = [('szName', wintypes.LPWSTR), ('FmtValue', PDH_FMT_COUNTERVALUE_LARGE)]
-
-                buf_size = wintypes.DWORD(0)
-                item_count = wintypes.DWORD(0)
-                self._pdh.PdhGetFormattedCounterArrayW(self._vram_counter, 0x00000400, ctypes.byref(buf_size), ctypes.byref(item_count), None)
-                if buf_size.value > 0:
-                    buf = ctypes.create_string_buffer(buf_size.value)
-                    if self._pdh.PdhGetFormattedCounterArrayW(self._vram_counter, 0x00000400, ctypes.byref(buf_size), ctypes.byref(item_count), buf) == 0:
-                        items = ctypes.cast(buf, ctypes.POINTER(PDH_FMT_COUNTERVALUE_ITEM_W))
-                        max_b = 0
-                        for i in range(item_count.value):
-                            if items[i].FmtValue.largeValue > max_b:
-                                max_b = items[i].FmtValue.largeValue
-                        vram_used_gb = max_b / (1024 ** 3)
+                vram_used_gb = self._read_pdh_memory_gb(self._vram_counter)
+                vram_shared_used_gb = self._read_pdh_memory_gb(self._shared_vram_counter)
 
                 class PDH_FMT_COUNTERVALUE_DOUBLE(ctypes.Structure):
                     _fields_ = [('CStatus', wintypes.DWORD), ('doubleValue', ctypes.c_double)]
@@ -228,15 +284,26 @@ class WindowsGpuFallback:
                     buf_eng = ctypes.create_string_buffer(buf_size_eng.value)
                     if self._pdh.PdhGetFormattedCounterArrayW(self._engine_counter, 0x00000200, ctypes.byref(buf_size_eng), ctypes.byref(item_count_eng), buf_eng) == 0:
                         items_eng = ctypes.cast(buf_eng, ctypes.POINTER(PDH_FMT_COUNTERVALUE_ITEM_W_DBL))
-                        tot = 0.0
+                        luid_tag = self._adapter_luid_tag
+                        matched_tot = 0.0
+                        overall_tot = 0.0
+                        has_luid_match = False
                         for i in range(item_count_eng.value):
-                            tot += items_eng[i].FmtValue.doubleValue
+                            val = max(0.0, float(items_eng[i].FmtValue.doubleValue))
+                            overall_tot += val
+                            name = (items_eng[i].szName or "").lower()
+                            if luid_tag and luid_tag in name:
+                                has_luid_match = True
+                                matched_tot += val
+                        tot = matched_tot if has_luid_match else overall_tot
                         util_pct = min(100.0, max(0.0, tot))
             except Exception:
                 pass
         return {
             "vram_used_gb": vram_used_gb,
+            "vram_shared_used_gb": vram_shared_used_gb,
             "vram_total_gb": self.vram_total_gb,
+            "vram_shared_total_gb": self.vram_shared_total_gb,
             "util_pct": int(round(util_pct))
         }
 
@@ -249,122 +316,133 @@ class WindowsGpuFallback:
             self._query = None
 
 
-
 class CpuMonitorBackend:
     """
-    Multi-tier CPU monitoring backend for Windows:
-    Tier 1: LibreHardwareMonitorLib.dll via pythonnet (clr) for exact Package & Core MSR temperatures, core clocks, and power.
-    Tier 2: Windows ACPI WMI (root\\wmi:MSAcpi_ThermalZoneTemperature).
-    Tier 3: psutil CPU load & frequencies fallback.
+    Pure user-mode CPU monitoring backend using Windows PDH and psutil.
+    - Utilization: Windows PDH (\\Processor Information(_Total)\\% Processor Utility) with psutil fallback.
+    - Clock speed: Windows PDH (Actual Frequency / Processor Performance) with psutil.cpu_freq() fallback.
+    - Package Temperature: Returns None (N/A) in user mode without Ring-0 kernel driver access.
     """
-    def __init__(self, dll_path: Optional[str] = None):
-        self.initialized = False
-        self._hw_computer = None
-        self._cpu_hardware = None
-        self.cpu_name: str = "CPU"
-        self._init_backend(dll_path)
+    def __init__(self):
+        self.initialized = True
+        self.cpu_name: str = self._detect_cpu_name()
+        self._pdh_available = False
+        self._pdh = None
+        self._query = None
+        self._util_counter = None
+        self._actual_freq_counter = None
+        self._base_freq_counter = None
+        self._perf_counter = None
 
-    def _init_backend(self, dll_path: Optional[str] = None):
-        candidates = []
-        if dll_path:
-            candidates.append(dll_path)
-        base_dir = get_bundle_dir()
-        candidates.append(os.path.join(base_dir, "assets", "bin", "LibreHardwareMonitorLib.dll"))
-        site_dll = os.path.join(sys.prefix, "Lib", "site-packages", "WinTmp", "LibreHardwareMonitorLib.dll")
-        candidates.append(site_dll)
+        # Prime psutil cpu_percent so first snapshot isn't 0.0
+        try:
+            psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
 
-        for p in candidates:
-            if os.path.exists(p):
-                try:
-                    import clr
-                    clr.AddReference(os.path.abspath(p))
-                    from LibreHardwareMonitor import Hardware
-                    self._hw_computer = Hardware.Computer()
-                    self._hw_computer.IsCpuEnabled = True
-                    self._hw_computer.IsGpuEnabled = False
-                    self._hw_computer.IsMemoryEnabled = False
-                    self._hw_computer.IsMotherboardEnabled = False
-                    self._hw_computer.IsStorageEnabled = False
-                    self._hw_computer.IsNetworkEnabled = False
-                    from concurrent.futures import ThreadPoolExecutor, TimeoutError
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        open_future = executor.submit(self._hw_computer.Open)
-                        try:
-                            open_future.result(timeout=3.0)
-                        except TimeoutError:
-                            logger.warning(
-                                "[HARDWARE] LibreHardwareMonitor Computer.Open() timed out after 3.0s "
-                                "(driver mutex likely locked by another instance or lingering process). "
-                                "Falling back to standard CPU telemetry."
-                            )
-                            self._hw_computer = None
-                            continue
-                        except Exception as open_err:
-                            logger.debug(f"[HARDWARE] Error opening LibreHardwareMonitor: {open_err}")
-                            self._hw_computer = None
-                            continue
-                    for h in self._hw_computer.Hardware:
-                        if h.HardwareType == Hardware.HardwareType.Cpu:
-                            self._cpu_hardware = h
-                            self.cpu_name = str(h.Name)
-                            break
-                    self.initialized = True
-                    logger.info(f"[HARDWARE] LibreHardwareMonitor initialized for CPU: '{self.cpu_name}'.")
-                    break
-                except Exception as e:
-                    logger.debug(f"[HARDWARE] Could not initialize LibreHardwareMonitor from {p}: {e}")
+        if os.name == "nt":
+            self._init_pdh()
 
-        if not self.cpu_name or self.cpu_name == "CPU":
+    def _detect_cpu_name(self) -> str:
+        if os.name == "nt":
             try:
-                import platform
-                self.cpu_name = platform.processor() or "CPU"
+                import winreg
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+                ) as key:
+                    val, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+                    if val and str(val).strip():
+                        return str(val).strip()
             except Exception:
-                self.cpu_name = "CPU"
+                pass
+        try:
+            import platform
+            return platform.processor() or "CPU"
+        except Exception:
+            return "CPU"
+
+    def _init_pdh(self):
+        try:
+            self._pdh = ctypes.windll.pdh
+            self._query = ctypes.c_void_p()
+            if self._pdh.PdhOpenQueryW(None, 0, ctypes.byref(self._query)) == 0:
+                self._util_counter = ctypes.c_void_p()
+                self._actual_freq_counter = ctypes.c_void_p()
+                self._base_freq_counter = ctypes.c_void_p()
+                self._perf_counter = ctypes.c_void_p()
+
+                self._pdh.PdhAddEnglishCounterW(
+                    self._query,
+                    r"\Processor Information(_Total)\% Processor Utility",
+                    0,
+                    ctypes.byref(self._util_counter)
+                )
+                self._pdh.PdhAddEnglishCounterW(
+                    self._query,
+                    r"\Processor Information(_Total)\Actual Frequency",
+                    0,
+                    ctypes.byref(self._actual_freq_counter)
+                )
+                self._pdh.PdhAddEnglishCounterW(
+                    self._query,
+                    r"\Processor Information(_Total)\Processor Frequency",
+                    0,
+                    ctypes.byref(self._base_freq_counter)
+                )
+                self._pdh.PdhAddEnglishCounterW(
+                    self._query,
+                    r"\Processor Information(_Total)\% Processor Performance",
+                    0,
+                    ctypes.byref(self._perf_counter)
+                )
+                self._pdh.PdhCollectQueryData(self._query)
+                self._pdh_available = True
+        except Exception:
+            self._pdh_available = False
+
+    def _read_pdh_double(self, counter) -> Optional[float]:
+        if not counter or not self._pdh:
+            return None
+
+        class PDH_FMT_COUNTERVALUE_DOUBLE(ctypes.Structure):
+            _fields_ = [("CStatus", wintypes.DWORD), ("doubleValue", ctypes.c_double)]
+
+        val = PDH_FMT_COUNTERVALUE_DOUBLE()
+        status = self._pdh.PdhGetFormattedCounterValue(counter, 0x00000200, None, ctypes.byref(val))
+        if status == 0 and val.CStatus == 0:
+            return float(val.doubleValue)
+        return None
 
     def query(self) -> Dict[str, Any]:
-        """Queries real-time CPU thermals, loads, clocks, and power consumption."""
-        temp_c = None
-        clock_ghz = None
-        power_w = None
-        load_pct = psutil.cpu_percent(interval=None)
+        """Queries real-time CPU utilization and clock speeds in pure user mode."""
+        load_pct: Optional[float] = None
+        clock_ghz: Optional[float] = None
 
-        if self.initialized and self._cpu_hardware:
+        if self._pdh_available and self._query and self._pdh:
             try:
-                from LibreHardwareMonitor import Hardware
-                self._cpu_hardware.Update()
-                pkg_temp = None
-                max_temp = None
-                max_clock_mhz = 0.0
+                self._pdh.PdhCollectQueryData(self._query)
+                util_val = self._read_pdh_double(self._util_counter)
+                if util_val is not None:
+                    load_pct = round(min(100.0, max(0.0, util_val)), 1)
 
-                for s in self._cpu_hardware.Sensors:
-                    if s.SensorType == Hardware.SensorType.Temperature:
-                        s_name = s.Name.lower()
-                        if "package" in s_name and s.Value:
-                            pkg_temp = s.Value
-                        elif "max" in s_name and s.Value and max_temp is None:
-                            max_temp = s.Value
-                        elif not pkg_temp and not max_temp and s.Value:
-                            max_temp = s.Value
-                    elif s.SensorType == Hardware.SensorType.Clock and "core" in s.Name.lower():
-                        if s.Value and s.Value > max_clock_mhz:
-                            max_clock_mhz = s.Value
-                    elif s.SensorType == Hardware.SensorType.Power and "package" in s.Name.lower():
-                        if s.Value:
-                            power_w = round(float(s.Value), 1)
+                actual_mhz = self._read_pdh_double(self._actual_freq_counter)
+                if actual_mhz is not None and actual_mhz > 0:
+                    clock_ghz = round(actual_mhz / 1000.0, 2)
+                else:
+                    base_mhz = self._read_pdh_double(self._base_freq_counter)
+                    perf_pct = self._read_pdh_double(self._perf_counter)
+                    if base_mhz is not None and base_mhz > 0 and perf_pct is not None and perf_pct > 0:
+                        clock_ghz = round((base_mhz * (perf_pct / 100.0)) / 1000.0, 2)
+            except Exception:
+                pass
 
-                chosen_temp = pkg_temp if pkg_temp is not None else max_temp
-                if chosen_temp is not None:
-                    temp_c = int(round(chosen_temp))
-                if max_clock_mhz > 0:
-                    clock_ghz = round(max_clock_mhz / 1000.0, 2)
-            except Exception as e:
-                logger.debug(f"[HARDWARE] Error polling LibreHardwareMonitor: {e}")
+        if load_pct is None:
+            try:
+                load_pct = float(psutil.cpu_percent(interval=None))
+            except Exception:
+                load_pct = 0.0
 
-        # WMI ACPI fallback if temperature not obtained
-        if temp_c is None:
-            temp_c = self._query_wmi_acpi_temp()
-
-        # psutil frequency fallback
         if clock_ghz is None:
             try:
                 freq = psutil.cpu_freq()
@@ -375,40 +453,33 @@ class CpuMonitorBackend:
 
         return {
             "cpu_name": self.cpu_name,
-            "temp_c": temp_c,
+            "temp_c": None,
             "load_pct": load_pct,
             "clock_ghz": clock_ghz,
-            "power_w": power_w
+            "power_w": None
         }
 
-    def _query_wmi_acpi_temp(self) -> Optional[int]:
-        try:
-            import win32com.client
-            w = win32com.client.GetObject("winmgmts:\\\\.\\root\\wmi")
-            for t in w.InstancesOf("MSAcpi_ThermalZoneTemperature"):
-                raw = getattr(t, "CurrentTemperature", None)
-                if raw and raw > 2732:
-                    return int(round((raw - 2732) / 10.0))
-        except Exception:
-            pass
-        return None
-
     def close(self):
-        if self._hw_computer:
+        if self._pdh and self._query:
             try:
-                self._hw_computer.Close()
+                self._pdh.PdhCloseQuery(self._query)
             except Exception:
                 pass
-            self._hw_computer = None
+            self._query = None
 
 
 @dataclass
 class HardwareSnapshot:
     gpu_temp_c: int = 0
+    gpu_hotspot_temp_c: Optional[int] = None
     gpu_utilization_pct: int = 0
+    gpu_clock_mhz: Optional[int] = None
+    gpu_mem_clock_mhz: Optional[int] = None
+    gpu_power_w: Optional[float] = None
     vram_used_gb: float = 0.0
     vram_total_gb: float = 0.0
     vram_pct: float = 0.0
+    vram_shared_used_gb: Optional[float] = None
     gpu_name: Optional[str] = None
 
     # CPU Telemetry
@@ -425,17 +496,24 @@ class HardwareSnapshot:
     fps_avg: Optional[int] = None
     fps_1pct_low: Optional[int] = None
     active_game_process: Optional[str] = None
+    telemetry_provider: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "gpu_name": self.gpu_name,
             "gpu_temp_c": self.gpu_temp_c,
+            "gpu_hotspot_temp_c": self.gpu_hotspot_temp_c,
             "gpu_utilization_pct": self.gpu_utilization_pct,
+            "gpu_clock_mhz": self.gpu_clock_mhz,
+            "gpu_mem_clock_mhz": self.gpu_mem_clock_mhz,
+            "gpu_power_w": round(self.gpu_power_w, 1) if self.gpu_power_w is not None else None,
             "vram_used_gb": round(self.vram_used_gb, 2),
             "vram_total_gb": round(self.vram_total_gb, 2),
             "vram_pct": round(self.vram_pct, 1),
+            "vram_shared_used_gb": round(self.vram_shared_used_gb, 2) if self.vram_shared_used_gb is not None else None,
             "cpu_name": self.cpu_name,
             "cpu_temp_c": self.cpu_temp_c,
+            "cpu_temp_display": f"{self.cpu_temp_c}°C" if self.cpu_temp_c is not None else "N/A",
             "cpu_load_pct": round(self.cpu_load_pct, 1),
             "cpu_clock_ghz": round(self.cpu_clock_ghz, 2) if self.cpu_clock_ghz is not None else None,
             "cpu_power_w": round(self.cpu_power_w, 1) if self.cpu_power_w is not None else None,
@@ -444,7 +522,8 @@ class HardwareSnapshot:
             "fps_current": self.fps_current,
             "fps_avg": self.fps_avg,
             "fps_1pct_low": self.fps_1pct_low,
-            "active_game_process": self.active_game_process
+            "active_game_process": self.active_game_process,
+            "telemetry_provider": self.telemetry_provider,
         }
 
 
@@ -457,7 +536,7 @@ class HardwareService:
         gpu_temp_alert_threshold_c: float = 85.0,
         cpu_temp_alert_threshold_c: float = 95.0,
         alerts_enabled: bool = True,
-        libre_dll_path: Optional[str] = None
+        alert_sustained_seconds: float = 15.0
     ):
         self.presentmon_path = presentmon_path
         self.alert_callback = alert_callback
@@ -465,12 +544,14 @@ class HardwareService:
         self.gpu_temp_alert_threshold_c = gpu_temp_alert_threshold_c
         self.cpu_temp_alert_threshold_c = cpu_temp_alert_threshold_c
         self.alerts_enabled = bool(alerts_enabled)
+        self.alert_sustained_seconds = max(1.0, float(alert_sustained_seconds))
 
-        # CPU Telemetry Provider
-        self._cpu_backend = CpuMonitorBackend(dll_path=libre_dll_path)
+        # Pure User-Mode CPU Telemetry Provider (PDH + psutil)
+        self._cpu_backend = CpuMonitorBackend()
 
-        # GPU Telemetry Providers
+        # Pure User-Mode GPU Telemetry Providers
         self._gpu_backend: str = "none"  # "nvml", "amd_adl", "windows", "none"
+        self._telemetry_provider: str = "DXGI-PDH"
         self._nvml_initialized = False
         self._gpu_handle = None
         self._amd_backend = AmdAdlBackend()
@@ -500,9 +581,10 @@ class HardwareService:
         alerts_enabled: Optional[bool] = None,
         cpu_temp_threshold_c: Optional[float] = None,
         gpu_temp_threshold_c: Optional[float] = None,
-        vram_threshold_pct: Optional[float] = None
+        vram_threshold_pct: Optional[float] = None,
+        sustained_seconds: Optional[float] = None
     ):
-        """Hot-updates thermal and VRAM warning thresholds and enable state at runtime."""
+        """Hot-updates thermal and VRAM warning thresholds, sustained duration, and enable state at runtime."""
         if alerts_enabled is not None:
             self.alerts_enabled = bool(alerts_enabled)
         if cpu_temp_threshold_c is not None:
@@ -511,15 +593,19 @@ class HardwareService:
             self.gpu_temp_alert_threshold_c = float(gpu_temp_threshold_c)
         if vram_threshold_pct is not None:
             self.vram_alert_threshold_pct = float(vram_threshold_pct)
+        if sustained_seconds is not None:
+            self.alert_sustained_seconds = max(1.0, float(sustained_seconds))
+            self._consecutive_breaches = {"cpu_temp": 0, "gpu_temp": 0, "vram": 0}
         logger.info(
             f"[HARDWARE] Updated alert settings: enabled={self.alerts_enabled}, "
             f"CPU={int(self.cpu_temp_alert_threshold_c)}°C, "
             f"GPU={int(self.gpu_temp_alert_threshold_c)}°C, "
-            f"VRAM={int(self.vram_alert_threshold_pct)}%"
+            f"VRAM={int(self.vram_alert_threshold_pct)}%, "
+            f"Sustained={int(self.alert_sustained_seconds)}s"
         )
 
     def _init_gpu_telemetry(self):
-        """Initializes the best available GPU driver reader in priority order: NVML -> AMD ADL -> Windows PDH."""
+        """Initializes the pure user-mode GPU telemetry chain: NVML -> AMD ADL -> Windows DXGI/PDH."""
         # 1. NVIDIA NVML
         if PYNVML_AVAILABLE:
             try:
@@ -527,30 +613,37 @@ class HardwareService:
                 self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
                 self._nvml_initialized = True
                 self._gpu_backend = "nvml"
+                self._telemetry_provider = "NVML / DXGI-PDH"
                 try:
                     name_bytes = pynvml.nvmlDeviceGetName(self._gpu_handle)
                     name = name_bytes.decode("utf-8") if isinstance(name_bytes, bytes) else str(name_bytes)
                 except Exception:
                     name = "NVIDIA GeForce GPU"
-                logger.info(f"[HARDWARE] NVML initialized successfully for '{name}'.")
+                logger.info(f"[HARDWARE] NVML initialized for '{name}'.")
+                logger.info(f"[HARDWARE] User-mode telemetry active (Provider: {self._telemetry_provider}). Kernel driver disabled.")
                 return
             except Exception as e:
-                logger.debug(f"[HARDWARE] NVML initialization skipped: {e}")
+                logger.debug(f"[HARDWARE] NVML not active: {e}")
                 self._nvml_initialized = False
 
         # 2. AMD ADL
         if self._amd_backend.initialized:
             self._gpu_backend = "amd_adl"
+            self._telemetry_provider = "AMD ADL / DXGI-PDH"
             logger.info("[HARDWARE] AMD ADL backend active for Radeon GPU.")
+            logger.info(f"[HARDWARE] User-mode telemetry active (Provider: {self._telemetry_provider}). Kernel driver disabled.")
             return
 
-        # 3. Universal Windows DXGI / PDH Fallback
-        if self._win_fallback.vram_total_gb > 0:
+        # 3. Universal Windows DXGI / PDH (Intel Arc, integrated, or generic DXGI adapters)
+        if self._win_fallback.vram_total_gb > 0 or self._win_fallback.vram_shared_total_gb > 0 or self._win_fallback._pdh_available:
             self._gpu_backend = "windows"
-            logger.info(f"[HARDWARE] Windows DXGI/PDH fallback active for '{self._win_fallback.gpu_name}'.")
+            self._telemetry_provider = "DXGI-PDH"
+            logger.info(f"[HARDWARE] Windows DXGI/PDH provider active for '{self._win_fallback.gpu_name}'.")
+            logger.info(f"[HARDWARE] User-mode telemetry active (Provider: {self._telemetry_provider}). Kernel driver disabled.")
         else:
             self._gpu_backend = "none"
-            logger.warning("[HARDWARE] No dedicated GPU telemetry provider available.")
+            self._telemetry_provider = "psutil / DXGI-PDH"
+            logger.info(f"[HARDWARE] User-mode telemetry active (Provider: {self._telemetry_provider}). Kernel driver disabled.")
 
     def close(self):
         if self._nvml_initialized and PYNVML_AVAILABLE:
@@ -886,8 +979,9 @@ class HardwareService:
     def get_snapshot(self) -> HardwareSnapshot:
         """Polls current system, CPU, GPU, VRAM, and calculates current FPS metrics."""
         snap = HardwareSnapshot()
+        snap.telemetry_provider = self._telemetry_provider
 
-        # 1. CPU Telemetry (LibreHardwareMonitor MSR -> ACPI WMI -> psutil)
+        # 1. Pure User-Mode CPU Telemetry (PDH + psutil)
         if self._cpu_backend:
             try:
                 cpu_data = self._cpu_backend.query()
@@ -907,7 +1001,7 @@ class HardwareService:
         snap.ram_used_gb = (sys_ram.total - sys_ram.available) / (1024 ** 3)
         snap.ram_total_gb = sys_ram.total / (1024 ** 3)
 
-        # 1. NVIDIA NVML Query
+        # 2. NVIDIA NVML Query (user-mode nvml.dll)
         if self._gpu_backend == "nvml" and self._nvml_initialized and self._gpu_handle and PYNVML_AVAILABLE:
             try:
                 snap.gpu_temp_c = pynvml.nvmlDeviceGetTemperature(self._gpu_handle, pynvml.NVML_TEMPERATURE_GPU)
@@ -919,6 +1013,48 @@ class HardwareService:
                 snap.vram_total_gb = mem.total / (1024 ** 3)
                 snap.vram_pct = (mem.used / mem.total) * 100.0 if mem.total > 0 else 0.0
 
+                # Hotspot / junction sensor (if exposed by driver)
+                try:
+                    target_all = getattr(pynvml, "NVML_THERMAL_TARGET_ALL", 15)
+                    sensors = pynvml.nvmlDeviceGetThermalSettings(self._gpu_handle, target_all)
+                    if isinstance(sensors, (list, tuple)):
+                        temps = [
+                            int(s.currentTemp)
+                            for s in sensors
+                            if getattr(s, "target", 0) != 0
+                            and isinstance(getattr(s, "currentTemp", None), (int, float))
+                            and 0 < s.currentTemp < 150
+                        ]
+                        if temps:
+                            max_sensor_temp = max(temps)
+                            if len(temps) > 1 or (isinstance(snap.gpu_temp_c, (int, float)) and max_sensor_temp > snap.gpu_temp_c):
+                                snap.gpu_hotspot_temp_c = max_sensor_temp
+                except Exception:
+                    pass
+
+                # GPU Graphics & Memory Clock Speeds (MHz)
+                try:
+                    gfx_clk = pynvml.nvmlDeviceGetClockInfo(self._gpu_handle, pynvml.NVML_CLOCK_GRAPHICS)
+                    if isinstance(gfx_clk, (int, float)) and not isinstance(gfx_clk, bool):
+                        snap.gpu_clock_mhz = int(gfx_clk)
+                except Exception:
+                    pass
+
+                try:
+                    mem_clk = pynvml.nvmlDeviceGetClockInfo(self._gpu_handle, pynvml.NVML_CLOCK_MEM)
+                    if isinstance(mem_clk, (int, float)) and not isinstance(mem_clk, bool):
+                        snap.gpu_mem_clock_mhz = int(mem_clk)
+                except Exception:
+                    pass
+
+                # GPU Board Power Draw (mW -> W)
+                try:
+                    power_mw = pynvml.nvmlDeviceGetPowerUsage(self._gpu_handle)
+                    if isinstance(power_mw, (int, float)) and not isinstance(power_mw, bool) and power_mw >= 0:
+                        snap.gpu_power_w = round(float(power_mw) / 1000.0, 1)
+                except Exception:
+                    pass
+
                 try:
                     name_bytes = pynvml.nvmlDeviceGetName(self._gpu_handle)
                     snap.gpu_name = name_bytes.decode("utf-8") if isinstance(name_bytes, bytes) else str(name_bytes)
@@ -927,7 +1063,7 @@ class HardwareService:
             except Exception as e:
                 logger.warning(f"[HARDWARE] Error polling NVML: {e}")
 
-        # 2. AMD ADL Query
+        # 3. AMD ADL Query
         elif self._gpu_backend == "amd_adl" and self._amd_backend.initialized:
             try:
                 amd_data = self._amd_backend.query()
@@ -937,20 +1073,27 @@ class HardwareService:
                 snap.vram_total_gb = amd_data.get("vram_total_gb") or self._win_fallback.vram_total_gb
                 snap.vram_pct = (snap.vram_used_gb / snap.vram_total_gb * 100.0) if snap.vram_total_gb > 0 else 0.0
                 snap.gpu_name = self._amd_backend.gpu_name or self._win_fallback.gpu_name
+                if self._win_fallback and self._win_fallback._pdh_available:
+                    try:
+                        win_data = self._win_fallback.query()
+                        snap.vram_shared_used_gb = win_data.get("vram_shared_used_gb", 0.0)
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.warning(f"[HARDWARE] Error polling AMD ADL: {e}")
 
-        # 3. Universal Windows Fallback (DXGI + PDH)
-        elif self._win_fallback.vram_total_gb > 0:
+        # 4. Universal Windows DXGI / PDH Provider (Intel Arc / Integrated / Generic)
+        elif self._win_fallback.vram_total_gb > 0 or self._win_fallback.vram_shared_total_gb > 0 or self._win_fallback._pdh_available:
             try:
                 win_data = self._win_fallback.query()
                 snap.gpu_utilization_pct = win_data.get("util_pct", 0)
                 snap.vram_used_gb = win_data.get("vram_used_gb", 0.0)
                 snap.vram_total_gb = win_data.get("vram_total_gb", 0.0)
+                snap.vram_shared_used_gb = win_data.get("vram_shared_used_gb", 0.0)
                 snap.vram_pct = (snap.vram_used_gb / snap.vram_total_gb * 100.0) if snap.vram_total_gb > 0 else 0.0
                 snap.gpu_name = self._win_fallback.gpu_name
             except Exception as e:
-                logger.warning(f"[HARDWARE] Error polling Windows GPU fallback: {e}")
+                logger.warning(f"[HARDWARE] Error polling Windows DXGI/PDH GPU provider: {e}")
 
         # Compute Framerate from Rolling Deque
         if self._frame_times and len(self._frame_times) >= 2:
@@ -1020,14 +1163,14 @@ class HardwareService:
 
         return alerts
 
-    def start_alert_monitoring(self, poll_interval_sec: float = 3.0):
+    def start_alert_monitoring(self, poll_interval_sec: float = 2.5):
         """Starts background task evaluating hardware thresholds."""
         if self._alert_running:
             return
         self._alert_running = True
         self._alert_task = asyncio.create_task(self._poll_hardware_alerts(poll_interval_sec))
 
-    async def start_alert_watcher(self, poll_interval_sec: float = 3.0):
+    async def start_alert_watcher(self, poll_interval_sec: float = 2.5):
         """Async compatibility alias for start_alert_monitoring."""
         self.start_alert_monitoring(poll_interval_sec)
 
@@ -1039,12 +1182,13 @@ class HardwareService:
             self._alert_task = None
 
     async def _poll_hardware_alerts(self, interval: float):
-        # Require 3 consecutive polls (~9s sustained) above threshold to filter out transient laptop boost spikes
-        sustained_polls_required = 3
+        # Compute required consecutive polls dynamically from alert_sustained_seconds (5s–30s)
         cooldown_seconds = 120.0
         while self._alert_running:
             try:
                 await asyncio.sleep(interval)
+                cadence = interval if interval >= 0.5 else 2.5
+                sustained_polls_required = max(1, int(math.ceil(self.alert_sustained_seconds / cadence)))
                 if not self.alerts_enabled:
                     self._consecutive_breaches = {"cpu_temp": 0, "gpu_temp": 0, "vram": 0}
                     continue

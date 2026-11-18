@@ -858,7 +858,8 @@ class AetherEngine:
                 vram_alert_threshold_pct=float(hw_cfg.get("vram_alert_threshold_pct", 95)),
                 gpu_temp_alert_threshold_c=float(hw_cfg.get("gpu_temp_alert_threshold_c", 85)),
                 cpu_temp_alert_threshold_c=float(hw_cfg.get("cpu_temp_alert_threshold_c", 95)),
-                alerts_enabled=alerts_en
+                alerts_enabled=alerts_en,
+                alert_sustained_seconds=float(hw_cfg.get("alert_sustained_seconds", 15))
             )
             register_hardware_tools(self.dispatcher, self.hardware_service)
             if hasattr(self, "game_engine") and self.game_engine and hasattr(self.game_engine, "manager"):
@@ -4995,7 +4996,10 @@ class AetherEngine:
                                 msg_parts.append(f"CPU is {snap.cpu_temp_c}°C at {snap.cpu_load_pct:.0f}% load")
                             else:
                                 msg_parts.append(f"CPU load is {snap.cpu_load_pct:.0f}%")
-                            msg_parts.append(f"GPU is {snap.gpu_temp_c}°C with {snap.vram_used_gb:.1f} of {snap.vram_total_gb:.1f} GB VRAM used")
+                            if snap.gpu_temp_c is not None and snap.gpu_temp_c > 0:
+                                msg_parts.append(f"GPU is {snap.gpu_temp_c}°C with {snap.vram_used_gb:.1f} of {snap.vram_total_gb:.1f} GB VRAM used")
+                            else:
+                                msg_parts.append(f"GPU is at {snap.gpu_utilization_pct}% load with {snap.vram_used_gb:.1f} of {snap.vram_total_gb:.1f} GB VRAM used")
                             if snap.fps_avg is not None:
                                 msg_parts.append(f"running at {snap.fps_avg} FPS")
                             intercept.tts_message = ", ".join(msg_parts) + "."

@@ -34,7 +34,13 @@ def register_hardware_tools(dispatcher, service: HardwareService):
             summary_parts.append(f"{cpu_label}: {snap.cpu_load_pct:.0f}% load")
 
         gpu_label = f"GPU ({snap.gpu_name})" if snap.gpu_name else "GPU"
-        summary_parts.append(f"{gpu_label}: {snap.gpu_temp_c}°C at {snap.gpu_utilization_pct}% load")
+        if snap.gpu_temp_c is not None and snap.gpu_temp_c > 0:
+            gpu_summary = f"{gpu_label}: {snap.gpu_temp_c}°C at {snap.gpu_utilization_pct}% load"
+            if getattr(snap, "gpu_hotspot_temp_c", None) is not None and snap.gpu_hotspot_temp_c > 0:
+                gpu_summary += f" (Hotspot: {snap.gpu_hotspot_temp_c}°C)"
+        else:
+            gpu_summary = f"{gpu_label}: {snap.gpu_utilization_pct}% load"
+        summary_parts.append(gpu_summary)
         summary_parts.append(f"VRAM: {snap.vram_used_gb:.1f} of {snap.vram_total_gb:.1f} GB ({snap.vram_pct:.0f}%)")
 
         if snap.fps_avg is not None:

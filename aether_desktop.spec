@@ -23,7 +23,6 @@ if os.path.isfile("models/wespeaker_en_voxceleb_CAM++.onnx"):
 
 binaries = []
 for bin_path in (
-    "assets/bin/LibreHardwareMonitorLib.dll",
     "assets/bin/PresentMon.exe",
 ):
     if os.path.isfile(bin_path):
@@ -70,7 +69,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "_pytest"],
+    excludes=["pytest", "_pytest", "WinTmp", "wintmp"],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

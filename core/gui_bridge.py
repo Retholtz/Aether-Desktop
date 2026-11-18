@@ -1860,6 +1860,8 @@ class GuiBridge:
                     hw_cfg["gpu_temp_alert_threshold_c"] = int(float(hw_in["gpu_temp_alert_threshold_c"]))
                 if "vram_alert_threshold_pct" in hw_in:
                     hw_cfg["vram_alert_threshold_pct"] = int(float(hw_in["vram_alert_threshold_pct"]))
+                if "alert_sustained_seconds" in hw_in:
+                    hw_cfg["alert_sustained_seconds"] = max(5, min(30, int(float(hw_in["alert_sustained_seconds"]))))
 
                 try:
                     from core.config import load_settings, save_settings
@@ -1877,6 +1879,7 @@ class GuiBridge:
                             cpu_temp_threshold_c=hw_cfg.get("cpu_temp_alert_threshold_c", 95),
                             gpu_temp_threshold_c=hw_cfg.get("gpu_temp_alert_threshold_c", 85),
                             vram_threshold_pct=hw_cfg.get("vram_alert_threshold_pct", 95),
+                            sustained_seconds=hw_cfg.get("alert_sustained_seconds", 15),
                         )
                 except Exception as e:
                     logger.debug(f"[GUI_BRIDGE] Failed syncing hardware_telemetry settings: {e}")
@@ -6916,9 +6919,10 @@ class GuiBridge:
         alerts_enabled: bool,
         cpu_temp_threshold_c: int,
         gpu_temp_threshold_c: int,
-        vram_threshold_pct: int
+        vram_threshold_pct: int,
+        sustained_seconds: Optional[int] = None
     ) -> dict:
-        """Persists and hot-updates CPU/GPU thermal and VRAM warning settings."""
+        """Persists and hot-updates CPU/GPU thermal, VRAM, and sustained-duration warning settings."""
         with self._config_lock:
             hw_cfg = self._config.setdefault("hardware_telemetry", {})
             hw_cfg["alerts_enabled"] = bool(alerts_enabled)
@@ -6926,6 +6930,10 @@ class GuiBridge:
             hw_cfg["cpu_temp_alert_threshold_c"] = int(float(cpu_temp_threshold_c))
             hw_cfg["gpu_temp_alert_threshold_c"] = int(float(gpu_temp_threshold_c))
             hw_cfg["vram_alert_threshold_pct"] = int(float(vram_threshold_pct))
+            if sustained_seconds is not None:
+                hw_cfg["alert_sustained_seconds"] = max(5, min(30, int(float(sustained_seconds))))
+            else:
+                hw_cfg.setdefault("alert_sustained_seconds", 15)
             save_config_atomic(self._config, self._config_path)
 
         engine_inst = getattr(self, "_engine", None) or getattr(self, "engine", None)
@@ -6944,6 +6952,7 @@ class GuiBridge:
                     cpu_temp_threshold_c=hw_cfg["cpu_temp_alert_threshold_c"],
                     gpu_temp_threshold_c=hw_cfg["gpu_temp_alert_threshold_c"],
                     vram_threshold_pct=hw_cfg["vram_alert_threshold_pct"],
+                    sustained_seconds=hw_cfg["alert_sustained_seconds"],
                 )
         except Exception as e:
             logger.debug(f"[GUI_BRIDGE] save_hardware_telemetry_settings error: {e}")

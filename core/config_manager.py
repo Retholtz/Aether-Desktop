@@ -423,6 +423,7 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     hw_cfg.setdefault("cpu_temp_alert_threshold_c", 95)
     hw_cfg.setdefault("gpu_temp_alert_threshold_c", 85)
     hw_cfg.setdefault("vram_alert_threshold_pct", 95)
+    hw_cfg.setdefault("alert_sustained_seconds", 15)
 
     return cfg
 

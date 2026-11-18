@@ -116,6 +116,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "cpu_temp_alert_threshold_c": 95,
         "gpu_temp_alert_threshold_c": 85,
         "vram_alert_threshold_pct": 95,
+        "alert_sustained_seconds": 15,
         "verbal_warnings": True,
     },
 }
@@ -258,6 +259,7 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
     hw_cfg.setdefault("presentmon_path", "assets/bin/PresentMon.exe")
     hw_cfg.setdefault("vram_alert_threshold_pct", 95)
     hw_cfg.setdefault("gpu_temp_alert_threshold_c", 85)
+    hw_cfg.setdefault("alert_sustained_seconds", 15)
     hw_cfg.setdefault("verbal_warnings", True)
 
     return Settings(settings_data)
