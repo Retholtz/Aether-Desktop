@@ -242,9 +242,11 @@ class NotebookLMService:
         store_name = self._normalize_store_name(notebook_id)
 
         def _sync_retrieve():
+            from core.model_discovery import get_configured_tier2_model
+            tier2_model, _ = get_configured_tier2_model()
             client = self._get_genai_client()
             resp = client.models.generate_content(
-                model="gemini-3.8-flash",
+                model=tier2_model,
                 contents=query,
                 config=types.GenerateContentConfig(
                     tools=[

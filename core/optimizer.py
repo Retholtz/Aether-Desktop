@@ -110,16 +110,20 @@ class ReflexionEngine:
             self.config = {}
 
         from core.model_discovery import resolve_model_profile
-        configured_heavy = self.config.get("tier2_heavy_model", "gemini-4-argon:high")
+        configured_heavy = (
+            self.config.get("tier3_heavy_model")
+            or self.config.get("tier2_heavy_model")
+            or "gemini-4-neon:high"
+        )
         if configured_heavy in ("gemini-3.8-pro",):
-            configured_heavy = "gemini-4-argon:high"
+            configured_heavy = "gemini-4-neon:high"
         base_heavy, profile_lvl = resolve_model_profile(
             configured_heavy,
-            default_model="gemini-4-argon",
-            default_level=self.config.get("tier2_thinking_level", "high")
+            default_model="gemini-4-neon",
+            default_level=self.config.get("tier3_thinking_level") or self.config.get("tier2_thinking_level", "high")
         )
         self.heavy_model = base_heavy
-        self.thinking_level = profile_lvl or self.config.get("tier2_thinking_level", "high")
+        self.thinking_level = profile_lvl or self.config.get("tier3_thinking_level") or self.config.get("tier2_thinking_level", "high")
         self.thinking_budget = self.config.get("tier2_thinking_budget", 2048)
 
         # Gemini Client Resolution: env var -> engine client -> decrypted config
@@ -158,7 +162,7 @@ class ReflexionEngine:
             thinking_level=self.thinking_level,
             thinking_budget=self.thinking_budget,
         )
-        is_argon = "argon" in str(self.heavy_model).lower() or "hydrogen" in str(self.heavy_model).lower()
+        is_gemini4 = any(k in str(self.heavy_model).lower() for k in ("neon", "argon", "hydrogen", "carbon", "gemini-4"))
 
         kwargs: Dict[str, Any] = {
             "safety_settings": get_permissive_safety_settings(),
@@ -168,7 +172,7 @@ class ReflexionEngine:
             kwargs["response_mime_type"] = response_mime_type
         if temperature is not None:
             kwargs["temperature"] = temperature
-        if is_argon:
+        if is_gemini4:
             kwargs["max_output_tokens"] = 65536
         return types.GenerateContentConfig(**kwargs)
 

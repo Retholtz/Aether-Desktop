@@ -450,17 +450,16 @@ function renderTtrpgModelSelector() {
     const options = Array.isArray(ttrpgData.ttrpg_model_options) && ttrpgData.ttrpg_model_options.length > 0
         ? ttrpgData.ttrpg_model_options
         : [
-            { id: "gemini-4-hydrogen:xhigh", display_name: "Gemini 4.0 Hydrogen Extra" },
-            { id: "gemini-4-hydrogen:high", display_name: "Gemini 4.0 Hydrogen High" },
-            { id: "gemini-4-hydrogen:medium", display_name: "Gemini 4.0 Hydrogen Medium (Recommended)" },
-            { id: "gemini-4-hydrogen:low", display_name: "Gemini 4.0 Hydrogen Low" },
-            { id: "gemini-4-hydrogen:instant", display_name: "Gemini 4.0 Hydrogen Instant (Fastest)" },
-            { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash (High Speed)" },
-            { id: "gemini-4-argon:high", display_name: "Gemini 4.0 Argon High" },
-            { id: "gemini-4-argon:medium", display_name: "Gemini 4.0 Argon Medium" },
-            { id: "gemini-4-argon:low", display_name: "Gemini 4.0 Argon Low" }
+            { id: "gemini-4-hydrogen:xhigh", display_name: "4.0 Hydrogen - Extra" },
+            { id: "gemini-4-hydrogen:high", display_name: "4.0 Hydrogen - High" },
+            { id: "gemini-4-hydrogen:medium", display_name: "4.0 Hydrogen - Medium (Default)" },
+            { id: "gemini-4-hydrogen:low", display_name: "4.0 Hydrogen - Low" },
+            { id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash - Live (High Speed)" }
         ];
-    const current = ttrpgData.ttrpg_model_endpoint || "gemini-4-hydrogen:medium";
+    let current = ttrpgData.ttrpg_model_endpoint || "gemini-4-hydrogen:medium";
+    if (!options.some(o => o.id === current)) {
+        current = "gemini-4-hydrogen:medium";
+    }
     const signature = options.map(o => `${o.id}:${o.display_name}`).join("|");
     if (sel.dataset.renderedSignature !== signature) {
         sel.innerHTML = "";
@@ -7801,44 +7800,10 @@ function getDefaultByocSeed() {
     return {
         genre: "heroic_fantasy",
         tone_sliders: { grittiness: 5, magic_tech_level: 7, political_intrigue: 5 },
-        locations: [
-            {
-                id: "loc_durahns_gate",
-                name: "Durahn's Gate",
-                type: "dungeon",
-                description: "Ancient stone fortress gate guarding the underground reaches.",
-                hazards: ["Freezing Cold (DC 10 CON)"]
-            }
-        ],
-        factions: [
-            {
-                id: "fac_iron_consortium",
-                name: "The Iron Consortium",
-                disposition: "neutral",
-                influence_score: 60,
-                agenda: "Control deep mining operations and ancient relics.",
-                public_reputation: "Disciplined dwarven trade guild."
-            }
-        ],
-        quests: [
-            {
-                id: "quest_silent_outpost",
-                title: "The Silent Outpost",
-                giver_npc: "Elder Morvin",
-                summary: "Investigate why the northern outpost went dark last week.",
-                objectives: [
-                    { id: "obj_1", description: "Reach the perimeter watchtower", is_completed: false, is_mandatory: true }
-                ]
-            }
-        ],
-        clues: [
-            {
-                id: "clue_sealed_orders",
-                title: "Sealed Iron Orders",
-                content: "Orders bearing the seal of the Grand Marshal hinting at a deeper subterranean breach.",
-                is_revealed: false
-            }
-        ]
+        locations: [],
+        factions: [],
+        quests: [],
+        clues: []
     };
 }
 
@@ -7853,11 +7818,7 @@ function updateByocSummaryBadge() {
     const facs = (tempByocState.factions || []).length;
     const quests = (tempByocState.quests || []).length;
     const clues = (tempByocState.clues || []).length;
-    if (locs === 1 && facs === 1 && quests === 1 && clues === 1) {
-        el.textContent = "Custom World: Default Template";
-    } else {
-        el.textContent = `Custom World: ${locs} Loc, ${facs} Faction, ${quests} Quest, ${clues} Clue`;
-    }
+    el.textContent = `Custom World: ${locs} Loc, ${facs} Faction, ${quests} Quest, ${clues} Clue`;
 }
 
 function renderWbPendingHazards() {

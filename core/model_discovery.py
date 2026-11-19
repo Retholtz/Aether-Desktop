@@ -17,50 +17,75 @@ from core.paths import app_path
 MANIFEST_PATH = app_path("data", "models_manifest.json")
 
 PRIMARY_CURATED_PROFILES: List[Dict[str, Any]] = [
-    {"id": "gemini-3.8-live", "display_name": "Gemini 3.8 Live (Default)"},
-    {"id": "gemini-4-hydrogen:instant", "display_name": "Gemini 4.0 Hydrogen Instant (Modular)"},
-    {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (Modular High Speed)"},
+    {"id": "gemini-3.8-live", "display_name": "3.8 - Live (Default)"},
+    {"id": "custom", "display_name": "Custom"},
 ]
 
 MODERATE_CURATED_PROFILES: List[Dict[str, Any]] = [
-    {"id": "gemini-4-hydrogen:low", "display_name": "Gemini 4.0 Hydrogen Low"},
-    {"id": "gemini-4-hydrogen:medium", "display_name": "Gemini 4.0 Hydrogen Medium (Default)"},
-    {"id": "gemini-4-hydrogen:high", "display_name": "Gemini 4.0 Hydrogen High"},
-    {"id": "gemini-4-hydrogen:xhigh", "display_name": "Gemini 4.0 Hydrogen Extra"},
+    {"id": "gemini-4-hydrogen", "display_name": "4.0 - Hydrogen (Default)"},
+    {"id": "custom", "display_name": "Custom"},
 ]
 
 TIER1_CURATED_PROFILES: List[Dict[str, Any]] = [
-    {"id": "gemini-4-hydrogen:xhigh", "display_name": "Gemini 4.0 Hydrogen Extra"},
-    {"id": "gemini-4-hydrogen:high", "display_name": "Gemini 4.0 Hydrogen High"},
-    {"id": "gemini-4-hydrogen:medium", "display_name": "Gemini 4.0 Hydrogen Medium"},
-    {"id": "gemini-4-hydrogen:low", "display_name": "Gemini 4.0 Hydrogen Low"},
+    {"id": "gemini-4-hydrogen:xhigh", "display_name": "4.0 Hydrogen - Extra"},
+    {"id": "gemini-4-hydrogen:high", "display_name": "4.0 Hydrogen - High"},
+    {"id": "gemini-4-hydrogen:medium", "display_name": "4.0 Hydrogen - Medium (Default)"},
+    {"id": "gemini-4-hydrogen:low", "display_name": "4.0 Hydrogen - Low"},
     {"id": "gemini-4-hydrogen:instant", "display_name": "Gemini 4.0 Hydrogen Instant (Default)"},
-    {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (High Speed)"},
+    {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash - Live (High Speed)"},
 ]
 
 TIER2_CURATED_PROFILES: List[Dict[str, Any]] = [
-    {"id": "gemini-4-argon:low", "display_name": "Gemini 4.0 Argon Low"},
-    {"id": "gemini-4-argon:medium", "display_name": "Gemini 4.0 Argon Medium (Default)"},
-    {"id": "gemini-4-argon:high", "display_name": "Gemini 4.0 Argon High"},
+    {"id": "gemini-4-neon", "display_name": "4.0 - Neon (Default)"},
+    {"id": "gemini-4-carbon", "display_name": "4.0 - Carbon"},
+    {"id": "custom", "display_name": "Custom"},
 ]
 
 HEAVY_CURATED_PROFILES = TIER2_CURATED_PROFILES
 
+TTRPG_CURATED_PROFILES: List[Dict[str, str]] = [
+    {"id": "gemini-3.8-flash", "display_name": "Gemini 3.8 Flash (Fastest)"},
+    {"id": "gemini-4-hydrogen", "display_name": "Gemini 4.0 Hydrogen (Default)"},
+    {"id": "gemini-4-neon", "display_name": "Gemini 4.0 Neon"},
+    {"id": "custom", "display_name": "Custom Endpoint"},
+]
+
 
 def get_ttrpg_model_options() -> List[Dict[str, str]]:
     """Returns curated model/thinking profiles available for the TTRPG Live Game Master."""
-    options: List[Dict[str, str]] = []
-    for item in TIER1_CURATED_PROFILES + TIER2_CURATED_PROFILES:
-        mid = str(item.get("id", "")).strip()
-        label = str(item.get("display_name", mid)).strip()
-        if mid == "gemini-4-hydrogen:medium":
-            label = "Gemini 4.0 Hydrogen Medium (Recommended)"
-        elif mid == "gemini-4-hydrogen:instant":
-            label = "Gemini 4.0 Hydrogen Instant (Fastest)"
-        elif mid == "gemini-4-argon:high":
-            label = "Gemini 4.0 Argon High"
-        options.append({"id": mid, "display_name": label})
-    return options
+    return [dict(item) for item in TTRPG_CURATED_PROFILES]
+
+
+def get_configured_tier2_model(cfg: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+    """
+    Returns (base_model_id, thinking_level) for the user's configured Tier 2 Moderate endpoint
+    from Settings (config.json), acting as the single source of truth for REST helper tasks.
+    """
+    if not isinstance(cfg, dict):
+        try:
+            from core.config_manager import load_config
+            cfg = load_config()
+        except Exception:
+            cfg = {}
+    api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+    raw = (
+        cfg.get("tier2_moderate_model")
+        or (api_cfg.get("moderate_model_id") if isinstance(api_cfg, dict) else None)
+        or "gemini-4-hydrogen:medium"
+    )
+    fallback_lvl = (
+        cfg.get("tier2_moderate_level")
+        or (api_cfg.get("tier2_moderate_level") if isinstance(api_cfg, dict) else None)
+        or "medium"
+    )
+    base_model, level = resolve_model_profile(
+        raw,
+        default_model="gemini-4-hydrogen",
+        default_level=str(fallback_lvl or "medium"),
+    )
+    if "live" in str(base_model).lower():
+        base_model = "gemini-4-hydrogen"
+    return base_model, (level or "medium")
 
 
 def resolve_model_profile(
@@ -69,7 +94,7 @@ def resolve_model_profile(
     default_level: Optional[str] = None,
 ) -> Tuple[str, Optional[str]]:
     """
-    Splits a configured endpoint profile (e.g. 'gemini-4-hydrogen:medium' or 'gemini-4-argon:high')
+    Splits a configured endpoint profile (e.g. 'gemini-4-hydrogen:medium' or 'gemini-4-neon:high')
     into (base_model_id, thinking_level).
     """
     raw = str(endpoint or "").strip()
@@ -88,7 +113,7 @@ def resolve_model_profile(
         level = str(level).strip().lower()
         if level == "extra":
             level = "xhigh"
-        if ("argon" in base_model.lower() or "carbon" in base_model.lower()) and level == "xhigh":
+        if "argon" in base_model.lower() and level == "xhigh":
             level = "high"
 
     return base_model, level
@@ -100,7 +125,7 @@ def build_thinking_config(
     thinking_budget: Optional[int] = None,
 ):
     """
-    Builds a google.genai.types.ThinkingConfig adapted for Gemini 4 (Hydrogen/Argon/Carbon)
+    Builds a google.genai.types.ThinkingConfig adapted for Gemini 4 (Hydrogen/Neon/Carbon/Argon)
     thinking_level vs legacy thinking_budget models (e.g. gemini-3.8-flash).
     """
     from google.genai import types
@@ -108,12 +133,19 @@ def build_thinking_config(
     mid_low = base_model.lower()
     if level in ("instant", "none", "off", "0"):
         return types.ThinkingConfig(thinking_budget=0)
-    if "hydrogen" in mid_low or "argon" in mid_low or "carbon" in mid_low:
+    is_gemini4_or_level = (
+        any(k in mid_low for k in ("hydrogen", "neon", "carbon", "argon", "gemini-4"))
+        or (
+            level in ("low", "medium", "high", "xhigh")
+            and not any(v in mid_low for v in ("3.8", "3.5", "3.1", "2.", "1."))
+        )
+    )
+    if is_gemini4_or_level:
         if not level:
             level = "medium" if "hydrogen" in mid_low else "high"
         if level not in ("low", "medium", "high", "xhigh"):
             level = "medium" if "hydrogen" in mid_low else "high"
-        if ("argon" in mid_low or "carbon" in mid_low) and level == "xhigh":
+        if "argon" in mid_low and level == "xhigh":
             level = "high"
         return types.ThinkingConfig(thinking_level=level)
 
@@ -181,7 +213,7 @@ def verify_chat_endpoint(client, model_id: str) -> bool:
     try:
         base_model, _ = resolve_model_profile(model_id)
         mid_low = base_model.lower()
-        if "argon" in mid_low or "hydrogen" in mid_low or "carbon" in mid_low:
+        if any(k in mid_low for k in ("neon", "argon", "hydrogen", "carbon")):
             res = client.models.generate_content(
                 model=base_model,
                 contents="ping",
@@ -273,6 +305,8 @@ def model_chronological_key(item: Any) -> tuple:
     rev_match = re.search(r'[-_](00\d)\b', mid)
     if "latest" in mid:
         checkpoint_score = 9999
+    elif "neon" in mid or "carbon" in mid:
+        checkpoint_score = 9500
     elif "argon" in mid:
         checkpoint_score = 9000
     elif rev_match:

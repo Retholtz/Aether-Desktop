@@ -251,7 +251,9 @@ class TestLiveStreamService(unittest.TestCase):
             engine.livestream_service.get_twitch_streams.assert_called_with(["streamer1"])
             engine.livestream_service.check_youtube_channel_live.assert_called_with("UC_YT_1", "YT")
 
-    def test_watchlist_management_tools(self):
+    @patch("tools.livestream_tools.save_settings")
+    @patch("core.config.save_settings")
+    def test_watchlist_management_tools(self, _mock_save_settings, _mock_tool_save):
         registered_tools = {}
 
         class DummyDispatcher:
@@ -309,7 +311,8 @@ class TestLiveStreamService(unittest.TestCase):
         yt_cids_after = [c["channel_id"] for c in mock_engine.settings["integrations"]["streaming"]["youtube"]["channels"]]
         self.assertNotIn("UC_SPACEX", yt_cids_after)
 
-    def test_gui_bridge_streaming_methods(self):
+    @patch("core.config.save_settings")
+    def test_gui_bridge_streaming_methods(self, _mock_save_settings):
         import tempfile
         import os
         from core.gui_bridge import GuiBridge

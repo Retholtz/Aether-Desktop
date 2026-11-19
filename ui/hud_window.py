@@ -3,6 +3,7 @@ Aether Desktop - UI Subsystem: HUD Window Runner
 Manages pywebview window initialization, styling, floating HUD overlay, system tray, and GUI lifecycle.
 """
 
+import json
 import os
 import sys
 import threading
@@ -768,16 +769,74 @@ class HudWindow:
         """Cleanly closes all windows and stops tray."""
         self._cleanup_before_window_close(destroy_main=True)
 
+    @staticmethod
+    def _ensure_webview_pdf_default_preference(storage_dir: str) -> None:
+        """
+        Pre-configures WebView2's Chromium Preferences so Print Preview defaults
+        to Chromium's built-in 'Save as PDF' destination instead of 'Microsoft Print to PDF'
+        or slow WSD network printers.
+        """
+        try:
+            pref_dir = os.path.join(storage_dir, "EBWebView", "Default")
+            os.makedirs(pref_dir, exist_ok=True)
+            pref_path = os.path.join(pref_dir, "Preferences")
+            prefs = {}
+            if os.path.isfile(pref_path):
+                try:
+                    with open(pref_path, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            prefs = loaded
+                except Exception:
+                    prefs = {}
+
+            save_as_pdf_dest = {
+                "id": "Save as PDF",
+                "origin": "local",
+                "account": "",
+                "capabilities": None,
+                "displayName": "Save as PDF",
+                "extensionId": "",
+                "extensionName": "",
+            }
+            app_state = {
+                "version": 2,
+                "isGcpPromoDismissed": False,
+                "recentDestinations": [save_as_pdf_dest],
+            }
+            printing_cfg = prefs.setdefault("printing", {})
+            if not isinstance(printing_cfg, dict):
+                printing_cfg = {}
+                prefs["printing"] = printing_cfg
+            sticky_cfg = printing_cfg.setdefault("print_preview_sticky_settings", {})
+            if not isinstance(sticky_cfg, dict):
+                sticky_cfg = {}
+                printing_cfg["print_preview_sticky_settings"] = sticky_cfg
+            sticky_cfg["appState"] = json.dumps(app_state, separators=(",", ":"))
+
+            with open(pref_path, "w", encoding="utf-8") as f:
+                json.dump(prefs, f, separators=(",", ":"))
+        except Exception as e:
+            print(f"[WARN] [HUD] Could not pre-seed WebView2 Save as PDF preference: {e}")
+
     def start(self, debug: bool = False):
         """Starts the PyWebView main GUI event loop and system tray."""
         import logging
         import traceback
+        from core.paths import app_path
 
         logging.getLogger("pywebview").setLevel(logging.DEBUG)
+        storage_dir = app_path("data", "webview_profile")
+        self._ensure_webview_pdf_default_preference(storage_dir)
         print(f"[HUD] Launching pywebview window from {self.html_path}...")
         self.tray.start()
         try:
-            webview.start(self._on_started, debug=debug)
+            webview.start(
+                self._on_started,
+                debug=debug,
+                private_mode=False,
+                storage_path=storage_dir,
+            )
         except Exception as exc:
             err_trace = traceback.format_exc()
             logging.getLogger("Aether").critical("PyWebView failed to initialize:\n%s", err_trace)

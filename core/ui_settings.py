@@ -61,15 +61,15 @@ def refresh_aether_settings_ui(ui, config):
         populate_dropdown(
             ui.primary_model_combo, 
             models_cfg.get("tier1_options", []), 
-            default_id=config.get("primary_model_endpoint", "gemini-4-hydrogen:instant")
+            default_id=config.get("primary_model_endpoint", "gemini-3.8-live")
         )
     
-    # Tier 2 Heavy Model
+    # Tier 2/3 Heavy Model
     if hasattr(ui, "tier2_model_combo"):
         populate_dropdown(
             ui.tier2_model_combo, 
             models_cfg.get("tier2_options", []), 
-            default_id=config.get("tier2_heavy_model", "gemini-4-argon:high")
+            default_id=config.get("tier3_heavy_model", config.get("tier2_heavy_model", "gemini-4-neon:high"))
         )
     
     # Speech-to-Text (STT)

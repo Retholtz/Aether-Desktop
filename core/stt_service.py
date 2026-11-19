@@ -83,7 +83,7 @@ def resolve_stt_model_endpoint(stt_endpoint: Optional[str] = None, fallback: Opt
             return resolve_model_profile(fallback, default_model="gemini-3.5-transcribe")[0]
         raw_ep = cfg.get("primary_model_endpoint") or cfg.get("tier1_fast_model") or "gemini-3.5-transcribe"
         base_ep = resolve_model_profile(raw_ep, default_model="gemini-3.5-transcribe")[0]
-        if "hydrogen" in base_ep.lower() or "argon" in base_ep.lower():
+        if any(k in base_ep.lower() for k in ("hydrogen", "neon", "argon", "carbon")):
             return "gemini-3.5-transcribe"
         return base_ep
 

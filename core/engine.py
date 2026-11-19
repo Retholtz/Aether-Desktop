@@ -114,13 +114,13 @@ You are explicitly authorized and expected to assist the user with biographical 
 """
 
 DOSSIER_GENERATION_DIRECTIVE = """
-### THREE-TIER ARCHITECTURE (3.8 LIVE -> 4.0 HYDROGEN -> 4.0 ARGON):
+### THREE-TIER ARCHITECTURE (3.8 LIVE -> 4.0 HYDROGEN -> 4.0 NEON):
 You are Aether's Tier 1 Conversational Front-End (Gemini 3.8 Live), engineered for sub-second, real-time voice interaction, casual chat, fast lookups, media/hardware control, and straightforward in-game advice.
 You have two companion reasoning engines:
 - **Tier 2 Moderate Engine & App-Agnostic Orchestrator (Gemini 4.0 Hydrogen)** via `delegate_moderate_task`:
-  * Use `task_type="workflow_orchestration"` for ANY multi-step desktop, browser, email, or document task across ANY application (Google Docs, Microsoft Word, Notepad, Gmail, Outlook, local files, etc.) — Hydrogen plans dynamic checklist steps, drives the app/browser, sub-contracts Argon if heavy writing is needed, and visually verifies completion on screen.
+  * Use `task_type="workflow_orchestration"` for ANY multi-step desktop, browser, email, or document task across ANY application (Google Docs, Microsoft Word, Notepad, Gmail, Outlook, local files, etc.) — Hydrogen plans dynamic checklist steps, drives the app/browser, sub-contracts Neon if heavy writing is needed, and visually verifies completion on screen.
   * Use `task_type="puzzle_reasoning"` / `"analysis"` / `"code_helper"` for tricky game puzzles/riddles, debugging code, or multi-step deduction.
-- **Tier 3 Heavy Engine (Gemini 4.0 Argon)** via `delegate_heavy_task`: use for exhaustive research dossiers, deep multi-page guides/manuals, complex Python automation pipelines, and high-stakes calibrated correspondence.
+- **Tier 3 Heavy Engine (Gemini 4.0 Neon / Carbon)** via `delegate_heavy_task`: use for exhaustive research dossiers, deep multi-page guides/manuals, complex Python automation pipelines, and high-stakes calibrated correspondence.
 
 MANDATORY TIER 2 & TIER 3 DELEGATION RULES:
 0. RETRIEVING OR RE-USING PREVIOUSLY GENERATED DOSSIERS / GUIDES (CHECK DISK FIRST!):
@@ -130,10 +130,10 @@ MANDATORY TIER 2 & TIER 3 DELEGATION RULES:
      * First call `search_past_sessions` OR use `execute_automation_script` to check `data/dossiers/` for the existing `.md` file, read it, and paste it directly into the target app using `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html`.
 1. APP-AGNOSTIC MULTI-STEP WORKFLOWS (`delegate_moderate_task` with `task_type="workflow_orchestration"`):
    - Whenever the user asks you to perform a multi-step task across apps or web services (e.g. "Create a document explaining X in Google Docs", "Open Word and write...", "Open Notepad and paste...", "Open Gmail and write Stan Orlop a letter..."):
-     * ALWAYS call `delegate_moderate_task(task_type="workflow_orchestration", title=..., instructions=...)` so Tier 2 Hydrogen creates a step checklist, launches/focuses the exact requested app, sub-contracts Tier 3 Argon (`delegate_heavy_task`) for deep writing when appropriate, pastes/types cleanly, and visually inspects screenshots before declaring success.
+     * ALWAYS call `delegate_moderate_task(task_type="workflow_orchestration", title=..., instructions=...)` so Tier 2 Hydrogen creates a step checklist, launches/focuses the exact requested app, sub-contracts Tier 3 Neon (`delegate_heavy_task`) for deep writing when appropriate, pastes/types cleanly, and visually inspects screenshots before declaring success.
      * NEVER attempt to improvise 4+ sequential UI/browser/paste tool calls directly from Tier 1 when Hydrogen orchestration can drive the full verified checklist.
-2. TIER 3 (`delegate_heavy_task` -> GEMINI 4 ARGON) FOR EXHAUSTIVE OR DEEP AUTHORING:
-   - Invoke `delegate_heavy_task` (or let Hydrogen sub-contract it during `workflow_orchestration`) whenever the user asks to `"use Argon"`, `"switch to Argon"`, `"use Tier 3"`, `"think deeply"`, or asks directly for a standalone research dossier, exhaustive manual/guide, complex Python automation script, or high-stakes formal correspondence.
+2. TIER 3 (`delegate_heavy_task` -> GEMINI 4 NEON) FOR EXHAUSTIVE OR DEEP AUTHORING:
+   - Invoke `delegate_heavy_task` (or let Hydrogen sub-contract it during `workflow_orchestration`) whenever the user asks to `"use Neon"`, `"switch to Neon"`, `"use Carbon"`, `"use Argon"`, `"use Tier 3"`, `"think deeply"`, or asks directly for a standalone research dossier, exhaustive manual/guide, complex Python automation script, or high-stakes formal correspondence.
 3. TIER 2 REASONING (`delegate_moderate_task` -> GEMINI 4 HYDROGEN):
    - Handle casual conversation, everyday Q&A, quick web lookups, and straightforward game advice directly in Tier 1 real time.
    - If a task involves tricky multi-constraint logic, a tough video game puzzle, code debugging, or the user says `"use Hydrogen"` / `"use Tier 2"` / `"think harder"`, call `delegate_moderate_task(...)` and concisely speak the solution.
@@ -142,7 +142,7 @@ MANDATORY TIER 2 & TIER 3 DELEGATION RULES:
 5. NEVER TYPE DOCUMENTS LINE-BY-LINE VIA `type_text`:
    - NEVER use `type_text` to type out multi-paragraph guides, manuals, or documents line-by-line into editors. Always use `paste_to_document` (via rich HTML clipboard) after verifying the target canvas is focused.
 6. ADAPTIVE VERBAL RESPONSE AFTER VERIFIED COMPLETION:
-   - When Hydrogen or Argon finishes a task or places content into an app/email compose window, summarize the verified outcome (or exact blocker if a step was blocked) concisely—do not read an entire multi-page document aloud verbatim unless the user asks you to.
+   - When Hydrogen or Neon finishes a task or places content into an app/email compose window, summarize the verified outcome (or exact blocker if a step was blocked) concisely—do not read an entire multi-page document aloud verbatim unless the user asks you to.
 
 ### CONNECTED EMAIL, CALENDAR & CONTACTS (OAUTH 2.0) DIRECTIVE:
 - Distinguish clearly between **viewing/opening an email on screen** vs. **checking/monitoring in the background**:
@@ -1593,8 +1593,10 @@ class AetherEngine:
         cfg = self.config_getter()
         defaults = {
             "tier1_fast_model": "gemini-4-hydrogen:instant",
-            "tier2_heavy_model": "gemini-4-argon:high",
+            "tier2_heavy_model": "gemini-4-neon:high",
+            "tier3_heavy_model": "gemini-4-neon:high",
             "tier2_thinking_level": "high",
+            "tier3_thinking_level": "high",
             "tier2_thinking_budget": 2048,
             "reflexion_idle_delay_seconds": 15,
             "reflexion_poll_interval_seconds": 30
@@ -1645,17 +1647,19 @@ class AetherEngine:
         return bool(getattr(self, "_ttrpg_session_active", False))
 
     def _get_tier1_fast_model(self) -> str:
-        """Returns the resolved Tier 1 fast non-live model ID for quick background summaries."""
+        """Returns the resolved non-live REST model ID from Settings (Tier 2 Moderate when Tier 1 is Live)."""
         try:
-            from core.model_discovery import resolve_model_profile
+            from core.model_discovery import resolve_model_profile, get_configured_tier2_model
             cfg = self.config_getter() if callable(self.config_getter) else {}
-            raw = (cfg or {}).get("tier1_fast_model") or "gemini-3.8-flash"
-            model_id, _ = resolve_model_profile(raw, default_model="gemini-3.8-flash")
-            if model_id and "live" not in str(model_id).lower():
-                return model_id
+            raw = (cfg or {}).get("tier1_fast_model") or (cfg or {}).get("primary_model_endpoint") or ""
+            if raw:
+                model_id, _ = resolve_model_profile(raw, default_model="gemini-4-hydrogen")
+                if model_id and "live" not in str(model_id).lower():
+                    return model_id
+            return get_configured_tier2_model(cfg)[0]
         except Exception:
             pass
-        return "gemini-3.8-flash"
+        return "gemini-4-hydrogen"
 
     def _get_active_cortex_profile(self) -> str:
         """Returns the active Cortex model/thinking profile (TTRPG profile when Adventure is active, else Primary)."""
@@ -2123,7 +2127,11 @@ class AetherEngine:
                 break
 
         tier: Optional[str] = None
-        if re.search(r"\b(argon|tier\s*3|tier\s+three)\b", low):
+        if re.search(r"\b(neon|tier\s*3|tier\s+three)\b", low):
+            tier = "neon"
+        elif re.search(r"\bcarbon\b", low):
+            tier = "carbon"
+        elif re.search(r"\bargon\b", low):
             tier = "argon"
         elif re.search(r"\b(hydrogen|tier\s*2|tier\s+two)\b", low):
             tier = "hydrogen"
@@ -2139,7 +2147,7 @@ class AetherEngine:
         # 2. Sticky next-task override OR explicit inline tier directive ("use Hydrogen for this next task: ...")
         m_next = re.match(
             r"^(?:please\s+)?(?:use|switch\s+to|run\s+with|route\s+with)\s+"
-            r"(?:gemini\s*4(?:\.0)?\s+)?(?:hydrogen|argon|tier\s*[23]|tier\s+(?:two|three))\s*"
+            r"(?:gemini\s*4(?:\.0)?\s+)?(?:hydrogen|neon|carbon|argon|tier\s*[23]|tier\s+(?:two|three))\s*"
             r"(?:(?:for|on)\s+(?:this\s+|the\s+|my\s+)?(?:next\s+)?(?:task|request|question|prompt|one))?"
             r"\s*[:,;\-\.]?\s*(.*)$",
             cleaned,
@@ -2149,7 +2157,7 @@ class AetherEngine:
             remainder = (m_next.group(1) or "").strip()
             # Strip conversational filler like "to deep dive" ONLY if it introduces an actual topic?
             # If user says "Use Hydrogen for this next task", remainder == "" -> sticky override for next turn.
-            # If user says "Use Argon to deep dive into sourdough starters", remainder == "to deep dive into sourdough starters".
+            # If user says "Use Neon to deep dive into sourdough starters", remainder == "to deep dive into sourdough starters".
             if remainder:
                 return {"action": "override_inline", "tier": tier, "inline_task": cleaned}
             return {"action": "override_next", "tier": tier, "inline_task": None}
@@ -2160,9 +2168,9 @@ class AetherEngine:
         return None
 
     async def _dispatch_to_explicit_tier(self, tier: str, prompt_text: str, agent_name: str = "Aether") -> Dict[str, Any]:
-        """Deterministically routes a prompt to Tier 2 (Hydrogen) or Tier 3 (Argon) and returns summary metadata."""
+        """Deterministically routes a prompt to Tier 2 (Hydrogen) or Tier 3 (Neon/Carbon/Argon) and returns summary metadata."""
         clean_prompt = (prompt_text or "").strip()
-        if tier == "argon":
+        if tier in ("neon", "carbon", "argon", "tier3"):
             res = await self.dispatcher.dispatch("delegate_heavy_task", {
                 "task_type": "research_dossier",
                 "title": clean_prompt[:64],
@@ -2175,9 +2183,9 @@ class AetherEngine:
             spoken = (
                 res.get("directive")
                 or res.get("analysis")
-                or (f"Finished deep synthesis with Argon and saved '{res.get('filename')}'." if res.get("filename") else "")
+                or (f"Finished deep synthesis with Tier 3 and saved '{res.get('filename')}'." if res.get("filename") else "")
                 or res.get("message")
-                or "Completed with Gemini 4 Argon."
+                or "Completed with Gemini 4.0 Neon."
             )
             return {"result": res, "spoken_text": spoken}
 
@@ -2212,7 +2220,12 @@ class AetherEngine:
         Returns None if normal pipeline processing should continue.
         """
         cmd = self.parse_tier_control_command(user_prompt, agent_name=agent_name)
-        tier_label = {"hydrogen": "Gemini 4.0 Hydrogen", "argon": "Gemini 4.0 Argon"}
+        tier_label = {
+            "hydrogen": "Gemini 4.0 Hydrogen",
+            "neon": "Gemini 4.0 Neon",
+            "carbon": "Gemini 4.0 Carbon",
+            "argon": "Gemini 4.0 Argon",
+        }
 
         if cmd and cmd["action"] == "rerun":
             target_tier = cmd["tier"]
@@ -3596,11 +3609,11 @@ class AetherEngine:
                                         "message": f"Gemini 4.0 Hydrogen is reasoning on '{task_title}'..."
                                     })
                                 elif fn_name == "delegate_heavy_task":
-                                    task_title = fn_args.get("title") or fn_args.get("task_type") or "Argon Task"
+                                    task_title = fn_args.get("title") or fn_args.get("task_type") or "Neon Task"
                                     self.notify("status", {
                                         "state": "thinking",
-                                        "action": f"🧠 Argon: {task_title}...",
-                                        "message": f"Gemini 4 Argon is synthesizing '{task_title}'..."
+                                        "action": f"🧠 Neon: {task_title}...",
+                                        "message": f"Gemini 4.0 Neon is synthesizing '{task_title}'..."
                                     })
                                 else:
                                     self.notify("status", {

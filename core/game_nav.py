@@ -436,7 +436,7 @@ class GameNavigator(UniversalGameNavigator):
     def __init__(
         self,
         client=None,
-        model_endpoint: str = "gemini-2.5-flash",
+        model_endpoint: str = "gemini-4-hydrogen",
         target_process: str = "",
         map_controls: Optional[Dict[str, Any]] = None
     ):

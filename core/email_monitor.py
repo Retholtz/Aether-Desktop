@@ -154,7 +154,8 @@ class EmailMonitorService:
         if client is None or not hasattr(client, "models"):
             return fallback
 
-        model_id = "gemini-3.8-flash"
+        from core.model_discovery import get_configured_tier2_model
+        model_id = get_configured_tier2_model()[0]
         if callable(self._fast_model_getter):
             try:
                 candidate = str(self._fast_model_getter() or "").strip()

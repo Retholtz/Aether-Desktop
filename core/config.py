@@ -57,17 +57,12 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
                 "enabled": True,
                 "client_id": "",
                 "client_secret": "",
-                "channels": ["shroud", "cohhcarnage"],
+                "channels": [],
             },
             "youtube": {
                 "enabled": True,
                 "api_key": "",
-                "channels": [
-                    {
-                        "name": "Team YouTube",
-                        "channel_id": "UCBR8-60-B28hp2BmDPdntcQ",
-                    }
-                ],
+                "channels": [],
             },
         },
         "replay_capture": {
@@ -202,16 +197,18 @@ def load_settings(settings_path: Optional[str] = None) -> Settings:
     tw_cfg.setdefault("enabled", True)
     tw_cfg.setdefault("client_id", os.getenv("TWITCH_CLIENT_ID", ""))
     tw_cfg.setdefault("client_secret", os.getenv("TWITCH_CLIENT_SECRET", ""))
-    tw_cfg.setdefault("channels", ["shroud", "cohhcarnage"])
+    tw_cfg.setdefault("channels", [])
+    if tw_cfg.get("channels") in (["shroud", "cohhcarnage"], ["shroud"]):
+        tw_cfg["channels"] = []
     yt_cfg = stream_cfg.setdefault("youtube", {})
     yt_cfg.setdefault("enabled", True)
     yt_cfg.setdefault("api_key", os.getenv("YOUTUBE_API_KEY", ""))
-    yt_cfg.setdefault("channels", [
-        {
-            "name": "Team YouTube",
-            "channel_id": "UCBR8-60-B28hp2BmDPdntcQ"
-        }
-    ])
+    yt_cfg.setdefault("channels", [])
+    if isinstance(yt_cfg.get("channels"), list):
+        yt_cfg["channels"] = [
+            c for c in yt_cfg["channels"]
+            if not (isinstance(c, dict) and c.get("channel_id") in ("UC_NASA", "UCBR8-60-B28hp2BmDPdntcQ"))
+        ]
 
     # Ensure nested integrations.replay_capture structure is populated
     replay_cfg = integrations.setdefault("replay_capture", {})

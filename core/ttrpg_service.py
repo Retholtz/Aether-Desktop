@@ -1651,7 +1651,11 @@ Respond ONLY with valid JSON."""
         try:
             from google.genai import types
             from core.parsers.spell_registry import sanitize_parsed_spells
-            candidate_models = ["gemini-3.8-flash", "gemini-2.5-flash"]
+            from core.model_discovery import get_configured_tier2_model
+            tier2_base, _ = get_configured_tier2_model()
+            candidate_models = [tier2_base]
+            if "gemini-3.8-flash" not in candidate_models:
+                candidate_models.append("gemini-3.8-flash")
             for model_name in candidate_models:
                 try:
                     resp = client.models.generate_content(
@@ -3050,8 +3054,10 @@ Extract the complete campaign structure, all acts and scenes, encounters, monste
 Respond ONLY with valid JSON."""
             try:
                 from google.genai import types
+                from core.model_discovery import get_configured_tier2_model
+                tier2_base, _ = get_configured_tier2_model()
                 resp = client.models.generate_content(
-                    model="gemini-3.8-flash",
+                    model=tier2_base,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
@@ -3344,8 +3350,10 @@ Respond in JSON with schema:
 }}"""
             try:
                 from google.genai import types
+                from core.model_discovery import get_configured_tier2_model
+                tier2_base, _ = get_configured_tier2_model()
                 resp = client.models.generate_content(
-                    model="gemini-3.8-flash",
+                    model=tier2_base,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",
@@ -5792,8 +5800,10 @@ Valid types: "Melee Weapon", "Ranged Weapon", "Spell Attack", "Unarmed Strike", 
 Valid damage_type: "Slashing", "Piercing", "Bludgeoning", "Fire", "Cold", "Lightning", "Poison", "Acid", "Radiant", "Necrotic", "Force", "Psychic", "Physical".
 Return ONLY valid JSON.
 """
+                from core.model_discovery import get_configured_tier2_model
+                tier2_base, _ = get_configured_tier2_model()
                 resp = client.models.generate_content(
-                    model="gemini-3.8-flash",
+                    model=tier2_base,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         response_mime_type="application/json",

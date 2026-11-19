@@ -9,6 +9,21 @@ from typing import Optional, Dict, Any
 from tools.dispatcher import register_tool
 
 
+def _resolve_tier2_game_model(engine=None) -> str:
+    """Resolves the configured Tier 2 Moderate REST model ID from Settings."""
+    from core.model_discovery import get_configured_tier2_model
+    cfg = None
+    if engine:
+        if hasattr(engine, "config") and isinstance(engine.config, dict):
+            cfg = engine.config
+        elif hasattr(engine, "config_getter") and callable(engine.config_getter):
+            try:
+                cfg = engine.config_getter()
+            except Exception:
+                cfg = None
+    return get_configured_tier2_model(cfg)[0]
+
+
 def register_game_tools(dispatcher, game_manager, engine=None):
     """
     Registers dedicated gaming tools on the provided ToolDispatcher, GameManager, and Engine:
@@ -157,11 +172,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         if client:
             try:
                 from google.genai import types
-                from core.model_discovery import resolve_model_profile
-                model_endpoint = "gemini-4-hydrogen"
-                if engine and hasattr(engine, "config") and isinstance(engine.config, dict):
-                    model_endpoint = engine.config.get("primary_model_endpoint", "gemini-4-hydrogen")
-                model_endpoint = resolve_model_profile(model_endpoint, default_model="gemini-4-hydrogen")[0]
+                model_endpoint = _resolve_tier2_game_model(engine)
 
                 search_scope = f"'{domain}' and {game_title}" if domain else f"'{game_title}'"
                 prompt_content = (
@@ -427,13 +438,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             or getattr(engine, "client", None)
             or getattr(dispatcher, "genai_client", None)
         )
-        model_endpoint = "gemini-2.5-flash"
-        if engine:
-            if hasattr(engine, "config") and isinstance(engine.config, dict):
-                model_endpoint = engine.config.get("primary_model_endpoint", "gemini-2.5-flash")
-            elif hasattr(engine, "config_getter") and callable(engine.config_getter):
-                cfg = engine.config_getter()
-                model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-2.5-flash"))
+        model_endpoint = _resolve_tier2_game_model(engine)
         active_id = ""
         target_process = ""
         map_controls = None
@@ -482,13 +487,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             or getattr(engine, "client", None)
             or getattr(dispatcher, "genai_client", None)
         )
-        model_endpoint = "gemini-3.8-flash"
-        if engine:
-            if hasattr(engine, "config") and isinstance(engine.config, dict):
-                model_endpoint = engine.config.get("primary_model_endpoint", "gemini-3.8-flash")
-            elif hasattr(engine, "config_getter") and callable(engine.config_getter):
-                cfg = engine.config_getter()
-                model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-3.8-flash"))
+        model_endpoint = _resolve_tier2_game_model(engine)
         target_process = ""
         map_controls = None
         if game_manager:
@@ -575,13 +574,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             or getattr(engine, "client", None)
             or getattr(dispatcher, "genai_client", None)
         )
-        model_endpoint = "gemini-2.5-flash"
-        if engine:
-            if hasattr(engine, "config") and isinstance(engine.config, dict):
-                model_endpoint = engine.config.get("primary_model_endpoint", "gemini-2.5-flash")
-            elif hasattr(engine, "config_getter") and callable(engine.config_getter):
-                cfg = engine.config_getter()
-                model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-2.5-flash"))
+        model_endpoint = _resolve_tier2_game_model(engine)
         target_process = ""
         map_controls = None
         if game_manager:
@@ -645,13 +638,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             or getattr(engine, "client", None)
             or getattr(dispatcher, "genai_client", None)
         )
-        model_endpoint = "gemini-2.5-flash"
-        if engine:
-            if hasattr(engine, "config") and isinstance(engine.config, dict):
-                model_endpoint = engine.config.get("primary_model_endpoint", "gemini-2.5-flash")
-            elif hasattr(engine, "config_getter") and callable(engine.config_getter):
-                cfg = engine.config_getter()
-                model_endpoint = cfg.get("primary_model_endpoint", cfg.get("api", {}).get("model_id", "gemini-2.5-flash"))
+        model_endpoint = _resolve_tier2_game_model(engine)
         target_process = ""
         map_controls = None
         nav_mode = "controller"

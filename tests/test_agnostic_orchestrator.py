@@ -284,6 +284,13 @@ class TestTierOverrideRerunAndAccentLock(unittest.IsolatedAsyncioTestCase):
         inline = AetherEngine.parse_tier_control_command("Use Argon to deep dive into geothermal heat pumps")
         self.assertEqual(inline["action"], "override_inline")
         self.assertEqual(inline["tier"], "argon")
+        neon_inline = AetherEngine.parse_tier_control_command("Use Neon to deep dive into geothermal heat pumps")
+        self.assertEqual(neon_inline["action"], "override_inline")
+        self.assertEqual(neon_inline["tier"], "neon")
+        self.assertEqual(
+            AetherEngine.parse_tier_control_command("Hey Aether, rerun that last request using Neon"),
+            {"action": "rerun", "tier": "neon"},
+        )
         self.assertIsNone(AetherEngine.parse_tier_control_command("Tell me a joke about a doctor"))
 
     async def test_sticky_next_turn_override_and_rerun_flow(self):

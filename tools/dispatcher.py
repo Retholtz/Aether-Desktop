@@ -901,8 +901,8 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
     "description": (
         "Delegates complex multi-step synthesis, comprehensive guides/manuals/recipes from scratch, deep research document generation, "
         "high-stakes calibrated correspondence (resignation letters, formal speeches, executive announcements), or intricate Python automation coding "
-        "to the Tier 3 Heavy Reasoning Model (Gemini 4 Argon). "
-        "ALWAYS invoke this tool whenever the user asks to 'use Argon', 'use Tier 3', 'think deeply', create an exhaustive document or guide, "
+        "to the Tier 3 Heavy Reasoning Model (Gemini 4.0 Neon / Carbon). "
+        "ALWAYS invoke this tool whenever the user asks to 'use Neon', 'use Carbon', 'use Argon', 'use Tier 3', 'think deeply', create an exhaustive document or guide, "
         "or requires multi-page structured reports with tables, diagrams, and meticulous detail."
     ),
     "parameters": {
@@ -1591,13 +1591,10 @@ class ToolDispatcher:
         jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
         mon_rect = meta.get("monitor_rect", {"left": 0, "top": 0, "width": 2560, "height": 1600})
 
-        # 3. Determine visual grounding model from config
+        # 3. Determine visual grounding model from Tier 2 Settings config
+        from core.model_discovery import get_configured_tier2_model
         cfg = self.config_getter() if self.config_getter else {}
-        v_endpoint = cfg.get("vision", {}).get("endpoint", "gemini-3.8-flash-snapshot")
-        if "pro" in str(v_endpoint).lower():
-            grounding_model = "gemini-3.1-pro-preview"
-        else:
-            grounding_model = "gemini-3.8-flash"
+        grounding_model, _ = get_configured_tier2_model(cfg)
 
         # 4. Resolve GenAI client
         client = self.genai_client
@@ -2926,24 +2923,32 @@ class ToolDispatcher:
         from core.model_discovery import resolve_model_profile, build_thinking_config
         cfg = self.config_getter() if self.config_getter else {}
         api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
-        raw_heavy = cfg.get("tier3_heavy_model") or cfg.get("tier2_heavy_model") or api_cfg.get("pro_model_id") or "gemini-4-argon:medium"
+        raw_heavy = cfg.get("tier3_heavy_model") or cfg.get("tier2_heavy_model") or api_cfg.get("pro_model_id") or "gemini-4-neon:high"
+        default_heavy_lvl = cfg.get("tier3_thinking_level") or cfg.get("tier2_thinking_level") or "high"
         heavy_model, thinking_level = resolve_model_profile(
             raw_heavy,
-            default_model="gemini-4-argon",
-            default_level=cfg.get("tier2_thinking_level", "medium"),
+            default_model="gemini-4-neon",
+            default_level=default_heavy_lvl,
         )
-        thinking_level = thinking_level or "medium"
-        is_argon = "argon" in str(heavy_model).lower() or "hydrogen" in str(heavy_model).lower()
+        thinking_level = thinking_level or "high"
+        hm_low = str(heavy_model).lower()
+        is_gemini4 = any(k in hm_low for k in ("neon", "argon", "hydrogen", "carbon", "gemini-4"))
+        if "carbon" in hm_low:
+            tier3_short, tier3_full = "Carbon", "Gemini 4.0 Carbon"
+        elif "argon" in hm_low:
+            tier3_short, tier3_full = "Argon", "Gemini 4.0 Argon"
+        else:
+            tier3_short, tier3_full = "Neon", "Gemini 4.0 Neon"
 
         # Visual HUD & Audio working indicator
         self.notify("status", {
             "state": "thinking",
-            "action": f"🧠 Argon: {title}...",
-            "message": f"Gemini 4 Argon ({heavy_model}, {thinking_level}) is synthesizing '{title}'..."
+            "action": f"🧠 {tier3_short}: {title}...",
+            "message": f"{tier3_full} ({heavy_model}, {thinking_level}) is synthesizing '{title}'..."
         })
         self.notify("chat_event", {
             "type": "tool",
-            "name": "Gemini 4 Argon",
+            "name": tier3_full,
             "content": f"🧠 [TIER 3] Initiating deep synthesis for '{title}' via {heavy_model} (thinking_level: {thinking_level})..."
         })
         try:
@@ -2957,7 +2962,7 @@ class ToolDispatcher:
             thinking_level=thinking_level,
             thinking_budget=int(cfg.get("tier2_thinking_budget", 2048)),
         )
-        if is_argon:
+        if is_gemini4:
             gen_config = types.GenerateContentConfig(
                 thinking_config=thinking_cfg,
                 max_output_tokens=65536,
@@ -2983,7 +2988,7 @@ class ToolDispatcher:
 
         if is_correspondence:
             prompt = (
-                f"You are Aether's Tier 2 Reasoning Engine (Gemini 4 Argon). Draft high-caliber, polished, ready-to-use "
+                f"You are Aether's Tier 3 Reasoning Engine ({tier3_full}). Draft high-caliber, polished, ready-to-use "
                 f"written correspondence for: '{title}'.\n\n"
                 f"Instructions:\n{instructions}\n\n"
             )
@@ -3004,7 +3009,7 @@ class ToolDispatcher:
                 t_start = time.monotonic()
                 stop_hb = asyncio.Event()
 
-                async def _argon_progress_heartbeat():
+                async def _heavy_progress_heartbeat():
                     while not stop_hb.is_set():
                         await asyncio.sleep(15.0)
                         if stop_hb.is_set():
@@ -3012,11 +3017,11 @@ class ToolDispatcher:
                         elapsed_s = int(time.monotonic() - t_start)
                         self.notify("status", {
                             "state": "thinking",
-                            "action": f"🧠 Argon: {title} ({elapsed_s}s)...",
-                            "message": f"Gemini 4 Argon ({heavy_model}) is drafting '{title}' ({elapsed_s}s elapsed)..."
+                            "action": f"🧠 {tier3_short}: {title} ({elapsed_s}s)...",
+                            "message": f"{tier3_full} ({heavy_model}) is drafting '{title}' ({elapsed_s}s elapsed)..."
                         })
 
-                hb_task = asyncio.create_task(_argon_progress_heartbeat())
+                hb_task = asyncio.create_task(_heavy_progress_heartbeat())
                 try:
                     response = await loop.run_in_executor(
                         None,
@@ -3073,7 +3078,7 @@ class ToolDispatcher:
                 t_start = time.monotonic()
                 stop_hb = asyncio.Event()
 
-                async def _argon_progress_heartbeat():
+                async def _heavy_progress_heartbeat():
                     while not stop_hb.is_set():
                         await asyncio.sleep(15.0)
                         if stop_hb.is_set():
@@ -3081,11 +3086,11 @@ class ToolDispatcher:
                         elapsed_s = int(time.monotonic() - t_start)
                         self.notify("status", {
                             "state": "thinking",
-                            "action": f"🧠 Argon: {title} ({elapsed_s}s)...",
-                            "message": f"Gemini 4 Argon ({heavy_model}) is synthesizing '{title}' ({elapsed_s}s elapsed)..."
+                            "action": f"🧠 {tier3_short}: {title} ({elapsed_s}s)...",
+                            "message": f"{tier3_full} ({heavy_model}) is synthesizing '{title}' ({elapsed_s}s elapsed)..."
                         })
 
-                hb_task = asyncio.create_task(_argon_progress_heartbeat())
+                hb_task = asyncio.create_task(_heavy_progress_heartbeat())
                 try:
                     response = await loop.run_in_executor(
                         None,

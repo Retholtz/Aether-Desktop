@@ -6,7 +6,7 @@ and frontend JavaScript asset integrity.
 import os
 import unittest
 from unittest.mock import MagicMock
-from ui.hud_window import get_monitor_work_areas, clamp_window_position, HUDBridge
+from ui.hud_window import get_monitor_work_areas, clamp_window_position, HUDBridge, HudWindow
 
 
 class TestHUDOverlayAndEndpoints(unittest.TestCase):
@@ -83,7 +83,7 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
         self.assertIn("success", res)
 
     def test_html_endpoints_populated(self):
-        """Ensures index.html includes option elements for primary and heavy models."""
+        """Ensures index.html includes option elements and reasoning sliders for primary, moderate, and heavy models."""
         path = "ui/static/index.html"
         self.assertTrue(os.path.exists(path), f"File {path} must exist")
         with open(path, "r", encoding="utf-8") as f:
@@ -92,9 +92,22 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
         self.assertIn('id="select-primary-model"', content)
         self.assertIn('id="select-moderate-model"', content)
         self.assertIn('id="select-heavy-model"', content)
+        self.assertIn('id="select-ttrpg-model"', content)
+        self.assertNotIn('id="rp-ttrpg-model-select"', content)
         self.assertIn('value="gemini-3.8-live"', content)
-        self.assertIn('value="gemini-4-hydrogen:medium"', content)
-        self.assertIn('value="gemini-4-argon:medium"', content)
+        self.assertIn('value="gemini-3.8-flash"', content)
+        self.assertIn('value="gemini-4-hydrogen"', content)
+        self.assertIn('value="gemini-4-neon"', content)
+        self.assertIn('value="gemini-4-carbon"', content)
+        self.assertIn('value="custom"', content)
+        self.assertIn('id="input-primary-custom-model"', content)
+        self.assertIn('id="input-moderate-custom-model"', content)
+        self.assertIn('id="input-heavy-custom-model"', content)
+        self.assertIn('id="input-ttrpg-custom-model"', content)
+        self.assertIn('id="slider-moderate-level"', content)
+        self.assertIn('id="slider-heavy-level"', content)
+        self.assertIn('id="slider-ttrpg-level"', content)
+        self.assertIn('id="ttrpg-reasoning-slider-box"', content)
 
     def test_settings_js_default_models_defined(self):
         """Ensures settings.js defines default fallback model arrays."""
@@ -104,9 +117,14 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
             content = f.read()
 
         self.assertIn("DEFAULT_CHAT_MODELS", content)
+        self.assertIn("DEFAULT_MODERATE_MODELS", content)
         self.assertIn("DEFAULT_HEAVY_MODELS", content)
+        self.assertIn("DEFAULT_TTRPG_MODELS", content)
+        self.assertIn("gemini-3.8-live", content)
         self.assertIn("gemini-3.8-flash", content)
-        self.assertIn("gemini-4-argon", content)
+        self.assertIn("gemini-4-hydrogen", content)
+        self.assertIn("gemini-4-neon", content)
+        self.assertIn("gemini-4-carbon", content)
 
     def test_app_js_no_duplicate_declarations(self):
         """Ensures app.js does not redeclare block-scoped variables."""
@@ -156,6 +174,26 @@ class TestHUDOverlayAndEndpoints(unittest.TestCase):
         form_idx = content.index('id="hudChatForm"')
         action_idx = content.index('id="actionRow"')
         self.assertLess(form_idx, action_idx)
+
+    def test_webview_pdf_default_preference_seeded(self):
+        """Verifies HudWindow._ensure_webview_pdf_default_preference seeds 'Save as PDF' as the default print destination."""
+        import json
+        import shutil
+        import tempfile
+
+        tmp = tempfile.mkdtemp()
+        try:
+            HudWindow._ensure_webview_pdf_default_preference(tmp)
+            pref_path = os.path.join(tmp, "EBWebView", "Default", "Preferences")
+            self.assertTrue(os.path.isfile(pref_path))
+            with open(pref_path, "r", encoding="utf-8") as f:
+                prefs = json.load(f)
+            app_state_str = prefs["printing"]["print_preview_sticky_settings"]["appState"]
+            app_state = json.loads(app_state_str)
+            self.assertEqual(app_state["recentDestinations"][0]["id"], "Save as PDF")
+            self.assertEqual(app_state["recentDestinations"][0]["origin"], "local")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

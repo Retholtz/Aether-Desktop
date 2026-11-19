@@ -42,28 +42,50 @@ class TestLatencyAndTTRPGEngine(unittest.TestCase):
         cfg = sync_config_schema({})
         self.assertEqual(cfg["primary_model_endpoint"], "gemini-3.8-live")
         self.assertEqual(cfg["tier2_moderate_model"], "gemini-4-hydrogen:medium")
-        self.assertEqual(cfg["tier3_heavy_model"], "gemini-4-argon:medium")
-        self.assertEqual(cfg["tier2_heavy_model"], "gemini-4-argon:medium")
+        self.assertEqual(cfg["tier2_moderate_level"], "medium")
+        self.assertEqual(cfg["tier3_heavy_model"], "gemini-4-neon:high")
+        self.assertEqual(cfg["tier2_heavy_model"], "gemini-4-neon:high")
+        self.assertEqual(cfg["tier3_thinking_level"], "high")
         self.assertEqual(cfg["ttrpg_model_endpoint"], "gemini-4-hydrogen:medium")
         self.assertEqual(cfg["api"]["ttrpg_model_id"], "gemini-4-hydrogen:medium")
 
         mod_ids = [o["id"] for o in cfg["models"]["tier2_moderate_options"]]
-        self.assertEqual(
-            mod_ids,
-            [
-                "gemini-4-hydrogen:low",
-                "gemini-4-hydrogen:medium",
-                "gemini-4-hydrogen:high",
-                "gemini-4-hydrogen:xhigh",
-            ],
-        )
-        self.assertNotIn("gemini-4-hydrogen:instant", mod_ids)
+        self.assertEqual(mod_ids, ["gemini-4-hydrogen", "custom"])
+        heavy_ids = [o["id"] for o in cfg["models"]["tier3_options"]]
+        self.assertEqual(heavy_ids, ["gemini-4-neon", "gemini-4-carbon", "custom"])
 
         opts = get_ttrpg_model_options()
         ids = [o["id"] for o in opts]
-        self.assertIn("gemini-4-hydrogen:medium", ids)
-        self.assertIn("gemini-4-hydrogen:high", ids)
-        self.assertIn("gemini-4-argon:high", ids)
+        self.assertEqual(
+            ids,
+            [
+                "gemini-3.8-flash",
+                "gemini-4-hydrogen",
+                "gemini-4-neon",
+                "custom",
+            ],
+        )
+        self.assertNotIn("gemini-4-hydrogen:instant", ids)
+        self.assertFalse(any("argon" in mid for mid in ids))
+
+        from core.model_discovery import get_configured_tier2_model
+        t2_base, t2_lvl = get_configured_tier2_model({"tier2_moderate_model": "gemini-4-hydrogen:high"})
+        self.assertEqual(t2_base, "gemini-4-hydrogen")
+        self.assertEqual(t2_lvl, "high")
+
+        # Verify Neon, Carbon, and Custom endpoints with Low/Medium/High/Extra levels
+        from core.model_discovery import resolve_model_profile, build_thinking_config
+        for ep, exp_base, exp_lvl in (
+            ("gemini-4-neon:high", "gemini-4-neon", "high"),
+            ("gemini-4-neon:extra", "gemini-4-neon", "xhigh"),
+            ("gemini-4-carbon:xhigh", "gemini-4-carbon", "xhigh"),
+            ("gemini-4.5-custom-neon:low", "gemini-4.5-custom-neon", "low"),
+        ):
+            b_mod, b_lvl = resolve_model_profile(ep)
+            self.assertEqual(b_mod, exp_base)
+            self.assertEqual(b_lvl, exp_lvl)
+            t_cfg = build_thinking_config(ep)
+            self.assertIn(exp_lvl, str(t_cfg.thinking_level).lower())
 
     def test_engine_active_cortex_profile_switches_for_ttrpg(self):
         eng = object.__new__(AetherEngine)
@@ -71,15 +93,15 @@ class TestLatencyAndTTRPGEngine(unittest.TestCase):
         eng.active_workspace_type = "general"
         eng.config_getter = lambda: {
             "primary_model_endpoint": "gemini-4-hydrogen:instant",
-            "ttrpg_model_endpoint": "gemini-4-argon:medium",
+            "ttrpg_model_endpoint": "gemini-4-hydrogen:high",
         }
 
         self.assertEqual(eng._get_active_cortex_profile(), "gemini-4-hydrogen:instant")
         eng._ttrpg_session_active = True
-        self.assertEqual(eng._get_active_cortex_profile(), "gemini-4-argon:medium")
+        self.assertEqual(eng._get_active_cortex_profile(), "gemini-4-hydrogen:high")
         eng._ttrpg_session_active = False
         eng.active_workspace_type = "campaign"
-        self.assertEqual(eng._get_active_cortex_profile(), "gemini-4-argon:medium")
+        self.assertEqual(eng._get_active_cortex_profile(), "gemini-4-hydrogen:instant")
 
     def test_split_complete_sentences_preserves_abbreviations_and_streams_cleanly(self):
         sentences, rem = AetherEngine._split_complete_sentences(

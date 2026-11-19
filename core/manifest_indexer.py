@@ -217,7 +217,7 @@ def _extract_and_store_manifest(
     transcript_path: str,
     client: Optional[Any] = None,
     db_path: Optional[str] = None,
-    model: str = "gemini-3.8-flash"
+    model: Optional[str] = None
 ):
     """
     Reads a persisted session JSON file, builds conversation text, prompts Gemini
@@ -292,7 +292,12 @@ Conversation:
 {turns_text[-6000:]}
 """
 
-    candidate_models = [model, "gemini-3.8-flash"]
+    from core.model_discovery import get_configured_tier2_model
+    tier2_base, _ = get_configured_tier2_model()
+    primary_candidate = model or tier2_base
+    candidate_models = [primary_candidate]
+    if tier2_base not in candidate_models:
+        candidate_models.append(tier2_base)
     card_data = None
 
     for candidate in candidate_models:
@@ -330,7 +335,7 @@ def queue_manifest_extraction(
     transcript_path: str,
     client: Optional[Any] = None,
     db_path: Optional[str] = None,
-    model: str = "gemini-3.8-flash"
+    model: Optional[str] = None
 ) -> threading.Thread:
     """
     Spawns an asynchronous background daemon thread to extract and index

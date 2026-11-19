@@ -1303,7 +1303,7 @@ class GuiBridge:
 
             # Top-level wake_phrase / kill_phrase / agent_name / startup updates
 
-            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "tts_pace", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "auto_check_updates", "skipped_update_version", "primary_model_endpoint", "ttrpg_model_endpoint", "tier1_fast_model", "tier2_moderate_model", "tier2_heavy_model", "tier3_heavy_model", "tier2_thinking_level", "tier2_thinking_budget", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
+            for top_key in ("agent_name", "pipeline_mode", "wake_phrase", "kill_phrase", "tts_endpoint", "tts_voice", "tts_speed", "tts_pace", "voice_accent", "wake_word_enabled", "idle_timeout_seconds", "boot_on_startup", "start_minimized", "auto_check_updates", "skipped_update_version", "primary_model_endpoint", "ttrpg_model_endpoint", "ttrpg_thinking_level", "tier1_fast_model", "tier2_moderate_model", "tier2_moderate_level", "tier2_heavy_model", "tier3_heavy_model", "tier2_thinking_level", "tier3_thinking_level", "tier2_thinking_budget", "stt_model_endpoint", "tts_model_endpoint", "stt_endpoint", "always_on_mode", "mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "hud_mode"):
 
                 if top_key in new_config:
 
@@ -1313,6 +1313,13 @@ class GuiBridge:
                 mod_val = str(new_config["tier2_moderate_model"]).strip()
                 self._config["tier2_moderate_model"] = mod_val
                 self._config.setdefault("api", {})["moderate_model_id"] = mod_val
+                if ":" in mod_val:
+                    m_lvl = mod_val.split(":", 1)[1].strip().lower()
+                    if m_lvl == "extra":
+                        m_lvl = "xhigh"
+                    if m_lvl in ("low", "medium", "high", "xhigh"):
+                        self._config["tier2_moderate_level"] = m_lvl
+                        self._config.setdefault("api", {})["tier2_moderate_level"] = m_lvl
 
             if "tier3_heavy_model" in new_config or "tier2_heavy_model" in new_config:
                 h_val = str(new_config.get("tier3_heavy_model") or new_config.get("tier2_heavy_model") or "").strip()
@@ -1320,6 +1327,15 @@ class GuiBridge:
                     self._config["tier3_heavy_model"] = h_val
                     self._config["tier2_heavy_model"] = h_val
                     self._config.setdefault("api", {})["pro_model_id"] = h_val
+                    if ":" in h_val:
+                        h_lvl = h_val.split(":", 1)[1].strip().lower()
+                        if h_lvl == "extra":
+                            h_lvl = "xhigh"
+                        if h_lvl in ("low", "medium", "high", "xhigh"):
+                            self._config["tier2_thinking_level"] = h_lvl
+                            self._config["tier3_thinking_level"] = h_lvl
+                            self._config.setdefault("api", {})["tier2_thinking_level"] = h_lvl
+                            self._config.setdefault("api", {})["tier3_thinking_level"] = h_lvl
 
             if "primary_model_endpoint" in new_config and new_config["primary_model_endpoint"]:
                 pm_val = str(new_config["primary_model_endpoint"]).strip()
@@ -1334,8 +1350,16 @@ class GuiBridge:
                         self._config["api"]["live_model_id"] = pm_val
 
             if "ttrpg_model_endpoint" in new_config and new_config["ttrpg_model_endpoint"]:
-                self._config["ttrpg_model_endpoint"] = str(new_config["ttrpg_model_endpoint"]).strip()
-                self._config.setdefault("api", {})["ttrpg_model_id"] = self._config["ttrpg_model_endpoint"]
+                t_val = str(new_config["ttrpg_model_endpoint"]).strip()
+                self._config["ttrpg_model_endpoint"] = t_val
+                self._config.setdefault("api", {})["ttrpg_model_id"] = t_val
+                if ":" in t_val:
+                    t_lvl = t_val.split(":", 1)[1].strip().lower()
+                    if t_lvl == "extra":
+                        t_lvl = "xhigh"
+                    if t_lvl in ("low", "medium", "high", "xhigh"):
+                        self._config["ttrpg_thinking_level"] = t_lvl
+                        self._config.setdefault("api", {})["ttrpg_thinking_level"] = t_lvl
 
 
 
@@ -1418,12 +1442,16 @@ class GuiBridge:
                 if ":" in str(new_config["tier2_heavy_model"]):
 
                     lvl = str(new_config["tier2_heavy_model"]).split(":", 1)[1].strip().lower()
+                    if lvl == "extra":
+                        lvl = "xhigh"
 
-                    if lvl in ("low", "medium", "high"):
+                    if lvl in ("low", "medium", "high", "xhigh"):
 
                         self._config["tier2_thinking_level"] = lvl
+                        self._config["tier3_thinking_level"] = lvl
 
                         self._config.setdefault("api", {})["tier2_thinking_level"] = lvl
+                        self._config.setdefault("api", {})["tier3_thinking_level"] = lvl
 
 
 
