@@ -3625,7 +3625,22 @@ class AetherEngine:
                                 if fn_name in ("delegate_moderate_task", "delegate_heavy_task") and hasattr(session, "send_realtime_input"):
                                     keepalive_task = asyncio.create_task(_live_tool_keepalive())
                                 try:
-                                    result = await self.dispatcher.dispatch(fn_name, fn_args)
+                                    if fn_name == "trigger_game_action" and (
+                                        getattr(self, "_macro_fired_in_current_turn", False)
+                                        or (time.time() - getattr(self, "_last_fast_path_macro_ts", 0.0)) < 3.0
+                                    ):
+                                        logger.info(
+                                            f"[GAME VOICE DEDUP] Skipping duplicate trigger_game_action({fn_args}) "
+                                            f"— already executed via fast-path macro in this turn."
+                                        )
+                                        result = {
+                                            "status": "already_executed",
+                                            "message": "Action already executed via fast-path voice macro for this turn.",
+                                        }
+                                    else:
+                                        if fn_name == "trigger_game_action":
+                                            self._macro_fired_in_current_turn = True
+                                        result = await self.dispatcher.dispatch(fn_name, fn_args)
                                 finally:
                                     if keepalive_task and not keepalive_task.done():
                                         keepalive_task.cancel()
@@ -3811,6 +3826,7 @@ class AetherEngine:
                                         self.request_live_session_rotation(reason=f"Game Mode Voice: {clean_user_speech}")
                                 elif intercept.action_type == "fast_path_macro":
                                     self._macro_fired_in_current_turn = True
+                                    self._last_fast_path_macro_ts = time.time()
                                     self._macro_suppressed_turn = True
                                     self._suppress_live_turn_audio = True
                                     self.kill_audio()
@@ -6654,6 +6670,7 @@ class AetherEngine:
 
                 ctx = None
                 session = None
+                used_prewarmed = False
                 async with self._tts_live_lock:
                     if getattr(self, "_tts_live_session", None) is not None and getattr(self, "_tts_live_key", None) == tts_key:
                         # Consume the unused pre-warmed session so Turn N starts at 0ms setup with zero prior turn audio history
@@ -6662,37 +6679,54 @@ class AetherEngine:
                         self._tts_live_session = None
                         self._tts_live_ctx = None
                         self._tts_live_key = None
+                        used_prewarmed = True
                     else:
                         await self._close_tts_live_session_unlocked()
 
-                if session is None:
-                    ctx = client.aio.live.connect(model=live_model, config=config)
-                    session = await ctx.__aenter__()
+                async def _run_live_tts_turn(active_ctx, active_session) -> bool:
+                    audio_received = False
+                    try:
+                        await active_session.send_realtime_input(text=text)
+                        async for response in active_session.receive():
+                            if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
+                                break
+                            if not self._text_queue.empty():
+                                self.kill_audio()
+                                break
+                            sc = getattr(response, "server_content", None)
+                            if sc and sc.model_turn:
+                                for part in sc.model_turn.parts:
+                                    inline_data = getattr(part, "inline_data", None)
+                                    if inline_data and inline_data.data:
+                                        audio_received = True
+                                        if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                                            _emit_scaled_chunk(inline_data.data)
+                            if sc and sc.turn_complete:
+                                break
+                        _flush_scaled_audio()
+                    finally:
+                        if active_ctx is not None:
+                            try:
+                                await active_ctx.__aexit__(None, None, None)
+                            except Exception:
+                                pass
+                    return audio_received
 
                 try:
-                    await session.send_realtime_input(text=text)
-                    async for response in session.receive():
-                        if not self.is_running or self._kill_playback_flag or (stop_event and stop_event.is_set()):
-                            break
-                        if not self._text_queue.empty():
-                            self.kill_audio()
-                            break
-                        sc = getattr(response, "server_content", None)
-                        if sc and sc.model_turn:
-                            for part in sc.model_turn.parts:
-                                inline_data = getattr(part, "inline_data", None)
-                                if inline_data and inline_data.data:
-                                    if not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
-                                        _emit_scaled_chunk(inline_data.data)
-                        if sc and sc.turn_complete:
-                            break
-                    _flush_scaled_audio()
+                    if session is None:
+                        ctx = client.aio.live.connect(model=live_model, config=config)
+                        session = await ctx.__aenter__()
+                    try:
+                        await _run_live_tts_turn(ctx, session)
+                    except Exception as prewarm_err:
+                        if used_prewarmed and self.is_running and not self._kill_playback_flag and not (stop_event and stop_event.is_set()):
+                            logger.debug(f"[GEMINI LIVE TTS] Pre-warmed session expired ({prewarm_err}); reconnecting fresh...")
+                            fresh_ctx = client.aio.live.connect(model=live_model, config=config)
+                            fresh_session = await fresh_ctx.__aenter__()
+                            await _run_live_tts_turn(fresh_ctx, fresh_session)
+                        else:
+                            raise
                 finally:
-                    if ctx is not None:
-                        try:
-                            await ctx.__aexit__(None, None, None)
-                        except Exception:
-                            pass
                     # Replenish a clean, unused TTS WebSocket in the background ready for the next turn
                     if self.is_running:
                         try:
@@ -6939,7 +6973,6 @@ class AetherEngine:
             return
         model = tts_engine if ("gemini" in tts_lower and ("tts" in tts_lower or "preview" in tts_lower)) else "gemini-3.8-flash-tts"
         try:
-            input_text = text
             style_cues = []
             if voice_accent and str(voice_accent).lower() not in ("default", "none", "neutral", ""):
                 if str(voice_accent).strip().lower() == "cockney":
@@ -6950,24 +6983,42 @@ class AetherEngine:
                 style_cues.append("a calm, slower, measured pace")
             elif tts_pace == "brisk":
                 style_cues.append("a brisk, faster conversational pace")
+
+            sys_inst = None
             if style_cues:
-                input_text = f"Say with {' and '.join(style_cues)}: {input_text}"
+                sys_inst = (
+                    f"You are a speech synthesis engine. Speak ONLY the exact user text aloud with "
+                    f"{' and '.join(style_cues)}. Never speak this instruction aloud."
+                )
 
             def _run_cloud_tts():
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=input_text,
-                    config=types.GenerateContentConfig(
-                        response_modalities=["AUDIO"],
-                        speech_config=types.SpeechConfig(
-                            voice_config=types.VoiceConfig(
-                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                    voice_name=voice_name or "Aoede"
-                                )
+                cfg_kwargs = {
+                    "response_modalities": ["AUDIO"],
+                    "speech_config": types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice_name or "Aoede"
                             )
                         )
+                    ),
+                }
+                if sys_inst:
+                    cfg_kwargs["system_instruction"] = sys_inst
+                try:
+                    resp = client.models.generate_content(
+                        model=model,
+                        contents=text,
+                        config=types.GenerateContentConfig(**cfg_kwargs),
                     )
-                )
+                except Exception:
+                    if not sys_inst:
+                        raise
+                    cfg_kwargs.pop("system_instruction", None)
+                    resp = client.models.generate_content(
+                        model=model,
+                        contents=text,
+                        config=types.GenerateContentConfig(**cfg_kwargs),
+                    )
                 audio_chunks = []
                 if getattr(resp, "candidates", None):
                     for part in resp.candidates[0].content.parts:
@@ -7733,6 +7784,11 @@ class AetherEngine:
         agent_name = self.config_getter().get("api", {}).get("agent_name", "Aether") if callable(self.config_getter) else "Aether"
         self.notify("status", {"state": "standby" if self.is_on_demand_mode() else "listening", "message": f"{agent_name} is active."})
         self.hotkey_manager.start()
+        if hasattr(self, "game_engine") and self.game_engine:
+            try:
+                self.game_engine.start(foreground_interval=2.0)
+            except Exception as e:
+                logger.warning(f"[START] Game engine start warning: {e}")
         if hasattr(self, "startup_runner") and self.startup_runner:
             try:
                 self.startup_runner.start()

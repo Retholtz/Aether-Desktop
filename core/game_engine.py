@@ -279,9 +279,14 @@ class GameEngine:
                 skip_llm=True
             )
 
-        # 1. Mode Toggle: Disable Game Mode
-        if (re.search(r'\b(disable|exit|turn\s+off|leave|deactivate|stop)\s+game\s+mode\b', clean_voice_cmd)
-                or re.search(r'\bgame\s+mode\s+(off|disable)\b', clean_voice_cmd)):
+        # 1. Mode Toggle: Disable Game Mode (ignore questions like "why did you exit game mode" or "re-enable")
+        if (
+            not re.search(r'\b(why\s+did\s+(you|it|we)|re-?enable)\b', clean_voice_cmd)
+            and (
+                re.search(r'\b(disable|exit|turn\s+off|leave|deactivate|stop)\s+game\s+mode\b', clean_voice_cmd)
+                or re.search(r'\bgame\s+mode\s+(off|disable)\b', clean_voice_cmd)
+            )
+        ):
             self.set_game_mode(False, user_explicit=True)
             active_id = self.manager.data.get("active_profile", "")
             prof = self.manager.get_profile(active_id) if active_id else None

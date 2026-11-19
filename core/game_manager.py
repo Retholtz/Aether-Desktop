@@ -531,8 +531,18 @@ class GameManager:
         if user_explicit:
             self.user_override_game_mode = bool(enabled)
 
-        self._notify_mode_changed()
         active_id = self.data.get("active_profile", "")
+        if self.game_mode_enabled:
+            if active_id and self.is_game_running(active_id):
+                self._last_detected_game = active_id
+            else:
+                running_gid = self.detect_running_game()
+                if running_gid:
+                    self.data["active_profile"] = running_gid
+                    active_id = running_gid
+                    self._last_detected_game = running_gid
+
+        self._notify_mode_changed()
         active_name = self.get_profile(active_id).get("display_name", active_id) if active_id else ""
         return {
             "success": True,

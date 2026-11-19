@@ -3946,13 +3946,15 @@ class GuiBridge:
         """Returns real-time HUD overlay state including running game status and live FPS."""
         active_id = self.game_mgr.data.get("active_profile", "")
         detected_id = getattr(self.game_mgr, "_last_detected_game", "UNSET")
-        if detected_id == "UNSET":
+        if detected_id == "UNSET" or (not detected_id and self.game_mgr.game_mode_enabled):
             is_running = self.game_mgr.is_game_running(active_id) if active_id else False
             if not is_running and hasattr(self.game_mgr, "detect_running_game"):
                 running_gid = self.game_mgr.detect_running_game()
                 if running_gid:
                     active_id = running_gid
                     is_running = True
+            if is_running and active_id:
+                self.game_mgr._last_detected_game = active_id
         else:
             if detected_id:
                 active_id = detected_id

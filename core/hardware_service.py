@@ -318,10 +318,11 @@ class WindowsGpuFallback:
 
 class CpuMonitorBackend:
     """
-    Pure user-mode CPU monitoring backend using Windows PDH and psutil.
+    Pure user-mode CPU monitoring backend using Windows PDH, psutil, and WHQL-signed OEM/WMI bridges.
     - Utilization: Windows PDH (\\Processor Information(_Total)\\% Processor Utility) with psutil fallback.
     - Clock speed: Windows PDH (Actual Frequency / Processor Performance) with psutil.cpu_freq() fallback.
-    - Package Temperature: Returns None (N/A) in user mode without Ring-0 kernel driver access.
+    - Package Temperature: In-process COM/WMI query (ASUS ATK WMI -> Lenovo GameZone WMI -> LHM/OHM WMI -> dynamic ACPI)
+      with 3-sample median smoothing to filter sub-second single-core Turbo Boost spikes.
     """
     def __init__(self):
         self.initialized = True
@@ -333,6 +334,11 @@ class CpuMonitorBackend:
         self._actual_freq_counter = None
         self._base_freq_counter = None
         self._perf_counter = None
+        self._tls = threading.local()
+        self._temp_provider: Optional[str] = None  # "asus", "lenovo", "lhm", "acpi", or "none"
+        self._temp_history: deque = deque(maxlen=3)
+        self._last_temp_poll_ts: float = 0.0
+        self._cached_temp_c: Optional[int] = None
 
         # Prime psutil cpu_percent so first snapshot isn't 0.0
         try:
@@ -451,13 +457,125 @@ class CpuMonitorBackend:
             except Exception:
                 pass
 
+        temp_c = self._query_user_mode_cpu_temp()
+
         return {
             "cpu_name": self.cpu_name,
-            "temp_c": None,
+            "temp_c": temp_c,
             "load_pct": load_pct,
             "clock_ghz": clock_ghz,
             "power_w": None
         }
+
+    def _query_user_mode_cpu_temp(self) -> Optional[int]:
+        """
+        Reads CPU temperature in pure user mode via in-process WMI COM (zero subprocess spawn)
+        and smooths transient P-core boost spikes with a 3-sample median filter.
+        """
+        if os.name != "nt" or self._temp_provider == "none":
+            return None
+
+        now = time.monotonic()
+        if (now - self._last_temp_poll_ts) < 1.5 and self._cached_temp_c is not None:
+            return self._cached_temp_c
+
+        self._last_temp_poll_ts = now
+        raw_temp: Optional[int] = None
+
+        try:
+            import pythoncom
+            import win32com.client
+
+            pythoncom.CoInitialize()
+            wmi_root = getattr(self._tls, "wmi_root", None)
+            if wmi_root is None:
+                locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+                wmi_root = locator.ConnectServer(".", r"root\WMI")
+                self._tls.wmi_root = wmi_root
+                self._tls.wmi_locator = locator
+
+            # 1. ASUS ATK WMI (WHQL-signed AsusSci2.sys — same endpoint as Armoury Crate / G-Helper)
+            if self._temp_provider in (None, "asus"):
+                try:
+                    asus_inst = getattr(self._tls, "asus_wmnb", None)
+                    if asus_inst is None:
+                        items = wmi_root.InstancesOf("AsusAtkWmi_WMNB")
+                        for it in items:
+                            asus_inst = it
+                            break
+                        self._tls.asus_wmnb = asus_inst
+                    if asus_inst is not None:
+                        in_params = asus_inst.Methods_("DSTS").InParameters.SpawnInstance_()
+                        in_params.Device_ID = 0x00120094
+                        out_params = asus_inst.ExecMethod_("DSTS", in_params)
+                        status_val = int(getattr(out_params, "device_status", 0))
+                        t_c = status_val - 65536 if status_val >= 65536 else status_val
+                        if 15 <= t_c <= 115:
+                            raw_temp = int(t_c)
+                            if self._temp_provider is None:
+                                self._temp_provider = "asus"
+                                logger.info(f"[HARDWARE] Pure user-mode CPU temperature active via ASUS ATK WMI ({raw_temp}°C).")
+                except Exception:
+                    if self._temp_provider == "asus":
+                        self._tls.asus_wmnb = None
+
+            # 2. Lenovo GameZone WMI (WHQL-signed Lenovo ACPI driver for Legion / LOQ / IdeaPad)
+            if raw_temp is None and self._temp_provider in (None, "lenovo"):
+                try:
+                    lenovo_inst = getattr(self._tls, "lenovo_gz", None)
+                    if lenovo_inst is None:
+                        items = wmi_root.InstancesOf("LENOVO_GAMEZONE_DATA")
+                        for it in items:
+                            lenovo_inst = it
+                            break
+                        self._tls.lenovo_gz = lenovo_inst
+                    if lenovo_inst is not None:
+                        out_params = lenovo_inst.ExecMethod_("GetCPUtemp")
+                        t_c = int(getattr(out_params, "Data", 0))
+                        if 15 <= t_c <= 115:
+                            raw_temp = int(t_c)
+                            if self._temp_provider is None:
+                                self._temp_provider = "lenovo"
+                                logger.info(f"[HARDWARE] Pure user-mode CPU temperature active via Lenovo GameZone WMI ({raw_temp}°C).")
+                except Exception:
+                    if self._temp_provider == "lenovo":
+                        self._tls.lenovo_gz = None
+
+            # 3. External LibreHardwareMonitor / OpenHardwareMonitor WMI bridge (if running on system)
+            if raw_temp is None and self._temp_provider in (None, "lhm"):
+                for ns_name in (r"root\LibreHardwareMonitor", r"root\OpenHardwareMonitor"):
+                    try:
+                        locator = getattr(self._tls, "wmi_locator", None) or win32com.client.Dispatch("WbemScripting.SWbemLocator")
+                        lhm_svc = locator.ConnectServer(".", ns_name)
+                        sensors = lhm_svc.ExecQuery("SELECT Name, Value FROM Sensor WHERE SensorType='Temperature'")
+                        best_val = None
+                        for s in sensors:
+                            s_name = str(getattr(s, "Name", "") or "").lower()
+                            if "cpu" in s_name or "package" in s_name or "core (tctl" in s_name:
+                                v = float(getattr(s, "Value", 0) or 0)
+                                if 15.0 <= v <= 115.0:
+                                    best_val = int(round(v))
+                                    if "package" in s_name or "tctl" in s_name:
+                                        break
+                        if best_val is not None:
+                            raw_temp = best_val
+                            if self._temp_provider is None:
+                                self._temp_provider = "lhm"
+                                logger.info(f"[HARDWARE] Pure user-mode CPU temperature active via {ns_name} ({raw_temp}°C).")
+                            break
+                    except Exception:
+                        continue
+
+            if raw_temp is None and self._temp_provider is None:
+                self._temp_provider = "none"
+        except Exception as e:
+            logger.debug(f"[HARDWARE] User-mode CPU temp WMI query skipped: {e}")
+
+        if raw_temp is not None:
+            self._temp_history.append(raw_temp)
+            sorted_hist = sorted(self._temp_history)
+            self._cached_temp_c = int(sorted_hist[len(sorted_hist) // 2])
+        return self._cached_temp_c
 
     def close(self):
         if self._pdh and self._query:

@@ -774,9 +774,10 @@ window.aetherUI = {
       const cpuTemp = parseInt(document.getElementById("cpuTempThresholdSlider")?.value || "95", 10);
       const gpuTemp = parseInt(document.getElementById("gpuTempThresholdSlider")?.value || "85", 10);
       const vramPct = parseInt(document.getElementById("vramThresholdSlider")?.value || "95", 10);
+      const sustainedSec = parseInt(document.getElementById("hwSustainedDurationSlider")?.value || "15", 10);
       if (window.pywebview && window.pywebview.api && window.pywebview.api.save_hardware_telemetry_settings) {
-        await window.pywebview.api.save_hardware_telemetry_settings(alertsEnabled, cpuTemp, gpuTemp, vramPct);
-        this.log(`Hardware warnings ${alertsEnabled ? "ENABLED" : "DISABLED"} (CPU: ${cpuTemp}°C, GPU: ${gpuTemp}°C, VRAM: ${vramPct}%)`);
+        await window.pywebview.api.save_hardware_telemetry_settings(alertsEnabled, cpuTemp, gpuTemp, vramPct, sustainedSec);
+        this.log(`Hardware warnings ${alertsEnabled ? "ENABLED" : "DISABLED"} (CPU: ${cpuTemp}°C, GPU: ${gpuTemp}°C, VRAM: ${vramPct}%, Sustained: ${sustainedSec}s)`);
       }
     };
 
@@ -810,6 +811,15 @@ window.aetherUI = {
         if (vramValEl) vramValEl.innerText = `${e.target.value}%`;
       });
       vramSliderEl.addEventListener("change", syncHardwareTelemetrySettings);
+    }
+
+    const sustainedSliderEl = document.getElementById("hwSustainedDurationSlider");
+    const sustainedValEl = document.getElementById("hwSustainedDurationVal");
+    if (sustainedSliderEl) {
+      sustainedSliderEl.addEventListener("input", (e) => {
+        if (sustainedValEl) sustainedValEl.innerText = `${e.target.value}s`;
+      });
+      sustainedSliderEl.addEventListener("change", syncHardwareTelemetrySettings);
     }
 
     // Voice Calibration Wizard Buttons
@@ -1835,6 +1845,12 @@ window.aetherUI = {
       const vramValEl = document.getElementById("vramThresholdVal");
       if (vramValEl) vramValEl.innerText = `${vramLimit}%`;
 
+      const sustainedSec = hwCfg.alert_sustained_seconds !== undefined ? parseInt(hwCfg.alert_sustained_seconds, 10) : 15;
+      const sustainedSlider = document.getElementById("hwSustainedDurationSlider");
+      if (sustainedSlider) sustainedSlider.value = sustainedSec;
+      const sustainedValEl = document.getElementById("hwSustainedDurationVal");
+      if (sustainedValEl) sustainedValEl.innerText = `${sustainedSec}s`;
+
       // Application & Startup Behavior
       const bootStartupToggle = document.getElementById("toggle-boot-startup");
       if (bootStartupToggle) {
@@ -2069,7 +2085,8 @@ window.aetherUI = {
           verbal_warnings: document.getElementById("hwWarningsEnabledCheck") ? document.getElementById("hwWarningsEnabledCheck").checked : (this.currentConfig?.hardware_telemetry?.verbal_warnings ?? true),
           cpu_temp_alert_threshold_c: document.getElementById("cpuTempThresholdSlider") ? parseInt(document.getElementById("cpuTempThresholdSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.cpu_temp_alert_threshold_c ?? 95),
           gpu_temp_alert_threshold_c: document.getElementById("gpuTempThresholdSlider") ? parseInt(document.getElementById("gpuTempThresholdSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.gpu_temp_alert_threshold_c ?? 85),
-          vram_alert_threshold_pct: document.getElementById("vramThresholdSlider") ? parseInt(document.getElementById("vramThresholdSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.vram_alert_threshold_pct ?? 95)
+          vram_alert_threshold_pct: document.getElementById("vramThresholdSlider") ? parseInt(document.getElementById("vramThresholdSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.vram_alert_threshold_pct ?? 95),
+          alert_sustained_seconds: document.getElementById("hwSustainedDurationSlider") ? parseInt(document.getElementById("hwSustainedDurationSlider").value, 10) : (this.currentConfig?.hardware_telemetry?.alert_sustained_seconds ?? 15)
         },
         primary_model_endpoint: primaryModelVal,
         tier2_heavy_model: heavyModelVal,
