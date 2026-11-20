@@ -9,12 +9,13 @@ import base64
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 from typing import Any, Dict, Optional
 
 from core.paths import get_app_dir
-from security.crypto import protect_secret as encrypt_secret, unprotect_secret as decrypt_secret
+from security.crypto import unprotect_secret as decrypt_secret
 
 CRYPTPROTECT_UI_FORBIDDEN = 0x01
 VAULT_ENTROPY = b"AetherDesktop_OAuthTokenVault_Entropy_2026_v1"
@@ -45,28 +46,35 @@ def _parse_dotenv_fallback(file_path: str) -> None:
 
 def load_app_env() -> None:
     """
-    Loads environment variables from .env or .env.local with support for
-    local development, CI/CD, and PyInstaller bundled environments.
+    Loads environment variables strictly from the trusted application directory
+    (get_app_dir() / bundled _MEIPASS) — never from an untrusted current working directory.
     """
     candidates = []
     # 1. PyInstaller frozen / bundle awareness
     if getattr(sys, "frozen", False):
         if hasattr(sys, "_MEIPASS"):
             candidates.append(os.path.join(sys._MEIPASS, ".env"))
-        exe_dir = os.path.dirname(sys.executable)
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         candidates.append(os.path.join(exe_dir, ".env.local"))
         candidates.append(os.path.join(exe_dir, ".env"))
 
-    # 2. Local repository / working directory
-    candidates.append(os.path.join(BASE_DIR, ".env.local"))
-    candidates.append(os.path.join(BASE_DIR, ".env"))
-    candidates.append(os.path.join(os.getcwd(), ".env.local"))
-    candidates.append(os.path.join(os.getcwd(), ".env"))
+    # 2. Trusted writable application root (never os.getcwd())
+    app_dir = get_app_dir()
+    candidates.append(os.path.join(app_dir, ".env.local"))
+    candidates.append(os.path.join(app_dir, ".env"))
+
+    seen = set()
+    unique_candidates = []
+    for path in candidates:
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm not in seen:
+            seen.add(norm)
+            unique_candidates.append(path)
 
     loaded = False
     try:
         from dotenv import load_dotenv
-        for path in candidates:
+        for path in unique_candidates:
             if os.path.isfile(path):
                 load_dotenv(dotenv_path=path, override=False)
                 loaded = True
@@ -74,7 +82,7 @@ def load_app_env() -> None:
         pass
 
     if not loaded:
-        for path in candidates:
+        for path in unique_candidates:
             if os.path.isfile(path):
                 _parse_dotenv_fallback(path)
 
@@ -107,29 +115,32 @@ DEFAULT_CLIENT_SECRETS = {
 
 
 def _dpapi_encrypt(plaintext: str) -> str:
-    """Encrypts a string using Windows DPAPI tied to the current Windows user session."""
+    """
+    Encrypts a string using Windows DPAPI tied to the current Windows user session
+    with VAULT_ENTROPY and CRYPTPROTECT_UI_FORBIDDEN. Fails closed if unavailable.
+    """
     if not plaintext:
         return ""
-    if sys.platform == "win32":
-        try:
-            import win32crypt
-            raw_bytes = plaintext.encode("utf-8")
-            encrypted_blob = win32crypt.CryptProtectData(
-                raw_bytes,
-                "AetherOAuthVault",
-                VAULT_ENTROPY,
-                None,
-                None,
-                CRYPTPROTECT_UI_FORBIDDEN,
-            )
-            return "dpapi:" + base64.b64encode(encrypted_blob).decode("ascii")
-        except Exception:
-            pass
-    return "fernet:" + encrypt_secret(plaintext)
+    if sys.platform != "win32":
+        raise RuntimeError("Windows DPAPI token vault encryption is only supported on Windows.")
+    try:
+        import win32crypt
+        raw_bytes = plaintext.encode("utf-8")
+        encrypted_blob = win32crypt.CryptProtectData(
+            raw_bytes,
+            "AetherOAuthVault",
+            VAULT_ENTROPY,
+            None,
+            None,
+            CRYPTPROTECT_UI_FORBIDDEN,
+        )
+        return "dpapi:" + base64.b64encode(encrypted_blob).decode("ascii")
+    except Exception as e:
+        raise RuntimeError(f"Token vault DPAPI encryption failed: {e}") from e
 
 
 def _dpapi_decrypt(ciphertext: str) -> str:
-    """Decrypts a string encrypted by _dpapi_encrypt (supports DPAPI and Fernet fallback)."""
+    """Decrypts a string encrypted by _dpapi_encrypt (with read-only migration support for legacy prefixes)."""
     if not ciphertext:
         return ""
     if ciphertext.startswith("dpapi:"):
@@ -150,8 +161,15 @@ def _dpapi_decrypt(ciphertext: str) -> str:
                 return ""
         return ""
     if ciphertext.startswith("fernet:"):
-        return decrypt_secret(ciphertext[len("fernet:"):])
-    return decrypt_secret(ciphertext)
+        # Legacy migration read-only path (prior builds wrapped crypto.protect_secret under 'fernet:')
+        try:
+            return decrypt_secret(ciphertext[len("fernet:"):])
+        except Exception:
+            return ""
+    try:
+        return decrypt_secret(ciphertext)
+    except Exception:
+        return ""
 
 
 class OAuthTokenVault:
@@ -185,21 +203,27 @@ class OAuthTokenVault:
 
     def _write_raw_vault(self, data: Dict[str, Any]) -> bool:
         with self._lock:
-            os.makedirs(os.path.dirname(self.vault_path), exist_ok=True)
-            tmp_path = f"{self.vault_path}.{os.getpid()}.tmp"
+            vault_dir = os.path.dirname(os.path.abspath(self.vault_path))
+            os.makedirs(vault_dir, exist_ok=True)
+            tmp_path = None
             try:
-                with open(tmp_path, "w", encoding="utf-8") as f:
+                with tempfile.NamedTemporaryFile(
+                    "w", dir=vault_dir, delete=False, suffix=".tmp", encoding="utf-8"
+                ) as f:
+                    tmp_path = f.name
                     json.dump(data, f, indent=2)
                 os.replace(tmp_path, self.vault_path)
+                tmp_path = None
                 return True
             except Exception as e:
                 print(f"[ERROR] [TOKEN_VAULT] Failed saving vault {self.vault_path}: {e}")
-                if os.path.exists(tmp_path):
+                return False
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
                     try:
                         os.remove(tmp_path)
                     except Exception:
                         pass
-                return False
 
     def save_client_config(self, provider: str, client_config: Dict[str, Any]) -> bool:
         """

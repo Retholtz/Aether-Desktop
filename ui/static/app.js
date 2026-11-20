@@ -2679,13 +2679,24 @@ handleDesktopNotification: function(notif) {
       const itemEl = document.createElement('div');
       itemEl.style.cssText = 'background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.15); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;';
       const timeStr = new Date().toLocaleTimeString();
-      itemEl.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-          <span style="color: #38bdf8; font-weight: 600; font-size: 0.8rem;">[${app}] ${title}</span>
-          <span style="color: #64748b; font-size: 0.72rem;">${timeStr}</span>
-        </div>
-        <div style="color: #cbd5e1; font-size: 0.78rem; word-break: break-word;">${body}</div>
-      `;
+
+      const headerRow = document.createElement('div');
+      headerRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;';
+      const titleSpan = document.createElement('span');
+      titleSpan.style.cssText = 'color: #38bdf8; font-weight: 600; font-size: 0.8rem;';
+      titleSpan.textContent = `[${app}] ${title}`;
+      const timeSpan = document.createElement('span');
+      timeSpan.style.cssText = 'color: #64748b; font-size: 0.72rem;';
+      timeSpan.textContent = timeStr;
+      headerRow.appendChild(titleSpan);
+      headerRow.appendChild(timeSpan);
+
+      const bodyDiv = document.createElement('div');
+      bodyDiv.style.cssText = 'color: #cbd5e1; font-size: 0.78rem; word-break: break-word;';
+      bodyDiv.textContent = body;
+
+      itemEl.appendChild(headerRow);
+      itemEl.appendChild(bodyDiv);
       listEl.insertBefore(itemEl, listEl.firstChild);
     }
   },

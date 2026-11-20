@@ -59,8 +59,11 @@ def register_project_tools(dispatcher, project_service: ProjectService, notebook
         if not pid:
             return {"status": "error", "message": "No active project selected."}
 
-        p_dir = project_service.get_project_dir(pid)
-        target = os.path.join(p_dir, filename)
+        try:
+            target = project_service.resolve_project_file_path(pid, filename)
+        except PermissionError:
+            return {"status": "error", "message": f"Access denied: invalid filename '{filename}'."}
+
         if not os.path.exists(target):
             return {"status": "error", "message": f"File '{filename}' does not exist in project '{pid}'."}
 

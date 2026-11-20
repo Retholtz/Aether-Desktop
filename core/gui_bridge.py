@@ -7276,8 +7276,11 @@ class GuiBridge:
 
     def open_project_file(self, project_id: str, filename: str) -> Dict[str, Any]:
         """Opens a local project document using the operating system's default viewer."""
-        p_dir = self.project_service.get_project_dir(project_id)
-        target = os.path.join(p_dir, filename)
+        try:
+            target = self.project_service.resolve_project_file_path(project_id, filename)
+        except PermissionError:
+            logger.warning(f"[GUI_BRIDGE SECURITY] Blocked path traversal in open_project_file: {filename}")
+            return {"status": "error", "message": "Access denied: invalid project file path."}
         if not os.path.exists(target):
             return {"status": "error", "message": f"File '{filename}' does not exist on disk."}
         try:
@@ -7298,7 +7301,11 @@ class GuiBridge:
     def open_project_file_location(self, project_id: str, filename: str) -> Dict[str, Any]:
         """Reveals the project file in Windows File Explorer with the item selected."""
         p_dir = self.project_service.get_project_dir(project_id)
-        target = os.path.join(p_dir, filename)
+        try:
+            target = self.project_service.resolve_project_file_path(project_id, filename)
+        except PermissionError:
+            logger.warning(f"[GUI_BRIDGE SECURITY] Blocked path traversal in open_project_file_location: {filename}")
+            return {"status": "error", "message": "Access denied: invalid project file path."}
         try:
             if sys.platform == "win32" and os.path.exists(target):
                 import subprocess
@@ -7318,31 +7325,32 @@ class GuiBridge:
             return {"status": "error", "message": str(e)}
 
     def open_external_url(self, url: str) -> Dict[str, Any]:
-        """Opens an external website URL in the user's default browser."""
+        """Opens an external HTTP/HTTPS website URL in the user's default browser."""
+        import urllib.parse
         import webbrowser
         clean_url = (url or "").strip()
         if not clean_url:
             return {"status": "error", "message": "No URL provided."}
-        if not clean_url.startswith(("http://", "https://")):
+        if "://" not in clean_url and not clean_url.lower().startswith(("mailto:", "javascript:", "file:", "data:", "vbscript:")):
             clean_url = "https://" + clean_url
+        parsed = urllib.parse.urlparse(clean_url)
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+            logger.warning(f"[GUI_BRIDGE SECURITY] Blocked non-HTTP(S) external URL: {clean_url!r}")
+            return {"status": "error", "message": "Only http:// and https:// URLs are permitted."}
         try:
-            if hasattr(os, "startfile"):
-                os.startfile(clean_url)
-            else:
-                webbrowser.open(clean_url)
+            webbrowser.open(clean_url)
             logger.info(f"[GUI_BRIDGE] Opened external URL: {clean_url}")
             return {"status": "success", "url": clean_url}
         except Exception as e:
-            try:
-                webbrowser.open(clean_url)
-                return {"status": "success", "url": clean_url}
-            except Exception as e2:
-                logger.error(f"[GUI_BRIDGE] Failed to open external URL '{clean_url}': {e2}")
-                return {"status": "error", "message": str(e2)}
+            logger.error(f"[GUI_BRIDGE] Failed to open external URL '{clean_url}': {e}")
+            return {"status": "error", "message": str(e)}
 
     def read_project_file(self, project_id: str, filename: str) -> Dict[str, Any]:
-        p_dir = self.project_service.get_project_dir(project_id)
-        target = os.path.join(p_dir, filename)
+        try:
+            target = self.project_service.resolve_project_file_path(project_id, filename)
+        except PermissionError:
+            logger.warning(f"[GUI_BRIDGE SECURITY] Blocked path traversal in read_project_file: {filename}")
+            return {"status": "error", "message": "Access denied: invalid project file path."}
         if not os.path.exists(target):
             return {"status": "error", "message": "File not found"}
         try:

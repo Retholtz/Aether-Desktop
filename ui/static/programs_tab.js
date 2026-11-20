@@ -152,8 +152,8 @@ async function handleLaunchActiveProgram() {
     try {
         const res = await window.pywebview.api.launch_program(activeProgramId);
         if (res && res.status === 'success') {
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(res.message || "Launched successfully");
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(res.message || "Launched successfully");
             }
             setTimeout(async () => {
                 await refreshProgramsStatusOnly();
@@ -599,13 +599,13 @@ async function loadInstalledProgramsForSync() {
             renderSyncProgramsList();
         } else {
             if (listEl) {
-                listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Failed to scan programs: ${(res && res.error) || 'Unknown error'}</div>`;
+                listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Failed to scan programs: ${escapeProgHtml((res && res.error) || 'Unknown error')}</div>`;
             }
         }
     } catch (err) {
         console.error("loadInstalledProgramsForSync error:", err);
         if (listEl) {
-            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Error scanning programs: ${err}</div>`;
+            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Error scanning programs: ${escapeProgHtml(err)}</div>`;
         }
     }
 }

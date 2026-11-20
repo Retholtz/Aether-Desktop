@@ -699,9 +699,33 @@ class ProjectService:
         except Exception:
             return ""
 
-    def read_file_text(self, project_id: str, filename: str) -> Optional[str]:
+    def resolve_project_file_path(self, project_id: str, filename: str) -> str:
+        """
+        Safely resolves a file path strictly inside the given project's files directory.
+        Raises PermissionError on path traversal, absolute paths, drive swaps, or symlink escape.
+        """
+        if not filename or not isinstance(filename, str):
+            raise PermissionError("Invalid project filename.")
+        if "\x00" in filename or os.path.isabs(filename):
+            raise PermissionError(f"Access denied: unsafe filename '{filename}'.")
+
         p_dir = self.get_project_dir(project_id)
-        target = os.path.join(p_dir, filename)
+        real_base = os.path.realpath(p_dir)
+        real_target = os.path.realpath(os.path.join(real_base, filename))
+        try:
+            common = os.path.commonpath([real_base, real_target])
+        except ValueError as err:
+            raise PermissionError(f"Access denied: path '{filename}' escapes project directory.") from err
+        if common != real_base or real_target == real_base:
+            raise PermissionError(f"Access denied: path '{filename}' escapes project directory.")
+        return real_target
+
+    def read_file_text(self, project_id: str, filename: str) -> Optional[str]:
+        try:
+            target = self.resolve_project_file_path(project_id, filename)
+        except PermissionError:
+            logger.warning("[PROJECT SECURITY] Blocked path traversal in read_file_text(%s, %s)", project_id, filename)
+            return None
         if not os.path.exists(target):
             return None
         return self.extract_file_text(target)

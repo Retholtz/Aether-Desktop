@@ -195,6 +195,7 @@ class TestCheckAndStageUpdate(unittest.TestCase):
 
         res = download_and_stage_update(
             "https://github.com/Retholtz/Aether-Desktop/releases/download/v0.83/Aether.0.83.zip",
+            expected_sha256=hashlib.sha256(zip_bytes).hexdigest(),
             app_dir=self.app_dir,
         )
         self.assertFalse(res["success"])

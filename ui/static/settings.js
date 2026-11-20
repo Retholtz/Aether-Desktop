@@ -1,5 +1,26 @@
 // ui/settings.js - Dynamic Model Discovery & Settings Integration
 
+function escapeSettingsHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeSettingsHttpUrl(rawUrl) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  try {
+    const parsed = new URL(s);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {}
+  return '';
+}
+
 // Reading startup settings to UI:
 function loadStartupSettings(config) {
   config = config || {};
@@ -896,7 +917,7 @@ function renderOAuthStatus(statusMap) {
     } else {
       wlBadgeList.innerHTML = apps.map(app => `
         <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.25); color: #38bdf8; font-size: 0.74rem;">
-          🛡️ ${app}
+          🛡️ ${escapeSettingsHtml(app)}
         </span>
       `).join('');
     }
@@ -1457,10 +1478,10 @@ function wireOAuthAccountButtons() {
         listEl.innerHTML = items.map(n => `
           <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.15); border-radius: 6px; padding: 8px 10px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-              <span style="color: #38bdf8; font-weight: 600; font-size: 0.8rem;">[${n.app_name}] ${n.title || ''}</span>
-              <span style="color: #64748b; font-size: 0.72rem;">${n.timestamp ? new Date(n.timestamp).toLocaleTimeString() : ''}</span>
+              <span style="color: #38bdf8; font-weight: 600; font-size: 0.8rem;">[${escapeSettingsHtml(n.app_name)}] ${escapeSettingsHtml(n.title || '')}</span>
+              <span style="color: #64748b; font-size: 0.72rem;">${escapeSettingsHtml(n.timestamp ? new Date(n.timestamp).toLocaleTimeString() : '')}</span>
             </div>
-            <div style="color: #cbd5e1; font-size: 0.78rem; word-break: break-word;">${n.body || ''}</div>
+            <div style="color: #cbd5e1; font-size: 0.78rem; word-break: break-word;">${escapeSettingsHtml(n.body || '')}</div>
           </div>
         `).join('');
       }
@@ -1613,16 +1634,17 @@ function wireOAuthAccountButtons() {
             ? '<span style="color: #34d399; font-weight: 700; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 4px;">● LIVE</span>'
             : '<span style="color: #64748b; font-size: 0.75rem;">OFFLINE</span>';
 
-          const viewers = isLive && s.viewer_count ? ` • ${s.viewer_count.toLocaleString()} viewers` : '';
-          const category = s.game_or_category ? ` • ${s.game_or_category}` : '';
-          const title = s.title ? `<div style="color: #cbd5e1; font-size: 0.78rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${s.title}</div>` : '';
-          const link = s.url ? `<a href="${s.url}" target="_blank" style="color: #38bdf8; font-size: 0.74rem; text-decoration: none; margin-left: auto;">Open Stream ↗</a>` : '';
+          const viewers = isLive && s.viewer_count ? ` • ${Number(s.viewer_count).toLocaleString()} viewers` : '';
+          const category = s.game_or_category ? ` • ${escapeSettingsHtml(s.game_or_category)}` : '';
+          const title = s.title ? `<div style="color: #cbd5e1; font-size: 0.78rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeSettingsHtml(s.title)}</div>` : '';
+          const safeUrl = safeSettingsHttpUrl(s.url);
+          const link = safeUrl ? `<a href="${escapeSettingsHtml(safeUrl)}" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; font-size: 0.74rem; text-decoration: none; margin-left: auto;">Open Stream ↗</a>` : '';
 
           return `
             <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(56, 189, 248, 0.15); border-radius: 6px; padding: 8px 10px;">
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                 ${platBadge}
-                <strong style="color: #e2e8f0; font-size: 0.84rem;">${s.channel_name}</strong>
+                <strong style="color: #e2e8f0; font-size: 0.84rem;">${escapeSettingsHtml(s.channel_name)}</strong>
                 ${livePill}
                 <span style="color: #94a3b8; font-size: 0.75rem;">${category}${viewers}</span>
                 ${link}
@@ -1633,7 +1655,7 @@ function wireOAuthAccountButtons() {
         }).join('');
       }
     } catch (e) {
-      listEl.innerHTML = `<div style="color: #f87171; font-size: 0.8rem;">Could not query live streams: ${e.message || e}</div>`;
+      listEl.innerHTML = `<div style="color: #f87171; font-size: 0.8rem;">Could not query live streams: ${escapeSettingsHtml(e.message || e)}</div>`;
     }
   });
 

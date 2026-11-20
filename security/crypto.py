@@ -7,12 +7,16 @@ import base64
 import os
 import sys
 
+CRYPTPROTECT_UI_FORBIDDEN = 0x01
+
+
 def is_windows() -> bool:
     return sys.platform == "win32"
 
+
 def protect_secret(plaintext: str) -> str:
     """
-    Encrypts a plaintext secret using Windows DPAPI.
+    Encrypts a plaintext secret using Windows DPAPI with CRYPTPROTECT_UI_FORBIDDEN.
     Raises RuntimeError if DPAPI is unavailable or fails.
     """
     if not plaintext:
@@ -29,15 +33,16 @@ def protect_secret(plaintext: str) -> str:
             None,
             None,
             None,
-            0
+            CRYPTPROTECT_UI_FORBIDDEN
         )
         return "dpapi:" + base64.b64encode(encrypted_bytes).decode("utf-8")
     except Exception as e:
         raise RuntimeError(f"CryptProtectData failed: {e}") from e
 
+
 def unprotect_secret(ciphertext: str) -> str:
     """
-    Decrypts a DPAPI-encrypted secret.
+    Decrypts a DPAPI-encrypted secret with CRYPTPROTECT_UI_FORBIDDEN.
     Raises RuntimeError if decryption fails.
     """
     if not ciphertext:
@@ -58,7 +63,7 @@ def unprotect_secret(ciphertext: str) -> str:
             None,
             None,
             None,
-            0
+            CRYPTPROTECT_UI_FORBIDDEN
         )
         return decrypted_bytes.decode("utf-8")
     except Exception as e:

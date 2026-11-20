@@ -12,9 +12,39 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from core.paths import get_app_dir, is_frozen
+
+WORKSPACE_ROOT = get_app_dir()
 STARTUP_DIR = os.path.join(WORKSPACE_ROOT, "scripts", "startup")
 REGISTRY_PATH = os.path.join(STARTUP_DIR, "registry.json")
+
+# Strict environment allowlist for sandboxed startup monitor subprocesses
+# (strips GEMINI_API_KEY, AETHER_*_CLIENT_SECRET, OAuth tokens, Steam/Twitch secrets, etc.)
+SAFE_SUBPROCESS_ENV_KEYS = (
+    "PATH",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "TEMP",
+    "TMP",
+    "PATHEXT",
+    "OS",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PYTHONPATH",
+    "PYTHONIOENCODING",
+    "PYTHONUTF8",
+    "LANG",
+    "LC_ALL",
+)
 
 
 class StartupJobRunner:
@@ -77,6 +107,15 @@ class StartupJobRunner:
         interval_minutes: int
     ) -> bool:
         """Registers or updates a scheduled monitoring script in the registry."""
+        if not script_name or not isinstance(script_name, str):
+            raise ValueError("Invalid script_name.")
+        if "\x00" in script_name or "/" in script_name or "\\" in script_name or ".." in script_name or os.path.isabs(script_name):
+            raise PermissionError(f"Unsafe startup script name rejected: {script_name!r}")
+        real_startup = os.path.realpath(self.startup_dir)
+        real_target = os.path.realpath(os.path.join(real_startup, script_name))
+        if os.path.commonpath([real_startup, real_target]) != real_startup or real_target == real_startup:
+            raise PermissionError(f"Startup script path escapes scripts/startup: {script_name!r}")
+
         with self._lock:
             registry = self.load_registry()
             # Canonical relative path relative to workspace or startup_dir
@@ -151,27 +190,59 @@ class StartupJobRunner:
                 break
 
     def _resolve_script_path(self, script_path: str) -> str:
-        """Resolves script path safely within the workspace scripts/startup or skills directories."""
-        cand2 = os.path.abspath(os.path.join(self.startup_dir, os.path.basename(script_path)))
-        if os.path.exists(cand2):
-            return cand2
+        """Resolves script path strictly inside scripts/startup (blocking path traversal)."""
+        if not script_path or not isinstance(script_path, str) or "\x00" in script_path:
+            raise PermissionError("Invalid startup monitor script path.")
 
-        cand1 = os.path.abspath(os.path.join(self.workspace_root, script_path))
-        ws_abs = os.path.abspath(self.workspace_root)
+        real_startup = os.path.realpath(self.startup_dir)
+        # Reject explicit traversal segments or absolute paths outside startup_dir
+        normalized = script_path.replace("\\", "/")
+        if ".." in normalized.split("/"):
+            raise PermissionError(f"Path traversal blocked for startup script: {script_path!r}")
+
+        if os.path.isabs(script_path):
+            cand = os.path.realpath(script_path)
+        else:
+            # Support canonical 'scripts/startup/<file>.py' or bare '<file>.py'
+            base_name = os.path.basename(script_path)
+            cand = os.path.realpath(os.path.join(real_startup, base_name))
+            # If a subpath was supplied, verify it resolves into startup_dir rather than another directory
+            if normalized not in (base_name, f"scripts/startup/{base_name}"):
+                ws_cand = os.path.realpath(os.path.join(self.workspace_root, script_path))
+                if os.path.commonpath([real_startup, ws_cand]) != real_startup:
+                    raise PermissionError(f"Startup script '{script_path}' must reside inside scripts/startup.")
+                cand = ws_cand
+
         try:
-            if os.path.commonpath([ws_abs, cand1]) == ws_abs and os.path.exists(cand1):
-                return cand1
-        except ValueError:
-            pass
+            if os.path.commonpath([real_startup, cand]) != real_startup or cand == real_startup:
+                raise PermissionError(f"Startup script '{script_path}' escapes scripts/startup.")
+        except ValueError as err:
+            raise PermissionError(f"Startup script '{script_path}' escapes scripts/startup.") from err
 
-        return cand2
+        return cand
+
+    def _build_sanitized_env(self) -> Dict[str, str]:
+        """Builds an allowlisted subprocess environment stripped of all API keys and OAuth secrets."""
+        clean_env: Dict[str, str] = {}
+        for k in SAFE_SUBPROCESS_ENV_KEYS:
+            val = os.environ.get(k)
+            if val is not None:
+                clean_env[k] = val
+        clean_env["PYTHONIOENCODING"] = "utf-8"
+        return clean_env
 
     def _execute_monitor_script(self, monitor: Dict[str, Any]):
         """Executes a monitor script in an isolated subprocess after AST Gatekeeper validation."""
         raw_path = monitor.get("script_path", "")
         task_id = monitor.get("task_id", "")
         desc = monitor.get("description") or task_id
-        resolved_path = self._resolve_script_path(raw_path)
+        try:
+            resolved_path = self._resolve_script_path(raw_path)
+        except PermissionError as sec_err:
+            print(f"[SECURITY] [STARTUP_RUNNER] Blocked unsafe script path for '{task_id}': {sec_err}")
+            monitor["last_status"] = f"blocked: {sec_err}"
+            self._update_monitor_status(task_id, f"blocked: {sec_err}")
+            return
 
         if not os.path.exists(resolved_path):
             print(f"[ERROR] [STARTUP_RUNNER] Script not found: {resolved_path}")
@@ -200,13 +271,12 @@ class StartupJobRunner:
         last_run = time.time()
         status = "unknown"
 
-        clean_env = os.environ.copy()
-        for secret_key in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "AETHER_MASTER_KEY"):
-            clean_env.pop(secret_key, None)
+        clean_env = self._build_sanitized_env()
+        cmd = [sys.executable, "--run-script", resolved_path] if is_frozen() else [sys.executable, resolved_path]
 
         try:
             result = subprocess.run(
-                [sys.executable, resolved_path],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=120,

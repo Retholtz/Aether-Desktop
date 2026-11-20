@@ -9,6 +9,7 @@ extracts via Python's built-in zipfile module, performs an atomic Windows
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 import hashlib
 import os
 import re
@@ -18,7 +19,7 @@ import sys
 import time
 import zipfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -27,6 +28,7 @@ from core.paths import get_app_dir, is_frozen
 from core.version import (
     APP_CHANNEL,
     APP_VERSION,
+    GITHUB_OWNER,
     GITHUB_RELEASES_API,
     GITHUB_RELEASES_PAGE,
     GITHUB_REPO,
@@ -37,13 +39,18 @@ logger = get_logger("Updater")
 EXE_NAME = "AetherDesktop.exe"
 INTERNAL_DIR_NAME = "_internal"
 STAGING_DIR_NAME = "_update_staging"
-PROTECTED_USER_FILES = frozenset({"config.json", ".env"})
-TRUSTED_DOWNLOAD_HOSTS = (
-    "github.com",
+PROTECTED_USER_FILES = frozenset({"config.json", ".env", ".env.local", "settings.json"})
+PROTECTED_USER_DIRS = frozenset({"data", "profile", "logs"})
+MAX_UPDATE_ARCHIVE_BYTES = 1_500_000_000   # 1.5 GB max zip archive download
+MAX_EXTRACT_BYTES = 4_000_000_000          # 4.0 GB max uncompressed payload
+MAX_EXTRACT_FILES = 25_000                 # Max archive members (zip-bomb guard)
+MAX_REDIRECT_HOPS = 5
+TRUSTED_GITHUB_REPO_HOSTS = frozenset({"github.com", "codeload.github.com"})
+TRUSTED_CDN_HOSTS = frozenset({
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
-    "codeload.github.com",
-)
+})
+TRUSTED_DOWNLOAD_HOSTS = tuple(TRUSTED_GITHUB_REPO_HOSTS | TRUSTED_CDN_HOSTS)
 
 
 def extract_version_string(raw: str) -> str:
@@ -83,13 +90,21 @@ def is_newer_version(remote_version: str, local_version: str = APP_VERSION) -> b
 
 
 def is_trusted_github_url(url: str) -> bool:
-    """Validates that a download URL uses HTTPS and points to a trusted GitHub host."""
+    """
+    Validates that a download URL uses HTTPS and points either to this project's
+    pinned GitHub repository (/{GITHUB_REPO}/) or GitHub's official release asset CDN.
+    """
     try:
         parsed = urlparse(str(url or "").strip())
         if parsed.scheme.lower() != "https" or not parsed.hostname:
             return False
-        host = parsed.hostname.lower()
-        return any(host == trusted or host.endswith(f".{trusted}") for trusted in TRUSTED_DOWNLOAD_HOSTS)
+        host = parsed.hostname.lower().rstrip(".")
+        if host in TRUSTED_GITHUB_REPO_HOSTS:
+            expected_prefix = f"/{GITHUB_OWNER.strip('/').lower()}/{GITHUB_REPO.strip('/').lower()}/"
+            return parsed.path.lower().startswith(expected_prefix)
+        if host in TRUSTED_CDN_HOSTS:
+            return True
+        return False
     except Exception:
         return False
 
@@ -172,8 +187,23 @@ def _extract_asset_sha256(asset: Optional[Dict[str, Any]], assets: list, timeout
             continue
         if cand_name == f"{asset_name}.sha256" or cand_name in ("sha256sums.txt", "checksums.txt"):
             try:
-                resp = httpx.get(cand_url, timeout=timeout, follow_redirects=True)
-                if resp.status_code == 200:
+                cur = cand_url
+                resp = None
+                for hop in range(MAX_REDIRECT_HOPS + 1):
+                    if not is_trusted_github_url(cur):
+                        resp = None
+                        break
+                    r = httpx.get(cur, timeout=timeout, follow_redirects=False)
+                    if r.status_code in (301, 302, 303, 307, 308):
+                        loc = r.headers.get("Location") or r.headers.get("location") or ""
+                        if not loc or hop >= MAX_REDIRECT_HOPS:
+                            resp = None
+                            break
+                        cur = urljoin(cur, loc.strip())
+                        continue
+                    resp = r
+                    break
+                if resp is not None and resp.status_code == 200:
                     for line in resp.text.splitlines():
                         parts = line.strip().split()
                         if not parts:
@@ -319,15 +349,29 @@ def strip_mark_of_the_web(target_dir: str) -> int:
 
 
 def _safe_extract_zip(zip_path: str, extract_dir: str) -> None:
-    """Verifies archive integrity and extracts a zip archive while guarding against path traversal."""
-    abs_extract_dir = os.path.abspath(extract_dir)
+    """Verifies archive integrity, bounds extraction size/count, and guards against zip-slip."""
+    abs_extract_dir = os.path.realpath(extract_dir)
     with zipfile.ZipFile(zip_path, "r") as zf:
         bad_member = zf.testzip()
         if bad_member is not None:
             raise zipfile.BadZipFile(f"Corrupted zip entry detected: {bad_member}")
-        for member in zf.infolist():
-            member_path = os.path.abspath(os.path.join(abs_extract_dir, member.filename))
-            if not (member_path == abs_extract_dir or member_path.startswith(abs_extract_dir + os.sep)):
+        members = zf.infolist()
+        if len(members) > MAX_EXTRACT_FILES:
+            raise ValueError(f"Update archive exceeds maximum file count ({len(members)} > {MAX_EXTRACT_FILES}).")
+        total_uncompressed = 0
+        for member in members:
+            total_uncompressed += max(0, int(member.file_size))
+            if total_uncompressed > MAX_EXTRACT_BYTES:
+                raise ValueError("Update archive exceeds maximum uncompressed size limit.")
+            # Reject symlinks inside zip archives (Unix mode 0o120000)
+            if ((member.external_attr >> 16) & 0o170000) == 0o120000:
+                raise ValueError(f"Unsafe symlink zip entry detected: {member.filename}")
+            member_path = os.path.realpath(os.path.join(abs_extract_dir, member.filename))
+            try:
+                common = os.path.commonpath([abs_extract_dir, member_path])
+            except ValueError as err:
+                raise ValueError(f"Unsafe zip entry path detected: {member.filename}") from err
+            if common != abs_extract_dir:
                 raise ValueError(f"Unsafe zip entry path detected: {member.filename}")
         zf.extractall(abs_extract_dir)
 
@@ -357,17 +401,28 @@ def download_and_stage_update(
     timeout: float = 30.0,
     expected_sha256: str = "",
     app_dir: Optional[str] = None,
+    require_sha256: bool = True,
 ) -> Dict[str, Any]:
     """
     Downloads the release .zip from GitHub via httpx into <app_dir>/_update_staging/,
-    verifies its SHA-256 checksum, extracts via zipfile, validates AetherDesktop.exe
-    is present, and strips user config files.
+    validating every redirect hop, enforcing SHA-256 verification (fail-closed by default),
+    extracting safely via zipfile, validating AetherDesktop.exe is present, and stripping
+    protected user files/directories.
     """
     if not is_trusted_github_url(download_url):
         return {
             "success": False,
             "error": "Refusing to download update from untrusted or non-HTTPS URL.",
         }
+
+    normalized_expected = _normalize_sha256(expected_sha256)
+    if require_sha256 and not normalized_expected:
+        return {
+            "success": False,
+            "error": "Missing or invalid expected SHA-256 checksum. Refusing unverified update archive.",
+        }
+    if expected_sha256 and not normalized_expected:
+        return {"success": False, "error": "Invalid expected SHA-256 checksum format."}
 
     target_app_dir = os.path.abspath(app_dir or get_app_dir())
     if not is_app_dir_writable(target_app_dir):
@@ -393,34 +448,58 @@ def download_and_stage_update(
     try:
         if progress_cb:
             progress_cb(0, 0, "downloading")
-        with httpx.stream(
-            "GET",
-            download_url,
-            headers=headers,
-            timeout=timeout,
-            follow_redirects=True,
-        ) as resp:
-            if resp.status_code >= 400:
-                return {"success": False, "error": f"Download failed with HTTP {resp.status_code}."}
-            total_bytes = int(resp.headers.get("Content-Length") or 0)
-            downloaded = 0
-            with open(zip_path, "wb") as out_f:
-                for chunk in resp.iter_bytes(chunk_size=65536):
-                    if not chunk:
-                        continue
-                    out_f.write(chunk)
-                    sha256_hasher.update(chunk)
-                    downloaded += len(chunk)
-                    if progress_cb:
-                        progress_cb(downloaded, total_bytes, "downloading")
+
+        current_url = download_url
+        for hop in range(MAX_REDIRECT_HOPS + 1):
+            if not is_trusted_github_url(current_url):
+                shutil.rmtree(stage_dir, ignore_errors=True)
+                return {
+                    "success": False,
+                    "error": f"Refusing redirect to untrusted URL: {current_url}",
+                }
+            with httpx.stream(
+                "GET",
+                current_url,
+                headers=headers,
+                timeout=timeout,
+                follow_redirects=False,
+            ) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("Location") or resp.headers.get("location") or ""
+                    if not loc or hop >= MAX_REDIRECT_HOPS:
+                        shutil.rmtree(stage_dir, ignore_errors=True)
+                        return {"success": False, "error": "Too many or invalid redirects while downloading update."}
+                    current_url = urljoin(current_url, loc.strip())
+                    continue
+
+                if resp.status_code >= 400:
+                    shutil.rmtree(stage_dir, ignore_errors=True)
+                    return {"success": False, "error": f"Download failed with HTTP {resp.status_code}."}
+
+                total_bytes = int(resp.headers.get("Content-Length") or 0)
+                if total_bytes > MAX_UPDATE_ARCHIVE_BYTES:
+                    shutil.rmtree(stage_dir, ignore_errors=True)
+                    return {"success": False, "error": "Update archive exceeds maximum allowed download size."}
+
+                downloaded = 0
+                with open(zip_path, "wb") as out_f:
+                    for chunk in resp.iter_bytes(chunk_size=65536):
+                        if not chunk:
+                            continue
+                        downloaded += len(chunk)
+                        if downloaded > MAX_UPDATE_ARCHIVE_BYTES:
+                            shutil.rmtree(stage_dir, ignore_errors=True)
+                            return {"success": False, "error": "Update archive exceeded maximum download size."}
+                        out_f.write(chunk)
+                        sha256_hasher.update(chunk)
+                        if progress_cb:
+                            progress_cb(downloaded, total_bytes, "downloading")
+                break
     except Exception as exc:
+        shutil.rmtree(stage_dir, ignore_errors=True)
         return {"success": False, "error": f"Download error: {exc}"}
 
     actual_sha256 = sha256_hasher.hexdigest().lower()
-    normalized_expected = _normalize_sha256(expected_sha256)
-    if expected_sha256 and not normalized_expected:
-        shutil.rmtree(stage_dir, ignore_errors=True)
-        return {"success": False, "error": "Invalid expected SHA-256 checksum format."}
     if normalized_expected and actual_sha256 != normalized_expected:
         shutil.rmtree(stage_dir, ignore_errors=True)
         return {
@@ -439,23 +518,31 @@ def download_and_stage_update(
         if cleared_ads:
             logger.info(f"[UPDATER] Cleared {cleared_ads} Zone.Identifier stream(s) from staged update.")
     except Exception as exc:
+        shutil.rmtree(stage_dir, ignore_errors=True)
         return {"success": False, "error": f"Failed to extract update archive: {exc}"}
 
     payload_dir = _locate_payload_root(extract_dir, EXE_NAME)
     if not payload_dir:
+        shutil.rmtree(stage_dir, ignore_errors=True)
         return {
             "success": False,
             "error": f"Update archive did not contain {EXE_NAME}.",
         }
 
-    # Never overwrite existing local user secrets/config if accidentally bundled
-    for protected_name in PROTECTED_USER_FILES:
-        protected_path = os.path.join(payload_dir, protected_name)
-        if os.path.isfile(protected_path):
-            try:
-                os.remove(protected_path)
-            except OSError:
-                pass
+    # Never overwrite existing local user secrets/config/data/profile if accidentally bundled (case-insensitive)
+    try:
+        for entry in os.listdir(payload_dir):
+            entry_lower = entry.lower()
+            entry_path = os.path.join(payload_dir, entry)
+            if entry_lower in PROTECTED_USER_FILES and os.path.isfile(entry_path):
+                try:
+                    os.remove(entry_path)
+                except OSError:
+                    pass
+            elif entry_lower in PROTECTED_USER_DIRS and os.path.isdir(entry_path):
+                shutil.rmtree(entry_path, ignore_errors=True)
+    except OSError:
+        pass
 
     return {
         "success": True,
@@ -469,36 +556,52 @@ def download_and_stage_update(
 
 def cleanup_old_update_artifacts(app_dir: Optional[str] = None) -> Dict[str, Any]:
     """
-    Sweeps and deletes any leftover *.old files (including inside _internal/),
-    _internal.old directories, or _update_staging directories from a prior update
-    on application startup.
+    Sweeps and deletes ONLY known leftover update artifacts:
+      - <app_dir>/AetherDesktop.exe.old
+      - <app_dir>/_internal.old/
+      - <app_dir>/_update_staging/
+      - *.old files strictly inside <app_dir>/_internal/
+    Never touches user data/, profile/, or project directories.
     """
     target_dir = os.path.abspath(app_dir or get_app_dir())
     removed: List[str] = []
     if not os.path.isdir(target_dir):
         return {"removed": removed}
 
-    try:
-        for root, dirs, files in os.walk(target_dir, topdown=False):
-            for fname in files:
-                if fname.lower().endswith(".old"):
-                    full_path = os.path.join(root, fname)
-                    try:
-                        os.remove(full_path)
-                        removed.append(os.path.relpath(full_path, target_dir))
-                    except OSError:
-                        pass
-            for dname in dirs:
-                if dname.lower().endswith(".old") or dname == STAGING_DIR_NAME:
-                    full_path = os.path.join(root, dname)
-                    try:
-                        shutil.rmtree(full_path, ignore_errors=True)
-                        if not os.path.exists(full_path):
+    # 1. Known top-level artifacts
+    old_exe = os.path.join(target_dir, f"{EXE_NAME}.old")
+    if os.path.isfile(old_exe):
+        try:
+            os.remove(old_exe)
+            removed.append(f"{EXE_NAME}.old")
+        except OSError:
+            pass
+
+    for dname in (f"{INTERNAL_DIR_NAME}.old", STAGING_DIR_NAME):
+        dpath = os.path.join(target_dir, dname)
+        if os.path.isdir(dpath):
+            try:
+                shutil.rmtree(dpath, ignore_errors=True)
+                if not os.path.exists(dpath):
+                    removed.append(dname)
+            except OSError:
+                pass
+
+    # 2. Any *.old files strictly inside _internal/ from fallback file-by-file swaps
+    internal_dir = os.path.join(target_dir, INTERNAL_DIR_NAME)
+    if os.path.isdir(internal_dir):
+        try:
+            for root, _, files in os.walk(internal_dir, topdown=False):
+                for fname in files:
+                    if fname.lower().endswith(".old"):
+                        full_path = os.path.join(root, fname)
+                        try:
+                            os.remove(full_path)
                             removed.append(os.path.relpath(full_path, target_dir))
-                    except OSError:
-                        pass
-    except OSError:
-        return {"removed": removed}
+                        except OSError:
+                            pass
+        except OSError:
+            pass
 
     if removed:
         logger.info(f"[UPDATER] Cleaned up prior update artifacts: {', '.join(removed[:20])}")
@@ -506,10 +609,15 @@ def cleanup_old_update_artifacts(app_dir: Optional[str] = None) -> Dict[str, Any
 
 
 def _merge_extra_payload_entries(payload_dir: str, app_dir: str, exe_name: str) -> None:
-    """Copies any additional top-level payload entries (excluding exe, _internal, and user configs) into app_dir."""
-    skip_names = {exe_name, INTERNAL_DIR_NAME, *PROTECTED_USER_FILES}
+    """Copies any additional top-level payload entries (excluding exe, _internal, and protected user files/dirs) into app_dir."""
+    skip_lower = {
+        exe_name.lower(),
+        INTERNAL_DIR_NAME.lower(),
+        *(f.lower() for f in PROTECTED_USER_FILES),
+        *(d.lower() for d in PROTECTED_USER_DIRS),
+    }
     for entry in os.listdir(payload_dir):
-        if entry in skip_names:
+        if entry.lower() in skip_lower:
             continue
         src = os.path.join(payload_dir, entry)
         dst = os.path.join(app_dir, entry)
@@ -528,7 +636,14 @@ def _wait_for_pid_exit(pid: int, timeout_seconds: float = 30.0) -> bool:
         return True
     SYNCHRONIZE = 0x00100000
     WAIT_OBJECT_0 = 0x00000000
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
     handle = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
     if not handle:
         return True
@@ -711,10 +826,24 @@ def apply_update_from_helper_cli(argv: List[str]) -> int:
         logger.error("[UPDATER] --apply-update invoked without --target-dir.")
         return 1
 
-    payload_dir = os.path.dirname(os.path.abspath(sys.executable))
+    real_target = os.path.realpath(target_dir)
+    payload_dir = os.path.realpath(os.path.dirname(os.path.abspath(sys.executable)))
+    expected_staging = os.path.realpath(os.path.join(real_target, STAGING_DIR_NAME))
+    try:
+        in_staging = os.path.commonpath([expected_staging, payload_dir]) == expected_staging
+    except ValueError:
+        in_staging = False
+    if not in_staging:
+        logger.error(
+            "[UPDATER SECURITY] Refusing --apply-update: staged helper '%s' is not inside target staging dir '%s'.",
+            payload_dir,
+            expected_staging,
+        )
+        return 1
+
     res = _swap_live_files_from_payload(
         payload_dir=payload_dir,
-        target_app_dir=os.path.abspath(target_dir),
+        target_app_dir=real_target,
         exe_name=EXE_NAME,
         old_pid=old_pid,
         relaunch=True,
