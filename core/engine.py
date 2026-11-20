@@ -6166,7 +6166,8 @@ class AetherEngine:
                     cfg_freq_now = str(user_cfg_now.get("callsign_frequency", "")).strip().lower()
                     if cfg_freq_now in ("never", "seldom", "often", "always"):
                         self.user_memory.set_callsign_frequency(cfg_freq_now)
-                    self.update_user_identity_directive()
+                    if getattr(self, "_base_system_instruction", "").strip():
+                        self.update_user_identity_directive()
                 except Exception:
                     pass
             base_inst = getattr(self, "_base_system_instruction", "") or api_cfg.get("system_instruction") or f"You are {agent_name}, a fast, knowledgeable desktop voice assistant."

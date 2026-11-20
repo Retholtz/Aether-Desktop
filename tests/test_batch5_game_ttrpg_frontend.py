@@ -266,14 +266,14 @@ class TestTTRPGServiceAndTools(unittest.TestCase):
         self.tmp_dir.cleanup()
 
     def test_find_helpers_reject_empty_string(self):
-        self.svc.start_combat([{"name": "Lyra", "initiative": 15, "is_player": True}])
+        self.svc.start_combat(enemies=[{"name": "Goblin", "hp": 7, "ac": 13}])
         self.assertEqual(self.svc._find_character(""), (None, None))
         self.assertEqual(self.svc._find_character("   "), (None, None))
         self.assertIsNone(self.svc._find_combatant(""))
         self.assertIsNone(self.svc._find_combatant("   "))
 
     def test_custom_meter_never_corrupts_initiative_hp_and_aliases_work(self):
-        self.svc.start_combat([{"name": "Lyra", "initiative": 14, "is_player": True}])
+        self.svc.start_combat(enemies=[{"name": "Goblin", "hp": 7, "ac": 13}])
 
         res_meter = self.svc.modify_character_stat(
             "Lyra", "ki_points", -1, is_custom_meter=True
@@ -300,7 +300,7 @@ class TestTTRPGServiceAndTools(unittest.TestCase):
 
     def test_start_combat_marks_zero_hp_player_dying_not_defeated(self):
         self.svc.modify_character_stat("Borin", "health", -18)
-        self.svc.start_combat([{"name": "Borin", "initiative": 10, "is_player": True}])
+        self.svc.start_combat(enemies=[{"name": "Goblin", "hp": 7, "ac": 13}])
         borin_init = self.svc._find_combatant("Borin")
         self.assertEqual(borin_init["status"], "Dying (0 HP)")
 
@@ -490,11 +490,13 @@ class TestFrontendStaticPolish(unittest.TestCase):
         src = self._read_static("projects.js")
         self.assertIn("window.activeProjectId = activeProjectId;", src)
         self.assertIn("function setActiveProjectId(pid)", src)
+        self.assertNotIn("getElementById('chatTextInput')", src)
 
     def test_roleplay_js_cast_spell_targets_real_story_chat(self):
         src = self._read_static("roleplay.js")
         self.assertNotIn("input-rp-dm-prompt", src)
         self.assertNotIn("btn-send-rp-dm-prompt", src)
+        self.assertNotIn("State your action to the Game Master (", src)
         m = re.search(r"async function handleCardCastSpell\b[\s\S]{0,1800}", src)
         self.assertIsNotNone(m)
         block = m.group(0)
@@ -512,6 +514,38 @@ class TestFrontendStaticPolish(unittest.TestCase):
         src = self._read_static("programs_tab.js")
         self.assertNotIn("window.AetherApp", src)
         self.assertGreaterEqual(src.count("window.aetherUI.showToast"), 4)
+
+    def test_hud_window_clears_stale_webview_cache_on_asset_change(self):
+        from ui.hud_window import HudWindow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            static_dir = Path(tmp) / "static"
+            static_dir.mkdir()
+            index_html = static_dir / "index.html"
+            index_html.write_text("<html>v1</html>", encoding="utf-8")
+
+            storage_dir = Path(tmp) / "profile"
+            default_dir = storage_dir / "EBWebView" / "Default"
+            (default_dir / "Cache" / "Cache_Data").mkdir(parents=True)
+            (default_dir / "Cache" / "Cache_Data" / "f_000001").write_bytes(b"stale")
+            (default_dir / "Code Cache" / "js").mkdir(parents=True)
+            (default_dir / "Code Cache" / "js" / "old_0").write_bytes(b"stale")
+            prefs = default_dir / "Preferences"
+            prefs.write_text('{"kept": true}', encoding="utf-8")
+
+            hud = HudWindow.__new__(HudWindow)
+            hud.html_path = str(index_html)
+            hud._clear_stale_webview_cache(str(storage_dir))
+
+            self.assertFalse((default_dir / "Cache").exists())
+            self.assertFalse((default_dir / "Code Cache").exists())
+            self.assertTrue(prefs.exists(), "Preferences must be preserved")
+
+            # Re-creating cache without changing assets should NOT clear it again
+            (default_dir / "Cache").mkdir(parents=True)
+            (default_dir / "Cache" / "fresh").write_bytes(b"ok")
+            hud._clear_stale_webview_cache(str(storage_dir))
+            self.assertTrue((default_dir / "Cache" / "fresh").exists())
 
 
 if __name__ == "__main__":

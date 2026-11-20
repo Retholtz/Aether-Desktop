@@ -1092,6 +1092,49 @@ class HudWindow:
         except Exception as e:
             print(f"[WARN] [HUD] Could not pre-seed WebView2 Save as PDF preference: {e}")
 
+    def _clear_stale_webview_cache(self, storage_dir: str):
+        """
+        Clears WebView2 HTTP and V8 JS bytecode caches whenever any static UI asset
+        (HTML/JS/CSS) changes on disk, preventing stale cached scripts from running
+        across upgrades or local edits while preserving Preferences and Local Storage.
+        """
+        import shutil
+
+        try:
+            static_dir = os.path.dirname(self.html_path)
+            sig_parts = []
+            if os.path.isdir(static_dir):
+                for fname in sorted(os.listdir(static_dir)):
+                    if fname.endswith((".html", ".js", ".css")):
+                        fpath = os.path.join(static_dir, fname)
+                        try:
+                            st = os.stat(fpath)
+                            sig_parts.append(f"{fname}:{st.st_mtime_ns}:{st.st_size}")
+                        except OSError:
+                            pass
+            current_sig = "|".join(sig_parts)
+            stamp_path = os.path.join(storage_dir, ".ui_asset_stamp")
+            prev_sig = ""
+            if os.path.isfile(stamp_path):
+                try:
+                    with open(stamp_path, "r", encoding="utf-8") as f:
+                        prev_sig = f.read().strip()
+                except OSError:
+                    prev_sig = ""
+
+            if current_sig and current_sig != prev_sig:
+                default_dir = os.path.join(storage_dir, "EBWebView", "Default")
+                for cache_sub in ("Cache", "Code Cache"):
+                    cache_path = os.path.join(default_dir, cache_sub)
+                    if os.path.isdir(cache_path):
+                        shutil.rmtree(cache_path, ignore_errors=True)
+                os.makedirs(storage_dir, exist_ok=True)
+                with open(stamp_path, "w", encoding="utf-8") as f:
+                    f.write(current_sig)
+                print("[HUD] Cleared stale WebView2 HTTP/JS cache after UI asset update.")
+        except Exception as e:
+            print(f"[WARN] [HUD] Could not refresh WebView2 static cache: {e}")
+
     def start(self, debug: bool = False):
         """Starts the PyWebView main GUI event loop and system tray."""
         import logging
@@ -1100,6 +1143,7 @@ class HudWindow:
 
         logging.getLogger("pywebview").setLevel(logging.DEBUG)
         storage_dir = app_path("data", "webview_profile")
+        self._clear_stale_webview_cache(storage_dir)
         self._ensure_webview_pdf_default_preference(storage_dir)
         print(f"[HUD] Launching pywebview window from {self.html_path}...")
         self.tray.start()

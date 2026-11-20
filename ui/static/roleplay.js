@@ -391,9 +391,6 @@ function renderCampaignHeader() {
         const storyTitle = document.getElementById("rp-story-title");
         if (storyTitle) storyTitle.textContent = `⚔️ ${meta.title || activeId} Chronicle`;
 
-        const bottomInput = document.getElementById("chatTextInput");
-        if (bottomInput) bottomInput.placeholder = `State your action to the Game Master (${meta.title || activeId})...`;
-
         if (activeId && window._loadedCampaignStoryId !== activeId) {
             window._loadedCampaignStoryId = activeId;
             loadCampaignStoryHistory(activeId);

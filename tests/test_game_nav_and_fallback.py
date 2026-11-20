@@ -426,7 +426,9 @@ class TestGameNavAndFallback(unittest.TestCase):
         self.assertIn("ZERO TOLERANCE FOR OUT-OF-UNIVERSE DEVIATION", sys_inst)
         self.assertIn("Pywel", sys_inst)
         self.assertIn("disable Game Mode", sys_inst)
-        self.assertNotIn("You are Aether desktop assistant.", sys_inst)
+        # User-configured personality is preserved in-character during Game Mode
+        self.assertIn("USER-CONFIGURED PERSONALITY & INSTRUCTIONS (Apply in-character as it applies to this mode):", sys_inst)
+        self.assertIn("You are Aether desktop assistant.", sys_inst)
 
         # 2. Tool declarations when Game Mode is active
         cfg = engine._execute_turn_modular("what should I do next?")

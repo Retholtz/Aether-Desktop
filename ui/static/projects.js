@@ -168,9 +168,6 @@ async function renderActiveProjectWorkspace() {
     const chatHeading = document.getElementById('project-chat-heading');
     if (chatHeading) chatHeading.textContent = `💬 ${proj.name || activeProjectId} Conversation`;
 
-    const bottomInput = document.getElementById('chatTextInput');
-    if (bottomInput) bottomInput.placeholder = `Ask Aether about ${proj.name || activeProjectId}...`;
-
     await loadProjectChatHistory(activeProjectId);
     await refreshProjectFilesList();
 }
