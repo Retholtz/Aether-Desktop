@@ -8,6 +8,7 @@ silent WebSocket session re-anchoring without audio stream interruption.
 import asyncio
 import json
 import os
+import tempfile
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -79,20 +80,23 @@ class SessionLifecycleManager:
 
     @property
     def rotation_in_progress(self) -> bool:
-        if self._rotation_in_progress:
-            if time.time() - self.rotation_started_at > 120.0:
-                print("[WARN] [SESSION] Stale rotation lock expired (>120s). Resetting lock.")
-                logger.warning("[SESSION] Stale rotation lock expired (>120s). Resetting lock.")
-                self._rotation_in_progress = False
-        return self._rotation_in_progress
+        with self._lock:
+            if self._rotation_in_progress:
+                if time.time() - self.rotation_started_at > 120.0:
+                    print("[WARN] [SESSION] Stale rotation lock expired (>120s). Resetting lock.")
+                    logger.warning("[SESSION] Stale rotation lock expired (>120s). Resetting lock.")
+                    self._rotation_in_progress = False
+                    self.rotation_started_at = 0.0
+            return self._rotation_in_progress
 
     @rotation_in_progress.setter
     def rotation_in_progress(self, value: bool):
-        self._rotation_in_progress = bool(value)
-        if value:
-            self.rotation_started_at = time.time()
-        else:
-            self.rotation_started_at = 0.0
+        with self._lock:
+            self._rotation_in_progress = bool(value)
+            if value:
+                self.rotation_started_at = time.time()
+            else:
+                self.rotation_started_at = 0.0
 
     def record_turn(self, role: str, content: str, tools_used: Optional[List[str]] = None):
         """Records a user utterance or model response in turn history and raw transcript."""
@@ -161,29 +165,24 @@ class SessionLifecycleManager:
           - duration >= 30 minutes (1800s)
           - tool execution chars >= 50,000
         """
-        # Reset stuck rotation locks older than 120 seconds
-        if self.rotation_in_progress:
-            if time.time() - self.rotation_started_at > 120.0:
-                print("[WARN] [SESSION] Stale rotation lock expired (>120s). Resetting lock.")
-                logger.warning("[SESSION] Stale rotation lock expired (>120s). Resetting lock.")
-                self.rotation_in_progress = False
-            else:
+        with self._lock:
+            if self.rotation_in_progress:
                 return False
 
-        if self.turn_count >= self.rotation_threshold_turns:
-            logger.info(f"[LIFECYCLE] NEEDS_ROTATION: turn_count ({self.turn_count}) >= threshold ({self.rotation_threshold_turns})")
-            return True
+            if self.turn_count >= self.rotation_threshold_turns:
+                logger.info(f"[LIFECYCLE] NEEDS_ROTATION: turn_count ({self.turn_count}) >= threshold ({self.rotation_threshold_turns})")
+                return True
 
-        elapsed = self.get_elapsed_seconds()
-        if elapsed >= self.rotation_threshold_duration:
-            logger.info(f"[LIFECYCLE] NEEDS_ROTATION: elapsed ({elapsed:.0f}s) >= threshold ({self.rotation_threshold_duration:.0f}s)")
-            return True
+            elapsed = self.get_elapsed_seconds()
+            if elapsed >= self.rotation_threshold_duration:
+                logger.info(f"[LIFECYCLE] NEEDS_ROTATION: elapsed ({elapsed:.0f}s) >= threshold ({self.rotation_threshold_duration:.0f}s)")
+                return True
 
-        if self.tool_execution_chars >= self.rotation_threshold_tool_chars:
-            logger.info(f"[LIFECYCLE] NEEDS_ROTATION: tool_chars ({self.tool_execution_chars}) >= threshold ({self.rotation_threshold_tool_chars})")
-            return True
+            if self.tool_execution_chars >= self.rotation_threshold_tool_chars:
+                logger.info(f"[LIFECYCLE] NEEDS_ROTATION: tool_chars ({self.tool_execution_chars}) >= threshold ({self.rotation_threshold_tool_chars})")
+                return True
 
-        return False
+            return False
 
     def rotate_session(self):
         """Executes session rotation with concurrency flag protection."""
@@ -290,16 +289,29 @@ class SessionLifecycleManager:
                 summary_text = _extract_summary_text(resp)
             except Exception as compactor_err:
                 logger.warning(f"[LIFECYCLE COMPACTOR] {model} failed: {compactor_err}. Attempting fallback...")
-                try:
-                    fallback_model = "gemini-3.8-flash"
-                    resp = await client.aio.models.generate_content(
-                        model=fallback_model,
-                        contents=full_prompt,
-                        config=compactor_cfg
-                    )
-                    summary_text = _extract_summary_text(resp)
-                except Exception as fb_err:
-                    logger.error(f"[LIFECYCLE COMPACTOR] Fallback LLM also failed: {fb_err}")
+                from core.model_discovery import build_thinking_config, resolve_model_profile
+                primary_base, _ = resolve_model_profile(model, default_model="gemini-3.8-flash")
+                fallback_candidates = [
+                    cand for cand in ("gemini-3.8-flash", "gemini-4-hydrogen")
+                    if cand != primary_base
+                ]
+                for fb_model in fallback_candidates:
+                    try:
+                        fb_cfg = types.GenerateContentConfig(
+                            temperature=0.2,
+                            max_output_tokens=1024,
+                            thinking_config=build_thinking_config(fb_model, thinking_level="low"),
+                        )
+                        resp = await client.aio.models.generate_content(
+                            model=fb_model,
+                            contents=full_prompt,
+                            config=fb_cfg
+                        )
+                        summary_text = _extract_summary_text(resp)
+                        if summary_text:
+                            break
+                    except Exception as fb_err:
+                        logger.error(f"[LIFECYCLE COMPACTOR] Fallback LLM '{fb_model}' failed: {fb_err}")
 
         # If LLM generation failed or client was None, construct deterministic operational summary
         if not summary_text:
@@ -372,45 +384,59 @@ class SessionLifecycleManager:
             if not self.raw_transcript:
                 return None
 
-            filepath = os.path.join(self.chats_dir, f"{self.session_id}.json")
+            flushed_count = len(self.raw_transcript)
+            old_id = self.session_id
+            filepath = os.path.join(self.chats_dir, f"{old_id}.json")
             start_t = self.raw_transcript[0]["timestamp"] if self.raw_transcript else self.session_start_time
             end_t = self.raw_transcript[-1]["timestamp"] if self.raw_transcript else time.time()
             payload = {
-                "session_id": self.session_id,
+                "session_id": old_id,
                 "start_time": start_t,
                 "end_time": end_t,
                 "turns": list(self.raw_transcript)
             }
 
-            try:
-                tmp_path = f"{filepath}.{os.getpid()}.tmp"
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2)
-                os.replace(tmp_path, filepath)
-                logger.info(f"[SESSION] Persisted raw session transcript to {filepath}")
-            except Exception as e:
-                logger.error(f"[SESSION ERROR] Failed to save session transcript to {filepath}: {e}")
-                return None
+        # Perform disk I/O outside self._lock so concurrent turn recording is never blocked
+        tmp_path = None
+        try:
+            os.makedirs(self.chats_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                "w", dir=self.chats_dir, delete=False, suffix=".tmp", encoding="utf-8"
+            ) as f:
+                tmp_path = f.name
+                json.dump(payload, f, indent=2)
+            os.replace(tmp_path, filepath)
+            tmp_path = None
+            logger.info(f"[SESSION] Persisted raw session transcript to {filepath}")
+        except Exception as e:
+            logger.error(f"[SESSION ERROR] Failed to save session transcript to {filepath}: {e}")
+            return None
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
 
-            # Session transcript is persisted; the idle-aware ReflexionEngine processes manifest extraction
-            logger.debug(f"[MANIFEST] Session {filepath} queued for idle Reflexion extraction.")
+        # Session transcript is persisted; the idle-aware ReflexionEngine processes manifest extraction
+        logger.debug(f"[MANIFEST] Session {filepath} queued for idle Reflexion extraction.")
 
-            old_id = self.session_id
-            new_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
-            if new_id == old_id:
-                import datetime
-                new_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-            self.session_id = new_id
-            self.raw_transcript = []
-            return old_id
+        with self._lock:
+            if self.session_id == old_id:
+                new_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
+                if new_id == old_id:
+                    import datetime
+                    new_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+                self.session_id = new_id
+                # Preserve any new turns appended while disk I/O was in flight
+                self.raw_transcript = self.raw_transcript[flushed_count:]
+        return old_id
 
     def reset_metrics(self, clear_rotation_lock: bool = False):
         """Resets turn count, elapsed time, and tool chars after successful silent reconnect."""
+        # Flush unpersisted transcript outside self._lock before resetting metrics
+        self.flush_session_to_disk()
         with self._lock:
-            # Ensure any unpersisted transcript turns are flushed to disk before resetting
-            if self.raw_transcript:
-                self.flush_session_to_disk()
-
             self.turn_count = 0
             self.session_start_time = time.time()
             self.tool_execution_chars = 0

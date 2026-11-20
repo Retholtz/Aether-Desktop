@@ -4,6 +4,8 @@ import json
 
 import os
 
+import queue
+
 import re
 
 import sys
@@ -479,6 +481,8 @@ class GuiBridge:
         self._current_hud_mode = "normal"
 
         self._js_lock = threading.Lock()
+        self._js_event_queue: "queue.Queue[Optional[str]]" = queue.Queue()
+        self._js_dispatcher_thread: Optional[threading.Thread] = None
         self._is_shutting_down = False
 
         self._config_lock = threading.RLock()
@@ -1035,9 +1039,81 @@ class GuiBridge:
 
 
 
+    def _ensure_js_dispatcher(self):
+        """Lazily starts the single FIFO UI event dispatcher thread."""
+        if not hasattr(self, "_js_event_queue") or self._js_event_queue is None:
+            self._js_event_queue = queue.Queue()
+        worker = getattr(self, "_js_dispatcher_thread", None)
+        if worker is not None and worker.is_alive():
+            return
+        with self._js_lock:
+            worker = getattr(self, "_js_dispatcher_thread", None)
+            if worker is not None and worker.is_alive():
+                return
+
+            def _worker_loop():
+                while True:
+                    payload = self._js_event_queue.get()
+                    if payload is None:
+                        break
+                    if getattr(self, "_is_shutting_down", False):
+                        continue
+                    with self._js_lock:
+                        if getattr(self, "_is_shutting_down", False):
+                            continue
+                        # Dispatch to Main Window
+                        if self._is_window_ready(self._window):
+                            try:
+                                js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
+                                self._window.evaluate_js(js_code)
+                            except Exception as e:
+                                logger.debug(f"[BRIDGE DISPATCH MAIN ERROR] {e}")
+
+                        # Dispatch to Floating Overlay Window
+                        if self._is_window_ready(self._overlay_window):
+                            try:
+                                overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
+                                self._overlay_window.evaluate_js(overlay_js)
+                            except Exception as e:
+                                logger.debug(f"[BRIDGE DISPATCH OVERLAY ERROR] {e}")
+
+            t = threading.Thread(target=_worker_loop, daemon=True, name="Aether-UIEventDispatcher")
+            self._js_dispatcher_thread = t
+            t.start()
+
+    def _run_async_coro(self, coro, close_services=(), timeout: float = 30.0):
+        """
+        Executes an async coroutine safely from synchronous GuiBridge methods without
+        leaking aiohttp.ClientSession instances across ephemeral event loops.
+        """
+        loop = getattr(self, "_loop", None)
+        if loop is not None and loop.is_running():
+            try:
+                fut = asyncio.run_coroutine_threadsafe(coro, loop)
+                return fut.result(timeout=timeout)
+            except Exception:
+                try:
+                    coro.close()
+                except Exception:
+                    pass
+                raise
+
+        async def _runner():
+            try:
+                return await coro
+            finally:
+                for svc in close_services:
+                    if svc is not None and hasattr(svc, "close"):
+                        try:
+                            await svc.close()
+                        except Exception:
+                            pass
+
+        return asyncio.run(_runner())
+
     def _on_engine_event(self, event_type: str, data: dict):
 
-        """Pushes events to both the Main Window and Floating Overlay JavaScript runtimes."""
+        """Pushes events to both the Main Window and Floating Overlay JavaScript runtimes in strict FIFO order."""
 
         if getattr(self, "_is_shutting_down", False):
             return
@@ -1073,32 +1149,8 @@ class GuiBridge:
 
 
             payload = json.dumps({"type": event_type, "data": data})
-
-            def _dispatch():
-                if getattr(self, "_is_shutting_down", False):
-                    return
-                with self._js_lock:
-                    if getattr(self, "_is_shutting_down", False):
-                        return
-                    # Dispatch to Main Window
-                    if self._is_window_ready(self._window):
-                        try:
-                            js_code = f"if (window.aetherUI && window.aetherUI.handleEvent) {{ window.aetherUI.handleEvent({payload}); }}"
-                            self._window.evaluate_js(js_code)
-                        except Exception as e:
-                            logger.debug(f"[BRIDGE DISPATCH MAIN ERROR] {e}")
-
-                    # Dispatch to Floating Overlay Window
-                    if self._is_window_ready(self._overlay_window):
-                        try:
-                            overlay_js = f"if (window.aetherOverlay && window.aetherOverlay.handleEvent) {{ window.aetherOverlay.handleEvent({payload}); }}"
-                            self._overlay_window.evaluate_js(overlay_js)
-                        except Exception as e:
-                            logger.debug(f"[BRIDGE DISPATCH OVERLAY ERROR] {e}")
-
-            # Execute dispatch asynchronously in a daemon worker thread to prevent
-            # deadlocking with PyWebView synchronous bridge call message pumping on Windows
-            threading.Thread(target=_dispatch, daemon=True).start()
+            self._ensure_js_dispatcher()
+            self._js_event_queue.put_nowait(payload)
 
         except Exception as err:
             logger.warning(f"[BRIDGE DISPATCH ERROR] {err}")
@@ -1525,9 +1577,9 @@ class GuiBridge:
 
 
 
-            api_cfg = new_config.get("api", {})
+            api_cfg = new_config.get("api") or {}
 
-            raw_key_input = api_cfg.get("new_api_key", "").strip()
+            raw_key_input = str(api_cfg.get("new_api_key") or "").strip()
 
             if raw_key_input and not raw_key_input.startswith("*") and not raw_key_input.startswith("•"):
 
@@ -1848,13 +1900,13 @@ class GuiBridge:
 
 
 
-            if "vision" in new_config:
+            if "vision" in new_config and isinstance(new_config["vision"], dict):
 
-                self._config["vision"] = new_config["vision"]
+                self._config.setdefault("vision", {}).update(new_config["vision"])
 
-            if "security" in new_config:
+            if "security" in new_config and isinstance(new_config["security"], dict):
 
-                self._config["security"] = new_config["security"]
+                self._config.setdefault("security", {}).update(new_config["security"])
 
             if "ui" in new_config:
 
@@ -7013,7 +7065,10 @@ class GuiBridge:
                                 if f.get("filename") and os.path.exists(os.path.join(p_dir, f["filename"]))
                             ]
                             if sources:
-                                asyncio.run(self.notebooklm_service.batch_create_sources(nb_id, sources))
+                                self._run_async_coro(
+                                    self.notebooklm_service.batch_create_sources(nb_id, sources),
+                                    close_services=(self.notebooklm_service,),
+                                )
                         except Exception as e:
                             logger.debug(f"[GUI_BRIDGE] Auto-heal cloud sync warning for '{pid}': {e}")
         return {
@@ -7069,7 +7124,10 @@ class GuiBridge:
         nb_id = nb.get("notebook_id")
         if not nb_id:
             try:
-                nb_resp = asyncio.run(self.notebooklm_service.create_notebook(proj.get("name", project_id)))
+                nb_resp = self._run_async_coro(
+                    self.notebooklm_service.create_notebook(proj.get("name", project_id)),
+                    close_services=(self.notebooklm_service,),
+                )
                 if isinstance(nb_resp, dict):
                     nb_id = nb_resp.get("name") or nb_resp.get("notebookId") or nb_resp.get("id")
                     if nb_id:
@@ -7121,7 +7179,12 @@ class GuiBridge:
                     if fpath and os.path.exists(fpath):
                         sources.append({"displayName": fname, "filePath": fpath})
                 if sources:
-                    cloud_synced = bool(asyncio.run(self.notebooklm_service.batch_create_sources(nb_id, sources)))
+                    cloud_synced = bool(
+                        self._run_async_coro(
+                            self.notebooklm_service.batch_create_sources(nb_id, sources),
+                            close_services=(self.notebooklm_service,),
+                        )
+                    )
                 else:
                     cloud_synced = True
             except Exception as e:
@@ -7167,7 +7230,10 @@ class GuiBridge:
         nb_id = proj.get("notebooklm", {}).get("notebook_id")
         if nb_id and hasattr(self, "notebooklm_service") and self.notebooklm_service and self.notebooklm_service.is_configured():
             try:
-                asyncio.run(self.notebooklm_service.delete_notebook(nb_id))
+                self._run_async_coro(
+                    self.notebooklm_service.delete_notebook(nb_id),
+                    close_services=(self.notebooklm_service,),
+                )
             except Exception:
                 pass
         ok = self.project_service.delete_project(project_id)
@@ -7193,11 +7259,12 @@ class GuiBridge:
                     p_dir = self.project_service.get_project_dir(project_id)
                     saved_fname = meta.get("filename", filename)
                     fpath = os.path.join(p_dir, saved_fname)
-                    asyncio.run(
+                    self._run_async_coro(
                         self.notebooklm_service.batch_create_sources(
                             nb_id,
                             [{"displayName": saved_fname, "filePath": fpath}]
-                        )
+                        ),
+                        close_services=(self.notebooklm_service,),
                     )
                 except Exception as e:
                     logger.debug(f"[GUI_BRIDGE] Cloud file sync warning: {e}")
@@ -7285,8 +7352,10 @@ class GuiBridge:
             return {"status": "error", "message": str(e)}
 
     def import_project_url(self, project_id: str, url: str) -> Dict[str, Any]:
-        import asyncio
-        res = asyncio.run(self.project_service.import_url(project_id, url))
+        res = self._run_async_coro(
+            self.project_service.import_url(project_id, url),
+            close_services=(self.project_service,),
+        )
         if res.get("status") == "success":
             p_data = self.project_service.data.get("projects", {}).get(project_id, {})
             if p_data.get("notebooklm", {}).get("sync_enabled"):
@@ -7297,11 +7366,12 @@ class GuiBridge:
                     try:
                         p_dir = self.project_service.get_project_dir(project_id)
                         fpath = os.path.join(p_dir, saved_fname)
-                        asyncio.run(
+                        self._run_async_coro(
                             self.notebooklm_service.batch_create_sources(
                                 nb_id,
                                 [{"displayName": saved_fname, "filePath": fpath}]
-                            )
+                            ),
+                            close_services=(self.notebooklm_service,),
                         )
                     except Exception as e:
                         logger.debug(f"[GUI_BRIDGE] Cloud URL sync warning: {e}")
@@ -7951,12 +8021,13 @@ class GuiBridge:
                         raw_turns = []
                         if hasattr(eng, "session_lifecycle") and eng.session_lifecycle:
                             raw_turns = eng.session_lifecycle.get_raw_turns()
-                        if (not raw_turns or len(raw_turns) < 2) and hasattr(eng, "session_manager") and eng.session_manager:
-                            raw_turns = getattr(eng.session_manager, "history", [])
+                        sess_mgr = getattr(eng, "session_mgr", None) or getattr(eng, "session_manager", None)
+                        if (not raw_turns or len(raw_turns) < 2) and sess_mgr:
+                            raw_turns = getattr(sess_mgr, "history", [])
                         if raw_turns:
                             sid = (
                                 getattr(eng.session_lifecycle, "session_id", None)
-                                or getattr(eng.session_manager, "active_session_id", "campaign")
+                                or (getattr(sess_mgr, "active_session_id", "campaign") if sess_mgr else "campaign")
                             )
                             self.ttrpg_service.auto_summarize_session_to_journal(raw_turns, session_id=sid)
                             if hasattr(self, "_on_engine_event"):
@@ -8056,11 +8127,12 @@ class GuiBridge:
 
         # Synchronize location and recap from recent session turns if available so resume location is never stale
         eng = getattr(self, "_engine", None)
-        if eng and hasattr(eng, "session_manager") and eng.session_manager:
+        sess_mgr = (getattr(eng, "session_mgr", None) or getattr(eng, "session_manager", None)) if eng else None
+        if sess_mgr:
             active_sid = f"campaign_{active_id}".lower().strip()
-            hist = getattr(eng.session_manager, "history", [])
-            if (not hist or getattr(eng.session_manager, "active_session_id", "") != active_sid) and hasattr(eng.session_manager, "switch_session"):
-                hist = eng.session_manager.switch_session("campaign", active_id)
+            hist = getattr(sess_mgr, "history", [])
+            if (not hist or getattr(sess_mgr, "active_session_id", "") != active_sid) and hasattr(sess_mgr, "switch_session"):
+                hist = sess_mgr.switch_session("campaign", active_id)
             if hist and len(hist) >= 2:
                 try:
                     self.ttrpg_service.auto_summarize_session_to_journal(hist, session_id=active_sid)
@@ -8434,16 +8506,27 @@ class GuiBridge:
         """Invokes a registered TTRPG tool directly (e.g. cast_spell)."""
         eng = getattr(self, "_engine", getattr(self, "engine", None))
         if eng and hasattr(eng, "dispatcher"):
-            import asyncio
             coro = eng.dispatcher.dispatch(tool_name, params)
             if asyncio.iscoroutine(coro):
-                future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+                target_loop = (
+                    getattr(self, "_loop", None)
+                    or getattr(self, "loop", None)
+                    or getattr(eng, "_loop", None)
+                )
                 try:
-                    res = future.result(timeout=10.0)
+                    if target_loop is not None and target_loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(coro, target_loop)
+                        res = future.result(timeout=10.0)
+                    else:
+                        res = asyncio.run(coro)
                     self._on_engine_event("roster_updated", self.ttrpg_service.get_campaign_roster())
                     self._on_engine_event("ttrpg_state_updated", res)
                     return res
                 except Exception as e:
+                    try:
+                        coro.close()
+                    except Exception:
+                        pass
                     return {"status": "error", "message": str(e)}
             return coro
 
@@ -8835,18 +8918,34 @@ class GuiBridge:
                 camp = self.ttrpg_service.manifest.get("campaigns", {}).get(context_id, {}) if hasattr(self, "ttrpg_service") and self.ttrpg_service else {}
                 camp_title = camp.get("title", context_id or "Active Campaign")
                 if not clean_text.startswith("Aether, please act as our Game Master") and not clean_text.startswith("[TABLETOP ROLEPLAY"):
+                    active_chars = (
+                        (self.ttrpg_service.active_state or {}).get("characters", {})
+                        if hasattr(self, "ttrpg_service") and self.ttrpg_service else {}
+                    )
+                    pc_names = [
+                        str(c.get("name", "")).strip()
+                        for c in active_chars.values()
+                        if isinstance(c, dict) and str(c.get("name", "")).strip()
+                    ]
+                    party_label = ", ".join(pc_names) if pc_names else "the active party roster"
+                    if len(pc_names) >= 2:
+                        ask_party_example = f"'Who in the party steps forward to do this? {', '.join(pc_names[:-1])}, or {pc_names[-1]}?'"
+                    elif len(pc_names) == 1:
+                        ask_party_example = f"'Does {pc_names[0]} step forward to attempt this?'"
+                    else:
+                        ask_party_example = "'Which character steps forward to attempt this?'"
                     prompt_to_send = (
                         f"[TABLETOP ROLEPLAY ACTION — CAMPAIGN: {camp_title}]\n"
                         f"Player Action / Dialogue: {clean_text}\n"
                         f"[GAME MASTER DIRECTIVE: Adjudicate this action strictly within the active adventure '{camp_title}'.\n"
                         f"- MANDATORY CHARACTER SELECTION & PLAYER AGENCY:\n"
-                        f"  * The party has multiple player characters (Joe, Sam, Shadow). YOU DO NOT CHOOSE WHO ACTS!\n"
-                        f"  * If the player specifies who acts (e.g. 'Shadow examines the locket', 'Joe speaks to Olaf'): resolve immediately with that character.\n"
+                        f"  * Active Party Roster: {party_label}. YOU DO NOT CHOOSE WHO ACTS!\n"
+                        f"  * If the player specifies which character acts: resolve immediately with that character.\n"
                         f"  * If the player did NOT name a character (e.g. '{clean_text}'):\n"
                         f"    - If this is dialogue, asking an NPC questions, or movement: DO NOT ROLL DICE! Answer directly in-character as the NPC or describe the travel.\n"
-                        f"    - If an action genuinely requires a skill check: ASK THE TABLE: 'Who in the party steps forward to do this? Joe, Sam, or Shadow?' DO NOT arbitrarily pick an actor or call roll_dice until the player specifies who acts!\n"
-                        f"- STRICT BAN ON UNSOLICITED DIALOGUE ROLLS: Routine conversation with NPCs ('Press Sandra for information', 'Ask about Imis', 'Question the guards') is NORMAL DIALOGUE, NOT a Persuasion check! Moving to an area ('Head to the western gate') is MOVEMENT, NOT a Survival check! Never roll dice for ordinary conversation or travel!\n"
-                        f"- ACTOR ATTRIBUTION & CLEAN NARRATION: Every dice roll MUST be explicitly attributed to a character or monster/DM. Always pass their name in `character_name` when calling `roll_dice`. In your narration, state the character and the final total (e.g. 'Joe rolled a 16')—DO NOT read off or append dice formulas like '(1d20+4)'.\n"
+                        f"    - If an action genuinely requires a skill check: ASK THE TABLE: {ask_party_example} DO NOT arbitrarily pick an actor or call roll_dice until the player specifies who acts!\n"
+                        f"- STRICT BAN ON UNSOLICITED DIALOGUE ROLLS: Routine conversation with NPCs (asking questions, pressing for clues, talking to guards) is NORMAL DIALOGUE, NOT a Persuasion check! Moving to an area (e.g. heading to the western gate) is MOVEMENT, NOT a Survival check! Never roll dice for ordinary conversation or travel!\n"
+                        f"- ACTOR ATTRIBUTION & CLEAN NARRATION: Every dice roll MUST be explicitly attributed to a character or monster/DM. Always pass their name in `character_name` when calling `roll_dice`. In your narration, state the character and the final total (e.g. '<Character> rolled a 16')—DO NOT read off or append dice formulas like '(1d20+4)'.\n"
                         f"- AUTONOMOUS REWARD & LOOT BESTOWAL: When the player asks you to grant class-appropriate weapons or gear upon a successful check without naming exact items, DO NOT ask them which items to add—call `grant_loot(mode='class_reward', character_name='all', ...)` (or `complete_quest` at quest end, or `manage_party_inventory` for exact items) immediately in this same turn using tier-scaled, proficiency-legal gear for each hero.\n"
                         f"- Do NOT answer as a general desktop assistant.]"
                     )

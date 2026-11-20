@@ -237,7 +237,7 @@ def verify_tts_endpoint(client, model_id: str) -> bool:
         res = client.models.generate_content(
             model=model_id,
             contents="test",
-            config={"response_mime_type": "audio/mp3"}
+            config={"response_modalities": ["AUDIO"]}
         )
         return bool(res and getattr(res, "candidates", None))
     except Exception as err:

@@ -85,6 +85,8 @@ ORCHESTRATOR_ALLOWED_TOOL_NAMES = {
     "maximize_window",
     "restore_window",
     "close_window",
+    "tile_windows",
+    "snap_window",
     "navigate_browser",
     "capture_screen_snapshot",
     "inspect_screen_context",
@@ -333,6 +335,8 @@ class TaskOrchestrator:
         last_fail_sig: Optional[str] = None
         repeat_fail_count = 0
         blocked_app_msg: Optional[str] = None
+        hit_max_iterations = False
+        empty_model_response = False
         final_answer = ""
 
         for iteration in range(1, self.max_iterations + 1):
@@ -352,6 +356,17 @@ class TaskOrchestrator:
             fn_calls = getattr(response, "function_calls", None) or []
             if not fn_calls:
                 final_answer = _extract_candidate_text(response)
+                if not final_answer:
+                    empty_model_response = True
+                    finish_reason = (
+                        str(getattr(candidates[0], "finish_reason", "") or "")
+                        if candidates else "NO_CANDIDATES"
+                    )
+                    logger.warning(
+                        "[ORCHESTRATOR] Model returned empty response (finish_reason=%s) on iteration %d.",
+                        finish_reason,
+                        iteration,
+                    )
                 break
 
             tool_parts: List[Any] = []
@@ -365,6 +380,12 @@ class TaskOrchestrator:
                     blocked_app_msg = str(
                         res_dict.get("message") or res_dict.get("error") or "Target application is blocked by whitelist."
                     )
+                    tool_parts.append(
+                        types.Part.from_function_response(name=fn_name, response=res_dict)
+                    )
+                    # Halt the remaining calls in this batch immediately so downstream actions
+                    # (e.g. type_text/paste_to_document) do not execute against an unrelated window.
+                    break
 
                 if res_dict.get("status") in ("error", "not_found", "blocked"):
                     sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True, default=str)}"
@@ -399,16 +420,27 @@ class TaskOrchestrator:
                 )
                 break
         else:
+            hit_max_iterations = True
             final_answer = (
-                "Reached maximum orchestration steps without final text confirmation. "
+                f"Reached maximum orchestration steps ({self.max_iterations}) without final confirmation. "
                 "Please check the screen state."
             )
 
         if not final_answer:
-            final_answer = "Workflow completed."
+            empty_model_response = True
+            final_answer = (
+                "Orchestrator received an empty or blocked model response before confirming completion. "
+                "Please check the screen state and retry."
+            )
 
         completed_steps = sum(1 for s in self.checklist if s.get("status") == "completed")
-        status = "blocked" if blocked_app_msg else ("error" if repeat_fail_count >= 3 else "success")
+        has_blocked_step = any(s.get("status") == "blocked" for s in self.checklist)
+        if blocked_app_msg or has_blocked_step:
+            status = "blocked"
+        elif repeat_fail_count >= 3 or hit_max_iterations or empty_model_response:
+            status = "error"
+        else:
+            status = "success"
         return {
             "status": status,
             "model": model,

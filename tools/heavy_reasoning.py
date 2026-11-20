@@ -23,20 +23,18 @@ def delegate_heavy_task(
     """Synchronous entrypoint for automation scripts delegating heavy reasoning to Gemini 4 Argon."""
     import json
     import os
+    from core.paths import get_app_dir
     from tools.dispatcher import ToolDispatcher
 
     should_paste = paste_to_target if paste_to_active_doc is None else bool(paste_to_active_doc)
 
     def _load_default_config() -> dict:
+        cfg_path = os.path.join(get_app_dir(), "config.json")
         try:
             from core.config_manager import load_config
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            cfg_path = os.path.join(base_dir, "config.json")
             return load_config(cfg_path)
         except Exception:
             try:
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                cfg_path = os.path.join(base_dir, "config.json")
                 if os.path.exists(cfg_path):
                     with open(cfg_path, "r", encoding="utf-8") as f:
                         return json.load(f)
@@ -44,7 +42,9 @@ def delegate_heavy_task(
                 pass
         return {}
 
-    dispatcher = ToolDispatcher(config_getter=_load_default_config)
+    existing_dispatcher = kwargs.get("dispatcher")
+    owns_dispatcher = existing_dispatcher is None
+    dispatcher = existing_dispatcher if existing_dispatcher is not None else ToolDispatcher(config_getter=_load_default_config)
 
     async def _invoke():
         return await dispatcher.execute_heavy_task(
@@ -74,4 +74,12 @@ def delegate_heavy_task(
             return asyncio.run(_invoke())
     except Exception as e:
         return {"status": "error", "message": f"Heavy reasoning execution failed: {e}"}
+    finally:
+        if owns_dispatcher:
+            try:
+                um = getattr(dispatcher, "user_memory", None)
+                if um and hasattr(um, "close"):
+                    um.close()
+            except Exception:
+                pass
 

@@ -255,7 +255,7 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         or cfg.get("stt_endpoint")
         or "gemini_live_audio"
     )
-    if stt_endpoint in ("gemini-3.8-flash", "gemini-3.5-transcribe", "gemini-3.5-transcribe-live", "gemini-live-native-audio"):
+    if stt_endpoint in ("gemini-3.8-flash", "gemini-3.5-transcribe-live", "gemini-live-native-audio"):
         stt_endpoint = "gemini_live_audio"
     cfg["stt_model_endpoint"] = stt_endpoint
     cfg["stt_endpoint"] = stt_endpoint
@@ -516,10 +516,25 @@ class ConfigManager:
     def save(self, updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if updates:
             # Handle API key encryption via Windows DPAPI if provided
-            api_updates = updates.get("api", {})
-            raw_key = api_updates.get("new_api_key", "").strip()
-            if raw_key and not raw_key.startswith("*") and not raw_key.startswith("•"):
-                self.config.setdefault("api", {})["api_key_encrypted"] = protect_secret(raw_key)
+            api_updates = updates.get("api")
+            if isinstance(api_updates, dict):
+                raw_key = str(api_updates.get("new_api_key") or "").strip()
+                if raw_key and not raw_key.startswith("*") and not raw_key.startswith("•"):
+                    self.config.setdefault("api", {})["api_key_encrypted"] = protect_secret(raw_key)
+
+            # Helper to update a model's ':level' suffix when only a thinking-level key was changed
+            def _retag_model_level(model_str: Any, new_level: Any) -> Any:
+                lvl = str(new_level or "").strip().lower()
+                if lvl == "extra":
+                    lvl = "xhigh"
+                if lvl not in ("low", "medium", "high", "xhigh"):
+                    return model_str
+                s = str(model_str or "").strip()
+                if ":" in s:
+                    base = s.split(":", 1)[0].strip()
+                    if base:
+                        return f"{base}:{lvl}"
+                return model_str
 
             # Apply top-level scalar updates
             for key in (
@@ -536,12 +551,15 @@ class ConfigManager:
                 "stt_model_endpoint",
                 "tts_voice",
                 "tts_speed",
+                "tts_pace",
                 "voice_accent",
                 "wake_word_enabled",
                 "idle_timeout_seconds",
                 "vad_trailing_silence_ms",
                 "boot_on_startup",
                 "start_minimized",
+                "auto_check_updates",
+                "skipped_update_version",
                 "primary_model_endpoint",
                 "ttrpg_model_endpoint",
                 "ttrpg_thinking_level",
@@ -565,52 +583,89 @@ class ConfigManager:
                 if key in updates:
                     self.config[key] = updates[key]
 
+            # Mirror top-level scalar updates into nested sections before nested updates run
+            # so sync_config_schema() does not revert top-level-only updates with stale nested values.
+            api_sec = self.config.setdefault("api", {})
+            audio_sec = self.config.setdefault("audio", {})
+            ui_sec = self.config.setdefault("ui", {})
+
+            if "tts_voice" in updates:
+                api_sec["voice_name"] = updates["tts_voice"]
+            if "tts_speed" in updates:
+                api_sec["voice_speed"] = float(updates["tts_speed"])
+            if "tts_pace" in updates:
+                api_sec["tts_pace"] = updates["tts_pace"]
+            if "voice_accent" in updates:
+                api_sec["voice_accent"] = updates["voice_accent"]
+            for audio_key in ("mode", "ptt_type", "ptt_key", "ptt_key_display", "ptt_vk", "ptt_modifiers", "software_gate"):
+                if audio_key in updates:
+                    audio_sec[audio_key] = updates[audio_key]
+            if "hud_mode" in updates:
+                ui_sec["hud_mode"] = updates["hud_mode"]
+
             if "primary_model_endpoint" in updates:
                 self.config["primary_model_endpoint"] = updates["primary_model_endpoint"]
                 self.config["tier1_fast_model"] = updates["primary_model_endpoint"]
-                self.config.setdefault("api", {})["model_id"] = updates["primary_model_endpoint"]
+                api_sec["model_id"] = updates["primary_model_endpoint"]
             if "ttrpg_model_endpoint" in updates:
                 self.config["ttrpg_model_endpoint"] = updates["ttrpg_model_endpoint"]
-                self.config.setdefault("api", {})["ttrpg_model_id"] = updates["ttrpg_model_endpoint"]
+                api_sec["ttrpg_model_id"] = updates["ttrpg_model_endpoint"]
             if "ttrpg_thinking_level" in updates:
                 self.config["ttrpg_thinking_level"] = updates["ttrpg_thinking_level"]
-                self.config.setdefault("api", {})["ttrpg_thinking_level"] = updates["ttrpg_thinking_level"]
+                api_sec["ttrpg_thinking_level"] = updates["ttrpg_thinking_level"]
+                if "ttrpg_model_endpoint" not in updates and not (isinstance(api_updates, dict) and "ttrpg_model_id" in api_updates):
+                    retagged = _retag_model_level(self.config.get("ttrpg_model_endpoint"), updates["ttrpg_thinking_level"])
+                    self.config["ttrpg_model_endpoint"] = retagged
+                    api_sec["ttrpg_model_id"] = retagged
             if "tier2_moderate_model" in updates:
                 self.config["tier2_moderate_model"] = updates["tier2_moderate_model"]
-                self.config.setdefault("api", {})["moderate_model_id"] = updates["tier2_moderate_model"]
+                api_sec["moderate_model_id"] = updates["tier2_moderate_model"]
             if "tier3_heavy_model" in updates or "tier2_heavy_model" in updates:
                 heavy_val = updates.get("tier3_heavy_model") or updates.get("tier2_heavy_model")
                 self.config["tier3_heavy_model"] = heavy_val
                 self.config["tier2_heavy_model"] = heavy_val
-                self.config.setdefault("api", {})["pro_model_id"] = heavy_val
+                api_sec["pro_model_id"] = heavy_val
             if "tier2_thinking_level" in updates or "tier3_thinking_level" in updates:
                 t_lvl = updates.get("tier3_thinking_level") or updates.get("tier2_thinking_level")
                 self.config["tier2_thinking_level"] = t_lvl
                 self.config["tier3_thinking_level"] = t_lvl
-                self.config.setdefault("api", {})["tier2_thinking_level"] = t_lvl
-                self.config.setdefault("api", {})["tier3_thinking_level"] = t_lvl
+                api_sec["tier2_thinking_level"] = t_lvl
+                api_sec["tier3_thinking_level"] = t_lvl
+                if (
+                    "tier3_heavy_model" not in updates
+                    and "tier2_heavy_model" not in updates
+                    and not (isinstance(api_updates, dict) and ("pro_model_id" in api_updates or "tier2_heavy_model" in api_updates))
+                ):
+                    retagged = _retag_model_level(self.config.get("tier3_heavy_model") or self.config.get("tier2_heavy_model"), t_lvl)
+                    self.config["tier3_heavy_model"] = retagged
+                    self.config["tier2_heavy_model"] = retagged
+                    api_sec["pro_model_id"] = retagged
             if "tier2_moderate_level" in updates:
                 self.config["tier2_moderate_level"] = updates["tier2_moderate_level"]
-                self.config.setdefault("api", {})["tier2_moderate_level"] = updates["tier2_moderate_level"]
+                api_sec["tier2_moderate_level"] = updates["tier2_moderate_level"]
+                if "tier2_moderate_model" not in updates and not (isinstance(api_updates, dict) and "moderate_model_id" in api_updates):
+                    retagged = _retag_model_level(self.config.get("tier2_moderate_model"), updates["tier2_moderate_level"])
+                    self.config["tier2_moderate_model"] = retagged
+                    api_sec["moderate_model_id"] = retagged
             if "stt_model_endpoint" in updates or "stt_endpoint" in updates:
                 stt_val = updates.get("stt_endpoint") or updates.get("stt_model_endpoint")
                 self.config["stt_model_endpoint"] = stt_val
                 self.config["stt_endpoint"] = stt_val
-                self.config.setdefault("api", {})["stt_model_id"] = stt_val
-                self.config.setdefault("api", {})["stt_endpoint"] = stt_val
+                api_sec["stt_model_id"] = stt_val
+                api_sec["stt_endpoint"] = stt_val
             if "tts_model_endpoint" in updates or "tts_endpoint" in updates:
                 tts_val = updates.get("tts_endpoint") or updates.get("tts_model_endpoint")
                 self.config["tts_model_endpoint"] = tts_val
                 self.config["tts_endpoint"] = tts_val
-                self.config.setdefault("api", {})["tts_model_id"] = tts_val
-                self.config.setdefault("api", {})["tts_endpoint"] = tts_val
+                api_sec["tts_model_id"] = tts_val
+                api_sec["tts_endpoint"] = tts_val
             if "pipeline_mode" in updates:
                 pipe_val = str(updates["pipeline_mode"]).lower()
                 self.config["pipeline_mode"] = pipe_val
-                self.config.setdefault("api", {})["pipeline_mode"] = pipe_val
+                api_sec["pipeline_mode"] = pipe_val
 
             # Apply nested dictionary updates
-            for section in ("api", "audio", "vision", "security", "ui", "user", "models"):
+            for section in ("api", "audio", "vision", "security", "ui", "user", "models", "hardware_telemetry"):
                 if section in updates and isinstance(updates[section], dict):
                     sec_copy = dict(updates[section])
                     sec_copy.pop("new_api_key", None)
@@ -636,6 +691,8 @@ class ConfigManager:
                         self.config["tts_voice"] = sec_copy["voice_name"]
                     if "voice_speed" in sec_copy:
                         self.config["tts_speed"] = float(sec_copy["voice_speed"])
+                    if "tts_pace" in sec_copy:
+                        self.config["tts_pace"] = sec_copy["tts_pace"]
                     if "voice_accent" in sec_copy:
                         self.config["voice_accent"] = sec_copy["voice_accent"]
                     if "tts_endpoint" in sec_copy:
@@ -684,10 +741,31 @@ class ConfigManager:
                         self.config.setdefault("api", {})["model_id"] = sec_copy["primary_model_endpoint"]
                     if "tier2_heavy_model" in sec_copy:
                         self.config["tier2_heavy_model"] = sec_copy["tier2_heavy_model"]
+                        self.config["tier3_heavy_model"] = sec_copy["tier2_heavy_model"]
                         self.config.setdefault("api", {})["pro_model_id"] = sec_copy["tier2_heavy_model"]
-                    if "tier2_thinking_level" in sec_copy:
-                        self.config["tier2_thinking_level"] = sec_copy["tier2_thinking_level"]
-                        self.config.setdefault("api", {})["tier2_thinking_level"] = sec_copy["tier2_thinking_level"]
+                    if "tier2_thinking_level" in sec_copy or "tier3_thinking_level" in sec_copy:
+                        t_lvl = sec_copy.get("tier3_thinking_level") or sec_copy.get("tier2_thinking_level")
+                        self.config["tier2_thinking_level"] = t_lvl
+                        self.config["tier3_thinking_level"] = t_lvl
+                        self.config.setdefault("api", {})["tier2_thinking_level"] = t_lvl
+                        self.config.setdefault("api", {})["tier3_thinking_level"] = t_lvl
+                        if "tier2_heavy_model" not in sec_copy and "pro_model_id" not in sec_copy:
+                            retagged = _retag_model_level(self.config.get("tier3_heavy_model") or self.config.get("tier2_heavy_model"), t_lvl)
+                            self.config["tier3_heavy_model"] = retagged
+                            self.config["tier2_heavy_model"] = retagged
+                            self.config.setdefault("api", {})["pro_model_id"] = retagged
+                    if "tier2_moderate_level" in sec_copy:
+                        self.config["tier2_moderate_level"] = sec_copy["tier2_moderate_level"]
+                        if "moderate_model_id" not in sec_copy and "tier2_moderate_model" not in updates:
+                            retagged = _retag_model_level(self.config.get("tier2_moderate_model"), sec_copy["tier2_moderate_level"])
+                            self.config["tier2_moderate_model"] = retagged
+                            self.config.setdefault("api", {})["moderate_model_id"] = retagged
+                    if "ttrpg_thinking_level" in sec_copy:
+                        self.config["ttrpg_thinking_level"] = sec_copy["ttrpg_thinking_level"]
+                        if "ttrpg_model_id" not in sec_copy and "ttrpg_model_endpoint" not in updates:
+                            retagged = _retag_model_level(self.config.get("ttrpg_model_endpoint"), sec_copy["ttrpg_thinking_level"])
+                            self.config["ttrpg_model_endpoint"] = retagged
+                            self.config.setdefault("api", {})["ttrpg_model_id"] = retagged
 
         sync_config_schema(self.config)
         try:
@@ -731,12 +809,21 @@ def save_config_atomic(config_data: dict, config_path: str = "config.json"):
         clean_data["api"].pop("new_api_key", None)
         clean_data["api"].pop("api_key_display", None)
 
-    with tempfile.NamedTemporaryFile("w", dir=base_dir, delete=False, suffix=".tmp", encoding="utf-8") as tf:
-        temp_name = tf.name
-        json.dump(clean_data, tf, indent=2)
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=base_dir, delete=False, suffix=".tmp", encoding="utf-8") as tf:
+            temp_name = tf.name
+            json.dump(clean_data, tf, indent=2)
 
-    # os.replace is an atomic operation on Windows (NTFS) and POSIX
-    os.replace(temp_name, abs_config_path)
+        # os.replace is an atomic operation on Windows (NTFS) and POSIX
+        os.replace(temp_name, abs_config_path)
+        temp_name = None
+    finally:
+        if temp_name and os.path.exists(temp_name):
+            try:
+                os.remove(temp_name)
+            except Exception:
+                pass
 
     # Synchronize startup registry if boot_on_startup is in config_data
     if isinstance(config_data, dict) and "boot_on_startup" in config_data:

@@ -7,7 +7,10 @@ credentials (e.g. Steam Web API) with environment variable fallbacks.
 import copy
 import json
 import os
+import tempfile
 from typing import Any, Dict, Optional
+
+from core.paths import app_path
 
 # Re-export config_manager symbols for compatibility
 try:
@@ -23,7 +26,7 @@ try:
 except ImportError:
     pass
 
-SETTINGS_PATH = os.path.join("data", "settings.json")
+SETTINGS_PATH = app_path("data", "settings.json")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "integrations": {
@@ -266,17 +269,21 @@ def save_settings(settings: Dict[str, Any], settings_path: Optional[str] = None)
     """Safely saves settings dictionary to JSON file atomically."""
     if settings_path is None:
         settings_path = SETTINGS_PATH
-    dirname = os.path.dirname(settings_path)
+    abs_path = os.path.abspath(settings_path)
+    dirname = os.path.dirname(abs_path)
     if dirname:
         os.makedirs(dirname, exist_ok=True)
-    tmp_path = f"{settings_path}.{os.getpid()}.tmp"
+    tmp_path = None
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile("w", dir=dirname, delete=False, suffix=".tmp", encoding="utf-8") as f:
+            tmp_path = f.name
             json.dump(settings, f, indent=2)
-        os.replace(tmp_path, settings_path)
+        os.replace(tmp_path, abs_path)
+        tmp_path = None
     except Exception as e:
         print(f"[WARN] [CONFIG] Failed saving {settings_path}: {e}")
-        if os.path.exists(tmp_path):
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except Exception:

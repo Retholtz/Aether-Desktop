@@ -79,7 +79,7 @@ def initialize_window(window):
     Checks start_minimized upon application boot to hide or minimize the
     main application window immediately.
     """
-    cfg = load_config()
+    cfg = load_config(os.path.join(get_app_dir(), "config.json"))
     should_minimize = cfg.get("start_minimized", False)
 
     if should_minimize:
@@ -189,20 +189,29 @@ def main():
 
     # Enforce Single-Instance application lock on Windows to prevent duplicate engines/voices
     _single_instance_mutex = None
+    _kernel32 = None
     if sys.platform == "win32":
         import ctypes
+        from ctypes import wintypes
         import time
         ERROR_ALREADY_EXISTS = 183
+        _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        _kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        _kernel32.CreateMutexW.restype = wintypes.HANDLE
+        _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        _kernel32.CloseHandle.restype = wintypes.BOOL
         mutex_name = "Local\\AetherDesktop_SingleInstance_Mutex"
         post_update = "--post-update" in sys.argv
         max_attempts = 25 if post_update else 1
         for attempt in range(max_attempts):
-            _single_instance_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
-            if ctypes.windll.kernel32.GetLastError() != ERROR_ALREADY_EXISTS:
+            ctypes.set_last_error(0)
+            _single_instance_mutex = _kernel32.CreateMutexW(None, False, mutex_name)
+            last_err = ctypes.get_last_error()
+            if last_err != ERROR_ALREADY_EXISTS:
                 break
             if attempt + 1 < max_attempts:
                 if _single_instance_mutex:
-                    ctypes.windll.kernel32.CloseHandle(_single_instance_mutex)
+                    _kernel32.CloseHandle(_single_instance_mutex)
                     _single_instance_mutex = None
                 time.sleep(0.2)
                 continue
@@ -265,18 +274,32 @@ def main():
         # Start GUI main loop (blocks until window is closed)
         hud.start(debug=False)
     finally:
+        import logging
         print("\n[SHUTDOWN] Window closed. Stopping assistant engine...")
-        shutdown_watchdog = threading.Timer(2.5, os._exit, args=(0,))
+        shutdown_watchdog = threading.Timer(4.0, os._exit, args=(0,))
         shutdown_watchdog.daemon = True
         shutdown_watchdog.start()
         try:
             bridge.stop_audio_watcher()
         except Exception:
             pass
-        bridge.stop_assistant()
+        try:
+            bridge.stop_assistant()
+        except Exception:
+            pass
         if hasattr(bridge._engine, "hotkey_manager") and bridge._engine.hotkey_manager:
             try:
                 bridge._engine.hotkey_manager.stop()
+            except Exception:
+                pass
+        if hasattr(bridge._engine, "session_mgr") and bridge._engine.session_mgr:
+            try:
+                bridge._engine.session_mgr.save_current_session()
+            except Exception:
+                pass
+        if hasattr(bridge._engine, "session_lifecycle") and bridge._engine.session_lifecycle:
+            try:
+                bridge._engine.session_lifecycle.flush_session_to_disk()
             except Exception:
                 pass
         if hasattr(bridge._engine, "user_memory") and bridge._engine.user_memory:
@@ -289,30 +312,43 @@ def main():
                 bridge._engine.telemetry_db.close()
             except Exception:
                 pass
-        async def _cancel_pending():
-            tasks = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
-            for t in tasks:
-                t.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+
+        async def _graceful_drain_and_cancel():
+            # Give in-flight cleanup tasks (e.g. close/disconnect coroutines scheduled by stop_assistant)
+            # a short window to finish before force-cancelling remaining background tasks.
+            pending = [t for t in asyncio.all_tasks(loop) if t is not asyncio.current_task()]
+            if pending:
+                done, still_pending = await asyncio.wait(pending, timeout=1.0)
+                for t in still_pending:
+                    t.cancel()
+                if still_pending:
+                    await asyncio.gather(*still_pending, return_exceptions=True)
 
         if loop.is_running():
             try:
-                fut = asyncio.run_coroutine_threadsafe(_cancel_pending(), loop)
-                fut.result(timeout=2.0)
+                fut = asyncio.run_coroutine_threadsafe(_graceful_drain_and_cancel(), loop)
+                fut.result(timeout=2.5)
             except Exception:
                 pass
             loop.call_soon_threadsafe(loop.stop)
 
         if _single_instance_mutex and sys.platform == "win32":
             try:
-                import ctypes
-                ctypes.windll.kernel32.CloseHandle(_single_instance_mutex)
+                if _kernel32 is not None:
+                    _kernel32.CloseHandle(_single_instance_mutex)
+                else:
+                    import ctypes
+                    ctypes.windll.kernel32.CloseHandle(_single_instance_mutex)
             except Exception:
                 pass
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
         print("[SHUTDOWN] Clean exit.")
         sys.stdout.flush()
         sys.stderr.flush()
+        shutdown_watchdog.cancel()
         os._exit(0)
 
 

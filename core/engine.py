@@ -1202,7 +1202,7 @@ class AetherEngine:
         if "live" in raw_model.lower() or "native-audio" in raw_model.lower():
             model_id = raw_model
         else:
-            model_id = "gemini-2.5-flash-native-audio-latest"
+            model_id = "gemini-3.8-live"
         if live_config is None:
             live_config = self._build_live_config()
 
@@ -1867,6 +1867,12 @@ class AetherEngine:
                     final_prompt = f"{hud}\n\nActor: {actor_name}\nDeclared Action: {stashed_action}"
 
                     resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
+                    if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+                        self.session_lifecycle.record_turn("user", f"{actor_name}: {stashed_action}")
+                        self.session_lifecycle.record_turn("assistant", resp_text)
+                    if hasattr(self, "session_mgr") and self.session_mgr:
+                        self.session_mgr.append_turn("user", f"{actor_name}: {stashed_action}")
+                        self.session_mgr.append_turn("model", resp_text)
                     self.notify("chat_event", {
                         "type": "assistant",
                         "agent_name": "Aether",
@@ -1903,6 +1909,12 @@ class AetherEngine:
                     f"Address {caller_name} as the party caller to confirm or describe the outcome."
                 )
                 resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
+                if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+                    self.session_lifecycle.record_turn("user", parsed.clean_action_text)
+                    self.session_lifecycle.record_turn("assistant", resp_text)
+                if hasattr(self, "session_mgr") and self.session_mgr:
+                    self.session_mgr.append_turn("user", parsed.clean_action_text)
+                    self.session_mgr.append_turn("model", resp_text)
                 self.notify("chat_event", {
                     "type": "assistant",
                     "agent_name": "Aether",
@@ -1921,6 +1933,12 @@ class AetherEngine:
             hud = self.ttrpg_service.generate_scene_hud(active_actor_name=parsed.actor_name)
             final_prompt = f"{hud}\n\nActor: {parsed.actor_name or 'Unspecified Hero'}\nAction: {parsed.clean_action_text}"
             resp_text = await self._execute_ttrpg_chat_turn(final_prompt)
+            if hasattr(self, "session_lifecycle") and self.session_lifecycle:
+                self.session_lifecycle.record_turn("user", parsed.clean_action_text)
+                self.session_lifecycle.record_turn("assistant", resp_text)
+            if hasattr(self, "session_mgr") and self.session_mgr:
+                self.session_mgr.append_turn("user", parsed.clean_action_text)
+                self.session_mgr.append_turn("model", resp_text)
             self.notify("chat_event", {
                 "type": "assistant",
                 "agent_name": "Aether",
@@ -1943,13 +1961,27 @@ class AetherEngine:
 
         turn_config = self._execute_turn_modular(final_prompt) if hasattr(self, "_execute_turn_modular") else None
 
-        if hasattr(self.chat, "send_message_async"):
-            resp = await self.chat.send_message_async(final_prompt)
-        elif hasattr(self, "_send_chat_message_resilient"):
-            resp = await self._send_chat_message_resilient(self.chat, final_prompt, config=turn_config)
-        elif hasattr(self.chat, "send_message"):
-            resp = await asyncio.to_thread(self.chat.send_message, final_prompt)
-        else:
+        async def _send_chat(payload):
+            if hasattr(self.chat, "send_message_async"):
+                if turn_config is not None:
+                    try:
+                        return await self.chat.send_message_async(payload, config=turn_config)
+                    except TypeError:
+                        return await self.chat.send_message_async(payload)
+                return await self.chat.send_message_async(payload)
+            if hasattr(self, "_send_chat_message_resilient"):
+                return await self._send_chat_message_resilient(self.chat, payload, config=turn_config)
+            if hasattr(self.chat, "send_message"):
+                if turn_config is not None:
+                    try:
+                        return await asyncio.to_thread(self.chat.send_message, payload, config=turn_config)
+                    except TypeError:
+                        return await asyncio.to_thread(self.chat.send_message, payload)
+                return await asyncio.to_thread(self.chat.send_message, payload)
+            return None
+
+        resp = await _send_chat(final_prompt)
+        if resp is None:
             return getattr(self.chat, "text", "Understood.")
 
         # Tool execution loop for roll_dice or character mutations
@@ -1978,12 +2010,10 @@ class AetherEngine:
                     except Exception:
                         pass
                 if tool_parts:
-                    if hasattr(self, "_send_chat_message_resilient"):
-                        resp = await self._send_chat_message_resilient(self.chat, tool_parts, config=turn_config)
-                    elif hasattr(self.chat, "send_message_async"):
-                        resp = await self.chat.send_message_async(tool_parts)
-                    else:
+                    next_resp = await _send_chat(tool_parts)
+                    if next_resp is None:
                         break
+                    resp = next_resp
                     fc_list = getattr(resp, "function_calls", None)
                     if not (isinstance(fc_list, list) and fc_list):
                         break
@@ -3280,7 +3310,17 @@ class AetherEngine:
         if not self.is_running and loop and loop.is_running():
             logger.info("[ENGINE] Auto-starting engine from send_text")
             self.start(loop)
-            await asyncio.sleep(0.3)
+            # Wait briefly for _run() to initialize client, audio, and system instruction
+            # before ensuring a live connection so typed messages don't race startup.
+            wait_deadline = time.monotonic() + 2.0
+            while time.monotonic() < wait_deadline:
+                if (
+                    self.is_running
+                    and getattr(self, "_active_pipeline_mode", None) is not None
+                    and getattr(self, "client", None) is not None
+                ):
+                    break
+                await asyncio.sleep(0.05)
 
         now_ts = time.time()
         self._kill_playback_flag = False
@@ -3561,10 +3601,22 @@ class AetherEngine:
             self._turn_audio_chunks = 0
             self._turn_audio_bytes = 0
             self._turn_audio_peak = 0.0
+            self._turn_intercept_fired = False
+            tracked_session = (self.session is session)
+            consecutive_empty_eof = 0
 
             while self.is_running:
+                if tracked_session and self.session is not session:
+                    break
+                if self.session is not None and self.session is not session:
+                    break
+                got_message = False
                 async for response in session.receive():
+                    got_message = True
+                    consecutive_empty_eof = 0
                     if not self.is_running:
+                        break
+                    if (tracked_session and self.session is not session) or (self.session is not None and self.session is not session):
                         break
 
                     self.conn_mgr.record_activity()
@@ -3793,9 +3845,15 @@ class AetherEngine:
                             logger.info(f"[KILL PHRASE DETECTED: '{clean_user_speech}'] -> Halting audio!")
                             self.kill_audio()
                         # Check Game Mode Voice Interception (Mode toggle or Fast-path macro)
-                        elif hasattr(self, "game_engine") and self.game_engine and not getattr(self, "_macro_fired_in_current_turn", False):
+                        elif (
+                            hasattr(self, "game_engine")
+                            and self.game_engine
+                            and not getattr(self, "_turn_intercept_fired", False)
+                            and not getattr(self, "_macro_fired_in_current_turn", False)
+                        ):
                             intercept = await self.game_engine.intercept_voice_turn_async(clean_user_speech, agent_name=agent_name)
                             if intercept.handled:
+                                self._turn_intercept_fired = True
                                 logger.info(f"[GAME VOICE INTERCEPT] Action: {intercept.action_type} for '{clean_user_speech}'")
                                 if intercept.action_type.startswith("media_") and hasattr(self, "media_service") and self.media_service:
                                     action = intercept.action_type.split("_")[1]
@@ -3988,6 +4046,7 @@ class AetherEngine:
                         self._live_wsola_scaler = None
                         self._macro_suppressed_turn = False
                         self._macro_fired_in_current_turn = False
+                        self._turn_intercept_fired = False
                         self.kill_audio()
                         self._in_active_turn = False
                         self._last_live_turn_completed_ts = time.time()
@@ -4014,6 +4073,7 @@ class AetherEngine:
                         self._suppress_live_turn_audio = False
                         self._macro_suppressed_turn = False
                         self._macro_fired_in_current_turn = False
+                        self._turn_intercept_fired = False
                         deferred_override_prompt = getattr(self, "_deferred_tier_override_prompt", None)
                         self._deferred_tier_override_prompt = None
                         scaler = getattr(self, "_live_wsola_scaler", None)
@@ -4157,6 +4217,20 @@ class AetherEngine:
                                 )
                             )
 
+                if not got_message:
+                    consecutive_empty_eof += 1
+                    if consecutive_empty_eof >= 2:
+                        logger.info("[RECEIVE_LOOP] Live WebSocket reached clean EOF; exiting receive loop.")
+                        if self.session is session:
+                            self.session = None
+                            self.live_session = None
+                            self._active_cm = None
+                            if self.is_on_demand_mode():
+                                self.conn_mgr.set_standby()
+                            else:
+                                self.conn_mgr.set_disconnected(reason="Clean EOF")
+                        break
+
                 # Avoid busy-loop if session closes
                 if self.is_running:
                     await asyncio.sleep(0.01)
@@ -4270,9 +4344,9 @@ class AetherEngine:
             return
 
         # Use the verified working Multimodal Live model endpoint
-        model_id = api_cfg.get("model_id", "gemini-2.5-flash-native-audio-latest")
-        if model_id == "gemini-2.0-flash-exp":
-            model_id = "gemini-2.5-flash-native-audio-latest"
+        model_id = api_cfg.get("model_id", "gemini-3.8-live")
+        if model_id in ("gemini-2.0-flash-exp", "gemini-2.5-flash-native-audio-latest", ""):
+            model_id = "gemini-3.8-live"
 
         voice_name = api_cfg.get("voice_name") or config.get("tts_voice") or "Aoede"
         voice_accent = api_cfg.get("voice_accent") or config.get("voice_accent") or "default"
@@ -4653,7 +4727,12 @@ class AetherEngine:
                 )
                 desired_profile = self._get_active_cortex_profile()
                 desired_model, _ = resolve_model_profile(desired_profile, default_model="gemini-4-hydrogen", default_level="instant")
-                if self._reset_context_flag or current_gm_active != chat_game_mode_state or desired_model != cortex_model:
+                if (
+                    self._reset_context_flag
+                    or current_gm_active != chat_game_mode_state
+                    or desired_profile != chat_cortex_profile
+                    or desired_model != cortex_model
+                ):
                     self._reset_context_flag = False
                     chat = create_fresh_chat()
                     chat_cortex_profile = cortex_profile
@@ -4700,6 +4779,30 @@ class AetherEngine:
 
                 user_prompt = ""
                 source = "voice"
+                is_wake_idle = False
+                active_wake_phrase = (
+                    self.audio.wake_detector.wake_phrase
+                    if (self.audio and getattr(self.audio, "wake_detector", None))
+                    else f"Hey {agent_name}"
+                )
+                active_sleep_phrase = (
+                    self.audio.wake_detector.sleep_phrase
+                    if (self.audio and getattr(self.audio, "wake_detector", None))
+                    else f"{agent_name} stop listening"
+                )
+                stt_prompt = (
+                    f"You are a verbatim speech-to-text transcriber for {preferred_language}. "
+                    f"Transcribe only clear, audible speech spoken in {preferred_language}. "
+                    f"Output only the verbatim spoken words without commentary. "
+                    f"The user's AI assistant is named '{agent_name}'. "
+                    f"Expected assistant phrases include: '{active_wake_phrase}', '{active_sleep_phrase}', and '{kill_phrase}'. "
+                    f"If the user says a greeting followed by a word sounding like '{agent_name}' (such as 'Hey Aker', 'Hey Ether', 'Hey Arthur', 'Hey Asher'), transcribe it as '{active_wake_phrase}'. "
+                    f"If the audio contains background chatter, noise, sighs, breathing, non-speech vocalizations, "
+                    f"or speech in another language, output NOTHING (empty string). Do not guess or translate."
+                )
+                lexicon_guide = self.user_memory.build_lexicon_instruction()
+                if lexicon_guide:
+                    stt_prompt += f"\nCustom lexicon vocabulary & phonetic spelling reference:\n{lexicon_guide}"
 
                 if text_task in done:
                     user_prompt = text_task.result().strip()
@@ -5093,7 +5196,12 @@ class AetherEngine:
                 )
                 desired_profile = self._get_active_cortex_profile()
                 desired_model, _ = resolve_model_profile(desired_profile, default_model="gemini-4-hydrogen", default_level="instant")
-                if self._reset_context_flag or current_gm_active != chat_game_mode_state or desired_model != cortex_model:
+                if (
+                    self._reset_context_flag
+                    or current_gm_active != chat_game_mode_state
+                    or desired_profile != chat_cortex_profile
+                    or desired_model != cortex_model
+                ):
                     self._reset_context_flag = False
                     chat = create_fresh_chat()
                     chat_cortex_profile = cortex_profile
@@ -7405,20 +7513,29 @@ class AetherEngine:
                 if hasattr(self.game_mgr, "get_active_game_context"):
                     gm_ctx = self.game_mgr.get_active_game_context()
 
-            summary = await self.session_lifecycle.generate_session_summary(
-                client,
-                is_game_mode=is_gm,
-                game_title=gm_title,
-                active_game_context=gm_ctx
+            was_explicit_reset = bool(self._reset_context_flag) or reason.startswith(
+                ("User Context Reset", "Workspace Switch", "Game Mode")
             )
+            if was_explicit_reset:
+                self._reset_context_flag = False
 
             # 3. Pre-seed new connection system instruction with the state summary
+            #    (skip old context summary on explicit context reset / workspace switch)
             base_inst = self._build_system_instruction() or getattr(self, "_base_system_instruction", "You are Aether.")
-            new_instruction = self.session_lifecycle.build_compacted_instruction(
-                base_inst,
-                summary=summary,
-                is_game_mode=is_gm
-            )
+            if was_explicit_reset:
+                new_instruction = base_inst
+            else:
+                summary = await self.session_lifecycle.generate_session_summary(
+                    client,
+                    is_game_mode=is_gm,
+                    game_title=gm_title,
+                    active_game_context=gm_ctx
+                )
+                new_instruction = self.session_lifecycle.build_compacted_instruction(
+                    base_inst,
+                    summary=summary,
+                    is_game_mode=is_gm
+                )
             new_instruction = apply_accent_directive(new_instruction, voice_accent)
             new_config = self._build_live_config(new_instruction, voice_name, temperature, use_resumption=False)
 
@@ -7474,7 +7591,6 @@ class AetherEngine:
             self.live_session = new_session
             self._active_cm = new_cm
             self.conn_mgr.set_connected()
-            self._rehydrate_session_context()
 
             # Sync with main.py
             try:
@@ -7508,9 +7624,6 @@ class AetherEngine:
                     pass
 
             # 9. Flush raw session transcript and reset lifecycle metrics
-            was_explicit_reset = bool(self._reset_context_flag) or reason.startswith(
-                ("User Context Reset", "Workspace Switch", "Game Mode")
-            )
             self.session_lifecycle.flush_session_to_disk()
             self.session_lifecycle.reset_metrics()
             if not was_explicit_reset:
@@ -7817,24 +7930,8 @@ class AetherEngine:
                 self.steam_service.start_friend_polling(loop=loop)
             except Exception as e:
                 logger.warning(f"[START] Steam friend polling start warning: {e}")
-        if hasattr(self, "notification_watcher") and self.notification_watcher:
-            try:
-                asyncio.run_coroutine_threadsafe(self.notification_watcher.start(), loop)
-            except Exception as e:
-                logger.warning(f"[START] Desktop notification watcher start warning: {e}")
-        if hasattr(self, "email_monitor") and self.email_monitor:
-            try:
-                asyncio.run_coroutine_threadsafe(self.email_monitor.start(), loop)
-            except Exception as e:
-                logger.warning(f"[START] Email monitor start warning: {e}")
-        if hasattr(self, "livestream_service") and self.livestream_service:
-            try:
-                if loop.is_running():
-                    self._stream_poller_task = asyncio.run_coroutine_threadsafe(self._livestream_poll_worker(), loop)
-                else:
-                    self._stream_poller_task = loop.create_task(self._livestream_poll_worker())
-            except Exception as e:
-                logger.warning(f"[START] Livestream poller start warning: {e}")
+        # Background watchers (notification_watcher, email_monitor, _livestream_poll_worker)
+        # are started once inside _run() on the event loop to prevent duplicate concurrent pollers.
         self._main_task = asyncio.run_coroutine_threadsafe(self._run(), loop)
 
     def stop(self):
@@ -7847,12 +7944,13 @@ class AetherEngine:
                         raw_turns = []
                         if hasattr(self, "session_lifecycle") and self.session_lifecycle:
                             raw_turns = self.session_lifecycle.get_raw_turns()
-                        if (not raw_turns or len(raw_turns) < 2) and hasattr(self, "session_manager") and self.session_manager:
-                            raw_turns = getattr(self.session_manager, "history", [])
+                        sess_mgr = getattr(self, "session_mgr", None) or getattr(self, "session_manager", None)
+                        if (not raw_turns or len(raw_turns) < 2) and sess_mgr:
+                            raw_turns = getattr(sess_mgr, "history", [])
                         if raw_turns:
                             sid = (
                                 getattr(self.session_lifecycle, "session_id", None)
-                                or getattr(self.session_manager, "active_session_id", "campaign")
+                                or (getattr(sess_mgr, "active_session_id", "campaign") if sess_mgr else "campaign")
                             )
                             turns_snapshot = list(raw_turns)
                             def _bg_summarize():
@@ -7984,8 +8082,9 @@ class AetherEngine:
         if hasattr(self, "steam_service") and self.steam_service:
             try:
                 self.steam_service.stop_friend_polling()
-                if hasattr(self, "loop") and self.loop and self.loop.is_running():
-                    asyncio.run_coroutine_threadsafe(self.steam_service.close(), self.loop)
+                steam_loop = getattr(self, "_loop", None) or getattr(self, "loop", None)
+                if steam_loop and steam_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.steam_service.close(), steam_loop)
             except Exception as e:
                 logger.warning(f"[STOP] Steam service close warning: {e}")
 

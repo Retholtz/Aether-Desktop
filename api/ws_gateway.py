@@ -47,16 +47,21 @@ class ConnectionManager:
         logger.info("Client disconnected from session %s", session_id)
 
     async def broadcast_to_campaign(self, campaign_id: str, message: Dict[str, Any]):
-        if campaign_id not in self.active_campaign_connections:
+        connections = list(self.active_campaign_connections.get(campaign_id, ()))
+        if not connections:
             return
-        dead_sockets = set()
-        for ws in self.active_campaign_connections[campaign_id]:
+        dead_sockets = []
+        for ws in connections:
             try:
                 await ws.send_json(message)
             except Exception:
-                dead_sockets.add(ws)
+                dead_sockets.append(ws)
         for ws in dead_sockets:
             self.disconnect(campaign_id, ws)
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
     async def stream_tokens(self, websocket: WebSocket, token_generator):
         """Streams chunk-by-chunk tokens to the client."""
@@ -77,6 +82,9 @@ async def session_endpoint(websocket: WebSocket, session_id: str):
     try:
         while True:
             data = await websocket.receive_json()
+            if not isinstance(data, dict):
+                await websocket.send_json({"type": "error", "message": "Expected JSON object payload."})
+                continue
             msg_type = data.get("type", "ping")
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong", "session_id": session_id})
@@ -95,6 +103,9 @@ async def play_game_endpoint(websocket: WebSocket, campaign_id: str):
     try:
         while True:
             data = await websocket.receive_json()
+            if not isinstance(data, dict):
+                await websocket.send_json({"type": "error", "message": "Expected JSON object payload."})
+                continue
             msg_type = data.get("type", "player_action")
 
             if msg_type == "ping":

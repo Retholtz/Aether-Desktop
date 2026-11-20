@@ -7,12 +7,33 @@ before sending them up the WebSocket to prevent context-window token bloat.
 import json
 import os
 import re
+import time
+import uuid
 from typing import Any, Dict, Optional
+
+from core.paths import get_app_dir
 
 # Default scratchpad cache path
 DEFAULT_CACHE_REL_PATH = os.path.join("data", "scratchpad", "last_tool_output.txt")
 MAX_PAYLOAD_CHAR_LIMIT = 800
 SUMMARY_CHAR_LIMIT = 500
+
+# Structured control/handoff fields that should survive truncation on non-exempt tools
+PRESERVED_CONTROL_KEYS = (
+    "file_path",
+    "filename",
+    "answer",
+    "directive",
+    "message",
+    "error",
+    "pasted",
+    "pasted_to_doc",
+    "checklist",
+    "task_type",
+    "action",
+    "hwnd",
+)
+PRESERVED_FIELD_CHAR_CAP = 600
 
 # Runner frames to strip from Python tracebacks
 RUNNER_FRAME_PATTERNS = [
@@ -157,7 +178,20 @@ EXEMPT_TOOLS = {
     "search_past_sessions",
     "list_available_skills",
     "read_saved_skill",
+    "delegate_moderate_task",
+    "delegate_heavy_task",
+    "export_research_dossier",
+    "paste_to_document",
 }
+
+
+def _looks_like_traceback(text: str) -> bool:
+    """Returns True only if text looks like a Python traceback rather than a plain error message."""
+    if not text or not isinstance(text, str):
+        return False
+    if "Traceback (most recent call last):" in text:
+        return True
+    return bool(re.search(r'^\s*File "[^"]+", line \d+', text, re.MULTILINE))
 
 
 def sanitize_tool_result(
@@ -171,9 +205,9 @@ def sanitize_tool_result(
     Sanitizes and caps tool execution outputs before sending them to Gemini.
     - Supports both sanitize_tool_result(tool_name, result) and legacy sanitize_tool_result(result).
     - Exempts tools in EXEMPT_TOOLS from the 800-character truncation limit.
-    - If output string exceeds 800 characters, writes raw payload to local cache
-      and returns an executive summary dictionary.
-    - If an exception or traceback is present, cleans internal runner frames
+    - If output string exceeds 800 characters, writes raw payload to a per-call local cache file
+      and returns an executive summary dictionary while preserving key control/handoff fields.
+    - If an exception traceback is present, cleans internal runner frames
       and preserves only the failing line, module name, and final exception lines.
     - Preserves private metadata keys (e.g. _jpeg_bytes) and binary vision payloads (image_bytes).
     """
@@ -194,15 +228,15 @@ def sanitize_tool_result(
     else:
         result_dict = dict(actual_result)
 
-    # 1. Clean tracebacks / stderr if present
+    # 1. Clean tracebacks / stderr only when the payload actually contains a traceback
     for tb_key in ("traceback", "stderr", "error"):
-        if tb_key in result_dict and isinstance(result_dict[tb_key], str) and result_dict[tb_key]:
-            cleaned_tb = clean_traceback(result_dict[tb_key])
-            result_dict[tb_key] = cleaned_tb
+        val = result_dict.get(tb_key)
+        if isinstance(val, str) and val and _looks_like_traceback(val):
+            result_dict[tb_key] = clean_traceback(val)
 
     if "traceback_history" in result_dict and isinstance(result_dict["traceback_history"], list):
         result_dict["traceback_history"] = [
-            clean_traceback(t) if isinstance(t, str) else t
+            clean_traceback(t) if isinstance(t, str) and _looks_like_traceback(t) else t
             for t in result_dict["traceback_history"]
         ]
 
@@ -211,9 +245,14 @@ def sanitize_tool_result(
 
     if exceeds:
         if base_dir is None:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
-        target_cache_path = cache_path or os.path.join(base_dir, DEFAULT_CACHE_REL_PATH)
+            base_dir = get_app_dir()
+
+        if cache_path:
+            target_cache_path = cache_path
+        else:
+            safe_tool = re.sub(r"[^a-zA-Z0-9_-]+", "_", resolved_tool_name or "tool").strip("_") or "tool"
+            unique_name = f"tool_output_{safe_tool}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}.txt"
+            target_cache_path = os.path.join(base_dir, "data", "scratchpad", unique_name)
 
         try:
             os.makedirs(os.path.dirname(os.path.abspath(target_cache_path)), exist_ok=True)
@@ -224,7 +263,10 @@ def sanitize_tool_result(
             return result_dict
 
         # Use relative path for presentation to Gemini
-        rel_cache_path = os.path.relpath(target_cache_path, base_dir).replace("\\", "/")
+        try:
+            rel_cache_path = os.path.relpath(target_cache_path, base_dir).replace("\\", "/")
+        except ValueError:
+            rel_cache_path = target_cache_path.replace("\\", "/")
 
         sanitized = {
             "status": result_dict.get("status", "success"),
@@ -232,6 +274,15 @@ def sanitize_tool_result(
             "cache_path": rel_cache_path,
             "total_characters": len(raw_text)
         }
+
+        # Preserve structured control/handoff fields (bounded if string) so downstream consumers don't break
+        for ctrl_key in PRESERVED_CONTROL_KEYS:
+            if ctrl_key in result_dict and result_dict[ctrl_key] is not None:
+                val = result_dict[ctrl_key]
+                if isinstance(val, str) and len(val) > PRESERVED_FIELD_CHAR_CAP and ctrl_key not in ("file_path", "filename"):
+                    sanitized[ctrl_key] = val[:PRESERVED_FIELD_CHAR_CAP] + "..."
+                else:
+                    sanitized[ctrl_key] = val
 
         # Preserve private pass-through keys (such as _jpeg_bytes for screen snapshots) and multimodal image_bytes
         for k, v in result_dict.items():
