@@ -234,6 +234,50 @@ def _decode_mime_words(header_val: Optional[str]) -> str:
         return str(header_val)
 
 
+def _normalize_graph_datetime(dt_obj: Optional[Dict[str, Any]]) -> str:
+    """
+    Normalizes Microsoft Graph dateTimeTimeZone objects (which return naive UTC strings
+    with timeZone='UTC' and up to 7 fractional digits) into timezone-aware local ISO strings.
+    """
+    if not isinstance(dt_obj, dict):
+        return str(dt_obj or "").strip()
+    raw_dt = str(dt_obj.get("dateTime") or "").strip()
+    if not raw_dt:
+        return ""
+    tz_name = str(dt_obj.get("timeZone") or "").strip()
+    if "T" not in raw_dt:
+        return raw_dt
+    # Truncate >6 fractional second digits (Graph often emits 7 digits: .0000000)
+    cleaned = re.sub(r"\.(\d{6})\d+", r".\1", raw_dt)
+    try:
+        dt = datetime.datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+        if dt.tzinfo is None and tz_name.lower() in ("utc", "etc/utc", "gmt", "coordinated universal time", ""):
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        if dt.tzinfo is not None:
+            return dt.astimezone().isoformat()
+        return dt.isoformat()
+    except Exception:
+        return raw_dt
+
+
+def _parse_event_local_date(raw_val: str) -> Optional[datetime.date]:
+    """Extracts the local calendar date from an ISO datetime or date string (never slicing raw UTC)."""
+    s = str(raw_val or "").strip()
+    if not s:
+        return None
+    try:
+        if "T" in s:
+            cleaned = re.sub(r"\.(\d{6})\d+", r".\1", s).replace("Z", "+00:00")
+            dt = datetime.datetime.fromisoformat(cleaned)
+            return dt.astimezone().date() if dt.tzinfo is not None else dt.date()
+        return datetime.date.fromisoformat(s[:10])
+    except Exception:
+        try:
+            return datetime.date.fromisoformat(s[:10])
+        except Exception:
+            return None
+
+
 def enrich_calendar_event(ev: Dict[str, Any], now_local: Optional[datetime.datetime] = None) -> Dict[str, Any]:
     """Enriches a raw calendar event dictionary with relative human-friendly date/time markers."""
     if now_local is None:
@@ -421,11 +465,9 @@ def summarize_calendar_events(
         target_str = target_date_obj.strftime("%A, %b %d, %Y")
         matching = []
         for e in events:
-            s_raw = str(e.get("start") or "")[:10]
-            e_raw = str(e.get("end") or "")[:10]
             try:
-                s_d = datetime.date.fromisoformat(s_raw) if s_raw else None
-                e_d = datetime.date.fromisoformat(e_raw) if e_raw else None
+                s_d = _parse_event_local_date(str(e.get("start") or ""))
+                e_d = _parse_event_local_date(str(e.get("end") or ""))
                 if s_d and e_d:
                     if s_d <= target_date_obj < e_d or (s_d == target_date_obj):
                         matching.append(e)
@@ -1721,11 +1763,9 @@ class OAuthManager:
             if target_date_obj is not None:
                 filtered_events = []
                 for ev in events:
-                    s_raw = str(ev.get("start") or "")[:10]
-                    e_raw = str(ev.get("end") or "")[:10]
                     try:
-                        s_d = datetime.date.fromisoformat(s_raw) if s_raw else None
-                        e_d = datetime.date.fromisoformat(e_raw) if e_raw else None
+                        s_d = _parse_event_local_date(str(ev.get("start") or ""))
+                        e_d = _parse_event_local_date(str(ev.get("end") or ""))
                         if s_d and e_d:
                             if s_d <= target_date_obj < e_d or (s_d == target_date_obj):
                                 filtered_events.append(ev)
@@ -2325,8 +2365,8 @@ class OAuthManager:
                     {
                         "id": ev.get("id", ""),
                         "summary": ev.get("subject", "(Untitled Event)"),
-                        "start": (ev.get("start") or {}).get("dateTime", ""),
-                        "end": (ev.get("end") or {}).get("dateTime", ""),
+                        "start": _normalize_graph_datetime(ev.get("start")),
+                        "end": _normalize_graph_datetime(ev.get("end")),
                         "location": (ev.get("location") or {}).get("displayName", ""),
                         "description": strip_html_to_plain_text(ev.get("bodyPreview", ""), max_chars=500),
                     }
@@ -2335,11 +2375,9 @@ class OAuthManager:
             if target_date_obj is not None:
                 filtered_events = []
                 for ev in events:
-                    s_raw = str(ev.get("start") or "")[:10]
-                    e_raw = str(ev.get("end") or "")[:10]
                     try:
-                        s_d = datetime.date.fromisoformat(s_raw) if s_raw else None
-                        e_d = datetime.date.fromisoformat(e_raw) if e_raw else None
+                        s_d = _parse_event_local_date(str(ev.get("start") or ""))
+                        e_d = _parse_event_local_date(str(ev.get("end") or ""))
                         if s_d and e_d:
                             if s_d <= target_date_obj < e_d or (s_d == target_date_obj):
                                 filtered_events.append(ev)
@@ -2371,19 +2409,30 @@ class OAuthManager:
         if not headers:
             return {"success": False, "error": "Microsoft access token unavailable."}
         try:
-            r = requests.get(
-                f"{MICROSOFT_GRAPH_BASE}/me/contacts",
-                headers=headers,
-                params={
-                    "$top": 25,
-                    "$select": "displayName,emailAddresses,homeAddress,businessAddress,otherAddress,mobilePhone,homePhones,businessPhones,birthday,personalNotes,jobTitle,companyName",
-                },
-                timeout=10,
-            )
+            all_contacts: List[Dict[str, Any]] = []
+            next_url: Optional[str] = f"{MICROSOFT_GRAPH_BASE}/me/contacts"
+            params: Optional[Dict[str, Any]] = {
+                "$top": 200,
+                "$select": "id,displayName,emailAddresses,homeAddress,businessAddress,otherAddress,mobilePhone,homePhones,businessPhones,birthday,personalNotes,jobTitle,companyName",
+            }
+            for _ in range(5):  # Up to 1,000 contacts across pages
+                if not next_url:
+                    break
+                r = requests.get(next_url, headers=headers, params=params, timeout=10)
+                params = None  # @odata.nextLink already encodes query params
+                if not r.ok:
+                    break
+                payload = r.json()
+                page_items = payload.get("value", [])
+                if isinstance(page_items, list):
+                    all_contacts.extend(page_items)
+                next_link = payload.get("@odata.nextLink")
+                next_url = str(next_link) if (isinstance(next_link, str) and next_link.startswith(MICROSOFT_GRAPH_BASE)) else None
+
             matches = []
-            if r.ok:
+            if all_contacts:
                 q_low = query.lower()
-                for c in r.json().get("value", []):
+                for c in all_contacts:
                     name = c.get("displayName") or ""
                     emails = [e.get("address", "") for e in c.get("emailAddresses", []) if e.get("address")]
 
@@ -2643,23 +2692,43 @@ class OAuthManager:
                     safe_q = _sanitize_imap_search_term(query)
                     if safe_q:
                         criteria = f'(OR SUBJECT "{safe_q}" FROM "{safe_q}")'
-                typ, data = M.search(None, criteria)
+                typ, data = M.uid("search", None, criteria)
                 if typ != "OK" or not data or not data[0]:
                     return {"success": True, "provider": "imap", "count": 0, "messages": []}
 
-                msg_nums = data[0].split()[-max_results:]
-                msg_nums.reverse()
+                msg_uids = data[0].split()[-max_results:]
+                msg_uids.reverse()
                 items = []
-                for num in msg_nums:
-                    typ, msg_data = M.fetch(num, "(RFC822.HEADER BODY.PEEK[TEXT]<0.600>)")
+                for uid in msg_uids:
+                    uid_str = uid.decode("ascii", errors="ignore") if isinstance(uid, bytes) else str(uid)
+                    typ, msg_data = M.uid("fetch", uid_str, "(RFC822.HEADER BODY.PEEK[TEXT]<0.1200>)")
                     if typ != "OK" or not msg_data:
                         continue
-                    raw_hdr = msg_data[0][1] if isinstance(msg_data[0], tuple) else b""
+                    raw_hdr = b""
+                    raw_body = b""
+                    tuples = [part for part in msg_data if isinstance(part, tuple) and len(part) >= 2]
+                    for meta, payload in tuples:
+                        meta_upper = (meta if isinstance(meta, bytes) else str(meta).encode("ascii", errors="ignore")).upper()
+                        payload_bytes = payload if isinstance(payload, bytes) else str(payload).encode("utf-8", errors="replace")
+                        if b"HEADER" in meta_upper:
+                            raw_hdr = payload_bytes
+                        elif b"BODY[TEXT]" in meta_upper or b"TEXT" in meta_upper:
+                            raw_body = payload_bytes
+                    if not raw_hdr and tuples:
+                        raw_hdr = tuples[0][1] if isinstance(tuples[0][1], bytes) else b""
+                    if not raw_body and len(tuples) > 1:
+                        raw_body = tuples[1][1] if isinstance(tuples[1][1], bytes) else b""
+
                     msg_obj = email.message_from_bytes(raw_hdr)
                     sender = _decode_mime_words(msg_obj.get("From", ""))
                     subj = _decode_mime_words(msg_obj.get("Subject", "(No Subject)"))
                     date_str = msg_obj.get("Date", "")
-                    uid_str = num.decode("ascii", errors="ignore")
+                    body_snippet = ""
+                    if raw_body:
+                        body_snippet = strip_html_to_plain_text(
+                            raw_body.decode("utf-8", errors="replace"),
+                            max_chars=400,
+                        )
                     items.append(
                         {
                             "message_id": uid_str,
@@ -2672,7 +2741,7 @@ class OAuthManager:
                                 sender=sender,
                                 subject=subj,
                                 date_str=date_str,
-                                body_text=subj,
+                                body_text=body_snippet or subj,
                                 message_id=uid_str,
                                 thread_id=uid_str,
                             ),
@@ -2694,7 +2763,7 @@ class OAuthManager:
             with imaplib.IMAP4_SSL(tokens["imap_host"], int(tokens.get("imap_port", 993)), timeout=12) as M:
                 M.login(tokens["account_email"], tokens["app_password"])
                 M.select("INBOX", readonly=True)
-                typ, msg_data = M.fetch(clean_id.encode("ascii"), "(RFC822)")
+                typ, msg_data = M.uid("fetch", clean_id, "(RFC822)")
                 if typ != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
                     return {"success": False, "error": f"IMAP message {msg_id} not found."}
                 msg_obj = email.message_from_bytes(msg_data[0][1])

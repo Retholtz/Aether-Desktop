@@ -319,8 +319,8 @@ async function handleBrowseProgramExe(isAddModal = true) {
                 banner.style.display = 'flex';
             }
 
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(`Grabbed: ${res.file_name}`);
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(`Grabbed: ${res.file_name}`);
             }
         }
     } catch (e) {
@@ -481,8 +481,8 @@ async function handleConfirmAddProgram() {
             closeAddProgramModal();
             activeProgramId = res.program_id;
             await loadProgramsUI();
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(`Saved "${name}" to allowed programs.`);
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(`Saved "${name}" to allowed programs.`);
             }
         } else {
             alert((res && res.error) || 'Failed to add whitelisted program.');
@@ -765,8 +765,8 @@ async function handleConfirmSyncPrograms() {
         if (res && res.success) {
             closeSyncProgramsModal();
             await loadProgramsUI();
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(`Added ${res.added_count} programs to allowed whitelist.`);
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(`Added ${res.added_count} programs to allowed whitelist.`);
             }
         } else {
             alert((res && res.error) || 'Failed to add programs in batch.');

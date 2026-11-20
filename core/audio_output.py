@@ -23,9 +23,9 @@ def apply_micro_fade_out(pcm_bytes: bytes, sample_rate: int = 24000, fade_ms: fl
         return b""
 
     fade_samples = min(len(samples), max(1, int(sample_rate * (fade_ms / 1000.0))))
-    samples = samples[:fade_samples]
+    tail_samples = samples[-fade_samples:]
     fade_curve = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
-    faded_samples = (samples.astype(np.float32) * fade_curve).astype(np.int16)
+    faded_samples = (tail_samples.astype(np.float32) * fade_curve).astype(np.int16)
     return faded_samples.tobytes()
 
 

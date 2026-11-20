@@ -25,19 +25,23 @@ import numpy as np
 
 
 AETHER_PHONETIC_VARIANTS = (
-    "aether", "ether", "ather", "either", "eather", "heather",
-    "aker", "acre", "acer", "arthur", "asher", "archer", "actor",
-    "after", "alter", "amber", "ava", "eva", "asa", "ever", "easter",
-    "cater", "hater", "later", "peter", "feather", "weather", "leather",
-    "tether", "nether", "aider", "ader", "laser", "razor", "major",
-    "8th", "eighth", "aeth", "eth", "eater", "heater", "meter",
-    "leader", "reader", "maker", "baker", "taker", "shaker", "waker",
-    "quaker", "faker", "paper", "vapor", "favor", "saver", "safer",
+    "aether", "ether", "ather", "eather", "heather",
+    "aker", "acre", "acer", "arthur", "asher", "archer",
+    "esther", "tether", "nether", "aider", "ader", "aeth", "eth",
 )
 
 WAKE_GREETINGS = (
-    "hey", "hi", "ok", "okay", "hello", "yo", "ay", "eh", "he", "hay", "wake", "listen"
+    "hey", "hi", "okay", "hello", "yo", "hay", "wake", "listen",
 )
+
+_COMMON_NON_WAKE_WORDS = frozenset({
+    "after", "later", "ever", "weather", "paper", "either", "neither", "whether",
+    "other", "water", "father", "mother", "better", "letter", "matter", "rather",
+    "together", "feather", "leather", "meter", "heater", "eater", "leader", "reader",
+    "maker", "baker", "taker", "shaker", "waker", "quaker", "faker", "vapor", "favor",
+    "saver", "safer", "laser", "razor", "major", "actor", "alter", "amber", "peter",
+    "cater", "hater", "easter", "ava", "eva", "asa", "eighth", "8th", "there", "where",
+})
 
 
 class AudioGateState(Enum):
@@ -45,30 +49,65 @@ class AudioGateState(Enum):
     ACTIVE_CONVERSATION = "ACTIVE_CONVERSATION"
 
 
-from core.paths import get_bundle_dir
+from core.paths import app_path, get_bundle_dir, resource_path
 
 PROJECT_ROOT = get_bundle_dir()
-SOUNDS_DIR = os.path.join(PROJECT_ROOT, "ui", "sounds")
+SOUNDS_DIR = resource_path("ui", "sounds")
+WRITABLE_SOUNDS_DIR = app_path("data", "sounds")
 
 
 def ensure_wake_sleep_sounds(base_dir: Optional[str] = None) -> Tuple[str, str, str]:
     """
-    Ensures subtle wake.wav, sleep.wav, and working.wav chime files exist under ui/sounds/.
+    Ensures subtle wake.wav, sleep.wav, and working.wav chime files exist.
+    Uses bundled ui/sounds when present, and falls back to writable data/sounds
+    when synthesis is needed in read-only frozen builds.
     Returns (wake_wav_path, sleep_wav_path, working_wav_path).
     """
-    sounds_dir = os.path.join(base_dir, "ui", "sounds") if base_dir else SOUNDS_DIR
-    os.makedirs(sounds_dir, exist_ok=True)
+    if base_dir is not None:
+        base_str = os.fspath(base_dir)
+        if os.path.basename(os.path.normpath(base_str)).lower() == "sounds":
+            sounds_dir = base_str
+        else:
+            sounds_dir = os.path.join(base_str, "ui", "sounds")
+    else:
+        sounds_dir = SOUNDS_DIR
 
     wake_path = os.path.join(sounds_dir, "wake.wav")
     sleep_path = os.path.join(sounds_dir, "sleep.wav")
     working_path = os.path.join(sounds_dir, "working.wav")
 
-    if not os.path.exists(wake_path):
-        _synthesize_chime_wav(wake_path, freqs=(523.25, 659.25), duration_sec=0.18, volume=0.22)
-    if not os.path.exists(sleep_path):
-        _synthesize_chime_wav(sleep_path, freqs=(587.33, 440.00), duration_sec=0.20, volume=0.18)
-    if not os.path.exists(working_path):
-        _synthesize_chime_wav(working_path, freqs=(440.00, 659.25), duration_sec=0.22, volume=0.19)
+    if all(os.path.exists(p) for p in (wake_path, sleep_path, working_path)):
+        return wake_path, sleep_path, working_path
+
+    target_dir = sounds_dir
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except OSError:
+        if base_dir is None:
+            target_dir = WRITABLE_SOUNDS_DIR
+            os.makedirs(target_dir, exist_ok=True)
+            wake_path = os.path.join(target_dir, "wake.wav")
+            sleep_path = os.path.join(target_dir, "sleep.wav")
+            working_path = os.path.join(target_dir, "working.wav")
+        else:
+            raise
+
+    def _ensure_one(path: str, filename: str, freqs: Tuple[float, float], duration_sec: float, volume: float) -> str:
+        if os.path.exists(path):
+            return path
+        if _synthesize_chime_wav(path, freqs=freqs, duration_sec=duration_sec, volume=volume):
+            return path
+        if base_dir is None and target_dir != WRITABLE_SOUNDS_DIR:
+            os.makedirs(WRITABLE_SOUNDS_DIR, exist_ok=True)
+            fallback_path = os.path.join(WRITABLE_SOUNDS_DIR, filename)
+            if not os.path.exists(fallback_path):
+                _synthesize_chime_wav(fallback_path, freqs=freqs, duration_sec=duration_sec, volume=volume)
+            return fallback_path
+        return path
+
+    wake_path = _ensure_one(wake_path, "wake.wav", (523.25, 659.25), 0.18, 0.22)
+    sleep_path = _ensure_one(sleep_path, "sleep.wav", (587.33, 440.00), 0.20, 0.18)
+    working_path = _ensure_one(working_path, "working.wav", (440.00, 659.25), 0.22, 0.19)
 
     return wake_path, sleep_path, working_path
 
@@ -79,7 +118,7 @@ def _synthesize_chime_wav(
     duration_sec: float = 0.18,
     sample_rate: int = 24000,
     volume: float = 0.22
-):
+) -> bool:
     """Generates a clean two-tone cosine-tapered WAV chime file."""
     try:
         total_samples = int(sample_rate * duration_sec)
@@ -99,8 +138,10 @@ def _synthesize_chime_wav(
             wf.setsampwidth(2)
             wf.setframerate(sample_rate)
             wf.writeframes(pcm16)
+        return True
     except Exception as e:
         print(f"[WARN] [WAKE_WORD] Could not synthesize sound file {filepath}: {e}")
+        return False
 
 
 def play_chime_async(sound_type: str = "wake"):
@@ -156,8 +197,109 @@ class WakeWordDetector:
         self._custom_scorer: Optional[Callable[[bytes], float]] = None
         self._pending_hotword_trigger = False
 
+        # Precompiled wake/sleep regexes (rebuilt only when phrases change)
+        self._wake_target_clean: str = ""
+        self._wake_clean_re: Optional[re.Pattern] = None
+        self._wake_raw_re: Optional[re.Pattern] = None
+        self._sleep_target_clean: str = ""
+        self._sleep_clean_re: Optional[re.Pattern] = None
+        self._compile_wake_patterns()
+        self._compile_sleep_patterns()
+
         # Initialize openWakeWord or phonetic keyword spotter
         self._init_model()
+
+    @staticmethod
+    def _clean_phrase(phrase: str) -> str:
+        clean = re.sub(r"[^\w\s]", " ", (phrase or "").lower())
+        return re.sub(r"\s+", " ", clean).strip()
+
+    def _compile_wake_patterns(self) -> None:
+        target = self._clean_phrase(self.wake_phrase)
+        self._wake_target_clean = target
+        if not target:
+            self._wake_clean_re = None
+            self._wake_raw_re = None
+            return
+
+        seen = set()
+        candidates: List[str] = []
+
+        def _add(cand: str):
+            c = cand.strip()
+            if c and c not in seen:
+                seen.add(c)
+                candidates.append(c)
+
+        for base in (
+            target,
+            "aether start listening",
+            "hey aether start listening",
+            "start listening",
+            "resume listening",
+            "begin listening",
+            "aether wake up",
+            "wake up aether",
+            "aether listen",
+        ):
+            _add(base)
+
+        if "aether" in target:
+            _add("ok aether")
+            _add("ok ether")
+            for phonetic in AETHER_PHONETIC_VARIANTS:
+                _add(target.replace("aether", phonetic))
+                for suffix in ("start listening", "resume listening", "begin listening", "wake up", "listen"):
+                    _add(f"{phonetic} {suffix}")
+            for greet in WAKE_GREETINGS:
+                for phonetic in AETHER_PHONETIC_VARIANTS:
+                    _add(f"{greet} {phonetic}")
+
+        # Sort longest-first so multi-word phrases match before shorter prefixes
+        candidates.sort(key=lambda s: (-len(s.split()), -len(s)))
+
+        clean_alts = [r"\s+".join(re.escape(w) for w in c.split()) for c in candidates]
+        raw_alts = [r"[\s,\.!?\-]+".join(re.escape(w) for w in c.split()) for c in candidates]
+        self._wake_clean_re = re.compile(r"\b(?:" + "|".join(clean_alts) + r")\b")
+        self._wake_raw_re = re.compile(r"\b(?:" + "|".join(raw_alts) + r")[\s,\.!?\-:]*", flags=re.IGNORECASE)
+
+    def _compile_sleep_patterns(self) -> None:
+        target = self._clean_phrase(self.sleep_phrase)
+        self._sleep_target_clean = target
+
+        seen = set()
+        sleep_candidates: List[str] = []
+
+        def _add(cand: str):
+            c = cand.strip()
+            if c and c not in seen:
+                seen.add(c)
+                sleep_candidates.append(c)
+
+        if target:
+            _add(target)
+            if "aether" in target:
+                for phonetic in AETHER_PHONETIC_VARIANTS:
+                    _add(target.replace("aether", phonetic))
+
+        for base in (
+            "stop listening",
+            "pause listening",
+            "mute listening",
+            "go to sleep",
+            "aether stop listening",
+            "aether go to sleep",
+            "aether standby",
+            "aether sleep",
+        ):
+            _add(base)
+        for phonetic in ("ether", "ather", "aker", "acre", "arthur", "asher"):
+            _add(f"{phonetic} stop listening")
+            _add(f"{phonetic} go to sleep")
+
+        sleep_candidates.sort(key=lambda s: (-len(s.split()), -len(s)))
+        clean_alts = [r"\s+".join(re.escape(w) for w in c.split()) for c in sleep_candidates]
+        self._sleep_clean_re = re.compile(r"\b(?:" + "|".join(clean_alts) + r")\b") if clean_alts else None
 
     def _init_model(self):
         """Loads lightweight offline keyword model (e.g., openWakeWord / custom verifier)."""
@@ -180,12 +322,14 @@ class WakeWordDetector:
         """Updates the configured wake phrase at runtime."""
         if wake_phrase and wake_phrase.strip():
             self.wake_phrase = wake_phrase.strip().lower()
+            self._compile_wake_patterns()
             print(f"[INFO] [WAKE_WORD] Wake phrase updated to: '{self.wake_phrase}'")
 
     def update_sleep_phrase(self, sleep_phrase: str):
         """Updates the configured stop-listening / sleep phrase at runtime."""
         if sleep_phrase and sleep_phrase.strip():
             self.sleep_phrase = sleep_phrase.strip().lower()
+            self._compile_sleep_patterns()
             print(f"[INFO] [WAKE_WORD] Sleep phrase updated to: '{self.sleep_phrase}'")
 
     def update_listening_mode(self, listening_mode: str):
@@ -319,49 +463,17 @@ class WakeWordDetector:
         if not clean:
             return False, ""
 
-        target = re.sub(r"[^\w\s]", " ", self.wake_phrase.lower())
-        target = re.sub(r"\s+", " ", target).strip()
+        target = self._clean_phrase(self.wake_phrase)
         if not target:
             return True, raw
+        if target != self._wake_target_clean:
+            self._compile_wake_patterns()
 
-        # 1. Exact, natural activation ('aether start listening'), and phonetic candidate regex matching
-        candidates: List[str] = [
-            target,
-            "aether start listening",
-            "hey aether start listening",
-            "start listening",
-            "resume listening",
-            "begin listening",
-            "aether wake up",
-            "wake up aether",
-            "aether listen",
-        ]
-        if "aether" in target:
-            for phonetic in AETHER_PHONETIC_VARIANTS:
-                if "aether" in target:
-                    cand = target.replace("aether", phonetic)
-                    if cand not in candidates:
-                        candidates.append(cand)
-                for suffix in ("start listening", "resume listening", "begin listening", "wake up", "listen"):
-                    act_cand = f"{phonetic} {suffix}"
-                    if act_cand not in candidates:
-                        candidates.append(act_cand)
-            # Also allow any greeting + any phonetic variant (e.g. "hey aker", "hi aker", "ok aker")
-            for greet in WAKE_GREETINGS:
-                for phonetic in AETHER_PHONETIC_VARIANTS:
-                    gp = f"{greet} {phonetic}"
-                    if gp not in candidates:
-                        candidates.append(gp)
-
-        for cand in candidates:
-            pattern = r"\b" + r"\s+".join(re.escape(w) for w in cand.split()) + r"\b"
-            m = re.search(pattern, clean)
+        # 1. Precompiled exact, natural activation ('aether start listening'), and phonetic candidate regex matching
+        if self._wake_clean_re is not None:
+            m = self._wake_clean_re.search(clean)
             if m:
-                raw_match = re.search(
-                    r"\b" + r"[\s,\.!?\-]+".join(re.escape(w) for w in cand.split()) + r"[\s,\.!?\-:]*",
-                    raw,
-                    flags=re.IGNORECASE
-                )
+                raw_match = self._wake_raw_re.search(raw) if self._wake_raw_re is not None else None
                 if raw_match:
                     remainder = raw[raw_match.end():].strip()
                 else:
@@ -373,49 +485,54 @@ class WakeWordDetector:
         words = clean.split()
         target_words = target.split()
         target_name = target_words[-1] if target_words else "aether"
+        is_default_aether = ("aether" in target)
 
-        # 2a. Greeting + Fuzzy Name match (e.g. "Hey Aker", "Hey <anything ~45%+ similar to target_name>")
+        # 2a. Greeting + Fuzzy Name match (rejecting common everyday non-wake English words)
         for idx in range(min(len(words) - 1, 4)):
             w_first = words[idx]
             w_second = words[idx + 1]
+            if is_default_aether and w_second in _COMMON_NON_WAKE_WORDS:
+                continue
             first_is_greeting = (
                 w_first in WAKE_GREETINGS
-                or (target_words and difflib.SequenceMatcher(None, w_first, target_words[0]).ratio() >= 0.65)
+                or (
+                    len(w_first) >= 3
+                    and target_words
+                    and difflib.SequenceMatcher(None, w_first, target_words[0]).ratio() >= 0.72
+                )
             )
             if first_is_greeting:
                 name_sim = difflib.SequenceMatcher(None, w_second, target_name).ratio()
-                is_phonetic_variant = ("aether" in target and w_second in AETHER_PHONETIC_VARIANTS)
-                starts_like_target = (
-                    len(w_second) >= 3
-                    and len(target_name) >= 3
-                    and (w_second[0] == target_name[0] or (w_second[0] in "ae" and target_name[0] in "ae"))
-                    and name_sim >= 0.38
-                )
-                if is_phonetic_variant or name_sim >= 0.46 or starts_like_target:
+                is_phonetic_variant = (is_default_aether and w_second in AETHER_PHONETIC_VARIANTS)
+                if is_phonetic_variant or name_sim >= 0.62:
                     remainder = self._extract_remainder_after_word_index(raw, idx + 2)
                     return True, self._strip_leading_wake_decorators(remainder)
 
-        # 2b. Sliding window fuzzy phrase similarity (>= 0.64)
+        # 2b. Sliding window fuzzy phrase similarity (>= 0.72)
         win_len = len(target_words)
         if win_len > 0 and len(words) >= win_len:
             for idx in range(min(len(words) - win_len + 1, 4)):
-                window_str = " ".join(words[idx:idx + win_len])
+                win_slice = words[idx:idx + win_len]
+                if is_default_aether and any(w in _COMMON_NON_WAKE_WORDS for w in win_slice):
+                    continue
+                window_str = " ".join(win_slice)
                 ratio = difflib.SequenceMatcher(None, window_str, target).ratio()
-                if ratio >= 0.64:
+                if ratio >= 0.72:
                     remainder = self._extract_remainder_after_word_index(raw, idx + win_len)
                     return True, self._strip_leading_wake_decorators(remainder)
 
         # 2c. Direct leading agent name invocation (e.g., "Aether, start listening" or "Aether what time is it")
         if words:
             first_word = words[0]
-            name_sim = difflib.SequenceMatcher(None, first_word, target_name).ratio()
-            if (
-                first_word == target_name
-                or ("aether" in target and first_word in ("aether", "ether", "ather", "aker", "acre", "arthur", "asher"))
-                or name_sim >= 0.75
-            ):
-                remainder = self._extract_remainder_after_word_index(raw, 1)
-                return True, self._strip_leading_wake_decorators(remainder)
+            if not (is_default_aether and first_word in _COMMON_NON_WAKE_WORDS):
+                name_sim = difflib.SequenceMatcher(None, first_word, target_name).ratio()
+                if (
+                    first_word == target_name
+                    or (is_default_aether and first_word in ("aether", "ether", "ather", "aker", "acre", "arthur", "asher"))
+                    or name_sim >= 0.80
+                ):
+                    remainder = self._extract_remainder_after_word_index(raw, 1)
+                    return True, self._strip_leading_wake_decorators(remainder)
 
         return False, raw
 
@@ -448,32 +565,11 @@ class WakeWordDetector:
         if any(w in start_action_words for w in words) and not any(w in stop_action_words for w in words):
             return False
 
-        sleep_candidates: List[str] = []
-        if target:
-            sleep_candidates.append(target)
-            if "aether" in target:
-                for phonetic in AETHER_PHONETIC_VARIANTS:
-                    sleep_candidates.append(target.replace("aether", phonetic))
+        if target != self._sleep_target_clean:
+            self._compile_sleep_patterns()
 
-        # Standard natural sleep / stop-listening phrases
-        sleep_candidates.extend([
-            "stop listening",
-            "pause listening",
-            "mute listening",
-            "go to sleep",
-            "aether stop listening",
-            "aether go to sleep",
-            "aether standby",
-            "aether sleep",
-        ])
-        for phonetic in ("ether", "ather", "aker", "acre", "arthur", "asher"):
-            sleep_candidates.append(f"{phonetic} stop listening")
-            sleep_candidates.append(f"{phonetic} go to sleep")
-
-        for cand in sleep_candidates:
-            pattern = r"\b" + r"\s+".join(re.escape(w) for w in cand.split()) + r"\b"
-            if re.search(pattern, clean):
-                return True
+        if self._sleep_clean_re is not None and self._sleep_clean_re.search(clean):
+            return True
 
         # Fuzzy sliding window match against target sleep phrase (requires a stop-like action word)
         has_stop_like_word = any(

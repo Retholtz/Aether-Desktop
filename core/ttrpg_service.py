@@ -4651,6 +4651,12 @@ Respond in JSON with schema:
                 return {"status": "error", "message": f"Stat '{stat_key}' not supported on combatant {character_name}."}
 
         target_dict = char_data.get("custom_meters" if is_custom_meter else "vitals", {})
+        if not is_custom_meter and stat_key not in target_dict:
+            sk_low = str(stat_key or "").lower().strip()
+            if sk_low in ("hp", "hit_points", "hitpoints") and "health" in target_dict:
+                stat_key = "health"
+            elif sk_low in ("ac", "defense", "armor_class") and "guard" in target_dict:
+                stat_key = "guard"
         if stat_key not in target_dict:
             return {"status": "error", "message": f"Stat '{stat_key}' not found on {character_name}."}
 
@@ -4660,8 +4666,10 @@ Respond in JSON with schema:
         new_val = max(0, min(max_val, old_val + delta))
         entry["current"] = new_val
 
+        is_health_stat = (not is_custom_meter) and (stat_key in ("health", "hp"))
+
         # Auto-apply Unconscious / Prone condition at 0 HP for characters and manage death saves
-        if stat_key in ("health", "hp"):
+        if is_health_stat:
             conds = char_data.setdefault("conditions", [])
             ds = char_data.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "none"})
             if new_val == 0:
@@ -4689,16 +4697,26 @@ Respond in JSON with schema:
                     conds.remove("Stable")
                 char_data["death_saves"] = {"successes": 0, "failures": 0, "status": "none"}
 
-        # Synchronize with initiative ladder if character is participating in combat
-        status = self.compute_health_status(new_val, max_val, is_player=True, death_saves=char_data.get("death_saves"))
-        for comb in self.active_state.get("initiative_order", []):
-            if comb.get("name", "").lower() == char_data["name"].lower() or comb.get("entity_id") == char_id:
-                comb["current_hp"] = new_val
-                comb["max_hp"] = max_val
-                comb["status"] = status
-                comb["death_saves"] = char_data.get("death_saves")
-                comb["conditions"] = list(char_data.get("conditions", []))
-                break
+            # Synchronize HP/status with initiative ladder ONLY when modifying health (never non-HP meters!)
+            status = self.compute_health_status(new_val, max_val, is_player=True, death_saves=char_data.get("death_saves"))
+            for comb in self.active_state.get("initiative_order", []):
+                if comb.get("name", "").lower() == char_data["name"].lower() or comb.get("entity_id") == char_id:
+                    comb["current_hp"] = new_val
+                    comb["max_hp"] = max_val
+                    comb["status"] = status
+                    comb["death_saves"] = char_data.get("death_saves")
+                    comb["conditions"] = list(char_data.get("conditions", []))
+                    break
+        else:
+            hp_entry = (char_data.get("vitals") or {}).get("health", {})
+            hp_cur = int(hp_entry.get("current", 1))
+            hp_max = int(hp_entry.get("max", max(1, hp_cur)))
+            status = self.compute_health_status(hp_cur, hp_max, is_player=True, death_saves=char_data.get("death_saves"))
+            if not is_custom_meter and stat_key in ("guard", "ac", "defense", "armor_class"):
+                for comb in self.active_state.get("initiative_order", []):
+                    if comb.get("name", "").lower() == char_data["name"].lower() or comb.get("entity_id") == char_id:
+                        comb["armor_class"] = new_val
+                        break
 
         self.save_active_campaign_state()
         return {
@@ -4887,16 +4905,36 @@ Respond in JSON with schema:
                     "message": f"Cannot cast '{spell_name}'! {char['name']} is currently {c} and incapacitated."
                 }
 
-        # 2. Charm check: cannot target charmer with harmful spells
+        # 2. Charm check: cannot target the charmer with harmful spells (do not block spells on allies or other targets)
         if target_name:
             t_clean = target_name.strip().lower()
+            caster_low = str(char.get("name", "")).strip().lower()
+            party_names = {
+                str(pc.get("name", "")).strip().lower()
+                for pc in (self.active_state.get("characters", {}) or {}).values()
+                if isinstance(pc, dict) and pc.get("name")
+            }
             for c in conds:
-                if "charm" in c.lower():
-                    if t_clean in c.lower() or c.strip().lower() == "charmed":
-                        return {
-                            "status": "error",
-                            "message": f"Cannot target {target_name} with '{spell_name}'! {char['name']} is Charmed by {target_name} and cannot target them with harmful abilities or spells."
-                        }
+                c_low = str(c or "").strip().lower()
+                if "charm" in c_low:
+                    # Named charmer e.g. "Charmed (Strahd)" or "Charmed by Strahd" -> block only that charmer
+                    if "(" in c_low or " by " in c_low:
+                        if t_clean and t_clean in c_low:
+                            return {
+                                "status": "error",
+                                "message": f"Cannot target {target_name} with '{spell_name}'! {char['name']} is Charmed by {target_name} and cannot target them with harmful abilities or spells."
+                            }
+                    elif c_low == "charmed":
+                        # Bare "Charmed" with unspecified source: allow self/ally beneficial targeting
+                        sp_low = str(spell_name or "").lower()
+                        is_beneficial = any(
+                            k in sp_low for k in ("heal", "cure", "bless", "aid", "shield", "ward", "restoration", "revivify", "spare", "guidance", "resistance", "sanctuary", "heroism", "haste")
+                        )
+                        if t_clean != caster_low and not (is_beneficial and t_clean in party_names):
+                            return {
+                                "status": "error",
+                                "message": f"Cannot target {target_name} with '{spell_name}'! {char['name']} is Charmed and cannot target their charmer with harmful abilities or spells."
+                            }
 
         # 3. Spatial Proximity check
         if target_name:
@@ -6111,7 +6149,9 @@ Return ONLY valid JSON.
             hp_info = vitals.get("health", {})
             cur_hp = int(hp_info.get("current", 20))
             max_hp = int(hp_info.get("max", 20))
-            status = self.compute_health_status(cur_hp, max_hp)
+            status = self.compute_health_status(
+                cur_hp, max_hp, is_player=True, death_saves=char_data.get("death_saves")
+            )
             ladder.append({
                 "entity_id": char_id,
                 "name": char_data.get("name", name),
@@ -6353,7 +6393,9 @@ Return ONLY valid JSON.
             hp_info = vitals.get("health", {})
             cur_hp = int(hp_info.get("current", 20))
             max_hp = int(hp_info.get("max", 20))
-            status = self.compute_health_status(cur_hp, max_hp)
+            status = self.compute_health_status(
+                cur_hp, max_hp, is_player=True, death_saves=c.get("death_saves")
+            )
             ladder.append({
                 "entity_id": cid,
                 "name": c_name,
@@ -6808,8 +6850,10 @@ Return ONLY valid JSON.
     def _find_character(self, name: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
         if not self._ensure_active_state():
             return None, None
-        chars = self.active_state.get("characters", {})
         clean = (name or "").lower().strip()
+        if not clean:
+            return None, None
+        chars = self.active_state.get("characters", {})
         for c_id, c_data in chars.items():
             if c_data.get("name", "").lower() == clean or c_id.lower() == clean:
                 return c_id, c_data
@@ -6822,8 +6866,10 @@ Return ONLY valid JSON.
         """Finds a combatant entity on the active initiative ladder."""
         if not self._ensure_active_state():
             return None
-        ladder = self.active_state.get("initiative_order", [])
         clean = (name or "").lower().strip()
+        if not clean:
+            return None
+        ladder = self.active_state.get("initiative_order", [])
         # 1. Exact match
         for item in ladder:
             if item.get("name", "").lower() == clean or item.get("entity_id", "").lower() == clean:
@@ -8325,28 +8371,48 @@ Return ONLY valid JSON.
             merged_slots = nat_slots or root_slots
 
             if is_long:
-                hp_obj["current"] = max_hp
-                vitals["temp_hp"] = 0
-                ch["temp_hp"] = 0
-                for s_v in merged_slots.values():
-                    if isinstance(s_v, dict) and "max" in s_v:
-                        s_v["current"] = s_v["max"]
-                if ed == "2024":
-                    hd_meter["current"] = hd_meter["max"]
+                conds_existing = [str(c) for c in (ch.get("conditions") or [])]
+                ds_state = (ch.get("death_saves") or {}).get("status", "none")
+                is_dead = (
+                    str(ds_state).lower() == "dead"
+                    or any(c.strip().lower().startswith("dead") for c in conds_existing)
+                )
+                if is_dead:
+                    notes.append("Deceased (Long Rest cannot revive dead characters)")
                 else:
-                    rec_hd = max(1, int(hd_meter.get("max", 1)) // 2)
-                    hd_meter["current"] = min(int(hd_meter.get("max", 1)), int(hd_meter.get("current", 0)) + rec_hd)
-                for m_k, m_v in meters.items():
-                    if m_k != "hit_dice" and isinstance(m_v, dict) and m_v.get("reset_on") in ("long_rest", "short_rest", "rest"):
-                        m_v["current"] = m_v["max"]
-                ch["conditions"] = [c for c in ch.get("conditions", []) if c == "Attuned"]
-                notes.append("Full Long Rest recovery")
+                    hp_obj["current"] = max_hp
+                    vitals["temp_hp"] = 0
+                    ch["temp_hp"] = 0
+                    if merged_slots.get("pact_max") is not None:
+                        merged_slots["pact_current"] = merged_slots["pact_max"]
+                    for s_v in merged_slots.values():
+                        if isinstance(s_v, dict):
+                            if "max" in s_v:
+                                s_v["current"] = s_v["max"]
+                            if s_v.get("pact_max") is not None:
+                                s_v["pact_current"] = s_v["pact_max"]
+                    if ed == "2024":
+                        hd_meter["current"] = hd_meter["max"]
+                    else:
+                        rec_hd = max(1, int(hd_meter.get("max", 1)) // 2)
+                        hd_meter["current"] = min(int(hd_meter.get("max", 1)), int(hd_meter.get("current", 0)) + rec_hd)
+                    for m_k, m_v in meters.items():
+                        if m_k != "hit_dice" and isinstance(m_v, dict) and m_v.get("reset_on") in ("long_rest", "short_rest", "rest"):
+                            m_v["current"] = m_v["max"]
+                    persistent_prefixes = ("attuned", "dead", "petrified", "cursed", "exhaust")
+                    ch["conditions"] = [
+                        c for c in conds_existing
+                        if any(c.strip().lower().startswith(p) for p in persistent_prefixes)
+                    ]
+                    notes.append("Full Long Rest recovery")
             else:
                 is_pact = bool(native.get("is_pact_magic", False) if native else ch.get("is_pact_magic", False))
                 has_long_slots = any(
                     isinstance(sv, dict) and sv.get("reset_on") == "long_rest" and int(sv.get("max") or 0) > 0
                     for sv in merged_slots.values()
                 )
+                if merged_slots.get("pact_max") is not None:
+                    merged_slots["pact_current"] = merged_slots["pact_max"]
                 for s_v in merged_slots.values():
                     if isinstance(s_v, dict):
                         if s_v.get("pact_max") is not None:
@@ -8902,7 +8968,7 @@ def level_up_dnd_character(char_data: Dict[str, Any], target_level: int) -> Dict
     elif "barbarian" in class_str.lower():
         hit_die = 12
 
-    avg_hp_gain = (hit_die // 2) + 1 + con_mod
+    avg_hp_gain = max(1, (hit_die // 2) + 1 + con_mod)
     levels_gained = target_level - old_level
     hp_entry = char_data.setdefault("vitals", {}).setdefault("health", {"current": 10, "max": 10})
     hp_entry["max"] += (avg_hp_gain * levels_gained)

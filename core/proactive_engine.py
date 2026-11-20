@@ -4,6 +4,7 @@ Evaluates user facts, dates, and interests against notification preferences
 at session startup to synthesize personalized proactive spoken briefings.
 """
 
+import asyncio
 import datetime
 import os
 import random
@@ -16,19 +17,30 @@ from core.user_memory import UserMemory
 logger = get_logger("ProactiveEngine")
 
 
+def _validate_month_day(month: int, day: int) -> Optional[tuple]:
+    """Validates (month, day) against a leap-year calendar (allowing Feb 29, rejecting Feb 30 / month 13)."""
+    try:
+        datetime.date(2024, int(month), int(day))
+        return int(month), int(day)
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_date_event(date_str: str) -> Optional[tuple]:
-    """Extracts (month, day) from various date formats."""
-    s = str(date_str).strip()
+    """Extracts validated (month, day) from various date formats, returning None on invalid dates."""
+    s = str(date_str or "").strip()
+    if not s:
+        return None
     m = re.match(r"^\d{4}[-/](\d{1,2})[-/](\d{1,2})$", s)
     if m:
-        return int(m.group(1)), int(m.group(2))
+        return _validate_month_day(int(m.group(1)), int(m.group(2)))
     m = re.match(r"^(\d{1,2})[-/](\d{1,2})$", s)
     if m:
-        return int(m.group(1)), int(m.group(2))
+        return _validate_month_day(int(m.group(1)), int(m.group(2)))
     for fmt in ["%B %d, %Y", "%b %d, %Y", "%Y-%m-%d"]:
         try:
             dt = datetime.datetime.strptime(s, fmt)
-            return dt.month, dt.day
+            return _validate_month_day(dt.month, dt.day)
         except ValueError:
             pass
     # Handle yearless month-day strings using a leap year (2024) to avoid Python 3.12+ deprecation warnings
@@ -36,7 +48,7 @@ def parse_date_event(date_str: str) -> Optional[tuple]:
     for fmt in ["%B %d %Y", "%b %d %Y"]:
         try:
             dt = datetime.datetime.strptime(f"{s_clean} 2024", fmt)
-            return dt.month, dt.day
+            return _validate_month_day(dt.month, dt.day)
         except ValueError:
             pass
     return None
@@ -44,6 +56,8 @@ def parse_date_event(date_str: str) -> Optional[tuple]:
 
 def days_until_annual_event(month: int, day: int, today: Optional[datetime.date] = None) -> int:
     """Calculates days remaining until the next annual occurrence of a date."""
+    if _validate_month_day(month, day) is None:
+        raise ValueError(f"Invalid annual event date: month={month}, day={day}")
     today = today or datetime.date.today()
     try:
         candidate = datetime.date(today.year, month, day)
@@ -129,11 +143,17 @@ class ProactiveEngine:
                 if active_prov in ("google", "microsoft"):
                     cal_res = oauth_mgr.list_calendar_events(provider=active_prov, days_ahead=1, max_results=3)
                     for ev in cal_res.get("events", []):
+                        ev_id = str(ev.get("id") or "").strip()
                         ev_summary = ev.get("summary") or "Calendar Event"
                         ev_start = ev.get("start") or "today"
+                        dedup_key = f"oauth_calendar:{active_prov}:{ev_id or ev_summary}:{ev_start}"
+                        if self.memory.has_prompt_fired_today(prompt_text=dedup_key):
+                            logger.info(f"[PROACTIVE] Skipping OAuth calendar event '{ev_summary}': already notified today.")
+                            continue
                         candidates.append({
                             "type": "oauth_calendar",
                             "fact_id": None,
+                            "dedup_key": dedup_key,
                             "category": "calendar",
                             "key": ev_summary,
                             "value": ev_start,
@@ -183,7 +203,8 @@ class ProactiveEngine:
         agent_name = agent_name or "Aether"
         user_name = self._resolve_single_user_name(user_name)
 
-        candidates = self.evaluate_candidates()
+        # Offload SQLite + synchronous OAuth HTTP calendar checks off the asyncio event loop
+        candidates = await asyncio.to_thread(self.evaluate_candidates)
         if not candidates:
             return None
 
@@ -220,8 +241,10 @@ class ProactiveEngine:
         if not greeting_text:
             greeting_text = self._generate_fallback_greeting(candidates, agent_name=agent_name, user_name=user_name)
 
-        # Record in prompt_history so it does not repeat today
+        # Record in prompt_history so it does not repeat today (including deterministic OAuth dedup key across restarts)
         self.memory.record_prompt(fact_id=primary.get("fact_id"), prompt_text=greeting_text)
+        if primary.get("dedup_key"):
+            self.memory.record_prompt(fact_id=None, prompt_text=str(primary["dedup_key"]))
         logger.info(f"[PROACTIVE] Briefing generated for {user_name}: '{greeting_text}'")
 
         return {

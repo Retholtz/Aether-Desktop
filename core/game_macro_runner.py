@@ -37,17 +37,17 @@ def evaluate_condition(condition_str: str, state_flags: Dict[str, Any]) -> bool:
 
         if expr.startswith("state."):
             flag_name = expr[len("state."):].strip()
-            # Handle '==' comparison
+            # Handle '==' / '!=' comparison with bool coercion (missing flags default to False)
             if "==" in flag_name:
-                parts = flag_name.split("==")
+                parts = flag_name.split("==", 1)
                 k = parts[0].strip()
                 v = parts[1].strip().lower() in ("true", "1")
-                res = state_flags.get(k) == v
+                res = bool(state_flags.get(k, False)) == v
             elif "!=" in flag_name:
-                parts = flag_name.split("!=")
+                parts = flag_name.split("!=", 1)
                 k = parts[0].strip()
                 v = parts[1].strip().lower() in ("true", "1")
-                res = state_flags.get(k) != v
+                res = bool(state_flags.get(k, False)) != v
             else:
                 res = bool(state_flags.get(flag_name, False))
 
@@ -84,22 +84,25 @@ class MacroRunner:
         clean_phrase = phrase.lower().strip()
         state_flags = telemetry_adapter.get_state_flags() if telemetry_adapter else {}
 
-        # 1. Check for Composite Sequence match
+        # 1. Check for Composite Sequence match (case-insensitive)
         sequences = profile.get("sequences", {})
-        if clean_phrase in sequences:
-            seq_def = sequences[clean_phrase]
+        seq_def = None
+        for seq_name, item in sequences.items():
+            if str(seq_name).lower().strip() == clean_phrase:
+                seq_def = item
+                break
+        if seq_def is not None:
             return self._run_sequence(clean_phrase, seq_def, profile, state_flags)
 
-        # 2. Check for Atomic Keybind/Action match
+        # 2. Check for Atomic Keybind/Action match (case-insensitive names & aliases)
         actions = profile.get("actions", {})
         keybinds = profile.get("keybinds", {})
         action_def = actions.get(clean_phrase) or keybinds.get(clean_phrase)
 
         if not action_def:
-            # Check for partial matches or aliases
             for name, item in {**actions, **keybinds}.items():
                 aliases = item.get("aliases", []) if isinstance(item, dict) else []
-                if clean_phrase == name or clean_phrase in [a.lower() for a in aliases]:
+                if clean_phrase == str(name).lower().strip() or clean_phrase in [str(a).lower().strip() for a in aliases]:
                     action_def = item
                     break
 
@@ -192,6 +195,12 @@ class MacroRunner:
         else:
             return {"status": "error", "message": "Invalid sequence format."}
 
+        # Abort and cleanly join any prior running sequence so keypresses never interleave
+        prev_thread = self._active_sequence_thread
+        if prev_thread is not None and prev_thread.is_alive():
+            self._abort_event.set()
+            prev_thread.join(timeout=0.5)
+
         self._abort_event.clear()
 
         # Run steps synchronously or launch in background if multi-step
@@ -220,7 +229,10 @@ class MacroRunner:
                     btn = step.get("button", "left")
                     os_controls.click_mouse(button=btn)
 
-                time.sleep(delay_ms / 1000.0)
+                if delay_ms and delay_ms > 0:
+                    if self._abort_event.wait(delay_ms / 1000.0):
+                        logger.info(f"Sequence '{name}' aborted during delay.")
+                        break
 
         thread = threading.Thread(target=step_worker, daemon=True, name=f"SeqRunner_{name}")
         thread.start()

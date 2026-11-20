@@ -189,14 +189,22 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
 
             # 4. Death Saving Throw Resolution
             if is_death_save and cdata:
-                d20_roll = res.get("rolls", [10])[0] if res.get("rolls") else res.get("total", 10)
+                if "kept_die" in res:
+                    natural_d20 = int(res["kept_die"])
+                elif res.get("dice_rolled"):
+                    natural_d20 = int(res["dice_rolled"][0])
+                elif res.get("rolls"):
+                    natural_d20 = int(res["rolls"][0])
+                else:
+                    natural_d20 = int(res.get("total", 10))
+                total_save = int(res.get("total", natural_d20))
                 ds = cdata.setdefault("death_saves", {"successes": 0, "failures": 0, "status": "dying"})
                 char_conds = cdata.setdefault("conditions", [])
                 msg = ""
-                if d20_roll == 20:
+                if natural_d20 == 20:
                     service.modify_character_stat(target_char, "health", 1)
                     msg = f"NATURAL 20! {target_char} regains 1 HP, revives, and is no longer unconscious!"
-                elif d20_roll == 1:
+                elif natural_d20 == 1:
                     ds["failures"] = ds.get("failures", 0) + 2
                     if ds["failures"] >= 3:
                         ds["status"] = "dead"
@@ -205,24 +213,24 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
                         msg = f"NATURAL 1! Critical failure! {target_char} suffers 2 death save failures ({ds['failures']}/3) and has DIED."
                     else:
                         msg = f"NATURAL 1! Critical failure! {target_char} suffers 2 death save failures ({ds['failures']}/3)."
-                elif d20_roll >= 10:
+                elif total_save >= 10:
                     ds["successes"] = ds.get("successes", 0) + 1
                     if ds["successes"] >= 3:
                         ds["status"] = "stable"
                         if "Stable" not in char_conds:
                             char_conds.append("Stable")
-                        msg = f"SUCCESS (Roll: {d20_roll})! {target_char} records a death save success ({ds['successes']}/3). STABLE at 0 HP!"
+                        msg = f"SUCCESS (Roll: {total_save})! {target_char} records a death save success ({ds['successes']}/3). STABLE at 0 HP!"
                     else:
-                        msg = f"SUCCESS (Roll: {d20_roll})! {target_char} records a death save success ({ds['successes']}/3)."
+                        msg = f"SUCCESS (Roll: {total_save})! {target_char} records a death save success ({ds['successes']}/3)."
                 else:
                     ds["failures"] = ds.get("failures", 0) + 1
                     if ds["failures"] >= 3:
                         ds["status"] = "dead"
                         if "Dead" not in char_conds:
                             char_conds.append("Dead")
-                        msg = f"FAILURE (Roll: {d20_roll})! {target_char} suffers a death save failure ({ds['failures']}/3) and has DIED."
+                        msg = f"FAILURE (Roll: {total_save})! {target_char} suffers a death save failure ({ds['failures']}/3) and has DIED."
                     else:
-                        msg = f"FAILURE (Roll: {d20_roll})! {target_char} suffers a death save failure ({ds['failures']}/3)."
+                        msg = f"FAILURE (Roll: {total_save})! {target_char} suffers a death save failure ({ds['failures']}/3)."
 
                 service.save_active_campaign_state()
                 res["death_save_result"] = msg
@@ -1326,6 +1334,12 @@ def register_ttrpg_tools(dispatcher, service: TTRPGService, notify_ui_callback=N
 
 
 def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_callback=None):
+    def _emit_modular(event_name: str, payload: Dict[str, Any]):
+        if callable(notify_ui_callback):
+            try:
+                notify_ui_callback(event_name, payload)
+            except Exception:
+                pass
 
     # 1. Pathfinder 2e Spell Adjudication
     async def cast_pathfinder_spell(
@@ -1349,10 +1363,13 @@ def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_c
                 return {"status": "error", "message": f"{character_name} has 0 Focus Points remaining."}
             focus["current"] = current_fp - 1
             service.save_active_campaign_state()
-            return {
+            res = {
                 "status": "success",
                 "message": f"{character_name} cast Focus Spell '{spell_name}'. Focus points: {focus['current']}/{focus['max']}."
             }
+            _emit_modular("ttrpg_state_updated", res)
+            _emit_modular("roster_updated", service.get_campaign_roster())
+            return res
 
         slots = casting.get("spell_slots", {}).get(f"rank_{spell_rank}")
         if not slots:
@@ -1363,10 +1380,13 @@ def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_c
 
         slots["current"] -= 1
         service.save_active_campaign_state()
-        return {
+        res = {
             "status": "success",
             "message": f"{character_name} cast '{spell_name}' (Rank {spell_rank}). Slots remaining: {slots['current']}/{slots['max']}."
         }
+        _emit_modular("ttrpg_state_updated", res)
+        _emit_modular("roster_updated", service.get_campaign_roster())
+        return res
 
     # 2. Call of Cthulhu Occult Spell Adjudication
     async def cast_coc_spell(
@@ -1398,7 +1418,7 @@ def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_c
         san_data["current"] = new_san
 
         service.save_active_campaign_state()
-        return {
+        res = {
             "status": "success",
             "spell_name": spell_name,
             "mp_spent": mp_cost,
@@ -1407,6 +1427,9 @@ def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_c
             "new_sanity": new_san,
             "summary": f"{character_name} completes the rite '{spell_name}'. Spent {mp_cost} MP, lost {san_loss} Sanity ({new_san} SAN remaining)."
         }
+        _emit_modular("ttrpg_state_updated", res)
+        _emit_modular("roster_updated", service.get_campaign_roster())
+        return res
 
     # 3. Cyberpunk RED Damage & Ablation Adjudication
     async def apply_cyberpunk_damage(
@@ -1452,7 +1475,7 @@ def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_c
 
         service.save_active_campaign_state()
 
-        return {
+        res = {
             "status": "penetrated",
             "character_name": character_name,
             "damage_dealt": penetrating_damage,
@@ -1461,6 +1484,9 @@ def register_modular_system_tools(dispatcher, service: TTRPGService, notify_ui_c
             "seriously_wounded": is_seriously_wounded,
             "summary": f"Attack penetrated {character_name}'s {hit_location} armor! Dealt {penetrating_damage} damage ({hp_entry['current']} HP left). Armor ablated to SP {armor_data['sp_current']}."
         }
+        _emit_modular("ttrpg_state_updated", res)
+        _emit_modular("roster_updated", service.get_campaign_roster())
+        return res
 
     # Tool Registrations
     dispatcher.register_tool(
@@ -1771,14 +1797,27 @@ def register_enhanced_rest_tools(dispatcher, service: TTRPGService, notify_ui_ca
             slots = native.get("spell_slots") or char.get("spell_slots", {})
 
             if is_long:
+                conds_existing = [str(c) for c in (char.get("conditions") or [])]
+                ds_state = (char.get("death_saves") or {}).get("status", "none")
+                is_dead = (
+                    str(ds_state).lower() == "dead"
+                    or any(c.strip().lower().startswith("dead") for c in conds_existing)
+                )
+                if is_dead:
+                    healed_reports.append(f"{name}: deceased (Long Rest cannot revive)")
+                    continue
+
                 # 1. Full HP Recovery
                 hp_data["current"] = hp_data["max"]
                 vitals["temp_hp"] = 0
 
-                # 2. Reset All Spell Slots (Standard & Pact)
+                # 2. Reset All Spell Slots (Standard & Warlock Pact)
                 for s_data in slots.values():
-                    if isinstance(s_data, dict) and "max" in s_data:
-                        s_data["current"] = s_data["max"]
+                    if isinstance(s_data, dict):
+                        if "max" in s_data:
+                            s_data["current"] = s_data["max"]
+                        if s_data.get("pact_max") is not None:
+                            s_data["pact_current"] = s_data["pact_max"]
 
                 # 3. Recover 1/2 Max Hit Dice
                 if "hit_dice" in meters:
@@ -1791,8 +1830,12 @@ def register_enhanced_rest_tools(dispatcher, service: TTRPGService, notify_ui_ca
                     if m_k != "hit_dice" and isinstance(m_v, dict) and m_v.get("reset_on") in ("long_rest", "short_rest", "rest"):
                         m_v["current"] = m_v["max"]
 
-                # 5. Clear Non-Attunement Conditions
-                char["conditions"] = [c for c in char.get("conditions", []) if c == "Attuned"]
+                # 5. Clear temporary conditions while preserving persistent states (Attuned, Dead, Petrified, Cursed, Exhaustion)
+                persistent_prefixes = ("attuned", "dead", "petrified", "cursed", "exhaust")
+                char["conditions"] = [
+                    c for c in conds_existing
+                    if any(c.strip().lower().startswith(p) for p in persistent_prefixes)
+                ]
 
             else:
                 # --- SHORT REST EXECUTION ---

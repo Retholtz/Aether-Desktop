@@ -51,6 +51,115 @@ def force_foreground_window(hwnd: int, maximize: bool = False):
         print(f"[HUD] force_foreground_window error: {e}")
 
 
+def _get_overlay_hwnd(window: Optional[webview.Window]) -> Optional[int]:
+    """Safely resolves the native Win32 HWND for the HUD overlay window."""
+    if sys.platform != "win32" or not window:
+        return None
+    try:
+        native = getattr(window, "native", None)
+        if native is not None and hasattr(native, "Handle"):
+            try:
+                hwnd = int(native.Handle.ToInt64())
+                if hwnd:
+                    return hwnd
+            except Exception:
+                pass
+        import win32gui
+        hwnd = win32gui.FindWindow(None, "Aether Overlay")
+        return int(hwnd) if hwnd else None
+    except Exception:
+        return None
+
+
+def _get_dpi_scale_for_window(window: Optional[webview.Window] = None) -> float:
+    """Returns the effective DPI scale factor (e.g. 1.0, 1.25, 1.5, 2.0) for the overlay window or primary display."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            hwnd = _get_overlay_hwnd(window)
+            if hwnd:
+                dpi = ctypes.windll.user32.GetDpiForWindow(int(hwnd))
+                if dpi and dpi >= 96:
+                    return float(dpi) / 96.0
+        except Exception:
+            pass
+    try:
+        monitors = get_monitor_work_areas()
+        primary = next((m for m in monitors if m.get("is_primary")), monitors[0])
+        scale = float(primary.get("scale", 1.0) or 1.0)
+        if scale > 0:
+            return scale
+    except Exception:
+        pass
+    return 1.0
+
+
+def _get_overlay_physical_rect(window: Optional[webview.Window]) -> Optional[tuple[int, int, int, int]]:
+    """Returns (x, y, width, height) of the overlay window in Win32 physical screen pixels."""
+    if sys.platform == "win32" and window is not None:
+        hwnd = _get_overlay_hwnd(window)
+        if hwnd:
+            try:
+                import win32gui
+                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                return (int(left), int(top), max(1, int(right - left)), max(1, int(bottom - top)))
+            except Exception:
+                pass
+    if window is not None:
+        try:
+            x = getattr(window, "x", None)
+            y = getattr(window, "y", None)
+            w = getattr(window, "width", None)
+            h = getattr(window, "height", None)
+            if x is not None and y is not None and w is not None and h is not None:
+                scale = _get_dpi_scale_for_window(window)
+                return (
+                    int(round(x * scale)),
+                    int(round(y * scale)),
+                    max(1, int(round(w * scale))),
+                    max(1, int(round(h * scale))),
+                )
+        except Exception:
+            pass
+    return None
+
+
+def move_overlay_physical(window: Optional[webview.Window], phys_x: int, phys_y: int) -> bool:
+    """
+    Moves the HUD overlay to exact Win32 physical screen coordinates (phys_x, phys_y)
+    without pywebview WinForms double-multiplying by DPI scale.
+    Falls back to DPI-adjusted window.move() when no native HWND exists (e.g. unit tests / non-Windows).
+    """
+    if window is None:
+        return False
+    if sys.platform == "win32":
+        hwnd = _get_overlay_hwnd(window)
+        if hwnd:
+            try:
+                import ctypes
+                SWP_NOSIZE = 0x0001
+                SWP_NOZORDER = 0x0004
+                SWP_NOACTIVATE = 0x0010
+                ctypes.windll.user32.SetWindowPos(
+                    int(hwnd),
+                    0,
+                    int(phys_x),
+                    int(phys_y),
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                )
+                return True
+            except Exception:
+                pass
+    try:
+        scale = _get_dpi_scale_for_window(window)
+        window.move(int(round(phys_x / scale)), int(round(phys_y / scale)))
+        return True
+    except Exception:
+        return False
+
+
 def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
     """
     Applies OS-level window styling for the HUD overlay.
@@ -241,6 +350,8 @@ class HUDBridge:
         self._mini_wide_size = (245, 56)
         self._mini_fps_visible = False
         self._mode_lock = threading.Lock()
+        self._drag_lock = threading.Lock()
+        self._is_native_dragging = False
         self._normal_size = (440, 180)
         self._max_size = (560, 480)
 
@@ -277,10 +388,13 @@ class HUDBridge:
         }
 
     def save_hud_position(self, x: Optional[int] = None, y: Optional[int] = None) -> dict:
-        """Saves current HUD overlay window position to config and disk."""
+        """Saves current HUD overlay window position (physical screen coordinates) to config and disk."""
         try:
             if x is None or y is None:
-                if self._window:
+                rect = _get_overlay_physical_rect(self._window)
+                if rect:
+                    x, y = rect[0], rect[1]
+                elif self._window:
                     x = getattr(self._window, "x", None)
                     y = getattr(self._window, "y", None)
             if x is not None and y is not None:
@@ -302,13 +416,17 @@ class HUDBridge:
                 elif mode == "max":
                     w, h = self._max_size[0], self._max_size[1]
 
-                # Re-clamp position so expanding width/height does not push window off screen
-                cur_x = getattr(self._window, "x", None)
-                cur_y = getattr(self._window, "y", None)
-                if cur_x is not None and cur_y is not None:
-                    cx, cy = clamp_window_position(cur_x, cur_y, width=w, height=h)
+                scale = _get_dpi_scale_for_window(self._window)
+                phys_w = int(round(w * scale))
+                phys_h = int(round(h * scale))
+
+                # Re-clamp position in physical pixels so expanding width/height never pushes window off screen
+                rect = _get_overlay_physical_rect(self._window)
+                if rect:
+                    cur_x, cur_y = rect[0], rect[1]
+                    cx, cy = clamp_window_position(cur_x, cur_y, width=phys_w, height=phys_h)
                     if cx != cur_x or cy != cur_y:
-                        self._window.move(cx, cy)
+                        move_overlay_physical(self._window, cx, cy)
                         self._bridge.save_overlay_position(cx, cy)
 
                 self._window.resize(w, h)
@@ -337,27 +455,40 @@ class HUDBridge:
             if cur_mode == "mini" and self._window:
                 with self._mode_lock:
                     w, h = self._mini_wide_size if new_vis else self._mini_narrow_size
-                    cur_x = getattr(self._window, "x", None)
-                    cur_y = getattr(self._window, "y", None)
-                    if cur_x is not None and cur_y is not None:
-                        cx, cy = clamp_window_position(cur_x, cur_y, width=w, height=h)
+                    scale = _get_dpi_scale_for_window(self._window)
+                    rect = _get_overlay_physical_rect(self._window)
+                    if rect:
+                        cur_x, cur_y = rect[0], rect[1]
+                        cx, cy = clamp_window_position(
+                            cur_x, cur_y,
+                            width=int(round(w * scale)),
+                            height=int(round(h * scale)),
+                        )
                         if cx != cur_x or cy != cur_y:
-                            self._window.move(cx, cy)
+                            move_overlay_physical(self._window, cx, cy)
                     self._window.resize(w, h)
         except Exception as e:
             return {"success": False, "error": str(e)}
         return {"success": True, "visible": new_vis}
 
     def resize_overlay(self, width: int, height: int, x: Optional[int] = None, y: Optional[int] = None) -> dict:
-        """Dynamically resizes (and optionally repositions) the HUD overlay window."""
+        """Dynamically resizes (and optionally repositions in logical px) the HUD overlay window."""
         try:
             if self._window:
                 w = max(100, int(width))
                 h = max(40, int(height))
+                scale = _get_dpi_scale_for_window(self._window)
                 self._window.resize(w, h)
                 if x is not None and y is not None:
-                    self._window.move(int(x), int(y))
-                    self._bridge.save_overlay_position(int(x), int(y))
+                    phys_x = int(round(int(x) * scale))
+                    phys_y = int(round(int(y) * scale))
+                    cx, cy = clamp_window_position(
+                        phys_x, phys_y,
+                        width=int(round(w * scale)),
+                        height=int(round(h * scale)),
+                    )
+                    move_overlay_physical(self._window, cx, cy)
+                    self._bridge.save_overlay_position(cx, cy)
                 cur_mode = self.get_hud_mode().get("mode", "normal")
                 apply_hud_window_shape(self._window, cur_mode)
                 return {"success": True, "width": w, "height": h}
@@ -401,36 +532,94 @@ class HUDBridge:
         return {"success": True}
 
     def start_drag(self) -> dict:
-        """Triggers native OS-level window drag via Win32."""
-        if sys.platform == "win32" and self._window:
+        """
+        Starts a smooth, 120Hz native Win32 physical-coordinate drag loop using
+        GetCursorPos + SetWindowPos while the left mouse button is held.
+        Eliminates WebView2 IPC choppiness, DPI double-scaling, and mouse-capture loss
+        on frameless WS_EX_NOACTIVATE windows across multi-monitor HiDPI setups.
+        """
+        if sys.platform != "win32" or not self._window:
+            return {"success": False, "error": "Not supported on this platform"}
+
+        hwnd = _get_overlay_hwnd(self._window)
+        if not hwnd:
+            return {"success": False, "error": "Overlay HWND not found"}
+
+        with self._drag_lock:
+            if self._is_native_dragging:
+                return {"success": True, "native": True}
+            self._is_native_dragging = True
+
+        def _drag_loop():
+            import ctypes
+            from ctypes import wintypes
+            import win32gui
+
+            user32 = ctypes.windll.user32
+            VK_LBUTTON = 0x01
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            SWP_NOACTIVATE = 0x0010
+            SWP_FLAGS = SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+
+            pt = wintypes.POINT()
             try:
-                import win32gui
-                import win32con
-                hwnd = None
-                if hasattr(self._window, "native") and self._window.native and hasattr(self._window.native, "Handle"):
-                    try:
-                        hwnd = self._window.native.Handle.ToInt64()
-                    except Exception:
-                        hwnd = None
-                if not hwnd:
-                    hwnd = win32gui.FindWindow(None, "Aether Overlay")
-                if hwnd:
-                    win32gui.ReleaseCapture()
-                    win32gui.PostMessage(hwnd, win32con.WM_NCLBUTTONDOWN, win32con.HTCAPTION, 0)
-                return {"success": True}
+                if not user32.GetCursorPos(ctypes.byref(pt)):
+                    return
+                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                offset_x = int(pt.x) - int(left)
+                offset_y = int(pt.y) - int(top)
+                win_w = max(1, int(right - left))
+                win_h = max(1, int(bottom - top))
+                last_x, last_y = int(left), int(top)
+
+                # Follow physical cursor at ~120Hz while left mouse button remains pressed
+                while user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000:
+                    if user32.GetCursorPos(ctypes.byref(pt)):
+                        nx = int(pt.x) - offset_x
+                        ny = int(pt.y) - offset_y
+                        if nx != last_x or ny != last_y:
+                            user32.SetWindowPos(int(hwnd), 0, nx, ny, 0, 0, SWP_FLAGS)
+                            last_x, last_y = nx, ny
+                    time.sleep(0.008)
+
+                # Re-read actual physical size (in case DPI changed across monitors) and clamp cleanly on release
+                try:
+                    fl, ft, fr, fb = win32gui.GetWindowRect(hwnd)
+                    last_x, last_y = int(fl), int(ft)
+                    win_w = max(1, int(fr - fl))
+                    win_h = max(1, int(fb - ft))
+                except Exception:
+                    pass
+
+                cx, cy = clamp_window_position(last_x, last_y, width=win_w, height=win_h)
+                if cx != last_x or cy != last_y:
+                    user32.SetWindowPos(int(hwnd), 0, cx, cy, 0, 0, SWP_FLAGS)
+                self._bridge.save_overlay_position(cx, cy)
             except Exception as e:
-                return {"success": False, "error": str(e)}
-        return {"success": False, "error": "Not supported on this platform"}
+                print(f"[HUD DRAG ERROR] {e}")
+            finally:
+                with self._drag_lock:
+                    self._is_native_dragging = False
+
+        t = threading.Thread(target=_drag_loop, daemon=True, name="HudNativeDrag")
+        t.start()
+        return {"success": True, "native": True}
 
     def move_overlay(self, x: int, y: int) -> dict:
-        """Moves the HUD overlay window to screen coordinates (x, y) with boundary clamping."""
+        """Moves the HUD overlay window to physical screen coordinates (x, y) with boundary clamping."""
         try:
             if self._window:
-                w = getattr(self._window, "width", None) or 440
-                h = getattr(self._window, "height", None) or 180
-                cx, cy = clamp_window_position(x, y, width=w, height=h)
-                self._window.move(cx, cy)
-                return {"success": True}
+                rect = _get_overlay_physical_rect(self._window)
+                if rect:
+                    w, h = rect[2], rect[3]
+                else:
+                    scale = _get_dpi_scale_for_window(self._window)
+                    w = int(round((getattr(self._window, "width", None) or 440) * scale))
+                    h = int(round((getattr(self._window, "height", None) or 180) * scale))
+                cx, cy = clamp_window_position(int(x), int(y), width=w, height=h)
+                move_overlay_physical(self._window, cx, cy)
+                return {"success": True, "x": cx, "y": cy}
         except Exception as e:
             return {"success": False, "error": str(e)}
         return {"success": False, "error": "Window not initialized"}
@@ -564,7 +753,14 @@ class HudWindow:
 
         init_x = cfg_ui.get("overlay_x")
         init_y = cfg_ui.get("overlay_y")
-        cx, cy = clamp_window_position(init_x, init_y, width=init_w, height=init_h)
+        init_scale = _get_dpi_scale_for_window(None)
+        phys_w = int(round(init_w * init_scale))
+        phys_h = int(round(init_h * init_scale))
+        cx, cy = clamp_window_position(init_x, init_y, width=phys_w, height=phys_h)
+
+        # pywebview WinForms multiplies initial x/y by DPI scale internally, so pass logical coords
+        logical_x = int(round(cx / init_scale))
+        logical_y = int(round(cy / init_scale))
 
         overlay_kwargs = {
             "title": "Aether Overlay",
@@ -572,8 +768,8 @@ class HudWindow:
             "js_api": self.hud_bridge,
             "width": init_w,
             "height": init_h,
-            "x": cx,
-            "y": cy,
+            "x": logical_x,
+            "y": logical_y,
             "min_size": (10, 10),
             "frameless": True,
             "on_top": True,
@@ -588,28 +784,46 @@ class HudWindow:
         self.bridge.set_overlay_window(self.overlay_window)
         self.bridge.set_hud_bridge(self.hud_bridge)
 
-        # If clamped position differed from config, persist clamped coordinates
+        # If clamped position differed from config, persist clamped physical coordinates
         if init_x != cx or init_y != cy:
             self.bridge.save_overlay_position(cx, cy)
 
-        # Wire window moved event for debounced position persistence
+        # Wire window moved event for debounced position persistence (physical pixels, never mid-drag)
         self._pos_save_timer = None
         self._last_moved_pos = None
 
         def _save_debounced_pos():
+            if getattr(self.hud_bridge, "_is_native_dragging", False):
+                return
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    # Do not snap/save while left mouse button is still held down
+                    if ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000:
+                        return
+                except Exception:
+                    pass
             if self._last_moved_pos and self.overlay_window:
                 mx, my = self._last_moved_pos
-                cur_x = getattr(self.overlay_window, "x", None)
-                cur_y = getattr(self.overlay_window, "y", None)
-                if cur_x is not None and cur_y is not None and (cur_x != mx or cur_y != my):
-                    self.overlay_window.move(mx, my)
+                rect = _get_overlay_physical_rect(self.overlay_window)
+                if rect and (rect[0] != mx or rect[1] != my):
+                    move_overlay_physical(self.overlay_window, mx, my)
                 self.bridge.save_overlay_position(mx, my)
 
         def _on_overlay_moved(x, y):
+            if getattr(self.hud_bridge, "_is_native_dragging", False):
+                return
             try:
-                w = getattr(self.overlay_window, "width", None) or 440
-                h = getattr(self.overlay_window, "height", None) or 180
-                cx, cy = clamp_window_position(x, y, width=w, height=h)
+                rect = _get_overlay_physical_rect(self.overlay_window)
+                if rect:
+                    px, py, pw, ph = rect
+                else:
+                    scale = _get_dpi_scale_for_window(self.overlay_window)
+                    px = int(round(x * scale))
+                    py = int(round(y * scale))
+                    pw = int(round((getattr(self.overlay_window, "width", None) or 440) * scale))
+                    ph = int(round((getattr(self.overlay_window, "height", None) or 180) * scale))
+                cx, cy = clamp_window_position(px, py, width=pw, height=ph)
                 self._last_moved_pos = (cx, cy)
                 if self._pos_save_timer:
                     self._pos_save_timer.cancel()

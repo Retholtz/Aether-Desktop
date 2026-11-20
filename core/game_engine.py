@@ -57,6 +57,8 @@ class GameEngine:
         "navigate_browser",
         "move_window_to_monitor",
         "focus_window",
+        "tile_windows",
+        "snap_window",
         "close_window",
         "close_application",
         "delegate_moderate_task",
@@ -71,6 +73,7 @@ class GameEngine:
         "trigger_instant_replay",
         "get_current_playing_media",
         "control_media_playback",
+        "play_music",
         "get_hardware_telemetry",
         "roll_dice",
         "modify_character_vitals",
@@ -177,8 +180,11 @@ class GameEngine:
                 skip_llm=True
             )
 
-        # 2. Pause
-        if re.search(r'\b(pause\s+(the\s+)?(music|track|song|media|playback)|pause)\b', clean_voice_cmd):
+        # 2. Pause (anchor standalone 'pause' so sentences like 'pause the game' are not hijacked)
+        if (
+            re.search(r'\b(pause\s+(the\s+)?(music|track|song|media|playback))\b', clean_voice_cmd)
+            or re.fullmatch(r'(?:please\s+)?pause(?:\s+please)?', clean_voice_cmd)
+        ):
             return GameInterceptionResult(
                 handled=True,
                 action_type="media_pause",
@@ -199,8 +205,11 @@ class GameEngine:
                 skip_llm=True
             )
 
-        # 4. Next / Skip
-        if re.search(r'\b(next\s+(song|track)|skip\s+(this\s+)?(song|track)|skip)\b', clean_voice_cmd):
+        # 4. Next / Skip (anchor standalone 'skip' so sentences like "let's skip this quest" are not hijacked)
+        if (
+            re.search(r'\b(next\s+(song|track)|skip\s+(this\s+)?(song|track))\b', clean_voice_cmd)
+            or re.fullmatch(r'(?:please\s+)?skip(?:\s+please)?', clean_voice_cmd)
+        ):
             return GameInterceptionResult(
                 handled=True,
                 action_type="media_next",
@@ -269,15 +278,33 @@ class GameEngine:
             )
 
         # --- Fast-Path: Initiative Turn Advancement ("Next turn" / "Advance initiative") ---
-        if re.search(r'\b(next\s+turn|advance\s+(initiative|combat)|who(\'s|\s+is)\s+up\s+next)\b', clean_voice_cmd):
-            return GameInterceptionResult(
-                handled=True,
-                action_type="ttrpg_advance_turn",
-                user_message="⚔️ Advancing initiative turn...",
-                tts_message=None,
-                requires_context_reset=False,
-                skip_llm=True
-            )
+        # Gate ambiguous "next turn" / "who's up next" on active TTRPG combat when ttrpg_service is attached
+        explicit_init_cmd = bool(re.search(r'\badvance\s+(initiative|combat)\b', clean_voice_cmd))
+        turn_advance_cmd = explicit_init_cmd or bool(re.search(r'\b(next\s+turn|who(\'s|\s+is)\s+up\s+next)\b', clean_voice_cmd))
+        if turn_advance_cmd:
+            ttrpg_svc = getattr(self.engine, "ttrpg_service", None) if self.engine is not None else None
+            combat_active = True
+            if ttrpg_svc is not None:
+                active_state = getattr(ttrpg_svc, "active_state", None)
+                if active_state is None and hasattr(ttrpg_svc, "get_active_state"):
+                    try:
+                        active_state = ttrpg_svc.get_active_state()
+                    except Exception:
+                        active_state = None
+                active_state = active_state or {}
+                combat_active = bool(
+                    (active_state.get("combat") or {}).get("active", False)
+                    or active_state.get("initiative_order")
+                )
+            if explicit_init_cmd or combat_active:
+                return GameInterceptionResult(
+                    handled=True,
+                    action_type="ttrpg_advance_turn",
+                    user_message="⚔️ Advancing initiative turn...",
+                    tts_message=None,
+                    requires_context_reset=False,
+                    skip_llm=True
+                )
 
         # 1. Mode Toggle: Disable Game Mode (ignore questions like "why did you exit game mode" or "re-enable")
         if (

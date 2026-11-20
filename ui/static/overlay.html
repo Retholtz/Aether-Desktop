@@ -1392,9 +1392,10 @@
       }
 
       // =========================================================================
-      // Window Dragging & Movement Logic
+      // Window Dragging & Movement Logic (120Hz Native Win32 Drag + Clean Fallback)
       // =========================================================================
       let isDragging = false;
+      let nativeDragActive = false;
       let dragStartX = 0;
       let dragStartY = 0;
       let dragStartScreenX = 0;
@@ -1416,6 +1417,7 @@
         }
 
         isDragging = true;
+        nativeDragActive = false;
         hasMovedDuringDrag = false;
         dragStartX = e.clientX;
         dragStartY = e.clientY;
@@ -1431,14 +1433,28 @@
       let pendingDragCoords = null;
 
       function onDragMouseMove(e) {
-        if (!isDragging) return;
+        if (!isDragging || nativeDragActive) return;
         const dx = Math.abs(e.screenX - dragStartScreenX);
         const dy = Math.abs(e.screenY - dragStartScreenY);
-        if (dx > 3 || dy > 3) {
-          hasMovedDuringDrag = true;
-          suppressNextClick = true;
+        if (dx <= 3 && dy <= 3) return;
+
+        hasMovedDuringDrag = true;
+        suppressNextClick = true;
+
+        // Hand off immediately to native 120Hz Win32 physical-coordinate drag (zero IPC choppiness!)
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+          nativeDragActive = true;
+          window.pywebview.api.start_drag().then((res) => {
+            if (!res || !res.success) {
+              nativeDragActive = false;
+            }
+          }).catch(() => {
+            nativeDragActive = false;
+          });
+          return;
         }
 
+        // Non-Windows fallback: convert logical CSS coords -> physical screen coords once
         const scale = window.devicePixelRatio || 1;
         const newX = Math.round((e.screenX - dragStartX) * scale);
         const newY = Math.round((e.screenY - dragStartY) * scale);
@@ -1447,7 +1463,7 @@
         if (!dragRafId) {
           dragRafId = requestAnimationFrame(() => {
             dragRafId = null;
-            if (!isDragging || !pendingDragCoords) return;
+            if (!isDragging || nativeDragActive || !pendingDragCoords) return;
             const [px, py] = pendingDragCoords;
             pendingDragCoords = null;
             if (window.pywebview && window.pywebview.api && window.pywebview.api.move_overlay) {
@@ -1459,7 +1475,9 @@
 
       function onDragMouseUp(e) {
         if (isDragging) {
+          const usedNativeDrag = nativeDragActive;
           isDragging = false;
+          nativeDragActive = false;
           if (dragRafId) {
             cancelAnimationFrame(dragRafId);
             dragRafId = null;
@@ -1477,7 +1495,8 @@
               hasMovedDuringDrag = false;
             }, 300);
 
-            if (window.pywebview && window.pywebview.api && window.pywebview.api.save_hud_position) {
+            // Native Win32 drag loop clamps & persists position automatically on mouse release
+            if (!usedNativeDrag && window.pywebview && window.pywebview.api && window.pywebview.api.save_hud_position) {
               window.pywebview.api.save_hud_position();
             }
           }
@@ -1485,6 +1504,7 @@
       }
 
       overlayCard.addEventListener("mousedown", onDragMouseDown);
+      window.addEventListener("blur", onDragMouseUp);
 
       // =========================================================================
       // 8-Directional Window Resizing & Scaling (Normal & Max Modes)

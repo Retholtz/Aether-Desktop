@@ -481,7 +481,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def pan_game_map(direction: str, distance: int = 350) -> dict:
-        from core.game_nav import UniversalGameNavigator as GameNavigator
+        from core.game_nav import GameNavigator
         client = (
             getattr(engine, "genai_client", None)
             or getattr(engine, "client", None)
@@ -601,7 +601,13 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def search_and_route_destination(destination_name: str) -> dict:
-        from core.game_nav import UniversalGameNavigator
+        from core.game_nav import GameNavigator
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        model_endpoint = _resolve_tier2_game_model(engine)
         target_process = ""
         map_controls = None
         if game_manager:
@@ -610,7 +616,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             if prof:
                 target_process = prof.get("process_name") or prof.get("display_name") or ""
                 map_controls = prof.get("map_controls")
-        nav = UniversalGameNavigator(target_process=target_process, map_controls=map_controls)
+        nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
         return nav.search_and_route_destination(destination_name=destination_name)
 
     @dispatcher.register(

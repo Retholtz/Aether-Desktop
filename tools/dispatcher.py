@@ -1646,14 +1646,14 @@ class ToolDispatcher:
         # 1. Focus application window if specified
         if app_name:
             focus_window(app_name)
-            await asyncio.sleep(0.12)
+            await asyncio.sleep(0.15)
 
-        # 2. Capture crisp snapshot (1024 max_dim provides clear text while keeping latency fast)
-        jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target="auto", max_dim=1024, quality=75)
-        mon_rect = meta.get("monitor_rect", {"left": 0, "top": 0, "width": 2560, "height": 1600})
+        # 2. Capture crisp snapshot (1280 max_dim improves small UI icon grounding while staying fast)
+        jpeg_bytes, meta = await self.screen_pipeline.capture_frame(target="auto", max_dim=1280, quality=80)
+        captured_monitor = meta.get("monitor_index", "auto")
 
-        # 3. Determine visual grounding model from Tier 2 Settings config
-        from core.model_discovery import get_configured_tier2_model
+        # 3. Determine visual grounding model from Tier 2 Settings config with low-latency thinking
+        from core.model_discovery import build_thinking_config, get_configured_tier2_model
         cfg = self.config_getter() if self.config_getter else {}
         grounding_model, _ = get_configured_tier2_model(cfg)
 
@@ -1667,21 +1667,52 @@ class ToolDispatcher:
             client = genai.Client(api_key=api_key)
 
         prompt = (
-            f"Locate the 2D bounding box of: '{clean_target}'.\n"
-            "Return a JSON list with 'box_2d' in [ymin, xmin, ymax, xmax] normalized from 0 to 1000 "
-            "relative to the image boundaries (0 is top/left, 1000 is bottom/right).\n"
+            f"Locate the exact clickable UI element matching: '{clean_target}'.\n"
+            "Target the clickable button, icon, thumbnail, or link itself (not surrounding whitespace).\n"
+            "Return ONLY a JSON list with 'box_2d' in [ymin, xmin, ymax, xmax] normalized from 0 to 1000 "
+            "relative to the image boundaries (0 is top/left, 1000 is bottom/right). "
+            "If the element is not visible on screen, return [].\n"
             "Format: [{\"box_2d\": [ymin, xmin, ymax, xmax], \"label\": \"description\"}]"
         )
 
+        # Cap thinking to low/0 and temperature=0.0 so visual grounding finishes in ~1-2s instead of 8-16s
+        fast_cfg_kwargs = {
+            "temperature": 0.0,
+            "max_output_tokens": 256,
+            "response_mime_type": "application/json",
+        }
         try:
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=grounding_model,
-                contents=[
-                    types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
-                    prompt
-                ]
+            fast_cfg_kwargs["thinking_config"] = build_thinking_config(
+                grounding_model,
+                thinking_level="low",
+                thinking_budget=0,
             )
+        except Exception:
+            pass
+
+        try:
+            try:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=grounding_model,
+                    contents=[
+                        types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
+                        prompt
+                    ],
+                    config=types.GenerateContentConfig(**fast_cfg_kwargs),
+                )
+            except Exception as cfg_err:
+                if "thinking" in str(cfg_err).lower() or "mime" in str(cfg_err).lower():
+                    response = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=grounding_model,
+                        contents=[
+                            types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
+                            prompt
+                        ],
+                    )
+                else:
+                    raise
             resp_text = response.text or ""
         except Exception as e:
             return {"status": "error", "message": f"Visual grounding failed with {grounding_model}: {e}"}
@@ -1702,13 +1733,13 @@ class ToolDispatcher:
         center_x_norm = (xmin + xmax) / 2.0
         center_y_norm = (ymin + ymax) / 2.0
 
-        # 6. Click at center coordinates
+        # 6. Click at center coordinates on the exact captured monitor
         click_res = self.gui_controller.click(
             x=center_x_norm,
             y=center_y_norm,
             button=button,
             clicks=clicks,
-            monitor="auto",
+            monitor=captured_monitor,
             normalized=True,
             app_name=app_name,
             window_relative=False

@@ -59,7 +59,10 @@ class AmdAdlBackend:
 
         try:
             ADL_MALLOC_CALLBACK = ctypes.WINFUNCTYPE(ctypes.c_void_p, ctypes.c_int)
-            self._malloc_cb = ADL_MALLOC_CALLBACK(ctypes.cdll.msvcrt.malloc)
+            msvcrt = ctypes.cdll.msvcrt
+            msvcrt.malloc.argtypes = [ctypes.c_size_t]
+            msvcrt.malloc.restype = ctypes.c_void_p
+            self._malloc_cb = ADL_MALLOC_CALLBACK(msvcrt.malloc)
             create_fn = getattr(self._dll, "ADL_Main_Control_Create", None)
             if not create_fn or create_fn(self._malloc_cb, 1) != 0:
                 return
@@ -486,7 +489,12 @@ class CpuMonitorBackend:
             import pythoncom
             import win32com.client
 
-            pythoncom.CoInitialize()
+            if not getattr(self._tls, "com_initialized", False):
+                try:
+                    pythoncom.CoInitialize()
+                except Exception:
+                    pass
+                self._tls.com_initialized = True
             wmi_root = getattr(self._tls, "wmi_root", None)
             if wmi_root is None:
                 locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
@@ -682,6 +690,7 @@ class HardwareService:
         self._presentmon_thread: Optional[threading.Thread] = None
         self._presentmon_stop_event = threading.Event()
         self._sync_lock = threading.Lock()
+        self._frame_lock = threading.Lock()
         self._monitored_process_name: Optional[str] = None
         self._frame_times: deque = deque(maxlen=120)  # Stores msBetweenPresents
         self._lock = asyncio.Lock()
@@ -853,7 +862,7 @@ class HardwareService:
                 proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     text=True,
                     bufsize=1,
                     encoding="utf-8",
@@ -943,7 +952,8 @@ class HardwareService:
                     try:
                         ms_val = float(parts[ms_col_idx])
                         if 0.1 < ms_val < 1000.0:
-                            self._frame_times.append(ms_val)
+                            with self._frame_lock:
+                                self._frame_times.append(ms_val)
                             if logged_first_frame_for != target:
                                 logged_first_frame_for = target
                                 logger.info(
@@ -990,7 +1000,7 @@ class HardwareService:
                     self._presentmon_proc = await asyncio.create_subprocess_exec(
                         *cmd,
                         stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
+                        stderr=asyncio.subprocess.DEVNULL
                     )
                     self._presentmon_task = asyncio.create_task(self._read_presentmon_stream())
                     logger.info(f"[HARDWARE] PresentMon ETW tracing started for {process_name} (PID: {self._presentmon_proc.pid}).")
@@ -1064,7 +1074,8 @@ class HardwareService:
                     try:
                         ms_val = float(parts[ms_col_idx])
                         if ms_val > 0.0:
-                            self._frame_times.append(ms_val)
+                            with self._frame_lock:
+                                self._frame_times.append(ms_val)
                     except ValueError:
                         pass
         except asyncio.CancelledError:
@@ -1214,8 +1225,9 @@ class HardwareService:
                 logger.warning(f"[HARDWARE] Error polling Windows DXGI/PDH GPU provider: {e}")
 
         # Compute Framerate from Rolling Deque
-        if self._frame_times and len(self._frame_times) >= 2:
-            frames = list(self._frame_times)
+        with self._frame_lock:
+            frames = list(self._frame_times) if self._frame_times else []
+        if len(frames) >= 2:
             avg_ms = sum(frames) / len(frames)
             snap.fps_avg = int(1000.0 / avg_ms) if avg_ms > 0 else None
 
@@ -1243,8 +1255,9 @@ class HardwareService:
             "fps_1pct_low": None,
             "active_game_process": self._monitored_process_name
         }
-        if self._frame_times and len(self._frame_times) >= 2:
-            frames = list(self._frame_times)
+        with self._frame_lock:
+            frames = list(self._frame_times) if self._frame_times else []
+        if len(frames) >= 2:
             avg_ms = sum(frames) / len(frames)
             res["fps_avg"] = int(1000.0 / avg_ms) if avg_ms > 0 else None
             last_ms = frames[-1]
@@ -1311,7 +1324,7 @@ class HardwareService:
                     self._consecutive_breaches = {"cpu_temp": 0, "gpu_temp": 0, "vram": 0}
                     continue
 
-                snap = self.get_snapshot()
+                snap = await asyncio.to_thread(self.get_snapshot)
                 now = time.time()
                 triggered: List[Tuple[str, str]] = []
 

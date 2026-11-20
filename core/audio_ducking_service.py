@@ -6,6 +6,7 @@ Includes fail-safe volume cleanup on normal shutdown, unhandled exceptions, and 
 import os
 import atexit
 import asyncio
+import threading
 from contextlib import asynccontextmanager, contextmanager
 from typing import Dict, Any, Optional, Callable, Set
 from core.logger import get_logger
@@ -71,7 +72,9 @@ class AudioDuckingService:
         self.own_pid = os.getpid()
 
         self._is_ducked: bool = False
-        self._original_volumes: Dict[int, float] = {}  # session_pid -> pre-duck volume level
+        self._original_volumes: Dict[int, float] = {}  # session_pid -> pre-duck volume level (back-compat)
+        self._session_volumes: Dict[Any, float] = {}   # (pid, instance_id) -> pre-duck volume level
+        self._sync_lock = threading.RLock()
         self._lock = asyncio.Lock()
         self._unduck_gen: int = 0
 
@@ -106,13 +109,27 @@ class AudioDuckingService:
     def _com_apartment(self):
         """
         Context manager ensuring COM apartment is initialized on the calling/worker thread
-        and properly uninitialized on block exit.
+        (preferring MTA to match worker threads & .NET CLR, safely tolerating RPC_E_CHANGED_MODE)
+        and properly uninitialized on block exit only when this scope initialized it.
         """
         initialized = False
         try:
             if comtypes:
-                comtypes.CoInitialize()
-                initialized = True
+                if hasattr(comtypes, "CoInitializeEx") and hasattr(comtypes, "COINIT_MULTITHREADED"):
+                    comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+                    initialized = True
+                else:
+                    comtypes.CoInitialize()
+                    initialized = True
+        except OSError as exc:
+            # RPC_E_CHANGED_MODE (-2147417850) means COM is already initialized in another apartment
+            if getattr(exc, "winerror", None) != -2147417850 and "Cannot change thread mode" not in str(exc):
+                try:
+                    if comtypes:
+                        comtypes.CoInitialize()
+                        initialized = True
+                except Exception:
+                    pass
         except Exception:
             pass
         try:
@@ -124,6 +141,17 @@ class AudioDuckingService:
                         comtypes.CoUninitialize()
                 except Exception:
                     pass
+
+    @staticmethod
+    def _get_session_key(session: Any, pid: int) -> Any:
+        """Builds a unique key per audio session (disambiguates multi-session browsers sharing a PID)."""
+        try:
+            inst_id = getattr(session, "InstanceIdentifier", None)
+            if isinstance(inst_id, str) and inst_id:
+                return (pid, inst_id)
+        except Exception:
+            pass
+        return pid
 
     def update_settings(self, enabled: Optional[bool] = None, duck_percentage: Optional[int] = None):
         if enabled is not None:
@@ -142,77 +170,80 @@ class AudioDuckingService:
         if not self.enabled or not self.is_supported():
             return
 
-        if self._is_ducked:
-            return  # Prevent compounding attenuation; keep original volume baseline
+        with self._sync_lock:
+            if self._is_ducked:
+                return  # Prevent compounding attenuation; keep original volume baseline
 
-        with self._com_apartment():
-            exclude = set(exclude_pids or ())
-            exclude.add(self.own_pid)
+            with self._com_apartment():
+                exclude = set(exclude_pids or ())
+                exclude.add(self.own_pid)
 
-            try:
-                sessions = AudioUtilities.GetAllSessions()
-                attenuation_factor = (100.0 - self.duck_percentage) / 100.0
-                ducked_count = 0
-                ducked_names = []
+                try:
+                    sessions = AudioUtilities.GetAllSessions()
+                    attenuation_factor = (100.0 - self.duck_percentage) / 100.0
+                    ducked_count = 0
+                    ducked_names = []
 
-                for session in sessions:
-                    try:
-                        if not session.Process:
-                            continue
-
-                        pid = session.Process.pid
-                        proc_name = ""
+                    for session in sessions:
                         try:
-                            proc_name = session.Process.name().lower()
-                        except Exception:
-                            pass
+                            if not session.Process:
+                                continue
 
-                        # Always keep Aether's own audio output at 100% and unmuted
-                        if not pid or pid in exclude or proc_name in self.SYSTEM_EXCLUSIONS or "python" in proc_name or "aether" in proc_name:
-                            if pid == self.own_pid or "python" in proc_name or "aether" in proc_name:
-                                try:
-                                    own_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
-                                    if own_ctl:
-                                        if own_ctl.GetMasterVolume() < 0.99:
-                                            own_ctl.SetMasterVolume(1.0, None)
-                                        if hasattr(own_ctl, "GetMute") and own_ctl.GetMute():
-                                            own_ctl.SetMute(0, None)
-                                except Exception:
-                                    pass
-                            continue
+                            pid = session.Process.pid
+                            proc_name = ""
+                            try:
+                                proc_name = session.Process.name().lower()
+                            except Exception:
+                                pass
 
-                        volume_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
-                        if not volume_ctl:
-                            continue
+                            # Keep Aether's own PID at 100% and unmuted; skip system exclusions without
+                            # forcibly overriding volume of unrelated Python processes.
+                            if not pid or pid in exclude or proc_name in self.SYSTEM_EXCLUSIONS or "aether" in proc_name:
+                                if pid == self.own_pid:
+                                    try:
+                                        own_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
+                                        if own_ctl:
+                                            if own_ctl.GetMasterVolume() < 0.99:
+                                                own_ctl.SetMasterVolume(1.0, None)
+                                            if hasattr(own_ctl, "GetMute") and own_ctl.GetMute():
+                                                own_ctl.SetMute(0, None)
+                                    except Exception:
+                                        pass
+                                continue
 
-                        current_vol = volume_ctl.GetMasterVolume()
+                            volume_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
+                            if not volume_ctl:
+                                continue
 
-                        # Cache original baseline volume (never overwrite while ducked)
-                        if pid not in self._original_volumes:
-                            # Safeguard: if an application volume was left severely attenuated (<= 5%) from an
-                            # ungraceful shutdown, baseline it to 100% instead of locking in the degraded state.
-                            if current_vol <= 0.05:
-                                self._original_volumes[pid] = 1.0
-                            else:
-                                self._original_volumes[pid] = current_vol
+                            current_vol = volume_ctl.GetMasterVolume()
+                            skey = self._get_session_key(session, pid)
 
-                        original_vol = self._original_volumes[pid]
-                        target_vol = max(0.0, min(1.0, original_vol * attenuation_factor))
+                            # Cache original baseline volume (never overwrite while ducked)
+                            if skey not in self._session_volumes:
+                                # Safeguard: if an application volume was left severely attenuated (<= 5%) from an
+                                # ungraceful shutdown, baseline it to 100% instead of locking in the degraded state.
+                                base_vol = 1.0 if current_vol <= 0.05 else current_vol
+                                self._session_volumes[skey] = base_vol
+                                if pid not in self._original_volumes:
+                                    self._original_volumes[pid] = base_vol
 
-                        # Idempotent: only apply if master volume differs noticeably (> 1%)
-                        if abs(current_vol - target_vol) > 0.01:
-                            volume_ctl.SetMasterVolume(target_vol, None)
-                            ducked_count += 1
-                            ducked_names.append(proc_name or str(pid))
-                    except Exception as e_session:
-                        logger.debug(f"[DUCKING] Skipped session due to error: {e_session}")
+                            original_vol = self._session_volumes[skey]
+                            target_vol = max(0.0, min(1.0, original_vol * attenuation_factor))
 
-                self._is_ducked = True
-                if ducked_count > 0:
-                    logger.info(f"[DUCKING] Ducked {ducked_count} active audio sessions by {self.duck_percentage}%: {ducked_names}")
-            except Exception as e:
-                logger.error(f"[DUCKING] Failed to duck sessions: {e}. Attempting rollback.")
-                self.restore_all()
+                            # Idempotent: only apply if master volume differs noticeably (> 1%)
+                            if abs(current_vol - target_vol) > 0.01:
+                                volume_ctl.SetMasterVolume(target_vol, None)
+                                ducked_count += 1
+                                ducked_names.append(proc_name or str(pid))
+                        except Exception as e_session:
+                            logger.debug(f"[DUCKING] Skipped session due to error: {e_session}")
+
+                    self._is_ducked = True
+                    if ducked_count > 0:
+                        logger.info(f"[DUCKING] Ducked {ducked_count} active audio sessions by {self.duck_percentage}%: {ducked_names}")
+                except Exception as e:
+                    logger.error(f"[DUCKING] Failed to duck sessions: {e}. Attempting rollback.")
+                    self.restore_all()
 
     def restore_all(self) -> None:
         """
@@ -222,36 +253,46 @@ class AudioDuckingService:
         if not self.is_supported():
             return
 
-        if not self._original_volumes and not self._is_ducked:
-            return  # Nothing to restore
+        with self._sync_lock:
+            if not self._original_volumes and not self._session_volumes and not self._is_ducked:
+                return  # Nothing to restore
 
-        with self._com_apartment():
-            restored_count = 0
+            with self._com_apartment():
+                restored_count = 0
 
-            try:
-                sessions = AudioUtilities.GetAllSessions()
-                for session in sessions:
-                    try:
-                        if not session.Process:
-                            continue
+                try:
+                    sessions = AudioUtilities.GetAllSessions()
+                    for session in sessions:
+                        try:
+                            if not session.Process:
+                                continue
 
-                        pid = session.Process.pid
-                        if pid and pid in self._original_volumes:
-                            original_vol = self._original_volumes[pid]
+                            pid = session.Process.pid
+                            if not pid:
+                                continue
+                            skey = self._get_session_key(session, pid)
+                            if skey in self._session_volumes:
+                                original_vol = self._session_volumes[skey]
+                            elif pid in self._original_volumes:
+                                original_vol = self._original_volumes[pid]
+                            else:
+                                continue
+
                             volume_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
                             if volume_ctl:
                                 volume_ctl.SetMasterVolume(original_vol, None)
                                 restored_count += 1
-                    except Exception as e_session:
-                        logger.debug(f"[DUCKING] Skipped session restore due to error: {e_session}")
+                        except Exception as e_session:
+                            logger.debug(f"[DUCKING] Skipped session restore due to error: {e_session}")
 
-                if restored_count > 0:
-                    logger.info(f"[DUCKING] Restored {restored_count} audio sessions to baseline.")
-            except Exception as e:
-                logger.error(f"[DUCKING] Failed during session volume restoration: {e}")
-            finally:
-                self._original_volumes.clear()
-                self._is_ducked = False
+                    if restored_count > 0:
+                        logger.info(f"[DUCKING] Restored {restored_count} audio sessions to baseline.")
+                except Exception as e:
+                    logger.error(f"[DUCKING] Failed during session volume restoration: {e}")
+                finally:
+                    self._session_volumes.clear()
+                    self._original_volumes.clear()
+                    self._is_ducked = False
 
     # Backwards compatibility alias for restore_all
     restore_volumes_sync = restore_all

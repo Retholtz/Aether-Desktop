@@ -6,8 +6,9 @@ and routes one-shot audio transcription to a valid multimodal Flash model.
 
 import os
 import asyncio
+import collections
 import logging
-from typing import Optional, Any, Callable, List
+from typing import Optional, Any, Callable, Deque, List
 from google import genai
 from google.genai import types
 from core.config_manager import load_config, unprotect_secret
@@ -150,6 +151,20 @@ def transcribe_audio_buffer(audio_bytes: bytes, mime_type: str = "audio/wav", st
         raise
 
 
+class _LiveSTTTurnBuffer:
+    """Isolated per-turn transcript & completion state so Turn 2 audio never races Turn 1 completion."""
+
+    def __init__(self) -> None:
+        self.final_parts: List[str] = []
+        self.interim_text: str = ""
+        self.has_streamed_audio: bool = False
+        self.done_event = asyncio.Event()
+
+    def get_text(self) -> Optional[str]:
+        text = " ".join(self.final_parts).strip() or self.interim_text.strip()
+        return text or None
+
+
 class ModularLiveSTTClient:
     """
     Persistent bidirectional WebSocket STT streamer for Modular Pipeline using
@@ -166,23 +181,52 @@ class ModularLiveSTTClient:
         self._recv_task: Optional[asyncio.Task] = None
         self._connect_lock = asyncio.Lock()
 
-        self._final_parts: List[str] = []
-        self._interim_text: str = ""
-        self._has_streamed_audio: bool = False
-        self._turn_done_event = asyncio.Event()
+        self._active_turn = _LiveSTTTurnBuffer()
+        self._pending_recv_turns: Deque[_LiveSTTTurnBuffer] = collections.deque()
+        self._pending_finish_turns: Deque[_LiveSTTTurnBuffer] = collections.deque()
         self._end_sent_event = asyncio.Event()
         self._closed: bool = False
+
+    @property
+    def _final_parts(self) -> List[str]:
+        return self._active_turn.final_parts
+
+    @property
+    def _interim_text(self) -> str:
+        return self._active_turn.interim_text
+
+    @_interim_text.setter
+    def _interim_text(self, value: str) -> None:
+        self._active_turn.interim_text = value
+
+    @property
+    def _has_streamed_audio(self) -> bool:
+        return self._active_turn.has_streamed_audio
+
+    @_has_streamed_audio.setter
+    def _has_streamed_audio(self, value: bool) -> None:
+        self._active_turn.has_streamed_audio = value
+
+    @property
+    def _turn_done_event(self) -> asyncio.Event:
+        return self._active_turn.done_event
 
     @property
     def is_connected(self) -> bool:
         return self._session is not None and not self._closed
 
     def _reset_turn_buffers(self) -> None:
-        self._final_parts.clear()
-        self._interim_text = ""
-        self._has_streamed_audio = False
-        self._turn_done_event.clear()
+        self._active_turn = _LiveSTTTurnBuffer()
+        self._pending_recv_turns.clear()
+        self._pending_finish_turns.clear()
         self._end_sent_event.clear()
+
+    def _signal_all_pending_done(self) -> None:
+        self._active_turn.done_event.set()
+        for t in list(self._pending_recv_turns):
+            t.done_event.set()
+        for t in list(self._pending_finish_turns):
+            t.done_event.set()
 
     async def ensure_connected(self) -> bool:
         """Connects (or reuses) the persistent gemini-3.5-transcribe-live WebSocket."""
@@ -201,7 +245,7 @@ class ModularLiveSTTClient:
                 self._ctx = ctx
                 self._session = session
                 self._reset_turn_buffers()
-                self._recv_task = asyncio.create_task(self._receive_loop(session))
+                self._recv_task = asyncio.create_task(self._receive_loop(session, ctx))
                 logger.info(f"[STT LIVE] Connected persistent WebSocket session ({self.model})")
                 return True
             except Exception as err:
@@ -217,7 +261,7 @@ class ModularLiveSTTClient:
         ctx = self._ctx
         self._ctx = None
         self._session = None
-        self._turn_done_event.set()
+        self._signal_all_pending_done()
         self._end_sent_event.set()
         if ctx is not None:
             try:
@@ -229,30 +273,48 @@ class ModularLiveSTTClient:
         self._closed = True
         await self._drop_connection()
 
-    async def _receive_loop(self, session: Any) -> None:
+    async def _receive_loop(self, session: Any, ctx: Any = None) -> None:
         try:
             async for resp in session.receive():
                 sc = getattr(resp, "server_content", None)
                 if not sc:
                     continue
+                target_turn = self._pending_recv_turns[0] if self._pending_recv_turns else self._active_turn
                 interim = getattr(sc, "interim_input_transcription", None)
                 if interim and getattr(interim, "text", None):
-                    self._interim_text = str(interim.text).strip()
+                    target_turn.interim_text = str(interim.text).strip()
                 final = getattr(sc, "input_transcription", None)
                 if final and getattr(final, "text", None):
                     part_txt = str(final.text).strip()
                     if part_txt:
-                        self._final_parts.append(part_txt)
+                        target_turn.final_parts.append(part_txt)
                 if getattr(sc, "generation_complete", False):
-                    self._turn_done_event.set()
+                    if self._pending_recv_turns:
+                        completed = self._pending_recv_turns.popleft()
+                        completed.done_event.set()
+                    else:
+                        target_turn.done_event.set()
         except asyncio.CancelledError:
             pass
         except Exception as err:
             logger.debug(f"[STT LIVE] Receive loop ended: {err}")
         finally:
+            ctx_to_close = None
             if self._session is session:
                 self._session = None
-                self._turn_done_event.set()
+                if self._ctx is not None:
+                    ctx_to_close = self._ctx
+                    self._ctx = None
+                self._signal_all_pending_done()
+                self._end_sent_event.set()
+            elif ctx is not None and self._ctx is ctx:
+                ctx_to_close = ctx
+                self._ctx = None
+            if ctx_to_close is not None:
+                try:
+                    await ctx_to_close.__aexit__(None, None, None)
+                except Exception:
+                    pass
 
     async def send_pcm(self, pcm_bytes: bytes) -> bool:
         """Streams a raw 16kHz 16-bit PCM frame into the active live STT session."""
@@ -264,7 +326,7 @@ class ModularLiveSTTClient:
             await self._session.send_realtime_input(
                 audio=types.Blob(data=pcm_bytes, mime_type="audio/pcm;rate=16000")
             )
-            self._has_streamed_audio = True
+            self._active_turn.has_streamed_audio = True
             self._end_sent_event.clear()
             return True
         except Exception as err:
@@ -272,24 +334,33 @@ class ModularLiveSTTClient:
             await self._drop_connection()
             return False
 
-    async def signal_end_of_turn(self) -> None:
-        if self._session and self._has_streamed_audio:
+    async def signal_end_of_turn(self, enqueue_for_finish: bool = True) -> Optional[_LiveSTTTurnBuffer]:
+        closed_turn: Optional[_LiveSTTTurnBuffer] = None
+        if self._session and self._active_turn.has_streamed_audio:
+            closed_turn = self._active_turn
+            self._active_turn = _LiveSTTTurnBuffer()
+            self._pending_recv_turns.append(closed_turn)
+            if enqueue_for_finish:
+                self._pending_finish_turns.append(closed_turn)
             try:
                 await self._session.send_realtime_input(audio_stream_end=True)
             except Exception as err:
                 logger.debug(f"[STT LIVE] audio_stream_end error: {err}")
                 await self._drop_connection()
         self._end_sent_event.set()
+        return closed_turn
 
     async def discard_turn(self) -> None:
-        """Clears buffered audio from a rejected/short VAD snippet."""
-        if self._session and self._has_streamed_audio:
-            try:
-                await self._session.send_realtime_input(audio_stream_end=True)
-                await asyncio.wait_for(self._turn_done_event.wait(), timeout=0.4)
-            except Exception:
-                await self._drop_connection()
-        self._reset_turn_buffers()
+        """Clears buffered audio from a rejected/short VAD snippet without disturbing subsequent turns."""
+        if self._session and self._active_turn.has_streamed_audio:
+            discarded = await self.signal_end_of_turn(enqueue_for_finish=False)
+            if discarded is not None:
+                try:
+                    await asyncio.wait_for(discarded.done_event.wait(), timeout=0.4)
+                except Exception:
+                    await self._drop_connection()
+        else:
+            self._active_turn = _LiveSTTTurnBuffer()
         self._end_sent_event.set()
 
     async def finish_turn(self, timeout: float = 2.5) -> Optional[str]:
@@ -297,20 +368,26 @@ class ModularLiveSTTClient:
         Waits for the live STT transcript corresponding to the streamed turn.
         Returns None if no live audio was streamed (signaling REST fallback).
         """
-        if not self._has_streamed_audio or self._session is None:
-            return None
-        try:
+        if not self._pending_finish_turns:
+            if not self._active_turn.has_streamed_audio or self._session is None:
+                return None
             if not self._end_sent_event.is_set():
                 try:
                     await asyncio.wait_for(self._end_sent_event.wait(), timeout=0.25)
                 except asyncio.TimeoutError:
                     await self.signal_end_of_turn()
-            await asyncio.wait_for(self._turn_done_event.wait(), timeout=timeout)
+            if not self._pending_finish_turns and self._active_turn.has_streamed_audio:
+                await self.signal_end_of_turn()
+
+        if not self._pending_finish_turns:
+            return None
+
+        turn = self._pending_finish_turns.popleft()
+        try:
+            await asyncio.wait_for(turn.done_event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
             logger.warning("[STT LIVE] Timed out waiting for generation_complete; using available hypothesis or REST fallback.")
-        text = " ".join(self._final_parts).strip() or self._interim_text.strip()
-        self._reset_turn_buffers()
-        return text or None
+        return turn.get_text()
 
     async def run_input_pump(
         self,

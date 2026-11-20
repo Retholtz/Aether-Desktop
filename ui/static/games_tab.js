@@ -864,13 +864,14 @@ function initGamesTabEvents() {
     document.getElementById('input-game-callsign')?.addEventListener('input', (e) => {
         if (!activeGameId) return;
         clearTimeout(callsignDebounceTimer);
+        const targetGameId = activeGameId;
         const val = e.target.value;
         callsignDebounceTimer = setTimeout(async () => {
             try {
                 if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.set_game_callsign === 'function') {
-                    const res = await window.pywebview.api.set_game_callsign(activeGameId, val);
-                    if (res && res.success && currentGamesData?.profiles?.[activeGameId]) {
-                        currentGamesData.profiles[activeGameId].callsign = res.callsign;
+                    const res = await window.pywebview.api.set_game_callsign(targetGameId, val);
+                    if (res && res.success && currentGamesData?.profiles?.[targetGameId]) {
+                        currentGamesData.profiles[targetGameId].callsign = res.callsign;
                     }
                 }
             } catch (err) {
@@ -882,21 +883,22 @@ function initGamesTabEvents() {
     // Scratchpad Autosave
     document.getElementById('game-scratchpad-input')?.addEventListener('input', (e) => {
         if (!activeGameId) return;
+        const targetGameId = activeGameId;
+        const text = e.target.value;
         const status = document.getElementById('scratchpad-save-status');
         if (status) status.textContent = 'Saving...';
         clearTimeout(scratchpadDebounceTimer);
 
         scratchpadDebounceTimer = setTimeout(async () => {
-            const text = e.target.value;
             try {
-                await window.pywebview.api.update_game_scratchpad(activeGameId, text);
-                if (currentGamesData && currentGamesData.profiles && currentGamesData.profiles[activeGameId]) {
-                    currentGamesData.profiles[activeGameId].scratchpad_raw = text;
+                await window.pywebview.api.update_game_scratchpad(targetGameId, text);
+                if (currentGamesData && currentGamesData.profiles && currentGamesData.profiles[targetGameId]) {
+                    currentGamesData.profiles[targetGameId].scratchpad_raw = text;
                 }
-                if (status) status.textContent = 'All changes saved locally';
+                if (status && activeGameId === targetGameId) status.textContent = 'All changes saved locally';
             } catch (err) {
                 console.error("scratchpad save error:", err);
-                if (status) status.textContent = 'Error saving changes';
+                if (status && activeGameId === targetGameId) status.textContent = 'Error saving changes';
             }
         }, 600);
     });
@@ -907,7 +909,7 @@ let telemetryPollInterval = null;
 function startTelemetryPolling() {
     if (telemetryPollInterval) clearInterval(telemetryPollInterval);
     telemetryPollInterval = setInterval(async () => {
-        const gamesPane = document.getElementById('tab-pane-games');
+        const gamesPane = document.getElementById('tab-games');
         if (gamesPane && gamesPane.classList.contains('hidden')) return;
         if (activeGameId && window.pywebview && window.pywebview.api) {
             try {

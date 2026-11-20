@@ -17,7 +17,8 @@ from core.paths import app_path, resource_path
 logger = get_logger("VoiceVerifier")
 
 DEFAULT_MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_CAM++.onnx"
-DEFAULT_MODEL_PATH = resource_path("models", "wespeaker_en_voxceleb_CAM++.onnx")
+BUNDLED_MODEL_PATH = resource_path("models", "wespeaker_en_voxceleb_CAM++.onnx")
+DEFAULT_MODEL_PATH = app_path("models", "wespeaker_en_voxceleb_CAM++.onnx")
 DEFAULT_PROFILE_PATH = app_path("profile", "user_voiceprint.npy")
 
 class VoiceProfileVerifier:
@@ -67,18 +68,42 @@ class VoiceProfileVerifier:
             logger.error(f"[VOICE VERIFIER INIT ERROR] {e}")
 
     def _ensure_model_file(self):
-        """Downloads the pretrained CAM++ ONNX model if missing."""
+        """Uses bundled model if present, or atomically downloads the pretrained CAM++ ONNX model to a writable path."""
         if os.path.exists(self.model_path) and os.path.getsize(self.model_path) > 1000000:
             return
-        os.makedirs(os.path.dirname(self.model_path) or ".", exist_ok=True)
+        if (
+            self.model_path == DEFAULT_MODEL_PATH
+            and os.path.exists(BUNDLED_MODEL_PATH)
+            and os.path.getsize(BUNDLED_MODEL_PATH) > 1000000
+        ):
+            self.model_path = BUNDLED_MODEL_PATH
+            return
+
+        target_dir = os.path.dirname(self.model_path) or "."
+        os.makedirs(target_dir, exist_ok=True)
+        tmp_path = f"{self.model_path}.tmp.{os.getpid()}"
         logger.info(f"[VOICE VERIFIER] Downloading CAM++ model from {DEFAULT_MODEL_URL}...")
         t0 = time.time()
         try:
-            urllib.request.urlretrieve(DEFAULT_MODEL_URL, self.model_path)
+            req = urllib.request.Request(DEFAULT_MODEL_URL, headers={"User-Agent": "Aether-Desktop"})
+            with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as out_f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    out_f.write(chunk)
+            if os.path.getsize(tmp_path) <= 1000000:
+                raise ValueError("Downloaded CAM++ model file is unexpectedly small/incomplete.")
+            os.replace(tmp_path, self.model_path)
             dur = time.time() - t0
             logger.info(f"[VOICE VERIFIER] Model downloaded successfully in {dur:.1f}s")
         except Exception as e:
             logger.error(f"[VOICE VERIFIER DOWNLOAD ERROR] {e}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
 
     def is_enrolled(self) -> bool:
         """Returns True if a valid user voiceprint profile is loaded."""
@@ -140,7 +165,6 @@ class VoiceProfileVerifier:
         if trimmed_peak > 1e-4:
             audio = (audio / trimmed_peak * 0.75).astype(np.float32)
 
-        self._last_voiced_duration_sec = len(audio) / float(max(1, sample_rate))
         return audio
 
     @staticmethod
@@ -171,10 +195,10 @@ class VoiceProfileVerifier:
             emb = emb / norm
         return emb
 
-    def extract_embedding_from_wav(self, wav_bytes: bytes) -> Optional[np.ndarray]:
-        """Extracts and normalizes a 512-dim embedding from WAV bytes with silence trimming and gain normalization."""
+    def _extract_embedding_and_duration_from_wav(self, wav_bytes: bytes) -> Tuple[Optional[np.ndarray], float]:
+        """Thread-safe extraction returning (normalized 512-dim embedding, voiced_duration_sec)."""
         if not self._is_initialized or not self.extractor:
-            return None
+            return None, 0.0
         try:
             with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
                 channels = wf.getnchannels()
@@ -183,7 +207,7 @@ class VoiceProfileVerifier:
                 frames = wf.readframes(wf.getnframes())
 
             if sample_width != 2:
-                return None
+                return None, 0.0
 
             audio_data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
 
@@ -194,8 +218,9 @@ class VoiceProfileVerifier:
             processed_audio = self._trim_and_normalize(audio_data, sample_rate)
             if processed_audio is None or len(processed_audio) < int(sample_rate * 0.18):
                 logger.warning("[VOICE VERIFIER] Speech segment too short or silent after trimming")
-                return None
+                return None, 0.0
 
+            voiced_dur = len(processed_audio) / float(max(1, sample_rate))
             emb = self._compute_stream_embedding(processed_audio, sample_rate)
             # For short 1-3 word phrases (< 1.65s, such as "Hey Aether" or "Aether stop"),
             # also compute a temporally-tiled embedding to stabilize CAM++ statistical pooling.
@@ -203,30 +228,25 @@ class VoiceProfileVerifier:
                 tiled_audio = self._tile_short_audio(processed_audio, sample_rate, min_duration_sec=1.65)
                 emb_tiled = self._compute_stream_embedding(tiled_audio, sample_rate)
                 if emb is not None and emb_tiled is not None:
+                    blended = emb + emb_tiled
+                    b_norm = np.linalg.norm(blended)
+                    if b_norm > 1e-6:
+                        blended = blended / b_norm
                     if self.enrolled_embedding is not None:
                         sim_raw = float(np.dot(emb, self.enrolled_embedding))
-                        sim_tiled = float(np.dot(emb_tiled, self.enrolled_embedding))
-                        blended = emb + emb_tiled
-                        b_norm = np.linalg.norm(blended)
-                        if b_norm > 1e-6:
-                            blended = blended / b_norm
                         sim_blended = float(np.dot(blended, self.enrolled_embedding))
-                        best = max(
-                            (sim_raw, emb),
-                            (sim_tiled, emb_tiled),
-                            (sim_blended, blended),
-                            key=lambda item: item[0]
-                        )
-                        emb = best[1]
+                        emb = blended if sim_blended >= sim_raw else emb
                     else:
-                        blended = emb + emb_tiled
-                        b_norm = np.linalg.norm(blended)
-                        if b_norm > 1e-6:
-                            emb = blended / b_norm
-            return emb
+                        emb = blended
+            return emb, voiced_dur
         except Exception as e:
             logger.error(f"[VOICE VERIFIER] Embedding extraction failed: {e}")
-            return None
+            return None, 0.0
+
+    def extract_embedding_from_wav(self, wav_bytes: bytes) -> Optional[np.ndarray]:
+        """Extracts and normalizes a 512-dim embedding from WAV bytes with silence trimming and gain normalization."""
+        emb, _ = self._extract_embedding_and_duration_from_wav(wav_bytes)
+        return emb
 
     def add_calibration_sample(self, wav_bytes: bytes) -> Dict:
         """Adds a calibration sample during onboarding."""
@@ -289,36 +309,40 @@ class VoiceProfileVerifier:
     def verify(self, wav_bytes: bytes, threshold: float = 0.40) -> Tuple[bool, float]:
         """
         Verifies if the audio belongs to the enrolled user.
-        Applies duration-adaptive threshold relaxation for short 1-3 word commands
+        Applies a single bounded duration-adaptive threshold relaxation for short 1-3 word commands
         (e.g. 'Hey Aether', 'Aether stop') which naturally exhibit lower pooling cosine scores.
+        Fails CLOSED if an enrolled voiceprint exists on disk but the verifier failed to initialize.
         Returns: (is_match: bool, similarity_score: float)
         """
         if not self.is_enrolled():
+            if self.profile_path and os.path.exists(self.profile_path):
+                logger.error(
+                    "[VOICE GATE] Enrolled voiceprint exists on disk but verifier is not initialized; "
+                    "failing CLOSED."
+                )
+                return False, 0.0
             return True, 1.0
 
         t0 = time.perf_counter()
-        self._last_voiced_duration_sec = 2.0
-        emb = self.extract_embedding_from_wav(wav_bytes)
+        emb, voiced_dur = self._extract_embedding_and_duration_from_wav(wav_bytes)
         if emb is None:
             return False, 0.0
 
         raw_similarity = float(np.dot(emb, self.enrolled_embedding))
-        voiced_dur = getattr(self, "_last_voiced_duration_sec", 2.0)
 
         # Short utterances (< 1.8s, like "Hey Aether") have fewer phonetic frames in CAM++ pooling.
-        # Apply a duration-proportional score boost (+0.05) and threshold relaxation (-0.08) so 2-word
-        # phrases hitting ~0.32-0.39 reliably clear the 0.40 gate while still blocking non-user speech.
+        # Apply a single bounded short-clip compensation (+0.04 max) WITHOUT stacking a second
+        # threshold reduction, keeping the effective raw cosine floor safe (e.g. >= 0.36 for 0.40 gate).
         if voiced_dur < 1.8:
             short_factor = max(0.0, min(1.0, (1.8 - voiced_dur) / 1.0))
-            similarity = min(1.0, raw_similarity + 0.05 * short_factor)
-            effective_threshold = max(0.28, threshold - 0.08 * short_factor)
+            similarity = min(1.0, raw_similarity + 0.04 * short_factor)
         else:
             similarity = raw_similarity
-            effective_threshold = threshold
+        effective_threshold = max(0.32, threshold)
 
         latency_ms = (time.perf_counter() - t0) * 1000
 
-        is_match = (similarity >= effective_threshold) or (raw_similarity >= effective_threshold)
+        is_match = similarity >= effective_threshold
         logger.info(
             f"[VOICE GATE] Score: {similarity:.3f} (raw={raw_similarity:.3f}, dur={voiced_dur:.2f}s) | "
             f"EffThresh: {effective_threshold:.2f} (cfg={threshold:.2f}) | Match: {is_match} ({latency_ms:.1f}ms)"

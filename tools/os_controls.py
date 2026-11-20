@@ -638,6 +638,44 @@ def get_monitors_info() -> List[Dict[str, Any]]:
     return monitors
 
 
+def _is_window_maximized(hwnd: int) -> bool:
+    """Checks whether a Win32 window is maximized (pywin32 win32gui lacks IsZoomed; use user32.IsZoomed)."""
+    if not hwnd:
+        return False
+    # Support mocked win32gui in unit tests while using real user32.IsZoomed on Windows
+    if win32gui is not None and hasattr(win32gui, "IsZoomed"):
+        try:
+            return bool(win32gui.IsZoomed(hwnd))
+        except Exception:
+            pass
+    try:
+        return bool(ctypes.windll.user32.IsZoomed(int(hwnd)))
+    except Exception:
+        pass
+    if win32gui is not None and win32con is not None:
+        try:
+            placement = win32gui.GetWindowPlacement(hwnd)
+            if placement and len(placement) >= 2:
+                return placement[1] == win32con.SW_SHOWMAXIMIZED
+        except Exception:
+            pass
+    return False
+
+
+def _find_hwnd_with_retry(query: str, timeout_sec: float = 1.2, poll_sec: float = 0.15) -> Optional[int]:
+    """Finds a window handle, briefly polling in case the app (e.g. File Explorer) was just launched."""
+    hwnd = find_hwnd_by_query(query)
+    if hwnd or timeout_sec <= 0:
+        return hwnd
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        time.sleep(poll_sec)
+        hwnd = find_hwnd_by_query(query)
+        if hwnd:
+            return hwnd
+    return None
+
+
 def move_window_to_monitor(
     app_name: str,
     monitor: int = 1,
@@ -687,7 +725,7 @@ def move_window_to_monitor(
         title = win32gui.GetWindowText(hwnd) or app_name
 
         # If currently maximized or minimized, restore first so SetWindowPos moves properly across display boundaries
-        if win32gui.IsZoomed(hwnd) or win32gui.IsIconic(hwnd):
+        if _is_window_maximized(hwnd) or win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
             time.sleep(0.08)
 
@@ -783,16 +821,16 @@ def _place_window_verified(
     that a top-level window actually moved to the target rectangle.
     """
     if not win32gui or not win32con:
-        return {"moved": False, "reason": "Win32 APIs unavailable"}
+        return {"moved": False, "actual_rect": None, "reason": "Win32 APIs unavailable"}
 
     cls_name = _get_window_class_safe(hwnd)
     if cls_name in SHELL_EXCLUDED_CLASSES:
-        return {"moved": False, "reason": f"Protected Windows shell surface '{cls_name}' cannot be repositioned."}
+        return {"moved": False, "actual_rect": None, "reason": f"Protected Windows shell surface '{cls_name}' cannot be repositioned."}
 
     # 1. Restore from minimized or maximized/snapped state and allow Win11 DWM to settle
     try:
         was_state_changed = False
-        if win32gui.IsIconic(hwnd) or win32gui.IsZoomed(hwnd):
+        if win32gui.IsIconic(hwnd) or _is_window_maximized(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
             was_state_changed = True
         else:
@@ -800,7 +838,7 @@ def _place_window_verified(
         if was_state_changed:
             time.sleep(0.08)
     except Exception as e:
-        return {"moved": False, "reason": f"Failed to restore window state: {e}"}
+        return {"moved": False, "actual_rect": None, "reason": f"Failed to restore window state: {e}"}
 
     # 2. Compensate for Windows 11 invisible DWM resize borders (~7px left/right/bottom)
     pad_l, pad_t, pad_r, pad_b = _get_dwm_border_insets(hwnd)
@@ -814,7 +852,7 @@ def _place_window_verified(
     try:
         win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, adj_x, adj_y, adj_w, adj_h, flags)
     except Exception as e:
-        return {"moved": False, "reason": f"SetWindowPos failed (possible elevation/UIPI restriction): {e}"}
+        return {"moved": False, "actual_rect": None, "reason": f"SetWindowPos failed (possible elevation/UIPI restriction): {e}"}
 
     time.sleep(0.05)
 
@@ -822,7 +860,7 @@ def _place_window_verified(
         try:
             if win32gui.IsIconic(hwnd):
                 return False, None, "Window remained minimized after restore."
-            if win32gui.IsZoomed(hwnd):
+            if _is_window_maximized(hwnd):
                 return False, None, "Window remained maximized after restore."
         except Exception:
             pass
@@ -889,7 +927,7 @@ def snap_window(
     if not win32gui or not win32con or not win32api:
         return {"status": "error", "message": "Win32 window management is only supported on Windows."}
 
-    hwnd = find_hwnd_by_query(app_name)
+    hwnd = _find_hwnd_with_retry(app_name, timeout_sec=1.2)
     if not hwnd:
         return {"status": "error", "message": f"No open window found for '{app_name}'."}
 
@@ -949,7 +987,7 @@ def snap_window(
         "hwnd": hwnd,
         "position": pos,
         "monitor": target_mon["index"],
-        "rect": ver["actual_rect"],
+        "rect": ver.get("actual_rect"),
         "message": f"Snapped '{title}' to {pos} half on Monitor #{target_mon['index']}.",
     }
 
@@ -972,7 +1010,7 @@ def tile_windows(
     if not left_q or not right_q:
         return {"status": "error", "message": "Both left_app and right_app are required to split/tile windows."}
 
-    hwnd_left = find_hwnd_by_query(left_q)
+    hwnd_left = _find_hwnd_with_retry(left_q, timeout_sec=1.2)
     if not hwnd_left:
         return {
             "status": "error",
@@ -980,7 +1018,7 @@ def tile_windows(
             "message": f"No open window found for '{left_q}'. Please open '{left_q}' first.",
         }
 
-    hwnd_right = find_hwnd_by_query(right_q)
+    hwnd_right = _find_hwnd_with_retry(right_q, timeout_sec=1.2)
     if not hwnd_right:
         return {
             "status": "error",
@@ -1031,8 +1069,8 @@ def tile_windows(
             "left_title": left_title,
             "right_title": right_title,
             "monitor": target_mon["index"],
-            "left_rect": ver_left["actual_rect"],
-            "right_rect": ver_right["actual_rect"],
+            "left_rect": ver_left.get("actual_rect"),
+            "right_rect": ver_right.get("actual_rect"),
             "message": f"Failed to split windows cleanly on Monitor #{target_mon['index']}: " + "; ".join(failures),
         }
 
@@ -1046,8 +1084,8 @@ def tile_windows(
         "left_hwnd": hwnd_left,
         "right_hwnd": hwnd_right,
         "monitor": target_mon["index"],
-        "left_rect": ver_left["actual_rect"],
-        "right_rect": ver_right["actual_rect"],
+        "left_rect": ver_left.get("actual_rect"),
+        "right_rect": ver_right.get("actual_rect"),
         "message": f"Split '{left_title}' (left) and '{right_title}' (right) side-by-side on Monitor #{target_mon['index']}.",
     }
 

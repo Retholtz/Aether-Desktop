@@ -2402,8 +2402,10 @@ window.aetherUI = {
       if (typeof window.handleRoleplayInitiativeEvent === "function") {
         window.handleRoleplayInitiativeEvent(data);
       }
-    } else if (type === "ttrpg_state_updated") {
-      if (typeof window.handleRoleplayStateEvent === "function") {
+    } else if (type === "ttrpg_state_updated" || type === "roster_updated") {
+      if (type === "roster_updated" && typeof window.handleRoleplayRosterEvent === "function") {
+        window.handleRoleplayRosterEvent(data);
+      } else if (typeof window.handleRoleplayStateEvent === "function") {
         window.handleRoleplayStateEvent(data);
       }
     } else if (type === "ttrpg_session_mode_changed") {
@@ -4460,44 +4462,46 @@ window.onAssistantSleep = function() {
   }
 };
 
-function collectSettingsPayload() {
-  const bootEl = document.getElementById("toggle-boot-startup");
-  const minEl = document.getElementById("toggle-start-minimized");
-  const autoUpdEl = document.getElementById("toggle-auto-check-updates");
-  const tierVals = typeof readTierEndpointsFromUI === "function"
-    ? readTierEndpointsFromUI()
-    : {
-        primaryModelVal: "gemini-3.8-live",
-        moderateModelVal: "gemini-4-hydrogen:medium",
-        modLevel: "medium",
-        heavyModelVal: "gemini-4-neon:high",
-        heavyLevel: "high",
-        ttrpgModelVal: "gemini-4-hydrogen:medium",
-        ttrpgLevel: "medium"
-      };
-  const sttEl = document.getElementById("stt_endpoint") || document.querySelector('select[name="stt_endpoint"]') || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
-  const ttsEl = document.getElementById("tts_endpoint") || document.querySelector('select[name="tts_endpoint"]') || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model") || document.getElementById("ttsSelect");
-  return {
-    boot_on_startup: bootEl ? bootEl.checked : false,
-    start_minimized: minEl ? minEl.checked : false,
-    auto_check_updates: autoUpdEl ? autoUpdEl.checked : true,
-    primary_model_endpoint: tierVals.primaryModelVal,
-    tier1_fast_model: tierVals.primaryModelVal,
-    tier2_moderate_model: tierVals.moderateModelVal,
-    tier2_moderate_level: tierVals.modLevel,
-    tier3_heavy_model: tierVals.heavyModelVal,
-    tier2_heavy_model: tierVals.heavyModelVal,
-    tier3_thinking_level: tierVals.heavyLevel,
-    tier2_thinking_level: tierVals.heavyLevel,
-    ttrpg_model_endpoint: tierVals.ttrpgModelVal,
-    ttrpg_thinking_level: tierVals.ttrpgLevel,
-    stt_model_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
-    stt_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
-    tts_model_endpoint: ttsEl ? ttsEl.value : "gemini_live",
-    tts_endpoint: ttsEl ? ttsEl.value : "gemini_live"
+// Delegate collectSettingsPayload to settings.js (single source of truth) when loaded.
+if (typeof window.collectSettingsPayload !== "function") {
+  window.collectSettingsPayload = function collectSettingsPayloadFallback() {
+    const bootEl = document.getElementById("toggle-boot-startup");
+    const minEl = document.getElementById("toggle-start-minimized");
+    const autoUpdEl = document.getElementById("toggle-auto-check-updates");
+    const tierVals = typeof readTierEndpointsFromUI === "function"
+      ? readTierEndpointsFromUI()
+      : {
+          primaryModelVal: "gemini-3.8-live",
+          moderateModelVal: "gemini-4-hydrogen:medium",
+          modLevel: "medium",
+          heavyModelVal: "gemini-4-neon:high",
+          heavyLevel: "high",
+          ttrpgModelVal: "gemini-4-hydrogen:medium",
+          ttrpgLevel: "medium"
+        };
+    const sttEl = document.getElementById("stt_endpoint") || document.querySelector('select[name="stt_endpoint"]') || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
+    const ttsEl = document.getElementById("tts_endpoint") || document.querySelector('select[name="tts_endpoint"]') || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model") || document.getElementById("ttsSelect");
+    return {
+      boot_on_startup: bootEl ? bootEl.checked : false,
+      start_minimized: minEl ? minEl.checked : false,
+      auto_check_updates: autoUpdEl ? autoUpdEl.checked : true,
+      primary_model_endpoint: tierVals.primaryModelVal,
+      tier1_fast_model: tierVals.primaryModelVal,
+      tier2_moderate_model: tierVals.moderateModelVal,
+      tier2_moderate_level: tierVals.modLevel,
+      tier3_heavy_model: tierVals.heavyModelVal,
+      tier2_heavy_model: tierVals.heavyModelVal,
+      tier3_thinking_level: tierVals.heavyLevel,
+      tier2_thinking_level: tierVals.heavyLevel,
+      ttrpg_model_endpoint: tierVals.ttrpgModelVal,
+      ttrpg_thinking_level: tierVals.ttrpgLevel,
+      stt_model_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
+      stt_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
+      tts_model_endpoint: ttsEl ? ttsEl.value : "gemini_live",
+      tts_endpoint: ttsEl ? ttsEl.value : "gemini_live"
+    };
   };
 }
-window.collectSettingsPayload = collectSettingsPayload;
 
 if (typeof populateModelDropdowns !== "undefined") {
   window.populateModelDropdowns = populateModelDropdowns;

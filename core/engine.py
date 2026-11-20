@@ -3598,6 +3598,9 @@ class AetherEngine:
             self.current_user_speech = ""
             self.current_turn_text = ""
             self.current_turn_tools = []
+            self._live_tool_exact_errors: Dict[str, int] = {}
+            self._live_tool_name_errors: Dict[str, int] = {}
+            self._live_tool_last_error: Dict[str, str] = {}
             self._turn_audio_chunks = 0
             self._turn_audio_bytes = 0
             self._turn_audio_peak = 0.0
@@ -3690,7 +3693,29 @@ class AetherEngine:
                                 if fn_name in ("delegate_moderate_task", "delegate_heavy_task") and hasattr(session, "send_realtime_input"):
                                     keepalive_task = asyncio.create_task(_live_tool_keepalive())
                                 try:
-                                    if fn_name == "trigger_game_action" and (
+                                    try:
+                                        norm_args_sig = f"{fn_name}:{json.dumps(fn_args, sort_keys=True, default=str)}"
+                                    except Exception:
+                                        norm_args_sig = f"{fn_name}:{repr(fn_args)}"
+
+                                    exact_err_cnt = self._live_tool_exact_errors.get(norm_args_sig, 0)
+                                    name_err_cnt = self._live_tool_name_errors.get(fn_name, 0)
+
+                                    if exact_err_cnt >= 2 or name_err_cnt >= 4:
+                                        prev_err = self._live_tool_last_error.get(fn_name, "repeated tool error")
+                                        logger.warning(
+                                            f"[LIVE TOOL CIRCUIT BREAKER] Blocking repeated failing call '{fn_name}' "
+                                            f"(exact_errors={exact_err_cnt}, tool_errors={name_err_cnt}): {prev_err}"
+                                        )
+                                        result = {
+                                            "status": "error",
+                                            "circuit_breaker": True,
+                                            "message": (
+                                                f"STOP RETRYING '{fn_name}': This tool already failed repeatedly ({prev_err}). "
+                                                f"Do NOT call '{fn_name}' again in this turn. Briefly inform the user what failed."
+                                            ),
+                                        }
+                                    elif fn_name == "trigger_game_action" and (
                                         getattr(self, "_macro_fired_in_current_turn", False)
                                         or (time.time() - getattr(self, "_last_fast_path_macro_ts", 0.0)) < 3.0
                                     ):
@@ -3706,6 +3731,18 @@ class AetherEngine:
                                         if fn_name == "trigger_game_action":
                                             self._macro_fired_in_current_turn = True
                                         result = await self.dispatcher.dispatch(fn_name, fn_args)
+                                        is_err = isinstance(result, dict) and (
+                                            result.get("status") == "error" or result.get("success") is False
+                                        )
+                                        if is_err:
+                                            self._live_tool_exact_errors[norm_args_sig] = exact_err_cnt + 1
+                                            self._live_tool_name_errors[fn_name] = name_err_cnt + 1
+                                            self._live_tool_last_error[fn_name] = str(
+                                                result.get("message") or result.get("error") or "Unknown error"
+                                            )
+                                        else:
+                                            self._live_tool_exact_errors.pop(norm_args_sig, None)
+                                            self._live_tool_name_errors.pop(fn_name, None)
                                 finally:
                                     if keepalive_task and not keepalive_task.done():
                                         keepalive_task.cancel()
@@ -4184,15 +4221,23 @@ class AetherEngine:
                             self.audio.clear_output_buffer()
                         if audio_chunks > 0 or clean_turn_text:
                             self._pending_tool_response_until = 0.0
+                            self._live_tool_exact_errors.clear()
+                            self._live_tool_name_errors.clear()
+                            self._live_tool_last_error.clear()
+                        waiting_for_tool_followup = (
+                            audio_chunks == 0
+                            and not clean_turn_text
+                            and time.time() < getattr(self, "_pending_tool_response_until", 0.0)
+                        )
                         if self.is_running:
                             now_done = time.time()
                             self.last_user_turn_time = time.perf_counter()
                             self.last_user_turn_timestamp = now_done
                             self.last_agent_turn_timestamp = now_done
                             self._last_live_turn_completed_ts = now_done
-                            if not self.is_tool_executing:
+                            if not self.is_tool_executing and not waiting_for_tool_followup:
                                 self.notify("status", {"state": "listening", "message": f"{agent_name} is listening..."})
-                        if time.time() >= getattr(self, "_pending_tool_response_until", 0.0):
+                        if not waiting_for_tool_followup:
                             self._in_active_turn = False
 
                         # Layer B: Check if session needs rolling compaction & silent reconnect
@@ -5901,7 +5946,9 @@ class AetherEngine:
             "- Atomic Reflex Tools (Low-Latency): Use built-in tools for instant actions:\n"
             "  * `launch_application(app_name, target, profile)`: Launches allowed desktop apps and browser profiles directly.\n"
             "  * `focus_window(app_name)`, `maximize_window(app_name)`, `minimize_window(app_name)`, `restore_window(app_name)`: Fast Win32 window management.\n"
+            "  * `tile_windows(left_app, right_app, monitor)`, `snap_window(app_name, position, monitor)`: Native Windows 11 split-screen / side-by-side window tiling and snapping with verification.\n"
             "  * `navigate_browser(query_or_url, app_name='chrome')`: Deterministic browser search and URL navigation via omnibox.\n"
+            "  * `play_music(query, service_name='youtube_music', app_name='chrome')`: Instant direct-play tool for songs/artists on YouTube Music or YouTube (resolves track URL directly without vision clicking).\n"
             "  * `find_and_click_element(target_description, app_name)`: Visual grounding element locator and clicker.\n"
             "  * `type_text(text, app_name, press_enter)`: Foreground window typing with formatting.\n"
             "  * `press_key(key_combo)`: Keyboard hotkeys and shortcuts.\n"
@@ -5915,13 +5962,10 @@ class AetherEngine:
             "- Whenever the user asks to pause, resume, play, skip, or go to the previous song, or asks what song/track is playing:\n"
             "  * ALWAYS invoke `control_media_playback(action=...)` or `get_current_playing_media()`.\n"
             "  * NEVER bring browser or media player windows to the foreground, and NEVER use `find_and_click_element` or mouse clicks to pause, play, or skip songs. The media controller executes in the background seamlessly without clicks.\n"
-            "- CLOSED-LOOP PLAYBACK VERIFICATION (MANDATORY DOUBLE-CHECK):\n"
-            "  * When asked to play a specific song, artist, album, or video (e.g. 'Play Sting on YouTube', 'Put on Alan Walker'):\n"
-            "    1. Navigate or launch the artist/song page.\n"
-            "    2. Click the top track/song result or press Enter.\n"
-            "    3. DOUBLE-CHECK: Call `get_current_playing_media()` immediately to verify that the track is actively playing.\n"
-            "    4. If `get_current_playing_media()` returns status 'idle' or the track title does not match, auto-retry by clicking the first song item row or pressing Space/Enter.\n"
-            "    5. Do NOT report success or conclude your turn until `get_current_playing_media()` confirms the track is actively playing.\n"
+            "- FAST DIRECT MUSIC PLAYBACK (YOUTUBE MUSIC / YOUTUBE):\n"
+            "  * When asked to play a specific song, artist, album, or video (e.g. 'Open YouTube Music and play Nyra Noir', 'Play Sting on YouTube'):\n"
+            "    1. ALWAYS call `play_music(query='<song or artist>', service_name='youtube_music')` (or `service_name='youtube'`) FIRST. It resolves the direct track URL, opens it immediately, and verifies playback via SMTC in ~2 seconds — do NOT open a search page and repeatedly call `find_and_click_element`.\n"
+            "    2. Only fall back to `control_media_playback('play')` or `find_and_click_element` if `play_music` reports `playback_verified: False`.\n"
             "- SYSTEM SOUND SAFETY RULE:\n"
             "  * NEVER launch, open, or click Windows Sound Control Panel (`mmsys.cpl`), `control.exe mmsys.cpl`, Windows Audio Troubleshooter (`control.exe /name Microsoft.Troubleshooting`, `msdt.exe`), or Device Manager (`devmgmt.msc`). Modifying Windows Sound endpoints or running troubleshooters restarts the Windows Audio Service and terminates active hardware audio output.\n\n"
             "PERMANENT SKILL LIBRARY (REUSABLE AUTOMATIONS):\n"

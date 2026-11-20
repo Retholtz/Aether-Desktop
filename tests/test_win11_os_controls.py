@@ -305,6 +305,221 @@ class TestWin11MultiMonitorInputAndShellFixes(unittest.TestCase):
         cmd = runner._build_python_cmd("tile_windows.py", {"left_app": "explorer"})
         self.assertEqual(cmd[:3], [r"C:\Aether\AetherDesktop.exe", "--run-script", "tile_windows.py"])
 
+    def test_real_pywin32_is_window_maximized_and_tile_error_no_keyerror(self):
+        """Real pywin32 win32gui lacks IsZoomed; _is_window_maximized must use user32.IsZoomed without AttributeError."""
+        import win32gui as real_win32gui
+        from tools import os_controls
+
+        self.assertFalse(hasattr(real_win32gui, "IsZoomed"))
+        fore = real_win32gui.GetForegroundWindow()
+        # Must return bool cleanly on real Win32 HWND without raising AttributeError
+        res_max = os_controls._is_window_maximized(fore)
+        self.assertIsInstance(res_max, bool)
+
+        # Even when _place_window_verified returns an early error, actual_rect is present (no KeyError in tile_windows)
+        with patch.object(os_controls, "find_hwnd_by_query", side_effect=[101, 202]), \
+             patch.object(os_controls, "_resolve_target_monitor_info", return_value=({"index": 1, "work_x": 0, "work_y": 0, "work_width": 1920, "work_height": 1040}, None)), \
+             patch.object(os_controls, "_get_window_class_safe", return_value="Progman"), \
+             patch("win32gui.GetWindowText", return_value="Test"):
+            res_tile = os_controls.tile_windows("chrome", "explorer")
+            self.assertEqual(res_tile["status"], "error")
+            self.assertIn("left_rect", res_tile)
+            self.assertIsNone(res_tile["left_rect"])
+
+    def test_play_music_resolves_direct_watch_url_and_verifies_playback(self):
+        """play_music resolves direct YouTube Music watch URL in 1 step and verifies via SMTC."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from tools.dispatcher import ToolDispatcher
+        from tools.media_tools import register_media_tools
+
+        disp = ToolDispatcher.__new__(ToolDispatcher)
+        disp._custom_declarations = {}
+        disp._custom_handlers = {}
+        disp._active_scopes = []
+
+        fake_media = MagicMock()
+        track_info = SimpleNamespace(
+            title="Closer Than Fear",
+            artist="Nyra Noir",
+            playback_status="playing",
+            to_dict=lambda: {"title": "Closer Than Fear", "artist": "Nyra Noir", "playback_status": "playing"},
+        )
+        fake_media.get_current_media_info = AsyncMock(return_value=track_info)
+        fake_media.execute_transport_command = AsyncMock(return_value=(True, "ok"))
+
+        register_media_tools(disp, fake_media)
+        self.assertIn("play_music", disp._custom_handlers)
+
+        with patch("tools.media_tools._resolve_youtube_video_id", return_value="V7ywftWI3iI"), \
+             patch("tools.media_tools.navigate_browser", return_value={"status": "success"}) as mock_nav, \
+             patch("tools.media_tools.asyncio.sleep", new=AsyncMock()):
+            res = asyncio.run(disp._custom_handlers["play_music"](query="Nyra Noir", service_name="youtube_music"))
+
+        self.assertEqual(res["status"], "success")
+        self.assertTrue(res["playback_verified"])
+        self.assertEqual(res["url"], "https://music.youtube.com/watch?v=V7ywftWI3iI")
+        mock_nav.assert_called_once()
+
+    def test_find_and_click_element_uses_low_latency_config_and_captured_monitor(self):
+        """find_and_click_element passes low-latency GenerateContentConfig and captured monitor index to click()."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from tools.dispatcher import ToolDispatcher
+
+        disp = ToolDispatcher.__new__(ToolDispatcher)
+        disp.on_event = None
+        disp.config_getter = lambda: {"tier2_moderate_model": "gemini-4-neon:high"}
+        disp.screen_pipeline = MagicMock()
+        disp.screen_pipeline.capture_frame = AsyncMock(return_value=(b"\xff\xd8\xff", {"monitor_index": 2, "monitor_rect": {"left": 2560, "top": 0, "width": 1920, "height": 1080}}))
+        disp.gui_controller = MagicMock()
+        disp.gui_controller.click.return_value = {"status": "success", "coords": (3520, 540)}
+        disp.genai_client = MagicMock()
+        disp.genai_client.models.generate_content.return_value = SimpleNamespace(
+            text='[{"box_2d": [400, 400, 600, 600], "label": "Play"}]'
+        )
+
+        with patch("tools.dispatcher.focus_window"):
+            res = asyncio.run(disp.find_and_click_element("Play button", app_name="chrome"))
+
+        self.assertEqual(res["status"], "success")
+        # Passed low-latency config (temperature=0.0, thinking_level='low')
+        gen_kwargs = disp.genai_client.models.generate_content.call_args.kwargs
+        self.assertIn("config", gen_kwargs)
+        self.assertEqual(gen_kwargs["config"].temperature, 0.0)
+        # Clicked on exact captured monitor #2
+        self.assertEqual(disp.gui_controller.click.call_args.kwargs["monitor"], 2)
+
+    def test_live_tool_circuit_breaker_and_no_premature_listening_during_tool_loop(self):
+        """Live loop must stop retrying identical failing tools and NOT emit 'listening' on empty mid-tool turn_complete."""
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from core.engine import AetherEngine
+
+        eng = AetherEngine.__new__(AetherEngine)
+        eng.is_running = True
+        eng._stop_requested = False
+        eng._kill_playback_flag = False
+        eng._is_transcribing = False
+        eng._is_audio_streaming = False
+        eng._in_active_turn = False
+        eng.is_tool_executing = False
+        eng._pending_tool_response_until = 0.0
+        eng._macro_fired_in_current_turn = False
+        eng._last_fast_path_macro_ts = 0.0
+        eng._session_resumption_handle = None
+        eng._reset_context_flag = False
+        eng.audio = None
+        eng.conn_mgr = MagicMock()
+        eng.session_lifecycle = MagicMock()
+        eng.session_lifecycle.needs_rotation.return_value = False
+        eng.session_lifecycle.rotation_in_progress = False
+        eng.dispatcher = MagicMock()
+        eng.dispatcher.dispatch = AsyncMock(return_value={"status": "error", "message": "Boom"})
+
+        status_events = []
+        eng.notify = lambda et, data: status_events.append((et, data)) if et == "status" else None
+
+        sent_responses = []
+
+        class FakeSession:
+            async def send_tool_response(self, function_responses):
+                sent_responses.extend(function_responses)
+
+            async def receive(self):
+                # 3 identical failing tool calls + empty mid-tool turn_complete between them, then final spoken turn_complete
+                for i in range(3):
+                    yield SimpleNamespace(
+                        tool_call=SimpleNamespace(
+                            function_calls=[SimpleNamespace(id=f"fc_{i}", name="snap_window", args={"app_name": "chrome", "position": "left"})]
+                        ),
+                        session_resumption_update=None,
+                        go_away=None,
+                        server_content=None,
+                    )
+                    # Empty turn_complete right after tool response (must NOT emit 'listening'!)
+                    yield SimpleNamespace(
+                        tool_call=None,
+                        session_resumption_update=None,
+                        go_away=None,
+                        server_content=SimpleNamespace(
+                            input_transcription=None,
+                            model_turn=None,
+                            output_transcription=None,
+                            interrupted=False,
+                            turn_complete=True,
+                        ),
+                    )
+                eng.is_running = False
+
+        sess = FakeSession()
+        eng.session = sess
+        asyncio.run(eng._async_receive_loop(sess, agent_name="Aether", kill_phrase="Aether stop"))
+
+        # Circuit breaker must have dispatched only TWICE and short-circuited the 3rd call!
+        self.assertEqual(eng.dispatcher.dispatch.call_count, 2)
+        self.assertEqual(len(sent_responses), 3)
+        self.assertTrue(sent_responses[2].response.get("circuit_breaker"))
+        # Must NEVER have emitted premature 'listening' during the active tool loop!
+        listening_events = [d for _, d in status_events if d.get("state") == "listening"]
+        self.assertEqual(listening_events, [])
+
+    def test_hud_hidpi_overlay_never_double_scales_offscreen_and_uses_native_drag(self):
+        """
+        On a 2560x1600 @ 150% DPI display, move_overlay_physical & reset_overlay_position
+        must keep the overlay within physical bounds (never multiplying 1984 * 1.5 = 2976 offscreen),
+        and overlay.html must delegate drag to native start_drag().
+        """
+        from ui import hud_window
+
+        hidpi_monitors = [{
+            "left": 0, "top": 0, "right": 2560, "bottom": 1528,
+            "scale": 1.5, "is_primary": True,
+        }]
+
+        with patch.object(hud_window, "get_monitor_work_areas", return_value=hidpi_monitors):
+            # 1. Default top-right for 176x56 logical (264x84 physical) at 150% DPI
+            phys_w, phys_h = int(round(176 * 1.5)), int(round(56 * 1.5))
+            cx, cy = hud_window.clamp_window_position(None, None, width=phys_w, height=phys_h)
+            self.assertEqual(cx, 2560 - 264 - 24)  # 2272 physical
+            self.assertLessEqual(cx + phys_w, 2560)
+
+            # 2. Offscreen coordinates (e.g. 4000, -500) clamp safely back inside 2560x1528
+            rx, ry = hud_window.clamp_window_position(4000, -500, width=phys_w, height=phys_h)
+            self.assertLessEqual(rx + phys_w, 2560)
+            self.assertGreaterEqual(ry, 16)
+
+            # 3. move_overlay_physical uses direct Win32 SetWindowPos with exact physical coords (no 1.5x double-scale)
+            fake_win = MagicMock()
+            fake_win.native = MagicMock()
+            fake_win.native.Handle.ToInt64.return_value = 987654
+            with patch("ctypes.windll.user32.SetWindowPos", return_value=1) as mock_swp:
+                ok = hud_window.move_overlay_physical(fake_win, cx, cy)
+                self.assertTrue(ok)
+                args = mock_swp.call_args.args
+                self.assertEqual(args[0], 987654)
+                self.assertEqual(args[2], cx)
+                self.assertEqual(args[3], cy)
+                # Must NOT have called pywebview's double-scaling window.move()!
+                fake_win.move.assert_not_called()
+
+            # 4. Fallback when no HWND exists converts physical -> logical for pywebview window.move()
+            mock_no_hwnd_win = MagicMock()
+            mock_no_hwnd_win.native = None
+            with patch.object(hud_window, "_get_overlay_hwnd", return_value=None):
+                ok2 = hud_window.move_overlay_physical(mock_no_hwnd_win, 2272, 24)
+                self.assertTrue(ok2)
+                mock_no_hwnd_win.move.assert_called_once_with(int(round(2272 / 1.5)), int(round(24 / 1.5)))
+
+        # 5. Verify overlay.html delegates drag to native start_drag()
+        overlay_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "static", "overlay.html")
+        with open(overlay_path, "r", encoding="utf-8") as f:
+            overlay_src = f.read()
+        self.assertIn("window.pywebview.api.start_drag()", overlay_src)
+
 
 if __name__ == "__main__":
     unittest.main()

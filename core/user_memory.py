@@ -164,6 +164,79 @@ def init_memory_db(db_path: Optional[str] = None):
                 """, (cat, en, lead))
 
 
+def _upsert_fact_row(
+    conn: sqlite3.Connection,
+    *,
+    category: str,
+    key: str,
+    value: str,
+    data_type: str,
+    fact: str,
+    source: Optional[str],
+    confidence: Optional[float],
+    updated_at: float,
+    prefer_category_key: bool = True,
+) -> int:
+    """
+    Inserts or updates a row in user_facts while safely reconciling both
+    UNIQUE(fact) and UNIQUE(category, key) constraints without IntegrityError,
+    preserving existing row IDs whenever possible.
+    """
+    row_ck = conn.execute(
+        "SELECT id, key, source, confidence, data_type FROM user_facts WHERE category = ? AND key = ? LIMIT 1;",
+        (category, key),
+    ).fetchone()
+    row_f = conn.execute(
+        "SELECT id, key, source, confidence, data_type FROM user_facts WHERE fact = ? LIMIT 1;",
+        (fact,),
+    ).fetchone()
+
+    ck_id = row_ck[0] if row_ck is not None else None
+    f_id = row_f[0] if row_f is not None else None
+
+    if ck_id is not None and f_id is not None and ck_id != f_id:
+        if prefer_category_key:
+            keep_row, keep_id, drop_id = row_ck, ck_id, f_id
+        else:
+            keep_row, keep_id, drop_id = row_f, f_id, ck_id
+        conn.execute("DELETE FROM user_facts WHERE id = ?;", (drop_id,))
+    elif ck_id is not None:
+        keep_row, keep_id = row_ck, ck_id
+    elif f_id is not None:
+        keep_row, keep_id = row_f, f_id
+    else:
+        keep_row, keep_id = None, None
+
+    if keep_id is not None:
+        existing_key = keep_row[1]
+        existing_source = keep_row[2]
+        existing_conf = keep_row[3]
+        existing_dtype = keep_row[4]
+        final_key = key if prefer_category_key else (existing_key or key)
+        final_source = source if source is not None else existing_source
+        final_conf = confidence if confidence is not None else existing_conf
+        final_dtype = data_type or existing_dtype or "string"
+        conn.execute(
+            """
+            UPDATE user_facts
+            SET category = ?, key = ?, value = ?, data_type = ?, fact = ?,
+                source = ?, confidence = ?, updated_at = ?, last_updated = CURRENT_TIMESTAMP
+            WHERE id = ?;
+            """,
+            (category, final_key, value, final_dtype, fact, final_source, final_conf, updated_at, keep_id),
+        )
+        return int(keep_id)
+
+    cursor = conn.execute(
+        """
+        INSERT INTO user_facts (category, key, value, data_type, fact, source, confidence, updated_at, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);
+        """,
+        (category, key, value, data_type or "string", fact, source, confidence, updated_at),
+    )
+    return int(cursor.lastrowid or 0)
+
+
 def add_fact_batch(facts: List[Dict[str, str]], source_session: str, db_path: Optional[str] = None):
     """Batch inserts or updates extracted user facts from a conversation session."""
     target_path = _resolve_db_path(db_path)
@@ -178,25 +251,18 @@ def add_fact_batch(facts: List[Dict[str, str]], source_session: str, db_path: Op
                 cat = item.get("category", "general")
                 now_ts = time.time()
                 key_text = item.get("key") or f"fact_{hashlib.md5(fact_text.encode('utf-8')).hexdigest()[:12]}"
-                conn.execute("""
-                    INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(fact) DO UPDATE SET
-                        category = excluded.category,
-                        source = excluded.source,
-                        confidence = excluded.confidence,
-                        updated_at = excluded.updated_at,
-                        key = COALESCE(user_facts.key, excluded.key),
-                        value = excluded.value
-                """, (
-                    cat,
-                    fact_text,
-                    source_session,
-                    0.9,
-                    now_ts,
-                    key_text,
-                    fact_text
-                ))
+                _upsert_fact_row(
+                    conn,
+                    category=cat,
+                    key=key_text,
+                    value=fact_text,
+                    data_type="string",
+                    fact=fact_text,
+                    source=source_session,
+                    confidence=0.9,
+                    updated_at=now_ts,
+                    prefer_category_key=False,
+                )
 
 
 def get_all_facts(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -221,10 +287,10 @@ def replace_facts(
     db_path: Optional[str] = None
 ):
     """
-    Safely replaces reconciled facts in user_facts table.
-    If snapshot_ts is provided, only facts with updated_at <= snapshot_ts are pruned,
-    preserving any new facts recorded while reconciliation was running in the background.
-    Always preserves entries in 'family' and 'dates' categories and explicit profile keys.
+    Safely replaces reconciled facts in user_facts table while preserving row IDs
+    for protected ('family', 'dates', explicit profile keys) and matched entries.
+    If snapshot_ts is provided, only facts with updated_at <= snapshot_ts are eligible
+    for pruning, preserving any new facts recorded while reconciliation was running.
     """
     target_path = _resolve_db_path(db_path)
     init_memory_db(target_path)
@@ -232,35 +298,38 @@ def replace_facts(
         configure_sqlite_connection(conn)
         conn.row_factory = sqlite3.Row
         with conn:
-            # Snapshot existing rows to preserve explicit keys and protected categories ('family', 'dates')
             existing_rows = conn.execute("""
-                SELECT category, key, value, data_type, fact, source, confidence, updated_at
+                SELECT id, category, key, value, data_type, fact, source, confidence, updated_at
                 FROM user_facts
                 WHERE fact IS NOT NULL AND fact != ''
             """).fetchall()
 
             by_fact: Dict[str, sqlite3.Row] = {}
             by_key: Dict[str, sqlite3.Row] = {}
-            protected_rows: List[sqlite3.Row] = []
+            by_cat_key: Dict[tuple, sqlite3.Row] = {}
+            protected_ids = set()
             for r in existing_rows:
+                rid = int(r["id"])
                 f_val = (r["fact"] or "").strip()
                 k_val = (r["key"] or "").strip()
                 c_val = (r["category"] or "").strip().lower()
                 if f_val:
                     by_fact[f_val] = r
-                if k_val and not k_val.startswith("fact_"):
-                    by_key[k_val] = r
-                if c_val in ("family", "dates") or (k_val and not k_val.startswith("fact_")):
-                    protected_rows.append(r)
-
-            if snapshot_ts is not None:
-                conn.execute("DELETE FROM user_facts WHERE updated_at <= ?;", (snapshot_ts,))
-            else:
-                conn.execute("DELETE FROM user_facts;")
+                if k_val:
+                    by_cat_key[(c_val, k_val)] = r
+                    if not k_val.startswith("fact_"):
+                        by_key[k_val] = r
+                is_newer_than_snapshot = (
+                    snapshot_ts is not None
+                    and r["updated_at"] is not None
+                    and float(r["updated_at"]) > float(snapshot_ts)
+                )
+                if is_newer_than_snapshot or c_val in ("family", "dates") or (k_val and not k_val.startswith("fact_")):
+                    protected_ids.add(rid)
 
             now_ts = time.time()
-            inserted_keys = set()
-            inserted_facts = set()
+            prepared_items: List[Dict[str, Any]] = []
+            kept_ids = set(protected_ids)
 
             for f in facts:
                 fact_str = f.get("fact", "")
@@ -276,8 +345,11 @@ def replace_facts(
                 explicit_key = (f.get("key") or "").strip()
                 explicit_val = f.get("value")
 
-                # Match back to existing explicit key if omitted in LLM reconciliation response
-                matched_row = by_fact.get(fact_str) or (by_key.get(explicit_key) if explicit_key else None)
+                matched_row = (
+                    by_fact.get(fact_str)
+                    or (by_cat_key.get((cat.lower(), explicit_key)) if explicit_key else None)
+                    or (by_key.get(explicit_key) if explicit_key else None)
+                )
                 if not explicit_key and matched_row:
                     rk = (matched_row["key"] or "").strip()
                     if rk and not rk.startswith("fact_"):
@@ -287,6 +359,7 @@ def replace_facts(
                     prefix_clean = prefix.strip()
                     if prefix_clean in by_key:
                         explicit_key = prefix_clean
+                        matched_row = matched_row or by_key[prefix_clean]
                         if explicit_val is None:
                             explicit_val = rest.strip()
                 if explicit_val is None and explicit_key and fact_str.lower().startswith(f"{explicit_key.lower()}:"):
@@ -296,53 +369,47 @@ def replace_facts(
 
                 key_text = explicit_key or f"fact_{hashlib.md5(fact_str.encode('utf-8')).hexdigest()[:12]}"
                 val_text = str(explicit_val).strip() if explicit_val is not None else fact_str
+                if matched_row is not None:
+                    kept_ids.add(int(matched_row["id"]))
 
-                conn.execute("""
-                    INSERT INTO user_facts (category, fact, source, confidence, updated_at, key, value)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(fact) DO UPDATE SET
-                        category = excluded.category,
-                        source = excluded.source,
-                        confidence = excluded.confidence,
-                        updated_at = excluded.updated_at,
-                        key = COALESCE(user_facts.key, excluded.key),
-                        value = excluded.value
-                    WHERE user_facts.updated_at <= excluded.updated_at;
-                """, (
-                    cat,
-                    fact_str,
-                    "reconciliation",
-                    f.get("confidence", 1.0),
-                    now_ts,
-                    key_text,
-                    val_text
-                ))
-                inserted_keys.add(key_text)
-                inserted_facts.add(fact_str)
+                prepared_items.append({
+                    "category": cat,
+                    "key": key_text,
+                    "value": val_text,
+                    "data_type": (matched_row["data_type"] if matched_row and matched_row["data_type"] else "string"),
+                    "fact": fact_str,
+                    "confidence": f.get("confidence", 1.0),
+                    "matched_row": matched_row,
+                })
 
-            # Guarantee preservation of all 'family' & 'dates' entries and explicit profile keys
-            for pr in protected_rows:
-                p_key = (pr["key"] or "").strip()
-                p_fact = (pr["fact"] or "").strip()
-                if (p_key and p_key in inserted_keys) or (p_fact and p_fact in inserted_facts):
+            # Delete only stale, non-protected rows that were not matched by reconciliation
+            ids_to_delete = [int(r["id"]) for r in existing_rows if int(r["id"]) not in kept_ids]
+            if ids_to_delete:
+                placeholders = ",".join("?" for _ in ids_to_delete)
+                conn.execute(f"DELETE FROM user_facts WHERE id IN ({placeholders});", ids_to_delete)
+
+            # Upsert reconciled facts in-place (preserving IDs and avoiding dual-UNIQUE conflicts)
+            for item in prepared_items:
+                matched_row = item["matched_row"]
+                if (
+                    matched_row is not None
+                    and snapshot_ts is not None
+                    and matched_row["updated_at"] is not None
+                    and float(matched_row["updated_at"]) > float(snapshot_ts)
+                ):
                     continue
-                conn.execute("""
-                    INSERT OR IGNORE INTO user_facts (category, key, value, data_type, fact, source, confidence, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    pr["category"],
-                    p_key or f"fact_{hashlib.md5(p_fact.encode('utf-8')).hexdigest()[:12]}",
-                    pr["value"] or p_fact,
-                    pr["data_type"] or "string",
-                    p_fact,
-                    pr["source"] or "preserved",
-                    pr["confidence"] if pr["confidence"] is not None else 1.0,
-                    pr["updated_at"] or now_ts
-                ))
-                if p_key:
-                    inserted_keys.add(p_key)
-                if p_fact:
-                    inserted_facts.add(p_fact)
+                _upsert_fact_row(
+                    conn,
+                    category=item["category"],
+                    key=item["key"],
+                    value=item["value"],
+                    data_type=item["data_type"],
+                    fact=item["fact"],
+                    source="reconciliation",
+                    confidence=item["confidence"],
+                    updated_at=now_ts,
+                    prefer_category_key=bool(matched_row is not None),
+                )
 
 
 class UserMemory:
@@ -389,21 +456,18 @@ class UserMemory:
         with self._lock:
             conn = self._get_connection()
             with conn:
-                cursor = conn.execute("""
-                    INSERT INTO user_facts (category, key, value, data_type, fact, updated_at, last_updated)
-                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(category, key) DO UPDATE SET
-                        value = excluded.value,
-                        data_type = excluded.data_type,
-                        fact = excluded.fact,
-                        updated_at = excluded.updated_at,
-                        last_updated = CURRENT_TIMESTAMP;
-                """, (cat_clean, key_clean, val_clean, type_clean, fact_str, now_ts))
-                fact_id = cursor.lastrowid
-
-            if not fact_id or cursor.rowcount == 0:
-                row = conn.execute("SELECT id FROM user_facts WHERE category = ? AND key = ?", (cat_clean, key_clean)).fetchone()
-                fact_id = row["id"] if row else 0
+                fact_id = _upsert_fact_row(
+                    conn,
+                    category=cat_clean,
+                    key=key_clean,
+                    value=val_clean,
+                    data_type=type_clean,
+                    fact=fact_str,
+                    source=None,
+                    confidence=None,
+                    updated_at=now_ts,
+                    prefer_category_key=True,
+                )
 
         logger.info(f"[USER MEMORY] Stored fact [{cat_clean}] {key_clean} = '{val_clean}' ({type_clean})")
         return {

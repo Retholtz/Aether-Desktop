@@ -6,7 +6,13 @@
 
 let currentProjectsData = { active_project: null, projects: {} };
 let activeProjectId = null;
+window.activeProjectId = null;
 let instructionsSaveTimer = null;
+
+function setActiveProjectId(pid) {
+    activeProjectId = pid || null;
+    window.activeProjectId = activeProjectId;
+}
 
 function escapeProjHtml(str) {
     return String(str == null ? '' : str)
@@ -24,12 +30,12 @@ async function loadProjectsUI() {
         }
         const data = await window.pywebview.api.get_projects_data();
         currentProjectsData = data || { active_project: null, projects: {} };
-        activeProjectId = currentProjectsData.active_project;
+        setActiveProjectId(currentProjectsData.active_project);
 
         const projects = currentProjectsData.projects || {};
         const pids = Object.keys(projects);
         if ((!activeProjectId || !projects[activeProjectId]) && pids.length > 0) {
-            activeProjectId = pids[0];
+            setActiveProjectId(pids[0]);
         }
 
         renderProjectsSidebar();
@@ -80,7 +86,7 @@ function renderProjectsSidebar() {
 
 async function selectProject(pid) {
     if (!pid || pid === activeProjectId) return;
-    activeProjectId = pid;
+    setActiveProjectId(pid);
     try {
         if (window.pywebview && window.pywebview.api) {
             await window.pywebview.api.set_active_project(pid);
@@ -592,7 +598,7 @@ async function handleDeleteActiveProject() {
     try {
         const res = await window.pywebview.api.delete_project(activeProjectId);
         if (res && res.status === 'success') {
-            activeProjectId = res.active_project || null;
+            setActiveProjectId(res.active_project || null);
             await loadProjectsUI();
         }
     } catch (e) {

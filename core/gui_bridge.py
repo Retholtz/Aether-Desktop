@@ -2885,17 +2885,23 @@ class GuiBridge:
 
         try:
 
-            from ui.hud_window import clamp_window_position
+            from ui.hud_window import (
+                clamp_window_position,
+                move_overlay_physical,
+                _get_dpi_scale_for_window,
+            )
 
             cur_mode = getattr(self, "_current_hud_mode", "normal")
 
-            w, h = (180, 52) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+            w, h = (180, 56) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
 
-            cx, cy = clamp_window_position(None, None, width=w, height=h)
+            overlay_win = getattr(self, "_overlay_window", None)
+            scale = _get_dpi_scale_for_window(overlay_win)
+            cx, cy = clamp_window_position(None, None, width=int(round(w * scale)), height=int(round(h * scale)))
 
-            if getattr(self, "_overlay_window", None):
+            if overlay_win:
 
-                self._overlay_window.move(cx, cy)
+                move_overlay_physical(overlay_win, cx, cy)
 
                 self.show_overlay()
 
@@ -2913,17 +2919,42 @@ class GuiBridge:
 
     def show_overlay(self) -> dict:
 
-        """Explicitly displays the floating overlay window."""
+        """Explicitly displays the floating overlay window and ensures it is within visible monitor bounds."""
 
         try:
 
-            if getattr(self, "_overlay_window", None):
+            overlay_win = getattr(self, "_overlay_window", None)
+            if overlay_win:
 
-                self._overlay_window.show()
-
-                self._overlay_visible = True
+                from ui.hud_window import (
+                    clamp_window_position,
+                    move_overlay_physical,
+                    _get_overlay_physical_rect,
+                    _get_dpi_scale_for_window,
+                )
 
                 cur_mode = getattr(self, "_current_hud_mode", "normal")
+                w, h = (180, 56) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+                rect = _get_overlay_physical_rect(overlay_win)
+                if rect:
+                    cur_x, cur_y, cur_w, cur_h = rect
+                    cx, cy = clamp_window_position(cur_x, cur_y, width=cur_w, height=cur_h)
+                    if cx != cur_x or cy != cur_y:
+                        move_overlay_physical(overlay_win, cx, cy)
+                else:
+                    ui_cfg = self.get_raw_config().get("ui", {})
+                    scale = _get_dpi_scale_for_window(overlay_win)
+                    cx, cy = clamp_window_position(
+                        ui_cfg.get("overlay_x"),
+                        ui_cfg.get("overlay_y"),
+                        width=int(round(w * scale)),
+                        height=int(round(h * scale)),
+                    )
+                    move_overlay_physical(overlay_win, cx, cy)
+
+                overlay_win.show()
+
+                self._overlay_visible = True
 
                 self.set_mode(cur_mode)
 
@@ -2971,21 +3002,7 @@ class GuiBridge:
 
                 else:
 
-                    self._overlay_window.show()
-
-                    self._overlay_visible = True
-
-                    try:
-
-                        from ui.hud_window import apply_hud_window_shape
-
-                        cur_mode = getattr(self, "_current_hud_mode", "normal")
-
-                        apply_hud_window_shape(self._overlay_window, cur_mode)
-
-                    except Exception:
-
-                        pass
+                    self.show_overlay()
 
             return {"success": True, "visible": getattr(self, "_overlay_visible", False)}
 
@@ -2997,17 +3014,18 @@ class GuiBridge:
 
     def save_overlay_position(self, x: int, y: int) -> dict:
 
-        """Persists the floating overlay window coordinates to config."""
+        """Persists the floating overlay window physical coordinates to config."""
 
         try:
 
-            from ui.hud_window import clamp_window_position
+            from ui.hud_window import clamp_window_position, _get_dpi_scale_for_window
 
             cur_mode = getattr(self, "_current_hud_mode", "normal")
 
-            w, h = (180, 52) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+            w, h = (180, 56) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+            scale = _get_dpi_scale_for_window(getattr(self, "_overlay_window", None))
 
-            cx, cy = clamp_window_position(x, y, width=w, height=h)
+            cx, cy = clamp_window_position(x, y, width=int(round(w * scale)), height=int(round(h * scale)))
 
             with self._config_lock:
 

@@ -996,6 +996,22 @@ function toggleUnpreparedDrawer(charId) {
 }
 
 async function handleCardCastSpell(charId, spellName, spellLevel) {
+  const sendCampaignSpellPrompt = async (promptText) => {
+    const inputEl = document.getElementById("rpStoryChatInput");
+    const sendBtn = document.getElementById("btnSendRpStory");
+    if (inputEl && sendBtn) {
+      inputEl.value = promptText;
+      sendBtn.click();
+      return;
+    }
+    const cid = (typeof ttrpgData !== "undefined" && ttrpgData && ttrpgData.active_campaign)
+      || (window.ttrpgData && window.ttrpgData.active_campaign)
+      || (window.ttrpgData && window.ttrpgData.manifest && window.ttrpgData.manifest.active_campaign);
+    if (cid && window.pywebview?.api?.send_workspace_message) {
+      await window.pywebview.api.send_workspace_message('campaign', cid, promptText);
+    }
+  };
+
   if (spellLevel > 0) {
     // Leveled spell: Call cast_spell to deduct slot and prompt GM narrative
     if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.invoke_ttrpg_tool === "function") {
@@ -1010,23 +1026,10 @@ async function handleCardCastSpell(charId, spellName, spellLevel) {
         return;
       }
     }
-    const inputEl = document.getElementById("input-rp-dm-prompt");
-    if (inputEl) {
-      inputEl.value = `*[SPELL CAST]* ${charId} casts **${spellName}** (Level ${spellLevel}).`;
-      const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
-      if (sendBtn) sendBtn.click();
-    }
+    await sendCampaignSpellPrompt(`*[SPELL CAST]* ${charId} casts **${spellName}** (Level ${spellLevel}).`);
   } else {
-    // Cantrip: At-will cast
-    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.send_chat_message === "function") {
-      await window.pywebview.api.send_chat_message(`Cast cantrip: ${spellName}`);
-    }
-    const inputEl = document.getElementById("input-rp-dm-prompt");
-    if (inputEl) {
-      inputEl.value = `*[SPELL CAST]* ${charId} casts cantrip **${spellName}**.`;
-      const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
-      if (sendBtn) sendBtn.click();
-    }
+    // Cantrip: At-will cast routed into the active TTRPG campaign story chat
+    await sendCampaignSpellPrompt(`*[SPELL CAST]* ${charId} casts cantrip **${spellName}**.`);
   }
 }
 
@@ -2937,11 +2940,19 @@ window.handleRollSpellDamage = function(charName, spellName, damageExpr) {
 window.handleCastSpell = function(charName, spellName, range, notes) {
     const rangeTxt = range ? ` (${range})` : "";
     const notesTxt = notes ? ` [${notes}]` : "";
-    const inputEl = document.getElementById("input-rp-dm-prompt");
-    if (inputEl) {
-        inputEl.value = `*[SPELL CAST]* ${charName} casts **${spellName}**${rangeTxt}${notesTxt}.`;
-        const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
-        if (sendBtn) sendBtn.click();
+    const promptText = `*[SPELL CAST]* ${charName} casts **${spellName}**${rangeTxt}${notesTxt}.`;
+    const inputEl = document.getElementById("rpStoryChatInput");
+    const sendBtn = document.getElementById("btnSendRpStory");
+    if (inputEl && sendBtn) {
+        inputEl.value = promptText;
+        sendBtn.click();
+        return;
+    }
+    const cid = (typeof ttrpgData !== "undefined" && ttrpgData && ttrpgData.active_campaign)
+        || (window.ttrpgData && window.ttrpgData.active_campaign)
+        || (window.ttrpgData && window.ttrpgData.manifest && window.ttrpgData.manifest.active_campaign);
+    if (cid && window.pywebview?.api?.send_workspace_message) {
+        window.pywebview.api.send_workspace_message("campaign", cid, promptText);
     }
 };
 

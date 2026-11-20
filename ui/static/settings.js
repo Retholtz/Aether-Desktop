@@ -367,6 +367,31 @@ function syncTierEndpointsToUI(currentConfig) {
   if (ttrpgValBadge) ttrpgValBadge.textContent = indexToLevelLabel(ttrpgIdx, 'Medium');
 }
 
+function formatTierEndpoint(baseOrCustom, level, defaultBase, isCustom) {
+  const raw = String(baseOrCustom || '').trim();
+  if (!raw) {
+    return `${defaultBase}:${level}`;
+  }
+  if (isCustom) {
+    // Preserve explicit custom endpoint strings (e.g. "gemini-2.5-pro", "gemini-3.8-flash",
+    // or explicit "gemini-4-neon:xhigh") without forcing a reasoning-level suffix on models
+    // that do not use ":level" profiles.
+    if (raw.includes(':')) {
+      return raw;
+    }
+    const lower = raw.toLowerCase();
+    if (lower.startsWith('gemini-4-')) {
+      return `${raw}:${level}`;
+    }
+    return raw;
+  }
+  const cleanBase = (raw.split(':')[0] || '').trim() || defaultBase;
+  if (cleanBase === 'gemini-3.8-flash') {
+    return cleanBase;
+  }
+  return `${cleanBase}:${level}`;
+}
+
 function readTierEndpointsFromUI(fallbackConfig) {
   fallbackConfig = fallbackConfig || {};
   const api = fallbackConfig.api || {};
@@ -391,21 +416,26 @@ function readTierEndpointsFromUI(fallbackConfig) {
                      document.querySelector('select[name="tier2_moderate_model"]');
   const moderateCustomInput = document.getElementById('input-moderate-custom-model');
   const modSlider = document.getElementById('slider-moderate-level');
-  const modLevel = modSlider
+  let modLevel = modSlider
     ? indexToLevelKey(modSlider.value, 'medium')
     : (fallbackConfig.tier2_moderate_level || api.tier2_moderate_level || 'medium');
-  let modBase = 'gemini-4-hydrogen';
+  let moderateModelVal;
   if (moderateEl) {
     if (moderateEl.value === 'custom') {
       const typedMod = (moderateCustomInput ? moderateCustomInput.value : '').trim();
-      modBase = (typedMod.split(':')[0] || '').trim() || 'gemini-4-hydrogen';
-    } else if (moderateEl.value) {
-      modBase = (moderateEl.value.split(':')[0] || '').trim() || 'gemini-4-hydrogen';
+      if (typedMod.includes(':')) {
+        modLevel = splitEndpointProfile(typedMod, 'gemini-4-hydrogen', modLevel).level;
+      }
+      moderateModelVal = formatTierEndpoint(typedMod, modLevel, 'gemini-4-hydrogen', true);
+    } else {
+      moderateModelVal = formatTierEndpoint(moderateEl.value, modLevel, 'gemini-4-hydrogen', false);
     }
   } else if (fallbackConfig.tier2_moderate_model) {
-    modBase = (String(fallbackConfig.tier2_moderate_model).split(':')[0] || '').trim() || 'gemini-4-hydrogen';
+    const rawFallbackMod = String(fallbackConfig.tier2_moderate_model).trim();
+    moderateModelVal = formatTierEndpoint(rawFallbackMod, modLevel, 'gemini-4-hydrogen', true);
+  } else {
+    moderateModelVal = `gemini-4-hydrogen:${modLevel}`;
   }
-  const moderateModelVal = `${modBase}:${modLevel}`;
 
   // Tier 3 Heavy
   const heavyEl = document.getElementById('select-heavy-model') ||
@@ -414,42 +444,52 @@ function readTierEndpointsFromUI(fallbackConfig) {
                   document.querySelector('select[name="tier2_heavy_model"]');
   const heavyCustomInput = document.getElementById('input-heavy-custom-model');
   const heavySlider = document.getElementById('slider-heavy-level');
-  const heavyLevel = heavySlider
+  let heavyLevel = heavySlider
     ? indexToLevelKey(heavySlider.value, 'high')
     : (fallbackConfig.tier3_thinking_level || fallbackConfig.tier2_thinking_level || api.tier2_thinking_level || 'high');
-  let heavyBase = 'gemini-4-neon';
+  let heavyModelVal;
   if (heavyEl) {
     if (heavyEl.value === 'custom') {
       const typedHeavy = (heavyCustomInput ? heavyCustomInput.value : '').trim();
-      heavyBase = (typedHeavy.split(':')[0] || '').trim() || 'gemini-4-neon';
-    } else if (heavyEl.value) {
-      heavyBase = (heavyEl.value.split(':')[0] || '').trim() || 'gemini-4-neon';
+      if (typedHeavy.includes(':')) {
+        heavyLevel = splitEndpointProfile(typedHeavy, 'gemini-4-neon', heavyLevel).level;
+      }
+      heavyModelVal = formatTierEndpoint(typedHeavy, heavyLevel, 'gemini-4-neon', true);
+    } else {
+      heavyModelVal = formatTierEndpoint(heavyEl.value, heavyLevel, 'gemini-4-neon', false);
     }
   } else if (fallbackConfig.tier3_heavy_model || fallbackConfig.tier2_heavy_model) {
-    heavyBase = (String(fallbackConfig.tier3_heavy_model || fallbackConfig.tier2_heavy_model).split(':')[0] || '').trim() || 'gemini-4-neon';
+    const rawFallbackHeavy = String(fallbackConfig.tier3_heavy_model || fallbackConfig.tier2_heavy_model).trim();
+    heavyModelVal = formatTierEndpoint(rawFallbackHeavy, heavyLevel, 'gemini-4-neon', true);
+  } else {
+    heavyModelVal = `gemini-4-neon:${heavyLevel}`;
   }
-  const heavyModelVal = `${heavyBase}:${heavyLevel}`;
 
   // TTRPG Game Master Endpoint
   const ttrpgEl = document.getElementById('select-ttrpg-model') ||
                   document.querySelector('select[name="ttrpg_model_endpoint"]');
   const ttrpgCustomInput = document.getElementById('input-ttrpg-custom-model');
   const ttrpgSlider = document.getElementById('slider-ttrpg-level');
-  const ttrpgLevel = ttrpgSlider
+  let ttrpgLevel = ttrpgSlider
     ? indexToLevelKey(ttrpgSlider.value, 'medium')
     : (fallbackConfig.ttrpg_thinking_level || api.ttrpg_thinking_level || 'medium');
-  let ttrpgBase = 'gemini-4-hydrogen';
+  let ttrpgModelVal;
   if (ttrpgEl) {
     if (ttrpgEl.value === 'custom') {
       const typedTtrpg = (ttrpgCustomInput ? ttrpgCustomInput.value : '').trim();
-      ttrpgBase = (typedTtrpg.split(':')[0] || '').trim() || 'gemini-4-hydrogen';
-    } else if (ttrpgEl.value) {
-      ttrpgBase = (ttrpgEl.value.split(':')[0] || '').trim() || 'gemini-4-hydrogen';
+      if (typedTtrpg.includes(':')) {
+        ttrpgLevel = splitEndpointProfile(typedTtrpg, 'gemini-4-hydrogen', ttrpgLevel).level;
+      }
+      ttrpgModelVal = formatTierEndpoint(typedTtrpg, ttrpgLevel, 'gemini-4-hydrogen', true);
+    } else {
+      ttrpgModelVal = formatTierEndpoint(ttrpgEl.value, ttrpgLevel, 'gemini-4-hydrogen', false);
     }
   } else if (fallbackConfig.ttrpg_model_endpoint) {
-    ttrpgBase = (String(fallbackConfig.ttrpg_model_endpoint).split(':')[0] || '').trim() || 'gemini-4-hydrogen';
+    const rawFallbackTtrpg = String(fallbackConfig.ttrpg_model_endpoint).trim();
+    ttrpgModelVal = formatTierEndpoint(rawFallbackTtrpg, ttrpgLevel, 'gemini-4-hydrogen', true);
+  } else {
+    ttrpgModelVal = `gemini-4-hydrogen:${ttrpgLevel}`;
   }
-  const ttrpgModelVal = (ttrpgBase === 'gemini-3.8-flash') ? 'gemini-3.8-flash' : `${ttrpgBase}:${ttrpgLevel}`;
 
   return {
     primaryModelVal,
@@ -520,6 +560,37 @@ function populateFixedOptions(el, items) {
   });
 }
 
+function mergeDiscoveredModelOptions(defaultItems, discoveredItems, stripLevelSuffix = false) {
+  const defaults = Array.isArray(defaultItems) ? defaultItems : [];
+  const discovered = Array.isArray(discoveredItems) ? discoveredItems : [];
+  const customOpt = defaults.find(i => i && i.id === 'custom') || { id: 'custom', display_name: 'Custom' };
+
+  const seen = new Set();
+  const baseList = [];
+  defaults.forEach(item => {
+    if (!item || !item.id || item.id === 'custom') return;
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      baseList.push(item);
+    }
+  });
+
+  const extraList = [];
+  discovered.forEach(raw => {
+    const rawId = typeof raw === 'string' ? raw : (raw && raw.id ? String(raw.id) : '');
+    const normalizedId = (stripLevelSuffix ? rawId.split(':')[0] : rawId).trim();
+    if (!normalizedId || normalizedId === 'custom' || seen.has(normalizedId)) return;
+    seen.add(normalizedId);
+    const label = (typeof raw === 'object' && raw && (raw.display_name || raw.label))
+      ? (stripLevelSuffix ? String(raw.display_name || raw.label).replace(/\s*\([^)]*(low|medium|high|extra|xhigh)[^)]*\)\s*/gi, '').trim() || normalizedId : (raw.display_name || raw.label))
+      : normalizedId;
+    extraList.push({ id: normalizedId, display_name: label });
+  });
+
+  const sortedExtras = sortModelsChronologically(extraList);
+  return [...baseList, ...sortedExtras, customOpt];
+}
+
 function updateSettingsModelDropdowns(categorizedData, currentConfig) {
   currentConfig = currentConfig || {};
   categorizedData = categorizedData || {};
@@ -537,17 +608,26 @@ function updateSettingsModelDropdowns(categorizedData, currentConfig) {
   const ttrpgEl = document.getElementById('select-ttrpg-model') ||
                   document.querySelector('select[name="ttrpg_model_endpoint"]');
 
+  const discoveredPrimary = categorizedData.primary_models || categorizedData.primary_options || categorizedData.chat_models || categorizedData.tier1_options || [];
+  const discoveredModerate = categorizedData.moderate_models || categorizedData.tier2_moderate_options || categorizedData.chat_models || [];
+  const discoveredHeavy = categorizedData.heavy_models || categorizedData.tier3_options || categorizedData.tier2_options || [];
+  const discoveredTtrpg = [
+    ...(categorizedData.ttrpg_models || []),
+    ...discoveredModerate,
+    ...discoveredHeavy
+  ];
+
   if (primaryEl) {
-    populateFixedOptions(primaryEl, DEFAULT_CHAT_MODELS);
+    populateFixedOptions(primaryEl, mergeDiscoveredModelOptions(DEFAULT_CHAT_MODELS, discoveredPrimary, false));
   }
   if (moderateEl) {
-    populateFixedOptions(moderateEl, DEFAULT_MODERATE_MODELS);
+    populateFixedOptions(moderateEl, mergeDiscoveredModelOptions(DEFAULT_MODERATE_MODELS, discoveredModerate, true));
   }
   if (heavyEl) {
-    populateFixedOptions(heavyEl, DEFAULT_HEAVY_MODELS);
+    populateFixedOptions(heavyEl, mergeDiscoveredModelOptions(DEFAULT_HEAVY_MODELS, discoveredHeavy, true));
   }
   if (ttrpgEl) {
-    populateFixedOptions(ttrpgEl, DEFAULT_TTRPG_MODELS);
+    populateFixedOptions(ttrpgEl, mergeDiscoveredModelOptions(DEFAULT_TTRPG_MODELS, discoveredTtrpg, true));
   }
   syncTierEndpointsToUI(currentConfig);
 
@@ -728,6 +808,7 @@ function showOAuthFeedback(msg, isError = false) {
 
 function renderOAuthStatus(statusMap) {
   if (!statusMap || typeof statusMap !== 'object') return;
+  const hasKey = (k) => Object.prototype.hasOwnProperty.call(statusMap, k) && statusMap[k] !== undefined;
 
   const updateProviderRow = (provKey, prefix) => {
     const info = statusMap[provKey] || {};
@@ -755,337 +836,352 @@ function renderOAuthStatus(statusMap) {
     }
   };
 
-  updateProviderRow('google', 'Google');
-  updateProviderRow('microsoft', 'Microsoft');
-  updateProviderRow('imap', 'Imap');
-
-  const gInfo = statusMap.google || {};
-  const gCidInput = document.getElementById('oauthGoogleClientId');
-  if (gCidInput && gInfo.client_id && !gCidInput.value) {
-    gCidInput.value = gInfo.client_id;
+  if (hasKey('google')) {
+    updateProviderRow('google', 'Google');
+    const gInfo = statusMap.google || {};
+    const gCidInput = document.getElementById('oauthGoogleClientId');
+    if (gCidInput && gInfo.client_id && !gCidInput.value) {
+      gCidInput.value = gInfo.client_id;
+    }
   }
 
-  const mInfo = statusMap.microsoft || {};
-  const mCidInput = document.getElementById('oauthMicrosoftClientId');
-  if (mCidInput && mInfo.client_id && !mCidInput.value) {
-    mCidInput.value = mInfo.client_id;
-  }
-  const mTenantInput = document.getElementById('oauthMicrosoftTenantId');
-  if (mTenantInput && mInfo.tenant_id) {
-    mTenantInput.value = mInfo.tenant_id;
+  if (hasKey('microsoft')) {
+    updateProviderRow('microsoft', 'Microsoft');
+    const mInfo = statusMap.microsoft || {};
+    const mCidInput = document.getElementById('oauthMicrosoftClientId');
+    if (mCidInput && mInfo.client_id && !mCidInput.value) {
+      mCidInput.value = mInfo.client_id;
+    }
+    const mTenantInput = document.getElementById('oauthMicrosoftTenantId');
+    if (mTenantInput && mInfo.tenant_id) {
+      mTenantInput.value = mInfo.tenant_id;
+    }
   }
 
-  const iInfo = statusMap.imap || {};
-  const iEmail = document.getElementById('oauthImapEmail');
-  const iHost = document.getElementById('oauthImapHost');
-  const sHost = document.getElementById('oauthSmtpHost');
-  if (iEmail && iInfo.account_email && !iEmail.value) iEmail.value = iInfo.account_email;
-  if (iHost && iInfo.imap_host && !iHost.value) iHost.value = iInfo.imap_host;
-  if (sHost && iInfo.smtp_host && !sHost.value) sHost.value = iInfo.smtp_host;
+  if (hasKey('imap')) {
+    updateProviderRow('imap', 'Imap');
+    const iInfo = statusMap.imap || {};
+    const iEmail = document.getElementById('oauthImapEmail');
+    const iHost = document.getElementById('oauthImapHost');
+    const sHost = document.getElementById('oauthSmtpHost');
+    if (iEmail && iInfo.account_email && !iEmail.value) iEmail.value = iInfo.account_email;
+    if (iHost && iInfo.imap_host && !iHost.value) iHost.value = iInfo.imap_host;
+    if (sHost && iInfo.smtp_host && !sHost.value) sHost.value = iInfo.smtp_host;
+  }
 
   // Steam (Gaming & Presence) Status
-  const steamInfo = statusMap.steam || {};
-  const steamConnected = Boolean(steamInfo.connected);
-  const steamBadge = document.getElementById('oauthSteamStatusBadge');
-  const steamLabel = document.getElementById('oauthSteamAccountLabel');
-  const steamConnectBtn = document.getElementById('btnConnectSteam');
-  const steamDisconnectBtn = document.getElementById('btnDisconnectSteam');
-  const steamKeyInput = document.getElementById('steamApiKeyInput');
-  const steamIdInput = document.getElementById('steamId64Input');
-  const steamAutoDetect = document.getElementById('steamAutoDetectAppId');
+  if (hasKey('steam')) {
+    const steamInfo = statusMap.steam || {};
+    const steamConnected = Boolean(steamInfo.connected);
+    const steamBadge = document.getElementById('oauthSteamStatusBadge');
+    const steamLabel = document.getElementById('oauthSteamAccountLabel');
+    const steamConnectBtn = document.getElementById('btnConnectSteam');
+    const steamDisconnectBtn = document.getElementById('btnDisconnectSteam');
+    const steamKeyInput = document.getElementById('steamApiKeyInput');
+    const steamIdInput = document.getElementById('steamId64Input');
+    const steamAutoDetect = document.getElementById('steamAutoDetectAppId');
 
-  if (steamBadge) {
-    steamBadge.textContent = steamConnected ? 'CONNECTED' : 'DISCONNECTED';
-    steamBadge.className = `step-status-pill ${steamConnected ? 'done' : 'pending'}`;
-  }
-  if (steamLabel) {
-    if (steamConnected) {
-      const name = steamInfo.persona_name
-        ? `${steamInfo.persona_name} (SteamID: ${steamInfo.steam_id64 || ''})`
-        : (steamInfo.steam_id64 ? `SteamID: ${steamInfo.steam_id64}` : 'Connected Account');
-      steamLabel.textContent = `Connected as ${name}`;
-      steamLabel.style.color = '#34d399';
-    } else {
-      steamLabel.textContent = 'Not connected';
-      steamLabel.style.color = '#94a3b8';
+    if (steamBadge) {
+      steamBadge.textContent = steamConnected ? 'CONNECTED' : 'DISCONNECTED';
+      steamBadge.className = `step-status-pill ${steamConnected ? 'done' : 'pending'}`;
     }
-  }
-  if (steamConnectBtn) {
-    steamConnectBtn.textContent = steamConnected ? 'Configure Steam' : 'Sign into Steam';
-  }
-  if (steamDisconnectBtn) {
-    steamDisconnectBtn.style.display = steamConnected ? 'inline-block' : 'none';
-  }
-  if (steamKeyInput && steamInfo.has_api_key && (!steamKeyInput.value || steamKeyInput.value === '••••••••')) {
-    steamKeyInput.value = steamInfo.api_key_masked || '••••••••';
-  }
-  if (steamIdInput && steamInfo.steam_id64 && !steamIdInput.value) {
-    steamIdInput.value = steamInfo.steam_id64;
-  }
-  if (steamAutoDetect && steamInfo.auto_detect_active_appid !== undefined) {
-    steamAutoDetect.checked = Boolean(steamInfo.auto_detect_active_appid);
-  }
+    if (steamLabel) {
+      if (steamConnected) {
+        const name = steamInfo.persona_name
+          ? `${steamInfo.persona_name} (SteamID: ${steamInfo.steam_id64 || ''})`
+          : (steamInfo.steam_id64 ? `SteamID: ${steamInfo.steam_id64}` : 'Connected Account');
+        steamLabel.textContent = `Connected as ${name}`;
+        steamLabel.style.color = '#34d399';
+      } else {
+        steamLabel.textContent = 'Not connected';
+        steamLabel.style.color = '#94a3b8';
+      }
+    }
+    if (steamConnectBtn) {
+      steamConnectBtn.textContent = steamConnected ? 'Configure Steam' : 'Sign into Steam';
+    }
+    if (steamDisconnectBtn) {
+      steamDisconnectBtn.style.display = steamConnected ? 'inline-block' : 'none';
+    }
+    if (steamKeyInput && steamInfo.has_api_key && (!steamKeyInput.value || steamKeyInput.value === '••••••••')) {
+      steamKeyInput.value = steamInfo.api_key_masked || '••••••••';
+    }
+    if (steamIdInput && steamInfo.steam_id64 && !steamIdInput.value) {
+      steamIdInput.value = steamInfo.steam_id64;
+    }
+    if (steamAutoDetect && steamInfo.auto_detect_active_appid !== undefined) {
+      steamAutoDetect.checked = Boolean(steamInfo.auto_detect_active_appid);
+    }
 
-  const pollRadio = document.getElementById('steamFriendPollRadio');
-  const pollInterval = document.getElementById('steamFriendPollInterval');
-  if (pollRadio) {
-    pollRadio.checked = Boolean(steamInfo.poll_friends_status);
-    pollRadio.disabled = !steamConnected;
-  }
-  if (pollInterval) {
-    if (steamInfo.poll_interval_minutes) {
-      pollInterval.value = String(steamInfo.poll_interval_minutes);
+    const pollRadio = document.getElementById('steamFriendPollRadio');
+    const pollInterval = document.getElementById('steamFriendPollInterval');
+    if (pollRadio) {
+      pollRadio.checked = Boolean(steamInfo.poll_friends_status);
+      pollRadio.disabled = !steamConnected;
     }
-    pollInterval.disabled = !steamConnected;
+    if (pollInterval) {
+      if (steamInfo.poll_interval_minutes) {
+        pollInterval.value = String(steamInfo.poll_interval_minutes);
+      }
+      pollInterval.disabled = !steamConnected;
+    }
   }
 
   // Background Email Monitoring Status
-  const emailMonInfo = statusMap.email_monitoring || {};
-  const emailMonBadge = document.getElementById('emailMonitorStatusBadge');
-  const chkEmailMonEn = document.getElementById('chkEmailMonitorEnabled');
-  const chkEmailMonVerb = document.getElementById('chkEmailMonitorVerbal');
-  const emailMonPoll = document.getElementById('emailMonitorPollInterval');
-  if (emailMonBadge && emailMonInfo.enabled !== undefined) {
-    if (emailMonInfo.enabled) {
-      emailMonBadge.textContent = emailMonInfo.running ? 'MONITORING' : 'ACTIVE';
-      emailMonBadge.className = 'step-status-pill done';
-    } else {
-      emailMonBadge.textContent = 'DISABLED';
-      emailMonBadge.className = 'step-status-pill pending';
+  if (hasKey('email_monitoring')) {
+    const emailMonInfo = statusMap.email_monitoring || {};
+    const emailMonBadge = document.getElementById('emailMonitorStatusBadge');
+    const chkEmailMonEn = document.getElementById('chkEmailMonitorEnabled');
+    const chkEmailMonVerb = document.getElementById('chkEmailMonitorVerbal');
+    const emailMonPoll = document.getElementById('emailMonitorPollInterval');
+    if (emailMonBadge && emailMonInfo.enabled !== undefined) {
+      if (emailMonInfo.enabled) {
+        emailMonBadge.textContent = emailMonInfo.running ? 'MONITORING' : 'ACTIVE';
+        emailMonBadge.className = 'step-status-pill done';
+      } else {
+        emailMonBadge.textContent = 'DISABLED';
+        emailMonBadge.className = 'step-status-pill pending';
+      }
     }
-  }
-  if (chkEmailMonEn && emailMonInfo.enabled !== undefined) {
-    chkEmailMonEn.checked = Boolean(emailMonInfo.enabled);
-  }
-  if (chkEmailMonVerb && emailMonInfo.verbal_announcement !== undefined) {
-    chkEmailMonVerb.checked = Boolean(emailMonInfo.verbal_announcement);
-  }
-  if (emailMonPoll && emailMonInfo.poll_interval_seconds !== undefined) {
-    emailMonPoll.value = String(emailMonInfo.poll_interval_seconds);
+    if (chkEmailMonEn && emailMonInfo.enabled !== undefined) {
+      chkEmailMonEn.checked = Boolean(emailMonInfo.enabled);
+    }
+    if (chkEmailMonVerb && emailMonInfo.verbal_announcement !== undefined) {
+      chkEmailMonVerb.checked = Boolean(emailMonInfo.verbal_announcement);
+    }
+    if (emailMonPoll && emailMonInfo.poll_interval_seconds !== undefined) {
+      emailMonPoll.value = String(emailMonInfo.poll_interval_seconds);
+    }
   }
 
   // Desktop Notifications Status (Discord, Slack, Teams, etc.)
-  const notifInfo = statusMap.desktop_notifications || {};
-  const notifBadge = document.getElementById('discordNotifStatusBadge');
-  const notifLabel = document.getElementById('discordNotifStatusLabel');
-  const notifEnabledChk = document.getElementById('chkDiscordNotifEnabled');
-  const notifVerbalChk = document.getElementById('chkDiscordNotifVerbal');
-  const notifPollInterval = document.getElementById('discordNotifPollInterval');
-  const notifTargetApps = document.getElementById('discordNotifTargetAppsInput');
+  if (hasKey('desktop_notifications')) {
+    const notifInfo = statusMap.desktop_notifications || {};
+    const notifBadge = document.getElementById('discordNotifStatusBadge');
+    const notifLabel = document.getElementById('discordNotifStatusLabel');
+    const notifEnabledChk = document.getElementById('chkDiscordNotifEnabled');
+    const notifVerbalChk = document.getElementById('chkDiscordNotifVerbal');
+    const notifPollInterval = document.getElementById('discordNotifPollInterval');
+    const notifTargetApps = document.getElementById('discordNotifTargetAppsInput');
 
-  if (notifBadge && notifInfo.enabled !== undefined) {
-    if (!notifInfo.supported) {
-      notifBadge.textContent = 'UNAVAILABLE';
-      notifBadge.className = 'step-status-pill pending';
-    } else if (notifInfo.enabled) {
-      notifBadge.textContent = notifInfo.running ? 'LISTENING' : 'ACTIVE';
-      notifBadge.className = 'step-status-pill done';
-    } else {
-      notifBadge.textContent = 'DISABLED';
-      notifBadge.className = 'step-status-pill pending';
+    if (notifBadge && notifInfo.enabled !== undefined) {
+      if (!notifInfo.supported) {
+        notifBadge.textContent = 'UNAVAILABLE';
+        notifBadge.className = 'step-status-pill pending';
+      } else if (notifInfo.enabled) {
+        notifBadge.textContent = notifInfo.running ? 'LISTENING' : 'ACTIVE';
+        notifBadge.className = 'step-status-pill done';
+      } else {
+        notifBadge.textContent = 'DISABLED';
+        notifBadge.className = 'step-status-pill pending';
+      }
     }
-  }
-  if (notifLabel && notifInfo.status_label) {
-    notifLabel.textContent = notifInfo.status_label;
-    notifLabel.style.color = (notifInfo.enabled && notifInfo.supported) ? '#38bdf8' : '#94a3b8';
-  }
-  if (notifEnabledChk && notifInfo.enabled !== undefined) {
-    notifEnabledChk.checked = Boolean(notifInfo.enabled);
-  }
-  if (notifVerbalChk && notifInfo.verbal_announcement !== undefined) {
-    notifVerbalChk.checked = Boolean(notifInfo.verbal_announcement);
-  }
-  if (notifPollInterval && notifInfo.poll_interval_seconds !== undefined) {
-    notifPollInterval.value = String(notifInfo.poll_interval_seconds);
-  }
-  if (notifTargetApps && Array.isArray(notifInfo.target_apps) && notifInfo.target_apps.length > 0) {
-    notifTargetApps.value = notifInfo.target_apps.join(', ');
-  }
+    if (notifLabel && notifInfo.status_label) {
+      notifLabel.textContent = notifInfo.status_label;
+      notifLabel.style.color = (notifInfo.enabled && notifInfo.supported) ? '#38bdf8' : '#94a3b8';
+    }
+    if (notifEnabledChk && notifInfo.enabled !== undefined) {
+      notifEnabledChk.checked = Boolean(notifInfo.enabled);
+    }
+    if (notifVerbalChk && notifInfo.verbal_announcement !== undefined) {
+      notifVerbalChk.checked = Boolean(notifInfo.verbal_announcement);
+    }
+    if (notifPollInterval && notifInfo.poll_interval_seconds !== undefined) {
+      notifPollInterval.value = String(notifInfo.poll_interval_seconds);
+    }
+    if (notifTargetApps && Array.isArray(notifInfo.target_apps) && notifInfo.target_apps.length > 0) {
+      notifTargetApps.value = notifInfo.target_apps.join(', ');
+    }
 
-  const notifIncludeWl = document.getElementById('chkDiscordIncludeWhitelist');
-  const notifIncludeWlDrawer = document.getElementById('chkDiscordIncludeWhitelistDrawer');
-  if (notifInfo.include_whitelist_apps !== undefined) {
-    if (notifIncludeWl) notifIncludeWl.checked = Boolean(notifInfo.include_whitelist_apps);
-    if (notifIncludeWlDrawer) notifIncludeWlDrawer.checked = Boolean(notifInfo.include_whitelist_apps);
-  }
+    const notifIncludeWl = document.getElementById('chkDiscordIncludeWhitelist');
+    const notifIncludeWlDrawer = document.getElementById('chkDiscordIncludeWhitelistDrawer');
+    if (notifInfo.include_whitelist_apps !== undefined) {
+      if (notifIncludeWl) notifIncludeWl.checked = Boolean(notifInfo.include_whitelist_apps);
+      if (notifIncludeWlDrawer) notifIncludeWlDrawer.checked = Boolean(notifInfo.include_whitelist_apps);
+    }
 
-  const wlBadgeList = document.getElementById('discordWhitelistBadgeList');
-  if (wlBadgeList) {
-    const apps = notifInfo.whitelist_apps || [];
-    if (!apps.length) {
-      wlBadgeList.innerHTML = '<span style="color: #64748b; font-size: 0.75rem; font-style: italic;">No programs added to whitelist yet.</span>';
-    } else {
-      wlBadgeList.innerHTML = apps.map(app => `
-        <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.25); color: #38bdf8; font-size: 0.74rem;">
-          🛡️ ${escapeSettingsHtml(app)}
-        </span>
-      `).join('');
+    const wlBadgeList = document.getElementById('discordWhitelistBadgeList');
+    if (wlBadgeList && Array.isArray(notifInfo.whitelist_apps)) {
+      const apps = notifInfo.whitelist_apps;
+      if (!apps.length) {
+        wlBadgeList.innerHTML = '<span style="color: #64748b; font-size: 0.75rem; font-style: italic;">No programs added to whitelist yet.</span>';
+      } else {
+        wlBadgeList.innerHTML = apps.map(app => `
+          <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.25); color: #38bdf8; font-size: 0.74rem;">
+            🛡️ ${escapeSettingsHtml(app)}
+          </span>
+        `).join('');
+      }
     }
   }
 
   // Live Streaming & Broadcaster Watchlist Status
-  const streamInfo = statusMap.streaming || {};
-  const streamBadge = document.getElementById('streamingStatusBadge');
-  const streamLabel = document.getElementById('streamingStatusLabel');
-  const streamEnabledChk = document.getElementById('chkStreamingEnabled');
-  const streamVerbalChk = document.getElementById('chkStreamingVerbal');
-  const streamPollInterval = document.getElementById('streamingPollInterval');
-  const twIdInput = document.getElementById('twitchClientIdInput');
-  const twSecInput = document.getElementById('twitchClientSecretInput');
-  const ytKeyInput = document.getElementById('youtubeApiKeyInput');
-  const chipsList = document.getElementById('streamingChipsList');
-  const countBadge = document.getElementById('streamingWatchlistCount');
+  if (hasKey('streaming') || hasKey('twitch')) {
+    const streamInfo = statusMap.streaming || {};
+    const twOAuthPill = document.getElementById('twitchOAuthStatusPill');
+    const twConnectBtn = document.getElementById('btnConnectTwitchOAuth');
+    const twDisconnectBtn = document.getElementById('btnDisconnectTwitchOAuth');
+    const twConnected = streamInfo.twitch_oauth_connected || (statusMap.twitch && statusMap.twitch.connected);
+    const twUser = streamInfo.twitch_account_name || (statusMap.twitch && statusMap.twitch.account_name) || '';
 
-  if (streamBadge && streamInfo.enabled !== undefined) {
-    if (streamInfo.enabled) {
-      streamBadge.textContent = streamInfo.running ? 'LISTENING' : 'ACTIVE';
-      streamBadge.className = 'step-status-pill done';
-    } else {
-      streamBadge.textContent = 'DISABLED';
-      streamBadge.className = 'step-status-pill pending';
+    if (twOAuthPill) {
+      if (twConnected) {
+        twOAuthPill.textContent = twUser ? `CONNECTED (${twUser})` : 'CONNECTED';
+        twOAuthPill.className = 'step-status-pill done';
+        if (twConnectBtn) twConnectBtn.style.display = 'none';
+        if (twDisconnectBtn) twDisconnectBtn.style.display = 'inline-block';
+      } else {
+        twOAuthPill.textContent = 'DISCONNECTED';
+        twOAuthPill.className = 'step-status-pill pending';
+        if (twConnectBtn) twConnectBtn.style.display = 'inline-block';
+        if (twDisconnectBtn) twDisconnectBtn.style.display = 'none';
+      }
     }
   }
 
-  const twChannels = streamInfo.twitch_channels || [];
-  const ytChannels = streamInfo.youtube_channels || [];
-  const totalChannels = twChannels.length + ytChannels.length;
+  if (hasKey('streaming')) {
+    const streamInfo = statusMap.streaming || {};
+    const streamBadge = document.getElementById('streamingStatusBadge');
+    const streamLabel = document.getElementById('streamingStatusLabel');
+    const streamEnabledChk = document.getElementById('chkStreamingEnabled');
+    const streamVerbalChk = document.getElementById('chkStreamingVerbal');
+    const streamPollInterval = document.getElementById('streamingPollInterval');
+    const twIdInput = document.getElementById('twitchClientIdInput');
+    const twSecInput = document.getElementById('twitchClientSecretInput');
+    const ytKeyInput = document.getElementById('youtubeApiKeyInput');
+    const chipsList = document.getElementById('streamingChipsList');
+    const countBadge = document.getElementById('streamingWatchlistCount');
 
-  if (streamLabel) {
-    const parts = [];
-    if (streamInfo.twitch_connected) parts.push('Twitch (Connected)');
-    else parts.push('Twitch');
-    if (streamInfo.youtube_connected) parts.push('YouTube (Connected)');
-    else parts.push('YouTube');
-    streamLabel.textContent = `Monitoring ${totalChannels} creators across ${parts.join(' & ')}`;
-    streamLabel.style.color = streamInfo.enabled ? '#38bdf8' : '#94a3b8';
-  }
-
-  if (countBadge) {
-    countBadge.textContent = `${totalChannels} CHANNEL${totalChannels === 1 ? '' : 'S'}`;
-  }
-
-  if (streamEnabledChk && streamInfo.enabled !== undefined) {
-    streamEnabledChk.checked = Boolean(streamInfo.enabled);
-  }
-  if (streamVerbalChk && streamInfo.verbal_alerts !== undefined) {
-    streamVerbalChk.checked = Boolean(streamInfo.verbal_alerts);
-  }
-  if (streamPollInterval && streamInfo.poll_interval_seconds !== undefined) {
-    streamPollInterval.value = String(streamInfo.poll_interval_seconds);
-  }
-
-  if (twIdInput && streamInfo.has_twitch_id && (!twIdInput.value || twIdInput.value === '••••••••')) {
-    twIdInput.value = streamInfo.twitch_client_id_masked || '••••••••';
-  }
-  if (twSecInput && streamInfo.has_twitch_secret && (!twSecInput.value || twSecInput.value === '••••••••')) {
-    twSecInput.value = '••••••••';
-  }
-  if (ytKeyInput && streamInfo.has_youtube_key && (!ytKeyInput.value || ytKeyInput.value === '••••••••')) {
-    ytKeyInput.value = streamInfo.youtube_api_key_masked || '••••••••';
-  }
-
-  // Update Twitch OAuth Pill & Button
-  const twOAuthPill = document.getElementById('twitchOAuthStatusPill');
-  const twConnectBtn = document.getElementById('btnConnectTwitchOAuth');
-  const twDisconnectBtn = document.getElementById('btnDisconnectTwitchOAuth');
-  const twConnected = streamInfo.twitch_oauth_connected || (statusMap.twitch && statusMap.twitch.connected);
-  const twUser = streamInfo.twitch_account_name || (statusMap.twitch && statusMap.twitch.account_name) || '';
-
-  if (twOAuthPill) {
-    if (twConnected) {
-      twOAuthPill.textContent = twUser ? `CONNECTED (${twUser})` : 'CONNECTED';
-      twOAuthPill.className = 'step-status-pill done';
-      if (twConnectBtn) twConnectBtn.style.display = 'none';
-      if (twDisconnectBtn) twDisconnectBtn.style.display = 'inline-block';
-    } else {
-      twOAuthPill.textContent = 'DISCONNECTED';
-      twOAuthPill.className = 'step-status-pill pending';
-      if (twConnectBtn) twConnectBtn.style.display = 'inline-block';
-      if (twDisconnectBtn) twDisconnectBtn.style.display = 'none';
+    if (streamBadge && streamInfo.enabled !== undefined) {
+      if (streamInfo.enabled) {
+        streamBadge.textContent = streamInfo.running ? 'LISTENING' : 'ACTIVE';
+        streamBadge.className = 'step-status-pill done';
+      } else {
+        streamBadge.textContent = 'DISABLED';
+        streamBadge.className = 'step-status-pill pending';
+      }
     }
-  }
 
-  // Update YouTube OAuth Pill & Button
-  const ytOAuthPill = document.getElementById('youtubeOAuthStatusPill');
-  const ytConnectBtn = document.getElementById('btnConnectYouTubeOAuth');
-  const ytDisconnectBtn = document.getElementById('btnDisconnectYouTubeOAuth');
-  const ytOauthConnected = streamInfo.youtube_oauth_connected || (statusMap.google && statusMap.google.connected && (statusMap.google.scopes || []).some(s => s.includes('youtube')));
+    const twChannels = streamInfo.twitch_channels || [];
+    const ytChannels = streamInfo.youtube_channels || [];
+    const totalChannels = twChannels.length + ytChannels.length;
 
-  if (ytOAuthPill) {
-    if (ytOauthConnected) {
-      ytOAuthPill.textContent = 'GOOGLE LINKED';
-      ytOAuthPill.className = 'step-status-pill done';
-      if (ytConnectBtn) ytConnectBtn.style.display = 'none';
-      if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'inline-block';
-    } else if (streamInfo.youtube_connected) {
-      ytOAuthPill.textContent = 'API KEY ACTIVE';
-      ytOAuthPill.className = 'step-status-pill done';
-      if (ytConnectBtn) ytConnectBtn.style.display = 'inline-block';
-      if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'none';
-    } else {
-      ytOAuthPill.textContent = 'DISCONNECTED';
-      ytOAuthPill.className = 'step-status-pill pending';
-      if (ytConnectBtn) ytConnectBtn.style.display = 'inline-block';
-      if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'none';
+    if (streamLabel) {
+      const parts = [];
+      if (streamInfo.twitch_connected) parts.push('Twitch (Connected)');
+      else parts.push('Twitch');
+      if (streamInfo.youtube_connected) parts.push('YouTube (Connected)');
+      else parts.push('YouTube');
+      streamLabel.textContent = `Monitoring ${totalChannels} creators across ${parts.join(' & ')}`;
+      streamLabel.style.color = streamInfo.enabled ? '#38bdf8' : '#94a3b8';
     }
-  }
 
-  // Render Creator Chips
-  if (chipsList) {
-    const esc = (t) => {
-      const d = document.createElement('div');
-      d.innerText = String(t || '');
-      return d.innerHTML;
-    };
+    if (countBadge) {
+      countBadge.textContent = `${totalChannels} CHANNEL${totalChannels === 1 ? '' : 'S'}`;
+    }
 
-    if (!totalChannels) {
-      chipsList.innerHTML = '<span style="color: #64748b; font-size: 0.8rem; font-style: italic;">No creators monitored yet. Add a username above or ask Aether via voice.</span>';
-    } else {
-      const twHtml = twChannels.map(ch => `
-        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc; font-size: 0.8rem;">
-          <span style="font-weight: 700; font-size: 0.68rem; background: #9333ea; color: #fff; padding: 1px 5px; border-radius: 3px;">TWITCH</span>
-          <strong>${esc(ch)}</strong>
-          <span class="remove-stream-chip" data-platform="twitch" data-channel="${esc(ch)}" style="cursor: pointer; opacity: 0.7; font-weight: bold; margin-left: 4px; font-size: 0.85rem;" title="Remove ${esc(ch)}">✕</span>
-        </span>
-      `).join('');
+    if (streamEnabledChk && streamInfo.enabled !== undefined) {
+      streamEnabledChk.checked = Boolean(streamInfo.enabled);
+    }
+    if (streamVerbalChk && streamInfo.verbal_alerts !== undefined) {
+      streamVerbalChk.checked = Boolean(streamInfo.verbal_alerts);
+    }
+    if (streamPollInterval && streamInfo.poll_interval_seconds !== undefined) {
+      streamPollInterval.value = String(streamInfo.poll_interval_seconds);
+    }
 
-      const ytHtml = ytChannels.map(entry => {
-        const name = typeof entry === 'object' ? (entry.name || entry.channel_id) : entry;
-        const cid = typeof entry === 'object' ? entry.channel_id : entry;
-        return `
-          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; font-size: 0.8rem;">
-            <span style="font-weight: 700; font-size: 0.68rem; background: #dc2626; color: #fff; padding: 1px 5px; border-radius: 3px;">YOUTUBE</span>
-            <strong>${esc(name)}</strong>
-            <span class="remove-stream-chip" data-platform="youtube" data-channel="${esc(cid)}" style="cursor: pointer; opacity: 0.7; font-weight: bold; margin-left: 4px; font-size: 0.85rem;" title="Remove ${esc(name)}">✕</span>
+    if (twIdInput && streamInfo.has_twitch_id && (!twIdInput.value || twIdInput.value === '••••••••')) {
+      twIdInput.value = streamInfo.twitch_client_id_masked || '••••••••';
+    }
+    if (twSecInput && streamInfo.has_twitch_secret && (!twSecInput.value || twSecInput.value === '••••••••')) {
+      twSecInput.value = '••••••••';
+    }
+    if (ytKeyInput && streamInfo.has_youtube_key && (!ytKeyInput.value || ytKeyInput.value === '••••••••')) {
+      ytKeyInput.value = streamInfo.youtube_api_key_masked || '••••••••';
+    }
+
+    // Update YouTube OAuth Pill & Button
+    const ytOAuthPill = document.getElementById('youtubeOAuthStatusPill');
+    const ytConnectBtn = document.getElementById('btnConnectYouTubeOAuth');
+    const ytDisconnectBtn = document.getElementById('btnDisconnectYouTubeOAuth');
+    const ytOauthConnected = streamInfo.youtube_oauth_connected || (statusMap.google && statusMap.google.connected && (statusMap.google.scopes || []).some(s => s.includes('youtube')));
+
+    if (ytOAuthPill) {
+      if (ytOauthConnected) {
+        ytOAuthPill.textContent = 'GOOGLE LINKED';
+        ytOAuthPill.className = 'step-status-pill done';
+        if (ytConnectBtn) ytConnectBtn.style.display = 'none';
+        if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'inline-block';
+      } else if (streamInfo.youtube_connected) {
+        ytOAuthPill.textContent = 'API KEY ACTIVE';
+        ytOAuthPill.className = 'step-status-pill done';
+        if (ytConnectBtn) ytConnectBtn.style.display = 'inline-block';
+        if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'none';
+      } else {
+        ytOAuthPill.textContent = 'DISCONNECTED';
+        ytOAuthPill.className = 'step-status-pill pending';
+        if (ytConnectBtn) ytConnectBtn.style.display = 'inline-block';
+        if (ytDisconnectBtn) ytDisconnectBtn.style.display = 'none';
+      }
+    }
+
+    // Render Creator Chips
+    if (chipsList) {
+      const esc = (t) => {
+        const d = document.createElement('div');
+        d.innerText = String(t || '');
+        return d.innerHTML;
+      };
+
+      if (!totalChannels) {
+        chipsList.innerHTML = '<span style="color: #64748b; font-size: 0.8rem; font-style: italic;">No creators monitored yet. Add a username above or ask Aether via voice.</span>';
+      } else {
+        const twHtml = twChannels.map(ch => `
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35); color: #c084fc; font-size: 0.8rem;">
+            <span style="font-weight: 700; font-size: 0.68rem; background: #9333ea; color: #fff; padding: 1px 5px; border-radius: 3px;">TWITCH</span>
+            <strong>${esc(ch)}</strong>
+            <span class="remove-stream-chip" data-platform="twitch" data-channel="${esc(ch)}" style="cursor: pointer; opacity: 0.7; font-weight: bold; margin-left: 4px; font-size: 0.85rem;" title="Remove ${esc(ch)}">✕</span>
           </span>
-        `;
-      }).join('');
+        `).join('');
 
-      chipsList.innerHTML = twHtml + ytHtml;
+        const ytHtml = ytChannels.map(entry => {
+          const name = typeof entry === 'object' ? (entry.name || entry.channel_id) : entry;
+          const cid = typeof entry === 'object' ? entry.channel_id : entry;
+          return `
+            <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #f87171; font-size: 0.8rem;">
+              <span style="font-weight: 700; font-size: 0.68rem; background: #dc2626; color: #fff; padding: 1px 5px; border-radius: 3px;">YOUTUBE</span>
+              <strong>${esc(name)}</strong>
+              <span class="remove-stream-chip" data-platform="youtube" data-channel="${esc(cid)}" style="cursor: pointer; opacity: 0.7; font-weight: bold; margin-left: 4px; font-size: 0.85rem;" title="Remove ${esc(name)}">✕</span>
+            </span>
+          `;
+        }).join('');
 
-      chipsList.querySelectorAll('.remove-stream-chip').forEach(el => {
-        el.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const plat = el.dataset.platform;
-          const chan = el.dataset.channel;
-          if (!window.pywebview?.api?.remove_stream_channel) return;
-          try {
-            const res = await window.pywebview.api.remove_stream_channel(plat, chan);
-            if (res && res.status) {
-              renderOAuthStatus({ streaming: res.status });
-              const banner = document.getElementById('streamingFeedbackBanner');
-              if (banner) {
-                banner.style.display = 'block';
-                banner.style.color = '#38bdf8';
-                banner.textContent = `Removed ${chan} from ${plat} watchlist.`;
-                setTimeout(() => { banner.style.display = 'none'; }, 3500);
+        chipsList.innerHTML = twHtml + ytHtml;
+
+        chipsList.querySelectorAll('.remove-stream-chip').forEach(el => {
+          el.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const plat = el.dataset.platform;
+            const chan = el.dataset.channel;
+            if (!window.pywebview?.api?.remove_stream_channel) return;
+            try {
+              const res = await window.pywebview.api.remove_stream_channel(plat, chan);
+              if (res && res.status) {
+                renderOAuthStatus({ streaming: res.status });
+                const banner = document.getElementById('streamingFeedbackBanner');
+                if (banner) {
+                  banner.style.display = 'block';
+                  banner.style.color = '#38bdf8';
+                  banner.textContent = `Removed ${chan} from ${plat} watchlist.`;
+                  setTimeout(() => { banner.style.display = 'none'; }, 3500);
+                }
               }
+            } catch (err) {
+              console.error('Failed removing stream channel:', err);
             }
-          } catch (err) {
-            console.error('Failed removing stream channel:', err);
-          }
+          });
         });
-      });
+      }
     }
   }
 
