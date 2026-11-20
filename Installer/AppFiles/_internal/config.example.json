@@ -9,10 +9,12 @@
   "api_key_encrypted": "",
   "primary_model_endpoint": "gemini-3.8-live",
   "tier2_moderate_model": "gemini-4-hydrogen:medium",
+  "tier2_moderate_level": "medium",
   "ttrpg_model_endpoint": "gemini-4-hydrogen:medium",
-  "tier3_heavy_model": "gemini-4-argon:medium",
-  "tier2_heavy_model": "gemini-4-argon:medium",
-  "tier2_thinking_level": "medium",
+  "tier3_heavy_model": "gemini-4-neon:high",
+  "tier2_heavy_model": "gemini-4-neon:high",
+  "tier3_thinking_level": "high",
+  "tier2_thinking_level": "high",
   "stt_model_endpoint": "gemini_live_audio",
   "tts_model_endpoint": "gemini-live-voice-stream",
   "creativity_temperature": 0.7,
@@ -22,20 +24,22 @@
   "start_minimized": false,
   "models": {
     "primary_options": [
-      { "id": "gemini-3.8-live", "label": "Gemini 3.8 Live (Default)" },
-      { "id": "gemini-4-hydrogen:instant", "label": "Gemini 4.0 Hydrogen Instant (Modular)" },
-      { "id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash (Modular High Speed)" }
+      { "id": "gemini-3.8-live", "label": "3.8 - Live (Default)" },
+      { "id": "custom", "label": "Custom" }
     ],
     "tier2_moderate_options": [
-      { "id": "gemini-4-hydrogen:low", "label": "Gemini 4.0 Hydrogen Low" },
-      { "id": "gemini-4-hydrogen:medium", "label": "Gemini 4.0 Hydrogen Medium (Default)" },
-      { "id": "gemini-4-hydrogen:high", "label": "Gemini 4.0 Hydrogen High" },
-      { "id": "gemini-4-hydrogen:xhigh", "label": "Gemini 4.0 Hydrogen Extra" }
+      { "id": "gemini-4-hydrogen", "label": "4.0 - Hydrogen (Default)" },
+      { "id": "custom", "label": "Custom" }
     ],
     "tier2_options": [
-      { "id": "gemini-4-argon:low", "label": "Gemini 4.0 Argon Low" },
-      { "id": "gemini-4-argon:medium", "label": "Gemini 4.0 Argon Medium (Default)" },
-      { "id": "gemini-4-argon:high", "label": "Gemini 4.0 Argon High" }
+      { "id": "gemini-4-neon", "label": "4.0 - Neon (Default)" },
+      { "id": "gemini-4-carbon", "label": "4.0 - Carbon" },
+      { "id": "custom", "label": "Custom" }
+    ],
+    "tier3_options": [
+      { "id": "gemini-4-neon", "label": "4.0 - Neon (Default)" },
+      { "id": "gemini-4-carbon", "label": "4.0 - Carbon" },
+      { "id": "custom", "label": "Custom" }
     ],
     "stt_options": [
       { "id": "gemini_live_audio", "label": "Gemini Live Native Audio Stream (Real-Time Bidirectional - Recommended)" },

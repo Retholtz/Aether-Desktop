@@ -126,23 +126,38 @@ class ScriptRunner:
         workspace_root: Optional[str] = None,
         telemetry_db: Optional[TelemetryDB] = None
     ):
-        self.workspace_root = workspace_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        from core.paths import get_app_dir, is_frozen
+        self.workspace_root = workspace_root or get_app_dir()
         self.cache_dir = os.path.join(self.workspace_root, "scripts", "cache")
         os.makedirs(self.cache_dir, exist_ok=True)
 
         self.telemetry_db = telemetry_db or TelemetryDB()
 
-        # Locate active virtual environment Python interpreter
+        # Locate active virtual environment Python interpreter (or frozen --run-script bridge)
         venv_python = os.path.join(self.workspace_root, ".venv", "Scripts", "python.exe")
         if os.path.exists(venv_python):
             self.python_exe = venv_python
+            self._use_frozen_script_flag = False
+        elif is_frozen():
+            self.python_exe = sys.executable
+            self._use_frozen_script_flag = True
         else:
             self.python_exe = sys.executable
+            self._use_frozen_script_flag = False
 
         # Tracks recent failures per intent for traceback-driven self-correction tracking
         # Schema: {intent_key: {"count": int, "tracebacks": List[str], "last_time": float}}
         self._failure_history: Dict[str, Dict[str, Any]] = {}
         self._history_lock = threading.Lock()
+
+    def _build_python_cmd(self, script_file: str, args: Optional[dict] = None) -> List[str]:
+        if getattr(self, "_use_frozen_script_flag", False):
+            cmd = [self.python_exe, "--run-script", script_file]
+        else:
+            cmd = [self.python_exe, script_file]
+        if args is not None:
+            cmd.append(json.dumps(args))
+        return cmd
 
     def _get_execution_env(self, args: Optional[dict] = None) -> dict:
         env = os.environ.copy()
@@ -338,9 +353,7 @@ class ScriptRunner:
 
         # 3. Build execution command
         if st_lower == "python":
-            cmd = [self.python_exe, script_file]
-            if args is not None:
-                cmd.append(json.dumps(args))
+            cmd = self._build_python_cmd(script_file, args)
         elif st_lower in ("powershell", "ps1"):
             cmd = [
                 "powershell.exe",
@@ -593,9 +606,7 @@ class ScriptRunner:
             logger.error(f"[SKILL ERROR] Failed reading script {file_name}: {e}")
             return {"status": "error", "error": f"Failed reading script: {e}"}
 
-        cmd = [self.python_exe, script_file]
-        if args is not None:
-            cmd.append(json.dumps(args))
+        cmd = self._build_python_cmd(script_file, args)
 
         try:
             exit_code, stdout_raw, stderr_raw, elapsed_ms, peak_mb = self._run_subprocess_monitored(
@@ -691,7 +702,7 @@ def execute_cached_script(script_path: str, intent_label: str = "adhoc_task", ti
     t0 = time.perf_counter()
     try:
         returncode, stdout, stderr, execution_time_ms, _ = runner._run_subprocess_monitored(
-            cmd=[runner.python_exe, script_path],
+            cmd=runner._build_python_cmd(script_path),
             timeout=timeout_seconds,
             env=runner._get_execution_env()
         )

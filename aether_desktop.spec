@@ -14,6 +14,8 @@ datas = [
     ("ui/sounds/*.wav", "ui/sounds"),
     ("assets/icon.png", "assets"),
     ("assets/icon.ico", "assets"),
+    ("scripts/library", "scripts/library"),
+    ("scripts/skills_catalog.json", "scripts"),
     ("config.example.json", "."),
     (".env.example", "."),
 ]

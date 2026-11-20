@@ -146,12 +146,41 @@ class INPUT(ctypes.Structure):
     ]
 
 
+EXTENDED_VK_CODES = {
+    VK_PRIOR,
+    VK_NEXT,
+    VK_END,
+    VK_HOME,
+    VK_LEFT,
+    VK_UP,
+    VK_RIGHT,
+    VK_DOWN,
+    VK_SNAPSHOT,
+    VK_INSERT,
+    VK_DELETE,
+    VK_LWIN,
+    0x5C,  # VK_RWIN
+    0xA3,  # VK_RCONTROL
+    0xA5,  # VK_RMENU
+}
+
+
 class GuiPrimitivesController:
     """Executes low-level mouse, keyboard, and scrolling actions on Windows."""
 
     def __init__(self, capture_pipeline: Optional[ScreenCapturePipeline] = None):
         ensure_thread_desktop()
-        self.capture = capture_pipeline or ScreenCapturePipeline()
+        self._capture: Optional[ScreenCapturePipeline] = capture_pipeline
+
+    @property
+    def capture(self) -> ScreenCapturePipeline:
+        if self._capture is None:
+            self._capture = ScreenCapturePipeline()
+        return self._capture
+
+    @capture.setter
+    def capture(self, value: Optional[ScreenCapturePipeline]):
+        self._capture = value
 
     def translate_coords(
         self,
@@ -454,38 +483,69 @@ class GuiPrimitivesController:
         }
 
     def press_key(self, key_combo: str) -> Dict:
-        """Presses a single key or key shortcut combination (e.g. ctrl+t, enter, escape)."""
+        """
+        Presses a single key or key shortcut combination (e.g. ctrl+t, win+left, enter, ctrl+-).
+        Populates hardware scancodes (MapVirtualKeyW) and KEYEVENTF_EXTENDEDKEY for Windows 11
+        Snap/navigation keys, and resolves punctuation accurately via VkKeyScanW.
+        """
         ensure_thread_desktop()
-        tokens = [t.strip().lower() for t in key_combo.split("+") if t.strip()]
+        # Preserve trailing/standalone '+' key (e.g. 'ctrl++' or '+')
+        raw = str(key_combo or "").strip()
+        if not raw:
+            return {"status": "error", "message": "Empty key combo"}
+        if raw == "+":
+            tokens = ["+"]
+        elif raw.endswith("++"):
+            tokens = [t.strip().lower() for t in raw[:-2].split("+") if t.strip()] + ["+"]
+        else:
+            tokens = [t.strip().lower() for t in raw.split("+") if t.strip()]
         if not tokens:
             return {"status": "error", "message": "Empty key combo"}
 
+        user32 = ctypes.windll.user32
         vk_codes = []
         for t in tokens:
             if t in KEY_MAP:
                 vk_codes.append(KEY_MAP[t])
-            elif len(t) == 1:
+            elif len(t) == 1 and t.isalnum():
                 vk_codes.append(ord(t.upper()))
+            elif len(t) == 1:
+                vk_scan = user32.VkKeyScanW(ord(t))
+                if vk_scan == -1:
+                    return {"status": "error", "message": f"Unrecognized key: {t}"}
+                vk_low = vk_scan & 0xFF
+                shift_state = (vk_scan >> 8) & 0xFF
+                if (shift_state & 1) and VK_SHIFT not in vk_codes:
+                    vk_codes.insert(0, VK_SHIFT)
+                vk_codes.append(vk_low)
             elif t.startswith("f") and t[1:].isdigit():
                 num = int(t[1:])
-                if 1 <= num <= 12:
+                if 1 <= num <= 24:
                     vk_codes.append(0x70 + num - 1)
+                else:
+                    return {"status": "error", "message": f"Unrecognized key: {t}"}
             else:
                 return {"status": "error", "message": f"Unrecognized key: {t}"}
 
-        # Press forward
-        for vk in vk_codes:
-            inp = INPUT(type=INPUT_KEYBOARD)
-            inp.ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=0, time=0, dwExtraInfo=0)
-            ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-            time.sleep(0.01)
-
-        # Release reverse
-        for vk in reversed(vk_codes):
-            inp = INPUT(type=INPUT_KEYBOARD)
-            inp.ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)
-            ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-            time.sleep(0.01)
+        pressed = []
+        try:
+            # Press forward
+            for vk in vk_codes:
+                scan = int(user32.MapVirtualKeyW(vk, 0)) if sys.platform == "win32" else 0
+                ext_flag = KEYEVENTF_EXTENDEDKEY if vk in EXTENDED_VK_CODES else 0
+                inp = INPUT(type=INPUT_KEYBOARD)
+                inp.ki = KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=ext_flag, time=0, dwExtraInfo=0)
+                user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+                pressed.append((vk, scan, ext_flag))
+                time.sleep(0.015)
+            time.sleep(0.02)
+        finally:
+            # Always release pressed keys in reverse order so modifiers never get stuck
+            for vk, scan, ext_flag in reversed(pressed):
+                inp = INPUT(type=INPUT_KEYBOARD)
+                inp.ki = KEYBDINPUT(wVk=vk, wScan=scan, dwFlags=ext_flag | KEYEVENTF_KEYUP, time=0, dwExtraInfo=0)
+                user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+                time.sleep(0.01)
 
         return {
             "status": "success",

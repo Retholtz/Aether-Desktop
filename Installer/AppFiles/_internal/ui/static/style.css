@@ -4012,37 +4012,108 @@ select option,
   background: var(--bg-card) !important;
 }
 
+.dossier-print-mount {
+  display: none;
+}
+
 @media print {
-  body, html {
-    background: #ffffff !important;
-    height: auto !important;
-    overflow: visible !important;
+  @page {
+    size: auto;
+    margin: 0.55in 0.6in;
   }
-  .hud-header,
-  .hud-footer,
-  .stored-chats-sidebar,
-  .dossier-toolbar,
-  .tab-pane:not(#tab-dossiers) {
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    width: 100% !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    user-select: text !important;
+  }
+
+  body > *:not(#dossierPrintMount) {
     display: none !important;
   }
-  #tab-dossiers,
-  .stored-chats-layout,
-  .stored-chats-detail,
-  .dossier-detail-view,
-  .dossier-viewer-canvas {
+
+  #dossierPrintMount {
     display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
     height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
     overflow: visible !important;
     background: #ffffff !important;
-    padding: 0 !important;
-  }
-  .dossier-paper-page,
-  .dossier-paper-page.dark-mode {
-    background: #ffffff !important;
-    color: #1e293b !important;
+    color: #0f172a !important;
     box-shadow: none !important;
     border: none !important;
     padding: 0 !important;
+    margin: 0 !important;
+    font-family: "Segoe UI", Calibri, Arial, sans-serif !important;
+    font-size: 10.5pt !important;
+    line-height: 1.55 !important;
+    zoom: 1 !important;
+    transform: none !important;
+  }
+
+  #dossierPrintMount h1,
+  #dossierPrintMount h2,
+  #dossierPrintMount h3,
+  #dossierPrintMount h4,
+  #dossierPrintMount p,
+  #dossierPrintMount li,
+  #dossierPrintMount strong,
+  #dossierPrintMount em {
+    color: #0f172a !important;
+  }
+
+  #dossierPrintMount h1,
+  #dossierPrintMount h2,
+  #dossierPrintMount h3,
+  #dossierPrintMount h4 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  #dossierPrintMount .dossier-table-wrap {
+    overflow: visible !important;
+    width: 100% !important;
     max-width: 100% !important;
+    margin: 12px 0 !important;
+  }
+
+  #dossierPrintMount table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 9.5pt !important;
+  }
+
+  #dossierPrintMount tr,
+  #dossierPrintMount pre,
+  #dossierPrintMount blockquote {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  #dossierPrintMount th,
+  #dossierPrintMount td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 6px 8px !important;
+    color: #0f172a !important;
+    background: #ffffff !important;
+    text-align: left !important;
+    vertical-align: top !important;
+    overflow-wrap: break-word !important;
+  }
+
+  #dossierPrintMount th {
+    background: #f1f5f9 !important;
+    font-weight: 600 !important;
   }
 }

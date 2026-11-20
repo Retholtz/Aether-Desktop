@@ -39,6 +39,24 @@ if "--apply-update" in sys.argv:
     from core.updater import apply_update_from_helper_cli
     sys.exit(apply_update_from_helper_cli(sys.argv[1:]))
 
+# Fast-path sandboxed Python script runner mode (--run-script <path> [args_json]):
+# allows frozen PyInstaller builds (where sys.executable is AetherDesktop.exe) to execute
+# AST-validated automation/skill scripts in an isolated subprocess without launching the GUI.
+if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
+    import runpy
+    _script_path = sys.argv[2]
+    _script_args = sys.argv[3:]
+    sys.argv = [_script_path] + _script_args
+    try:
+        runpy.run_path(_script_path, run_name="__main__")
+        sys.exit(0)
+    except SystemExit as _se:
+        sys.exit(_se.code if isinstance(_se.code, int) else 0)
+    except Exception as _exc:
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
 from core.screen_stream import ensure_thread_desktop, init_dpi_awareness
 init_dpi_awareness()
 ensure_thread_desktop()

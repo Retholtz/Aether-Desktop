@@ -1427,6 +1427,9 @@
         window.addEventListener("mouseup", onDragMouseUp);
       }
 
+      let dragRafId = null;
+      let pendingDragCoords = null;
+
       function onDragMouseMove(e) {
         if (!isDragging) return;
         const dx = Math.abs(e.screenX - dragStartScreenX);
@@ -1436,17 +1439,32 @@
           suppressNextClick = true;
         }
 
-        const newX = e.screenX - dragStartX;
-        const newY = e.screenY - dragStartY;
+        const scale = window.devicePixelRatio || 1;
+        const newX = Math.round((e.screenX - dragStartX) * scale);
+        const newY = Math.round((e.screenY - dragStartY) * scale);
+        pendingDragCoords = [newX, newY];
 
-        if (window.pywebview && window.pywebview.api && window.pywebview.api.move_overlay) {
-          window.pywebview.api.move_overlay(newX, newY);
+        if (!dragRafId) {
+          dragRafId = requestAnimationFrame(() => {
+            dragRafId = null;
+            if (!isDragging || !pendingDragCoords) return;
+            const [px, py] = pendingDragCoords;
+            pendingDragCoords = null;
+            if (window.pywebview && window.pywebview.api && window.pywebview.api.move_overlay) {
+              window.pywebview.api.move_overlay(px, py);
+            }
+          });
         }
       }
 
       function onDragMouseUp(e) {
         if (isDragging) {
           isDragging = false;
+          if (dragRafId) {
+            cancelAnimationFrame(dragRafId);
+            dragRafId = null;
+          }
+          pendingDragCoords = null;
           overlayCard.classList.remove("dragging");
           window.removeEventListener("mousemove", onDragMouseMove);
           window.removeEventListener("mouseup", onDragMouseUp);
@@ -1494,19 +1512,23 @@
           resizeStartY = e.screenY;
           resizeStartW = window.innerWidth;
           resizeStartH = window.innerHeight;
+          resizeStartWinX = window.screenX || 0;
+          resizeStartWinY = window.screenY || 0;
+
+          // Attach listeners synchronously BEFORE any await so a quick mouseup is never missed
+          window.addEventListener("mousemove", onResizeMouseMove);
+          window.addEventListener("mouseup", onResizeMouseUp);
 
           if (window.pywebview && window.pywebview.api && window.pywebview.api.get_window_bounds) {
             try {
               const res = await window.pywebview.api.get_window_bounds();
+              if (!isResizing) return;
               if (res && res.bounds) {
                 resizeStartWinX = res.bounds.x || 0;
                 resizeStartWinY = res.bounds.y || 0;
               }
             } catch(err) {}
           }
-
-          window.addEventListener("mousemove", onResizeMouseMove);
-          window.addEventListener("mouseup", onResizeMouseUp);
         });
       });
 

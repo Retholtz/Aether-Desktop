@@ -97,8 +97,15 @@ class SystemTrayManager:
             self.on_toggle_mute()
 
         def _action_exit(icon, item):
-            self.stop()
-            self.on_exit()
+            # Running on pystray's own Win32 message-loop thread: stop the icon directly
+            # instead of joining a thread that waits for this pump (avoids 1.0s self-deadlock),
+            # and dispatch app teardown off the tray thread.
+            self._is_running = False
+            try:
+                icon.stop()
+            except Exception:
+                pass
+            threading.Thread(target=self.on_exit, name="TrayExitWorker", daemon=True).start()
 
         menu = pystray.Menu(
             pystray.MenuItem("Open Aether Desktop", _action_open, default=True),

@@ -36,61 +36,248 @@ except ImportError:
     psutil = None
 
 
+SHELL_EXCLUDED_CLASSES = {
+    "Progman",
+    "WorkerW",
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "NotifyIconOverflowWindow",
+    "TaskListThumbnailWnd",
+    "Windows.UI.Core.CoreWindow",
+    "EdgeUiInputTopWndClass",
+    "Shell_InputSwitchTopLevelWindow",
+    "XamlExplorerHostIslandWindow",
+    "ForegroundStaging",
+    "MultitaskingViewFrame",
+    "ApplicationManager_DesktopShellWindow",
+}
+
+FILE_EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass"}
+FILE_EXPLORER_QUERIES = {
+    "file explorer",
+    "file_explorer",
+    "explorer",
+    "explorer.exe",
+    "windows explorer",
+    "files",
+}
+
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+DWMWA_CLOAKED = 14
+
+
+def _is_file_explorer_query(query: str) -> bool:
+    raw = (query or "").strip().lower()
+    if raw in FILE_EXPLORER_QUERIES:
+        return True
+    try:
+        return WhitelistValidator.normalize_app_name(raw).lower() == "explorer.exe"
+    except Exception:
+        return False
+
+
+def _get_window_class_safe(hwnd: int) -> str:
+    if not win32gui or not hwnd:
+        return ""
+    try:
+        cls_name = win32gui.GetClassName(hwnd)
+        return cls_name if isinstance(cls_name, str) else ""
+    except Exception:
+        return ""
+
+
+def _is_window_cloaked(hwnd: int) -> bool:
+    """Returns True if a Windows 10/11 window is DWM-cloaked (suspended UWP or another virtual desktop)."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        cloaked = ctypes.c_int(0)
+        hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(int(hwnd)),
+            ctypes.c_uint(DWMWA_CLOAKED),
+            ctypes.byref(cloaked),
+            ctypes.sizeof(cloaked),
+        )
+        return hr == 0 and cloaked.value != 0
+    except Exception:
+        return False
+
+
+def _get_visible_window_rect(hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+    """Returns DWM extended frame bounds (visible window edges excluding invisible shadow), falling back to GetWindowRect."""
+    if sys.platform == "win32" and hwnd:
+        try:
+            rect = wintypes.RECT()
+            hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                wintypes.HWND(int(hwnd)),
+                ctypes.c_uint(DWMWA_EXTENDED_FRAME_BOUNDS),
+                ctypes.byref(rect),
+                ctypes.sizeof(rect),
+            )
+            if hr == 0 and (rect.right > rect.left or rect.bottom > rect.top):
+                return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+        except Exception:
+            pass
+    if win32gui and hwnd:
+        try:
+            r = win32gui.GetWindowRect(hwnd)
+            if isinstance(r, (tuple, list)) and len(r) == 4:
+                return (int(r[0]), int(r[1]), int(r[2]), int(r[3]))
+        except Exception:
+            pass
+    return None
+
+
+def _get_dwm_border_insets(hwnd: int) -> Tuple[int, int, int, int]:
+    """
+    Computes the invisible DWM resize-shadow border thickness (left, top, right, bottom)
+    on Windows 10/11 so SetWindowPos/MoveWindow places visible frames flush with monitor edges.
+    """
+    if sys.platform != "win32" or not win32gui or not hwnd:
+        return (0, 0, 0, 0)
+    try:
+        win_rect = win32gui.GetWindowRect(hwnd)
+        ext_rect = _get_visible_window_rect(hwnd)
+        if not win_rect or not ext_rect or len(win_rect) != 4 or len(ext_rect) != 4:
+            return (0, 0, 0, 0)
+        pad_l = max(0, min(32, int(ext_rect[0]) - int(win_rect[0])))
+        pad_t = max(0, min(32, int(ext_rect[1]) - int(win_rect[1])))
+        pad_r = max(0, min(32, int(win_rect[2]) - int(ext_rect[2])))
+        pad_b = max(0, min(32, int(win_rect[3]) - int(ext_rect[3])))
+        return (pad_l, pad_t, pad_r, pad_b)
+    except Exception:
+        return (0, 0, 0, 0)
+
+
+def _is_valid_app_window(hwnd: int, require_explorer_class: bool = False) -> bool:
+    """Filters out Windows shell surfaces, DWM-cloaked UWP ghosts, tool windows, and zero-area helpers."""
+    if not win32gui or not hwnd:
+        return False
+    try:
+        if not win32gui.IsWindowVisible(hwnd):
+            return False
+
+        cls_name = _get_window_class_safe(hwnd)
+        if cls_name in SHELL_EXCLUDED_CLASSES:
+            return False
+        if require_explorer_class:
+            if cls_name and cls_name not in FILE_EXPLORER_CLASSES:
+                return False
+
+        if _is_window_cloaked(hwnd):
+            return False
+
+        if win32con:
+            try:
+                ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+                if isinstance(ex_style, int) and (ex_style & win32con.WS_EX_TOOLWINDOW):
+                    return False
+            except Exception:
+                pass
+
+        # Allow minimized (iconic) windows to be discovered so focus/restore/tile can un-minimize them,
+        # but reject non-iconic zero-area hidden helper windows.
+        try:
+            is_iconic = bool(win32gui.IsIconic(hwnd))
+        except Exception:
+            is_iconic = False
+        if not is_iconic:
+            try:
+                rect = win32gui.GetWindowRect(hwnd)
+                if isinstance(rect, (tuple, list)) and len(rect) == 4:
+                    if isinstance(rect[0], int) and isinstance(rect[2], int):
+                        if (rect[2] - rect[0]) <= 0 or (rect[3] - rect[1]) <= 0:
+                            return False
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False
+
+
 def find_hwnd_by_query(query: str) -> Optional[int]:
     """
     Finds the primary top-level HWND matching an executable name or window title substring.
-    Uses win32gui.EnumWindows to inspect visible windows and checks both window titles
-    and process image names via psutil with alias normalization.
+    Uses win32gui.EnumWindows to inspect visible, non-cloaked application windows and ranks
+    exact process/alias matches and real File Explorer (CabinetWClass) windows accurately,
+    excluding Windows shell surfaces (Progman, Shell_TrayWnd, WorkerW, CoreWindow).
     """
     ensure_thread_desktop()
 
-    if not win32gui:
+    if not win32gui or not query:
         return None
 
-    raw_query = query.lower().strip()
+    raw_query = str(query).lower().strip()
+    if not raw_query:
+        return None
     norm_exe = WhitelistValidator.normalize_app_name(raw_query)
     query_base = norm_exe[:-4] if norm_exe.endswith(".exe") else norm_exe
-    query_tokens = [t for t in raw_query.split() if len(t) >= 3]
+    query_tokens = [t for t in re.split(r"[\s_\-]+", raw_query) if len(t) >= 3]
+    is_explorer_query = _is_file_explorer_query(raw_query)
 
-    title_matches = []
-    process_matches = []
+    exact_proc_titled: List[int] = []
+    title_matches: List[int] = []
+    fuzzy_proc_titled: List[int] = []
+    process_matches: List[int] = []
 
     def enum_windows_callback(hwnd, extra):
         try:
-            if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd).strip()
-                title_lower = title.lower()
+            if not _is_valid_app_window(hwnd, require_explorer_class=is_explorer_query):
+                return True
 
-                # 1. Match against window title (exact query, normalized base, or token)
-                if title_lower:
-                    if raw_query in title_lower or query_base in title_lower:
-                        title_matches.append(hwnd)
-                        return True
+            title = (win32gui.GetWindowText(hwnd) or "").strip()
+            title_lower = title.lower()
 
-                # 2. Match against process name
-                if psutil and win32process:
-                    try:
-                        _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                        proc = psutil.Process(pid)
-                        proc_name = proc.name().lower()
-                        proc_base = proc_name[:-4] if proc_name.endswith(".exe") else proc_name
+            # File Explorer queries match exclusively against CabinetWClass / ExploreWClass
+            if is_explorer_query:
+                cls_name = _get_window_class_safe(hwnd)
+                if cls_name in FILE_EXPLORER_CLASSES:
+                    if title:
+                        exact_proc_titled.append(hwnd)
+                    else:
+                        process_matches.append(hwnd)
+                return True
 
-                        # Check if process matches normalized base, raw query, or any query token
-                        proc_matched = (
-                            query_base == proc_base or
-                            proc_base in query_base or
-                            query_base in proc_base or
-                            raw_query in proc_name or
-                            any(token in proc_name for token in query_tokens)
-                        )
+            # Inspect owning process name
+            proc_name = ""
+            proc_base = ""
+            if psutil and win32process:
+                try:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    proc = psutil.Process(pid)
+                    proc_name = proc.name().lower()
+                    proc_base = proc_name[:-4] if proc_name.endswith(".exe") else proc_name
+                except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
+                    proc_name = ""
+                    proc_base = ""
 
-                        if proc_matched:
-                            if title:
-                                title_matches.append(hwnd)
-                            else:
-                                process_matches.append(hwnd)
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, Exception):
-                        pass
+            # 1. Exact process match (e.g. 'chrome' -> chrome.exe, 'notepad' -> notepad.exe)
+            if proc_base and (proc_base == query_base or proc_name == norm_exe):
+                if title:
+                    exact_proc_titled.append(hwnd)
+                else:
+                    process_matches.append(hwnd)
+                return True
+
+            # 2. Window title match (e.g. 'Google Docs', 'Inara', UWP 'Calculator'/'Settings')
+            if title_lower:
+                if raw_query in title_lower or (len(query_base) >= 2 and query_base in title_lower):
+                    title_matches.append(hwnd)
+                    return True
+
+            # 3. Fuzzy / token process match (guarding against short-name false positives)
+            if proc_base:
+                proc_matched = (
+                    (len(proc_base) >= 3 and proc_base in query_base)
+                    or (len(query_base) >= 3 and query_base in proc_base)
+                    or (len(raw_query) >= 3 and raw_query in proc_name)
+                    or any(token in proc_name for token in query_tokens)
+                )
+                if proc_matched:
+                    if title:
+                        fuzzy_proc_titled.append(hwnd)
+                    else:
+                        process_matches.append(hwnd)
         except Exception:
             pass
         return True
@@ -98,14 +285,12 @@ def find_hwnd_by_query(query: str) -> Optional[int]:
     try:
         win32gui.EnumWindows(enum_windows_callback, None)
     except Exception as e:
-        if not title_matches and not process_matches:
+        if not (exact_proc_titled or title_matches or fuzzy_proc_titled or process_matches):
             print(f"[OS_CONTROLS] EnumWindows note: {e}")
 
-    # Prioritize windows that have a visible title bar over background/helper windows
-    if title_matches:
-        return title_matches[0]
-    if process_matches:
-        return process_matches[0]
+    for bucket in (exact_proc_titled, title_matches, fuzzy_proc_titled, process_matches):
+        if bucket:
+            return bucket[0]
     return None
 
 
@@ -354,7 +539,7 @@ def focus_window(app_name: Any, auto_launch: bool = True) -> dict:
 
 
 def close_window(app_name: str) -> dict:
-    """Natively closes the top-level window by posting WM_CLOSE message."""
+    """Natively closes the top-level window by posting WM_CLOSE message (never closes Windows shell surfaces)."""
     ensure_thread_desktop()
     if not win32gui or not win32con:
         return {"status": "error", "message": "Win32 window management is only supported on Windows."}
@@ -362,6 +547,13 @@ def close_window(app_name: str) -> dict:
     hwnd = find_hwnd_by_query(app_name)
     if not hwnd:
         return {"status": "error", "message": f"No active window found for '{app_name}'."}
+
+    cls_name = _get_window_class_safe(hwnd)
+    if cls_name in SHELL_EXCLUDED_CLASSES:
+        return {
+            "status": "error",
+            "message": f"Refused to close protected Windows shell surface '{cls_name}' for '{app_name}'."
+        }
 
     try:
         title = win32gui.GetWindowText(hwnd) or app_name
@@ -494,10 +686,10 @@ def move_window_to_monitor(
     try:
         title = win32gui.GetWindowText(hwnd) or app_name
 
-        # If currently maximized, restore first so SetWindowPos moves properly across display boundaries
-        if win32gui.IsZoomed(hwnd):
+        # If currently maximized or minimized, restore first so SetWindowPos moves properly across display boundaries
+        if win32gui.IsZoomed(hwnd) or win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            time.sleep(0.05)
+            time.sleep(0.08)
 
         wx = target_mon["work_x"]
         wy = target_mon["work_y"]
@@ -540,6 +732,324 @@ def move_window_to_monitor(
         }
     except Exception as e:
         return {"status": "error", "message": f"Failed to move '{app_name}' to Monitor #{monitor}: {str(e)}"}
+
+
+def _resolve_target_monitor_info(
+    monitor: Optional[int] = None,
+    fallback_hwnd: Optional[int] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Resolves a target monitor info dictionary by 1-based index, window location, or primary display."""
+    monitors = get_monitors_info()
+    if not monitors:
+        return None, "No active display monitors detected."
+
+    if monitor is not None:
+        for m in monitors:
+            if m["index"] == monitor:
+                return m, None
+        if 1 <= monitor <= len(monitors):
+            return monitors[monitor - 1], None
+        available_nums = ", ".join(f"Monitor {m['index']}" for m in monitors)
+        return None, (
+            f"Monitor #{monitor} not found. System has {len(monitors)} monitor(s) configured in Windows: {available_nums}."
+        )
+
+    if fallback_hwnd and win32api and win32con:
+        try:
+            hmon = win32api.MonitorFromWindow(fallback_hwnd, win32con.MONITOR_DEFAULTTONEAREST)
+            info = win32api.GetMonitorInfo(hmon)
+            m_rect = info.get("Monitor")
+            if m_rect:
+                for m in monitors:
+                    if m.get("rect") == m_rect or (m.get("x") == m_rect[0] and m.get("y") == m_rect[1]):
+                        return m, None
+        except Exception:
+            pass
+
+    primary = next((m for m in monitors if m.get("is_primary")), monitors[0])
+    return primary, None
+
+
+def _place_window_verified(
+    hwnd: int,
+    target_x: int,
+    target_y: int,
+    target_w: int,
+    target_h: int,
+    bring_front: bool = True,
+) -> Dict[str, Any]:
+    """
+    Restores, positions (with Windows 11 DWM invisible-border compensation), and verifies
+    that a top-level window actually moved to the target rectangle.
+    """
+    if not win32gui or not win32con:
+        return {"moved": False, "reason": "Win32 APIs unavailable"}
+
+    cls_name = _get_window_class_safe(hwnd)
+    if cls_name in SHELL_EXCLUDED_CLASSES:
+        return {"moved": False, "reason": f"Protected Windows shell surface '{cls_name}' cannot be repositioned."}
+
+    # 1. Restore from minimized or maximized/snapped state and allow Win11 DWM to settle
+    try:
+        was_state_changed = False
+        if win32gui.IsIconic(hwnd) or win32gui.IsZoomed(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            was_state_changed = True
+        else:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOWNORMAL)
+        if was_state_changed:
+            time.sleep(0.08)
+    except Exception as e:
+        return {"moved": False, "reason": f"Failed to restore window state: {e}"}
+
+    # 2. Compensate for Windows 11 invisible DWM resize borders (~7px left/right/bottom)
+    pad_l, pad_t, pad_r, pad_b = _get_dwm_border_insets(hwnd)
+    adj_x = int(target_x - pad_l)
+    adj_y = int(target_y - pad_t)
+    adj_w = max(100, int(target_w + pad_l + pad_r))
+    adj_h = max(100, int(target_h + pad_t + pad_b))
+
+    # 3. Position window via SetWindowPos (and retry once with MoveWindow if DWM snap resisted)
+    flags = win32con.SWP_SHOWWINDOW | win32con.SWP_NOACTIVATE
+    try:
+        win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, adj_x, adj_y, adj_w, adj_h, flags)
+    except Exception as e:
+        return {"moved": False, "reason": f"SetWindowPos failed (possible elevation/UIPI restriction): {e}"}
+
+    time.sleep(0.05)
+
+    def _check_rect() -> Tuple[bool, Optional[Tuple[int, int, int, int]], str]:
+        try:
+            if win32gui.IsIconic(hwnd):
+                return False, None, "Window remained minimized after restore."
+            if win32gui.IsZoomed(hwnd):
+                return False, None, "Window remained maximized after restore."
+        except Exception:
+            pass
+        actual = _get_visible_window_rect(hwnd)
+        if not actual:
+            # Mocked or unreadable rect: cannot prove failure, assume SetWindowPos succeeded
+            return True, None, ""
+        act_x, act_y, act_r, act_b = actual
+        act_w = act_r - act_x
+        act_h = act_b - act_y
+        # Allow tolerance for Windows 11 DPI rounding & app minimum width/height constraints
+        pos_ok = abs(act_x - target_x) <= 64 and abs(act_y - target_y) <= 64
+        size_ok = act_w >= min(320, int(target_w * 0.5)) and act_h >= min(240, int(target_h * 0.5))
+        if pos_ok and size_ok:
+            return True, actual, ""
+        return (
+            False,
+            actual,
+            f"Window landed at ({act_x}, {act_y}, {act_w}x{act_h}) instead of target ({target_x}, {target_y}, {target_w}x{target_h}).",
+        )
+
+    ok, actual_rect, reason = _check_rect()
+    if not ok:
+        # Retry once after forcing SW_RESTORE + MoveWindow (handles Win11 Snap Assist state)
+        try:
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.08)
+            pad_l, pad_t, pad_r, pad_b = _get_dwm_border_insets(hwnd)
+            win32gui.MoveWindow(
+                hwnd,
+                int(target_x - pad_l),
+                int(target_y - pad_t),
+                max(100, int(target_w + pad_l + pad_r)),
+                max(100, int(target_h + pad_t + pad_b)),
+                True,
+            )
+            time.sleep(0.06)
+            ok, actual_rect, reason = _check_rect()
+        except Exception as e:
+            reason = f"Retry MoveWindow failed: {e}"
+
+    if ok and bring_front:
+        bring_hwnd_to_foreground(hwnd)
+
+    return {
+        "moved": ok,
+        "actual_rect": actual_rect,
+        "target_rect": (target_x, target_y, target_x + target_w, target_y + target_h),
+        "reason": reason,
+    }
+
+
+def snap_window(
+    app_name: str,
+    position: str = "left",
+    monitor: Optional[int] = None,
+) -> dict:
+    """
+    Snaps a single application window to a screen region ('left', 'right', 'top', 'bottom',
+    'top_left', 'top_right', 'bottom_left', 'bottom_right', 'center', or 'maximize') on Windows 11
+    with DWM border compensation and post-move verification.
+    """
+    ensure_thread_desktop()
+    if not win32gui or not win32con or not win32api:
+        return {"status": "error", "message": "Win32 window management is only supported on Windows."}
+
+    hwnd = find_hwnd_by_query(app_name)
+    if not hwnd:
+        return {"status": "error", "message": f"No open window found for '{app_name}'."}
+
+    pos = str(position or "left").strip().lower().replace("-", "_").replace(" ", "_")
+    if pos in ("maximize", "full", "fullscreen"):
+        if monitor is not None:
+            return move_window_to_monitor(app_name, monitor=monitor, maximize=True)
+        return maximize_window(app_name)
+
+    target_mon, mon_err = _resolve_target_monitor_info(monitor=monitor, fallback_hwnd=hwnd)
+    if not target_mon:
+        return {"status": "error", "message": mon_err or "Target monitor not found."}
+
+    wx = target_mon["work_x"]
+    wy = target_mon["work_y"]
+    ww = target_mon["work_width"]
+    wh = target_mon["work_height"]
+    half_w = ww // 2
+    half_h = wh // 2
+
+    regions = {
+        "left": (wx, wy, half_w, wh),
+        "right": (wx + half_w, wy, ww - half_w, wh),
+        "top": (wx, wy, ww, half_h),
+        "bottom": (wx, wy + half_h, ww, wh - half_h),
+        "top_left": (wx, wy, half_w, half_h),
+        "top_right": (wx + half_w, wy, ww - half_w, half_h),
+        "bottom_left": (wx, wy + half_h, half_w, wh - half_h),
+        "bottom_right": (wx + half_w, wy + half_h, ww - half_w, wh - half_h),
+        "center": (wx + int(ww * 0.1), wy + int(wh * 0.1), int(ww * 0.8), int(wh * 0.8)),
+    }
+    if pos not in regions:
+        return {
+            "status": "error",
+            "message": f"Unsupported snap position '{position}'. Valid options: {', '.join(sorted(regions.keys()))}, maximize.",
+        }
+
+    tx, ty, tw, th = regions[pos]
+    title = win32gui.GetWindowText(hwnd) or app_name
+    ver = _place_window_verified(hwnd, tx, ty, tw, th, bring_front=True)
+    if not ver["moved"]:
+        return {
+            "status": "error",
+            "action": "snap_window",
+            "app_name": app_name,
+            "title": title,
+            "position": pos,
+            "monitor": target_mon["index"],
+            "message": f"Failed to snap '{title}' to {pos} on Monitor #{target_mon['index']}: {ver['reason']}",
+        }
+
+    return {
+        "status": "success",
+        "action": "snap_window",
+        "app_name": app_name,
+        "title": title,
+        "hwnd": hwnd,
+        "position": pos,
+        "monitor": target_mon["index"],
+        "rect": ver["actual_rect"],
+        "message": f"Snapped '{title}' to {pos} half on Monitor #{target_mon['index']}.",
+    }
+
+
+def tile_windows(
+    left_app: str,
+    right_app: str,
+    monitor: Optional[int] = None,
+) -> dict:
+    """
+    Arranges two open application windows side-by-side (50% left, 50% right) on Windows 11
+    with DWM invisible-border compensation, multi-monitor support, and strict post-move verification.
+    """
+    ensure_thread_desktop()
+    if not win32gui or not win32con or not win32api:
+        return {"status": "error", "message": "Win32 window management is only supported on Windows."}
+
+    left_q = str(left_app or "").strip()
+    right_q = str(right_app or "").strip()
+    if not left_q or not right_q:
+        return {"status": "error", "message": "Both left_app and right_app are required to split/tile windows."}
+
+    hwnd_left = find_hwnd_by_query(left_q)
+    if not hwnd_left:
+        return {
+            "status": "error",
+            "action": "tile_windows",
+            "message": f"No open window found for '{left_q}'. Please open '{left_q}' first.",
+        }
+
+    hwnd_right = find_hwnd_by_query(right_q)
+    if not hwnd_right:
+        return {
+            "status": "error",
+            "action": "tile_windows",
+            "message": f"No open window found for '{right_q}'. Please open '{right_q}' first.",
+        }
+
+    if hwnd_left == hwnd_right:
+        title_same = win32gui.GetWindowText(hwnd_left) or left_q
+        return {
+            "status": "error",
+            "action": "tile_windows",
+            "message": (
+                f"Both '{left_q}' and '{right_q}' resolved to the same window ('{title_same}'). "
+                "Please ensure both applications are open in separate windows."
+            ),
+        }
+
+    target_mon, mon_err = _resolve_target_monitor_info(monitor=monitor, fallback_hwnd=hwnd_left)
+    if not target_mon:
+        return {"status": "error", "message": mon_err or "Target monitor not found."}
+
+    wx = target_mon["work_x"]
+    wy = target_mon["work_y"]
+    ww = target_mon["work_width"]
+    wh = target_mon["work_height"]
+    half_w = ww // 2
+
+    left_title = win32gui.GetWindowText(hwnd_left) or left_q
+    right_title = win32gui.GetWindowText(hwnd_right) or right_q
+
+    ver_left = _place_window_verified(hwnd_left, wx, wy, half_w, wh, bring_front=True)
+    time.sleep(0.04)
+    ver_right = _place_window_verified(hwnd_right, wx + half_w, wy, ww - half_w, wh, bring_front=True)
+
+    failures = []
+    if not ver_left["moved"]:
+        failures.append(f"'{left_title}' (left): {ver_left['reason']}")
+    if not ver_right["moved"]:
+        failures.append(f"'{right_title}' (right): {ver_right['reason']}")
+
+    if failures:
+        return {
+            "status": "error",
+            "action": "tile_windows",
+            "left_app": left_q,
+            "right_app": right_q,
+            "left_title": left_title,
+            "right_title": right_title,
+            "monitor": target_mon["index"],
+            "left_rect": ver_left["actual_rect"],
+            "right_rect": ver_right["actual_rect"],
+            "message": f"Failed to split windows cleanly on Monitor #{target_mon['index']}: " + "; ".join(failures),
+        }
+
+    return {
+        "status": "success",
+        "action": "tile_windows",
+        "left_app": left_q,
+        "right_app": right_q,
+        "left_title": left_title,
+        "right_title": right_title,
+        "left_hwnd": hwnd_left,
+        "right_hwnd": hwnd_right,
+        "monitor": target_mon["index"],
+        "left_rect": ver_left["actual_rect"],
+        "right_rect": ver_right["actual_rect"],
+        "message": f"Split '{left_title}' (left) and '{right_title}' (right) side-by-side on Monitor #{target_mon['index']}.",
+    }
 
 
 def navigate_browser(
@@ -794,6 +1304,12 @@ class OSControls:
     def move_window_to_monitor(self, app_name: str, monitor: int = 1, maximize: bool = False, no_activate: bool = False) -> dict:
         return move_window_to_monitor(app_name, monitor=monitor, maximize=maximize, no_activate=no_activate)
 
+    def tile_windows(self, left_app: str, right_app: str, monitor: Optional[int] = None) -> dict:
+        return tile_windows(left_app, right_app, monitor=monitor)
+
+    def snap_window(self, app_name: str, position: str = "left", monitor: Optional[int] = None) -> dict:
+        return snap_window(app_name, position=position, monitor=monitor)
+
     def get_monitors_info(self) -> list:
         return get_monitors_info()
 
@@ -834,7 +1350,7 @@ class OSControls:
         """Universal DirectInput key pulse."""
         return pulse_key(key_name, duration_sec=duration_sec)
 
-    def move_cursor_to_point(self, x: int, y: int, screen_width: int = 1920, screen_height: int = 1080):
+    def move_cursor_to_point(self, x: int, y: int, screen_width: Optional[int] = None, screen_height: Optional[int] = None):
         """Universal absolute cursor placement."""
         return move_cursor_to_point(x, y, screen_width=screen_width, screen_height=screen_height)
 
@@ -1183,18 +1699,32 @@ def pulse_key(key_name: str, duration_sec: float = 0.08) -> bool:
     return send_directinput_key(key_name, duration_sec=duration_sec)
 
 
+MOUSEEVENTF_VIRTUALDESK = 0x4000
+
+
 def move_cursor_to_point(x: int, y: int, screen_width: Optional[int] = None, screen_height: Optional[int] = None):
-    """Universal absolute cursor placement with dynamic display resolution querying."""
+    """Universal absolute cursor placement supporting single and multi-monitor virtual desktops."""
     if sys.platform != "win32":
         return
     ensure_thread_desktop()
-    sw = screen_width or max(1, ctypes.windll.user32.GetSystemMetrics(0))
-    sh = screen_height or max(1, ctypes.windll.user32.GetSystemMetrics(1))
-    norm_x = int(x * (65535.0 / sw))
-    norm_y = int(y * (65535.0 / sh))
+    user32 = ctypes.windll.user32
+    if screen_width is None and screen_height is None:
+        vx = user32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
+        vy = user32.GetSystemMetrics(77)   # SM_YVIRTUALSCREEN
+        vw = max(1, user32.GetSystemMetrics(78))  # SM_CXVIRTUALSCREEN
+        vh = max(1, user32.GetSystemMetrics(79))  # SM_CYVIRTUALSCREEN
+        norm_x = int(((x - vx) * 65535.0) / max(1, vw - 1))
+        norm_y = int(((y - vy) * 65535.0) / max(1, vh - 1))
+        flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
+    else:
+        sw = screen_width or max(1, user32.GetSystemMetrics(0))
+        sh = screen_height or max(1, user32.GetSystemMetrics(1))
+        norm_x = int(x * (65535.0 / sw))
+        norm_y = int(y * (65535.0 / sh))
+        flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE
     inp = INPUT(type=INPUT_MOUSE)
-    inp.mi = MOUSEINPUT(norm_x, norm_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, 0)
-    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+    inp.mi = MOUSEINPUT(norm_x, norm_y, 0, flags, 0, 0)
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
 
 def click_mouse(button: str = "left", duration_sec: float = 0.06):

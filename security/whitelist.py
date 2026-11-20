@@ -394,6 +394,22 @@ class WhitelistValidator:
         if sys.platform != "win32":
             return {"status": "error", "error": "Application closing is only supported on Windows."}
 
+        # Protect the Windows Explorer shell process: NEVER run `taskkill /IM explorer.exe /F`
+        # (which kills the desktop & taskbar). Close open File Explorer folder windows instead.
+        if target_exe_lower == "explorer.exe" or target_str in ("file explorer", "file_explorer", "explorer", "windows explorer"):
+            try:
+                from core.program_manager import ProgramManager
+                pm_res = ProgramManager().close_program("file_explorer")
+                pm_res.setdefault("executable", "explorer.exe")
+                return pm_res
+            except Exception as e:
+                return {
+                    "status": "error",
+                    "app_name": app_name,
+                    "executable": "explorer.exe",
+                    "error": f"Failed to safely close File Explorer windows: {e}"
+                }
+
         try:
             target_lower = target_exe.lower()
             candidates = []

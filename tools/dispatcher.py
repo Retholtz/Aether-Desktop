@@ -28,6 +28,8 @@ from tools.os_controls import (
     close_window,
     navigate_browser,
     move_window_to_monitor,
+    tile_windows,
+    snap_window,
     get_monitors_info,
     bring_hwnd_to_foreground,
     find_hwnd_by_query,
@@ -185,6 +187,61 @@ MOVE_WINDOW_TO_MONITOR_DECLARATION = {
             }
         },
         "required": ["app_name", "monitor"]
+    }
+}
+
+TILE_WINDOWS_DECLARATION = {
+    "name": "tile_windows",
+    "description": (
+        "Splits or tiles two open application windows side-by-side (50% left half, 50% right half) on Windows 11 "
+        "using native Win32/DWM positioning with post-move verification. "
+        "ALWAYS call this tool when the user asks to split, tile, snap side-by-side, or put two apps next to each other "
+        "(e.g. 'split File Explorer and Chrome', 'put Notepad on the left and Chrome on the right')."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "left_app": {
+                "type": "STRING",
+                "description": "The application name or window title to place on the left half (e.g. 'file explorer', 'notepad', 'chrome')."
+            },
+            "right_app": {
+                "type": "STRING",
+                "description": "The application name or window title to place on the right half (e.g. 'chrome', 'word', 'vscode')."
+            },
+            "monitor": {
+                "type": "INTEGER",
+                "description": "Optional 1-based monitor number (1, 2, 3...) to split the windows on. Defaults to the first app's current monitor or primary display."
+            }
+        },
+        "required": ["left_app", "right_app"]
+    }
+}
+
+SNAP_WINDOW_DECLARATION = {
+    "name": "snap_window",
+    "description": (
+        "Snaps a single open application window to a screen region on Windows 11 using native Win32/DWM positioning "
+        "with post-move verification (e.g. 'snap Chrome to the left', 'put File Explorer on the right half', 'top left corner')."
+    ),
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "app_name": {
+                "type": "STRING",
+                "description": "The application name or window title to snap (e.g. 'chrome', 'file explorer', 'notepad')."
+            },
+            "position": {
+                "type": "STRING",
+                "enum": ["left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right", "center", "maximize"],
+                "description": "Target snap region on the monitor. Default is 'left'."
+            },
+            "monitor": {
+                "type": "INTEGER",
+                "description": "Optional 1-based monitor number (1, 2, 3...). Defaults to the window's current monitor or primary display."
+            }
+        },
+        "required": ["app_name", "position"]
     }
 }
 
@@ -1257,6 +1314,8 @@ def get_all_tool_declarations() -> List[dict]:
         FOCUS_WINDOW_DECLARATION,
         CLOSE_WINDOW_DECLARATION,
         MOVE_WINDOW_TO_MONITOR_DECLARATION,
+        TILE_WINDOWS_DECLARATION,
+        SNAP_WINDOW_DECLARATION,
         LAUNCH_APPLICATION_DECLARATION,
         CLOSE_APPLICATION_DECLARATION,
         ADD_TO_WHITELIST_DECLARATION,
@@ -1451,6 +1510,8 @@ class ToolDispatcher:
             FOCUS_WINDOW_DECLARATION,
             CLOSE_WINDOW_DECLARATION,
             MOVE_WINDOW_TO_MONITOR_DECLARATION,
+            TILE_WINDOWS_DECLARATION,
+            SNAP_WINDOW_DECLARATION,
             NAVIGATE_BROWSER_DECLARATION,
             FIND_AND_CLICK_ELEMENT_DECLARATION,
             MOUSE_CLICK_DECLARATION,
@@ -1789,6 +1850,46 @@ class ToolDispatcher:
                     "type": "tool",
                     "name": "Window Control",
                     "content": f"🖥️ [MONITOR] {result.get('message', f'Moved {app_name} to Monitor #{monitor}')}"
+                })
+                return result
+
+            elif fn_name == "tile_windows":
+                left_app = str(args.get("left_app") or args.get("app1") or "").strip()
+                right_app = str(args.get("right_app") or args.get("app2") or "").strip()
+                monitor = args.get("monitor", None)
+                if monitor is not None:
+                    try:
+                        monitor = int(monitor)
+                    except (ValueError, TypeError):
+                        monitor = None
+                if right_app:
+                    self.last_target_app = right_app
+                elif left_app:
+                    self.last_target_app = left_app
+                result = await asyncio.to_thread(tile_windows, left_app, right_app, monitor=monitor)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Window Control",
+                    "content": f"🪟 [SPLIT] {result.get('message', f'Split {left_app} and {right_app}')}"
+                })
+                return result
+
+            elif fn_name == "snap_window":
+                app_name = str(args.get("app_name") or args.get("window_name") or "").strip()
+                position = str(args.get("position", "left")).strip() or "left"
+                monitor = args.get("monitor", None)
+                if monitor is not None:
+                    try:
+                        monitor = int(monitor)
+                    except (ValueError, TypeError):
+                        monitor = None
+                if app_name:
+                    self.last_target_app = app_name
+                result = await asyncio.to_thread(snap_window, app_name, position=position, monitor=monitor)
+                self.notify("chat_event", {
+                    "type": "tool",
+                    "name": "Window Control",
+                    "content": f"🪟 [SNAP] {result.get('message', f'Snapped {app_name} ({position})')}"
                 })
                 return result
 

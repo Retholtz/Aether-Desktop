@@ -15,12 +15,21 @@ VK_MENU = 0x12       # Alt key
 VK_F10 = 0x79        # F10 key
 VK_LWIN = 0x5B       # Left Windows key
 VK_G = 0x47          # G key
+KEYEVENTF_EXTENDEDKEY = 0x0001
 KEYEVENTF_KEYUP = 0x0002
 
 try:
     user32 = ctypes.windll.user32
 except (AttributeError, Exception):
     user32 = None
+
+
+def _ensure_desktop_safe():
+    try:
+        from core.screen_stream import ensure_thread_desktop
+        ensure_thread_desktop()
+    except Exception:
+        pass
 
 
 class ReplayService:
@@ -42,53 +51,85 @@ class ReplayService:
 
     # --- Hardware Scancode Emulation ---
     def _pulse_shadowplay(self) -> bool:
-        """Sends Alt + F10 keystroke for GeForce Experience."""
-        try:
-            target_user32 = getattr(ctypes, "windll", None)
-            target_user32 = target_user32.user32 if target_user32 else user32
-            if not target_user32:
-                logger.error("[REPLAY] user32 is unavailable on this platform.")
-                return False
+        """Sends Alt + F10 keystroke for GeForce Experience with guaranteed key-up cleanup."""
+        _ensure_desktop_safe()
+        target_user32 = getattr(ctypes, "windll", None)
+        target_user32 = target_user32.user32 if target_user32 else user32
+        if not target_user32:
+            logger.error("[REPLAY] user32 is unavailable on this platform.")
+            return False
 
-            # Press Alt, press F10, release F10, release Alt
+        alt_down = False
+        f10_down = False
+        try:
             target_user32.keybd_event(VK_MENU, 0, 0, 0)
+            alt_down = True
             time.sleep(0.05)
             target_user32.keybd_event(VK_F10, 0, 0, 0)
+            f10_down = True
             time.sleep(0.08)
-            target_user32.keybd_event(VK_F10, 0, KEYEVENTF_KEYUP, 0)
-            time.sleep(0.02)
-            target_user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
             logger.info("[REPLAY] Sent Alt + F10 (ShadowPlay) shortcut.")
             return True
         except Exception as e:
             logger.error(f"[REPLAY] Failed to send ShadowPlay key combination: {e}")
             return False
+        finally:
+            if f10_down:
+                try:
+                    target_user32.keybd_event(VK_F10, 0, KEYEVENTF_KEYUP, 0)
+                    time.sleep(0.02)
+                except Exception:
+                    pass
+            if alt_down:
+                try:
+                    target_user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+                except Exception:
+                    pass
 
     def _pulse_game_bar(self) -> bool:
-        """Sends Win + Alt + G keystroke for Windows Game Bar."""
-        try:
-            target_user32 = getattr(ctypes, "windll", None)
-            target_user32 = target_user32.user32 if target_user32 else user32
-            if not target_user32:
-                logger.error("[REPLAY] user32 is unavailable on this platform.")
-                return False
+        """Sends Win + Alt + G keystroke for Windows Game Bar with extended-key flag & guaranteed cleanup."""
+        _ensure_desktop_safe()
+        target_user32 = getattr(ctypes, "windll", None)
+        target_user32 = target_user32.user32 if target_user32 else user32
+        if not target_user32:
+            logger.error("[REPLAY] user32 is unavailable on this platform.")
+            return False
 
-            # Press Win + Alt + G, then release in reverse order
-            target_user32.keybd_event(VK_LWIN, 0, 0, 0)
+        win_down = False
+        alt_down = False
+        g_down = False
+        try:
+            target_user32.keybd_event(VK_LWIN, 0, KEYEVENTF_EXTENDEDKEY, 0)
+            win_down = True
             time.sleep(0.03)
             target_user32.keybd_event(VK_MENU, 0, 0, 0)
+            alt_down = True
             time.sleep(0.05)
             target_user32.keybd_event(VK_G, 0, 0, 0)
+            g_down = True
             time.sleep(0.08)
-            target_user32.keybd_event(VK_G, 0, KEYEVENTF_KEYUP, 0)
-            time.sleep(0.02)
-            target_user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
-            target_user32.keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0)
             logger.info("[REPLAY] Sent Win + Alt + G (Xbox Game Bar) shortcut.")
             return True
         except Exception as e:
             logger.error(f"[REPLAY] Failed to send Game Bar key combination: {e}")
             return False
+        finally:
+            if g_down:
+                try:
+                    target_user32.keybd_event(VK_G, 0, KEYEVENTF_KEYUP, 0)
+                    time.sleep(0.02)
+                except Exception:
+                    pass
+            if alt_down:
+                try:
+                    target_user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+                except Exception:
+                    pass
+            if win_down:
+                try:
+                    target_user32.keybd_event(VK_LWIN, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0)
+                except Exception:
+                    pass
 
     # --- OBS Studio WebSocket v5 ---
     async def _trigger_obs_replay(self) -> bool:

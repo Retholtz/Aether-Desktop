@@ -1350,25 +1350,53 @@ class ProgramManager:
                     prog["path"] = alt
                     self._save_programs(self.data)
 
-        # Build command-line arguments
+        # Build command-line arguments (preserve Windows backslashes via posix=False)
+        def _split_win_args(arg_str: str) -> List[str]:
+            raw_tokens = shlex.split(arg_str, posix=(sys.platform != "win32"))
+            cleaned = []
+            for tok in raw_tokens:
+                if len(tok) >= 2 and ((tok[0] == '"' and tok[-1] == '"') or (tok[0] == "'" and tok[-1] == "'")):
+                    cleaned.append(tok[1:-1])
+                else:
+                    cleaned.append(tok)
+            return cleaned
+
         arg_parts = []
         if config_args:
             # Strip --elevate from args if elevated via runas
-            clean_cargs = [a for a in shlex.split(config_args) if a not in ("--elevate", "--admin")] if should_elevate else shlex.split(config_args)
+            parsed_cargs = _split_win_args(config_args)
+            clean_cargs = [a for a in parsed_cargs if a not in ("--elevate", "--admin")] if should_elevate else parsed_cargs
             arg_parts.extend(clean_cargs)
 
         if extra_args:
-            clean_eargs = [a for a in shlex.split(extra_args) if a not in ("--elevate", "--admin")] if should_elevate else shlex.split(extra_args)
+            parsed_eargs = _split_win_args(extra_args)
+            clean_eargs = [a for a in parsed_eargs if a not in ("--elevate", "--admin")] if should_elevate else parsed_eargs
             arg_parts.extend(clean_eargs)
 
-        # Handle browser URLs / search queries
+        # Handle browser URLs / search queries & friendly Chrome/Edge profile names
         exe_lower = os.path.basename(exe_path).lower()
+        resolved_profile_name = None
         if exe_lower in ("chrome.exe", "msedge.exe", "brave.exe", "firefox.exe"):
             arg_parts.append("--disable-session-crashed-bubble")
-            if profile:
-                arg_parts.append(f"--profile-directory={profile}")
-            elif exe_lower in ("chrome.exe", "msedge.exe"):
-                arg_parts.append("--profile-directory=Default")
+            if exe_lower in ("chrome.exe", "msedge.exe"):
+                if profile:
+                    prof_clean = str(profile).strip().lower()
+                    try:
+                        from security.whitelist import WhitelistValidator
+                        profiles_map = WhitelistValidator.get_chrome_profiles()
+                    except Exception:
+                        profiles_map = {}
+                    if prof_clean in profiles_map:
+                        prof_dir = profiles_map[prof_clean]
+                        arg_parts.append(f"--profile-directory={prof_dir}")
+                        resolved_profile_name = f"{profile} ({prof_dir})"
+                    else:
+                        safe_prof = re.sub(r"[^a-zA-Z0-9 _.-]", "", str(profile)).strip() or "Default"
+                        arg_parts.append(f"--profile-directory={safe_prof}")
+                        resolved_profile_name = safe_prof
+                else:
+                    arg_parts.append("--profile-directory=Default")
+                    resolved_profile_name = "Default"
 
         if target:
             clean_t = str(target).strip()

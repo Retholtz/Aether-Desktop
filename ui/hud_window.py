@@ -88,6 +88,27 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
             )
         except Exception:
             pass
+
+        # Apply WS_EX_TOOLWINDOW so the floating HUD overlay doesn't pollute Windows 11 Alt+Tab / taskbar,
+        # and WS_EX_NOACTIVATE in mini pill mode so clicking/hovering during games won't steal focus.
+        try:
+            import win32con
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            new_style = (ex_style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
+            if (mode or "").lower() == "mini":
+                new_style |= win32con.WS_EX_NOACTIVATE
+            else:
+                new_style &= ~win32con.WS_EX_NOACTIVATE
+            if new_style != ex_style:
+                win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, new_style)
+                win32gui.SetWindowPos(
+                    hwnd,
+                    win32con.HWND_TOPMOST,
+                    0, 0, 0, 0,
+                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_FRAMECHANGED
+                )
+        except Exception:
+            pass
     except Exception as e:
         print(f"[HUD SHAPE ERROR] Failed to apply window shape: {e}")
 
@@ -95,7 +116,7 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
 def get_monitor_work_areas() -> list:
     """
     Returns a list of connected monitor work areas (excluding taskbars)
-    with per-monitor bounds and primary monitor indicator in logical coordinates.
+    in the same physical screen coordinate space used by DPI-aware WinForms/PyWebView.
     """
     monitors = []
     if sys.platform == "win32":
@@ -117,11 +138,14 @@ def get_monitor_work_areas() -> list:
                     except Exception:
                         pass
 
+                    # Process is Per-Monitor DPI v2 aware: keep work area coordinates in physical
+                    # screen pixels so mixed-DPI origins and WinForms window.x/window.y match 1:1.
                     monitors.append({
-                        "left": int(work[0] / scale),
-                        "top": int(work[1] / scale),
-                        "right": int(work[2] / scale),
-                        "bottom": int(work[3] / scale),
+                        "left": int(work[0]),
+                        "top": int(work[1]),
+                        "right": int(work[2]),
+                        "bottom": int(work[3]),
+                        "scale": scale,
                         "is_primary": is_primary
                     })
         except Exception:
@@ -221,7 +245,7 @@ class HUDBridge:
         self._max_size = (560, 480)
 
     @property
-    def _mini_size(self) -> Tuple[int, int]:
+    def _mini_size(self) -> tuple[int, int]:
         return self._mini_wide_size if self._mini_fps_visible else self._mini_narrow_size
 
     def get_agent_name(self) -> dict:
@@ -642,8 +666,27 @@ class HudWindow:
         self.window.events.restored += on_restored
 
         # 4. Initialize System Tray Manager
+        def _maximize_main_window():
+            try:
+                self.bridge.restore_main_window()
+                hwnd = None
+                native = getattr(self.window, "native", None)
+                if native is not None and hasattr(native, "Handle"):
+                    try:
+                        hwnd = native.Handle.ToInt64()
+                    except Exception:
+                        hwnd = None
+                if not hwnd and sys.platform == "win32":
+                    import win32gui
+                    hwnd = win32gui.FindWindow(None, self.title)
+                if hwnd:
+                    force_foreground_window(hwnd, maximize=True)
+            except Exception as e:
+                print(f"[HUD] Tray maximize error: {e}")
+
         self.tray = SystemTrayManager(
             on_open_main=self.bridge.restore_main_window,
+            on_maximize_main=_maximize_main_window,
             on_toggle_overlay=self.bridge.toggle_overlay,
             on_toggle_mute=self.bridge.toggle_mic_mute,
             on_set_hud_mode=self.bridge.set_mode,
@@ -720,10 +763,14 @@ class HudWindow:
         if hasattr(self.bridge, "_is_shutting_down"):
             self.bridge._is_shutting_down = True
 
-        # Guarantee process termination even if WinForms/WebView2 blocks Application.Exit
-        watchdog = threading.Timer(2.5, os._exit, args=(0,))
-        watchdog.daemon = True
-        watchdog.start()
+        # Guarantee process termination if a live WinForms/WebView2 loop blocks Application.Exit
+        # (only arm when a real native WinForms handle exists so test mocks don't terminate the runner)
+        has_native_ui = getattr(self.window, "native", None) is not None or getattr(self.overlay_window, "native", None) is not None
+        if has_native_ui:
+            watchdog = threading.Timer(2.5, os._exit, args=(0,))
+            watchdog.daemon = True
+            watchdog.start()
+            self._shutdown_watchdog = watchdog
 
         if getattr(self, "_session_ending_handler", None) is not None:
             try:
@@ -747,21 +794,33 @@ class HudWindow:
             self.tray.stop()
         except Exception:
             pass
+
+        def _invoke_on_ui_or_direct(win_obj, fn):
+            native = getattr(win_obj, "native", None) if win_obj is not None else None
+            if native is not None and getattr(native, "InvokeRequired", False) and hasattr(native, "BeginInvoke"):
+                try:
+                    from System import Action
+                    native.BeginInvoke(Action(fn))
+                    return
+                except Exception:
+                    pass
+            fn()
+
         try:
             if self.overlay_window:
-                self.overlay_window.destroy()
+                _invoke_on_ui_or_direct(self.overlay_window, self.overlay_window.destroy)
         except Exception:
             pass
         if destroy_main:
             try:
                 if self.window:
-                    self.window.destroy()
+                    _invoke_on_ui_or_direct(self.window, self.window.destroy)
             except Exception:
                 pass
-            if sys.platform == "win32":
+            if sys.platform == "win32" and has_native_ui:
                 try:
                     from System.Windows.Forms import Application
-                    Application.Exit()
+                    _invoke_on_ui_or_direct(self.window, Application.Exit)
                 except Exception:
                     pass
 

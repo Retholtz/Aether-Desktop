@@ -29,11 +29,23 @@
       "name": "tile_windows",
       "filename": "tile_windows.py",
       "path": "scripts\\library\\tile_windows.py",
-      "intent": "Tiles two open applications side-by-side (50% left, 50% right) on the screen.",
-      "description": "Tiles two open applications side-by-side (50% left, 50% right) on the screen.",
+      "intent": "Splits, snaps, or tiles two open applications side-by-side (50% left half, 50% right half) on the screen.",
+      "description": "Splits, snaps, or tiles two open applications side-by-side (50% left half, 50% right half) on the screen.",
+      "tags": [
+        "split",
+        "snap",
+        "tile",
+        "side-by-side",
+        "half",
+        "arrange",
+        "left",
+        "right",
+        "windows"
+      ],
       "parameters": {
-        "left_app": "Application name to position on the left (e.g. 'notepad')",
-        "right_app": "Application name to position on the right (e.g. 'chrome')"
+        "left_app": "Application name to position on the left (e.g. 'file explorer', 'notepad')",
+        "right_app": "Application name to position on the right (e.g. 'chrome')",
+        "monitor": "Optional 1-based monitor number"
       }
     },
     {

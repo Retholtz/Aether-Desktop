@@ -1588,15 +1588,17 @@ window.aetherUI = {
 
       const activePrimary = cfg.primary_model_endpoint || api.model_id || cfg.tier1_fast_model || "gemini-3.8-live";
       const primSel = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
-      if (primSel) primSel.value = activePrimary;
-
       const activeModerate = cfg.tier2_moderate_model || api.moderate_model_id || "gemini-4-hydrogen:medium";
       const modSel = document.getElementById("select-moderate-model") || document.querySelector('select[name="tier2_moderate_model"]');
-      if (modSel) modSel.value = activeModerate;
-
-      const activeHeavy = cfg.tier3_heavy_model || cfg.tier2_heavy_model || api.pro_model_id || "gemini-4-argon:medium";
+      const activeHeavy = cfg.tier3_heavy_model || cfg.tier2_heavy_model || api.pro_model_id || "gemini-4-neon:high";
       const heavySel = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier3_heavy_model"]') || document.querySelector('select[name="tier2_heavy_model"]');
-      if (heavySel) heavySel.value = activeHeavy;
+      if (typeof syncTierEndpointsToUI === "function") {
+        syncTierEndpointsToUI(cfg);
+      } else {
+        if (primSel) primSel.value = activePrimary;
+        if (modSel) modSel.value = activeModerate.split(":")[0];
+        if (heavySel) heavySel.value = activeHeavy.split(":")[0];
+      }
       const currentStt = cfg.stt_endpoint || cfg.stt_model_endpoint || api.stt_model_id || api.stt_endpoint || "gemini_live_audio";
       const sttEl = document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
       if (sttEl) {
@@ -1960,9 +1962,21 @@ window.aetherUI = {
 
       const sttModelVal = (document.getElementById("stt_endpoint") || document.getElementById("sttSelect") || document.getElementById("select-stt-model"))?.value || this.currentConfig?.stt_endpoint || "gemini_live_audio";
       const ttsModelVal = ttsVal;
-      const primaryModelVal = (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || this.currentConfig?.primary_model_endpoint || "gemini-3.8-live";
-      const moderateModelVal = (document.getElementById("select-moderate-model") || document.querySelector('select[name="tier2_moderate_model"]'))?.value || this.currentConfig?.tier2_moderate_model || "gemini-4-hydrogen:medium";
-      const heavyModelVal = (document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier3_heavy_model"]') || document.querySelector('select[name="tier2_heavy_model"]'))?.value || this.currentConfig?.tier3_heavy_model || this.currentConfig?.tier2_heavy_model || "gemini-4-argon:medium";
+      const tierEndpoints = typeof readTierEndpointsFromUI === "function"
+        ? readTierEndpointsFromUI(this.currentConfig)
+        : {
+            primaryModelVal: (document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]'))?.value || this.currentConfig?.primary_model_endpoint || "gemini-3.8-live",
+            moderateModelVal: this.currentConfig?.tier2_moderate_model || "gemini-4-hydrogen:medium",
+            modLevel: this.currentConfig?.tier2_moderate_level || "medium",
+            heavyModelVal: this.currentConfig?.tier3_heavy_model || this.currentConfig?.tier2_heavy_model || "gemini-4-neon:high",
+            heavyLevel: this.currentConfig?.tier3_thinking_level || this.currentConfig?.tier2_thinking_level || "high",
+            ttrpgModelVal: this.currentConfig?.ttrpg_model_endpoint || "gemini-4-hydrogen:medium",
+            ttrpgLevel: this.currentConfig?.ttrpg_thinking_level || "medium"
+          };
+      const primaryModelVal = tierEndpoints.primaryModelVal;
+      const moderateModelVal = tierEndpoints.moderateModelVal;
+      const heavyModelVal = tierEndpoints.heavyModelVal;
+      const ttrpgModelVal = tierEndpoints.ttrpgModelVal || this.currentConfig?.ttrpg_model_endpoint || "gemini-4-hydrogen:medium";
 
       const inIdx = (inSel && inSel.value && inSel.value !== "-1" && !isNaN(parseInt(inSel.value, 10))) ? parseInt(inSel.value, 10) : (this.currentConfig?.audio?.input_device_index ?? null);
       const inName = (inSel && inSel.selectedOptions[0]) ? inSel.selectedOptions[0].text : (this.currentConfig?.audio?.input_device_name || "");
@@ -1990,8 +2004,13 @@ window.aetherUI = {
         primary_model_endpoint: primaryModelVal,
         tier1_fast_model: primaryModelVal,
         tier2_moderate_model: moderateModelVal,
+        tier2_moderate_level: tierEndpoints.modLevel,
         tier3_heavy_model: heavyModelVal,
         tier2_heavy_model: heavyModelVal,
+        tier3_thinking_level: tierEndpoints.heavyLevel,
+        tier2_thinking_level: tierEndpoints.heavyLevel,
+        ttrpg_model_endpoint: ttrpgModelVal,
+        ttrpg_thinking_level: tierEndpoints.ttrpgLevel || "medium",
         tts_voice: voiceName,
         tts_speed: voiceSpeedNum,
         tts_pace: geminiPaceVal,
@@ -2021,6 +2040,11 @@ window.aetherUI = {
           stt_endpoint: sttModelVal,
           tts_endpoint: ttsModelVal,
           pro_model_id: heavyModelVal,
+          tier2_moderate_level: tierEndpoints.modLevel,
+          tier2_thinking_level: tierEndpoints.heavyLevel,
+          tier3_thinking_level: tierEndpoints.heavyLevel,
+          ttrpg_model_id: ttrpgModelVal,
+          ttrpg_thinking_level: tierEndpoints.ttrpgLevel || "medium",
           temperature: document.getElementById("temperatureSlider") ? parseFloat(document.getElementById("temperatureSlider").value) : (this.currentConfig?.api?.temperature ?? 0.7),
           system_instruction: document.getElementById("systemPromptInput") ? document.getElementById("systemPromptInput").value : (this.currentConfig?.api?.system_instruction || "")
         },
@@ -2922,8 +2946,10 @@ handleDesktopNotification: function(notif) {
     if (this._telemetryLoopTimer) return;
     const meterFill = document.getElementById("micMeterFill");
     let inFlight = false;
+    window.addEventListener("beforeprint", () => { this._isPrintingDossier = true; });
+    window.addEventListener("afterprint", () => { this._isPrintingDossier = false; });
     this._telemetryLoopTimer = setInterval(async () => {
-      if (inFlight || document.hidden || !window.pywebview || !window.pywebview.api) return;
+      if (this._isPrintingDossier || inFlight || document.hidden || !window.pywebview || !window.pywebview.api) return;
       inFlight = true;
       try {
         const tel = await window.pywebview.api.get_telemetry();
@@ -4032,7 +4058,7 @@ handleDesktopNotification: function(notif) {
 
     const printBtn = document.getElementById("printDossierBtn");
     if (printBtn) {
-      printBtn.addEventListener("click", () => window.print());
+      printBtn.addEventListener("click", () => this.printCurrentDossier());
     }
 
     const delBtn = document.getElementById("deleteCurrentDossierBtn");
@@ -4176,6 +4202,7 @@ handleDesktopNotification: function(notif) {
         });
         pageEl.classList.toggle("dark-mode", Boolean(this.dossierDarkMode));
         this.applyDossierZoom();
+        this.syncDossierPrintMount();
         const canvas = pageEl.parentElement;
         if (canvas) {
           canvas.scrollTop = 0;
@@ -4270,6 +4297,32 @@ handleDesktopNotification: function(notif) {
   openDossierExternal: async function() {
     if (!this.selectedDossierFilename || !window.pywebview?.api?.open_dossier_file) return;
     await window.pywebview.api.open_dossier_file(this.selectedDossierFilename);
+  },
+
+  syncDossierPrintMount: function() {
+    const pageEl = document.getElementById("dossierPaperPage");
+    let mount = document.getElementById("dossierPrintMount");
+    if (!mount) {
+      mount = document.createElement("div");
+      mount.id = "dossierPrintMount";
+      mount.className = "dossier-print-mount";
+      mount.setAttribute("aria-hidden", "true");
+      document.body.appendChild(mount);
+    }
+    mount.innerHTML = pageEl ? pageEl.innerHTML : "";
+  },
+
+  printCurrentDossier: function() {
+    this._isPrintingDossier = true;
+    this.syncDossierPrintMount();
+    // Wait one tick so any in-flight 150ms telemetry bridge call finishes before window.print() locks the JS thread
+    setTimeout(() => {
+      try {
+        window.print();
+      } finally {
+        this._isPrintingDossier = false;
+      }
+    }, 80);
   },
 
   setDossierZoom: function(val) {
@@ -4400,20 +4453,33 @@ function collectSettingsPayload() {
   const bootEl = document.getElementById("toggle-boot-startup");
   const minEl = document.getElementById("toggle-start-minimized");
   const autoUpdEl = document.getElementById("toggle-auto-check-updates");
-  const primaryEl = document.getElementById("select-primary-model") || document.getElementById("modelSelect") || document.querySelector('select[name="primary_model_endpoint"]');
-  const moderateEl = document.getElementById("select-moderate-model") || document.querySelector('select[name="tier2_moderate_model"]');
-  const heavyEl = document.getElementById("select-heavy-model") || document.getElementById("proModelSelect") || document.querySelector('select[name="tier3_heavy_model"]') || document.querySelector('select[name="tier2_heavy_model"]');
+  const tierVals = typeof readTierEndpointsFromUI === "function"
+    ? readTierEndpointsFromUI()
+    : {
+        primaryModelVal: "gemini-3.8-live",
+        moderateModelVal: "gemini-4-hydrogen:medium",
+        modLevel: "medium",
+        heavyModelVal: "gemini-4-neon:high",
+        heavyLevel: "high",
+        ttrpgModelVal: "gemini-4-hydrogen:medium",
+        ttrpgLevel: "medium"
+      };
   const sttEl = document.getElementById("stt_endpoint") || document.querySelector('select[name="stt_endpoint"]') || document.getElementById("sttSelect") || document.getElementById("select-stt-model");
   const ttsEl = document.getElementById("tts_endpoint") || document.querySelector('select[name="tts_endpoint"]') || document.getElementById("select-tts-endpoint") || document.getElementById("select-tts-model") || document.getElementById("ttsSelect");
   return {
     boot_on_startup: bootEl ? bootEl.checked : false,
     start_minimized: minEl ? minEl.checked : false,
     auto_check_updates: autoUpdEl ? autoUpdEl.checked : true,
-    primary_model_endpoint: primaryEl ? primaryEl.value : "gemini-3.8-live",
-    tier1_fast_model: primaryEl ? primaryEl.value : "gemini-3.8-live",
-    tier2_moderate_model: moderateEl ? moderateEl.value : "gemini-4-hydrogen:medium",
-    tier3_heavy_model: heavyEl ? heavyEl.value : "gemini-4-argon:medium",
-    tier2_heavy_model: heavyEl ? heavyEl.value : "gemini-4-argon:medium",
+    primary_model_endpoint: tierVals.primaryModelVal,
+    tier1_fast_model: tierVals.primaryModelVal,
+    tier2_moderate_model: tierVals.moderateModelVal,
+    tier2_moderate_level: tierVals.modLevel,
+    tier3_heavy_model: tierVals.heavyModelVal,
+    tier2_heavy_model: tierVals.heavyModelVal,
+    tier3_thinking_level: tierVals.heavyLevel,
+    tier2_thinking_level: tierVals.heavyLevel,
+    ttrpg_model_endpoint: tierVals.ttrpgModelVal,
+    ttrpg_thinking_level: tierVals.ttrpgLevel,
     stt_model_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
     stt_endpoint: sttEl ? sttEl.value : "gemini_live_audio",
     tts_model_endpoint: ttsEl ? ttsEl.value : "gemini_live",

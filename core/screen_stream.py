@@ -124,10 +124,18 @@ class ScreenCapturePipeline:
                 return 1
             hmon = win32api.MonitorFromWindow(hwnd, win32con.MONITOR_DEFAULTTONEAREST)
             info = win32api.GetMonitorInfo(hmon)
-            rc = info.get("rcMonitor", (0, 0, 0, 0))  # (left, top, right, bottom)
+            # pywin32 returns "Monitor" (not "rcMonitor")
+            rc = info.get("Monitor") or info.get("rcMonitor") or (0, 0, 0, 0)
             for idx in range(1, len(self.monitors)):
                 m = self.monitors[idx]
                 if m["left"] == rc[0] and m["top"] == rc[1]:
+                    return idx
+            # Fallback: match by monitor center point containment
+            cx = (rc[0] + rc[2]) // 2
+            cy = (rc[1] + rc[3]) // 2
+            for idx in range(1, len(self.monitors)):
+                m = self.monitors[idx]
+                if m["left"] <= cx < m["left"] + m["width"] and m["top"] <= cy < m["top"] + m["height"]:
                     return idx
             return 1
         except Exception:
@@ -228,11 +236,21 @@ class ScreenCapturePipeline:
             return self.capture_frame_sync(target="auto", max_dim=max_dim, quality=quality)
 
         rect = win32gui.GetWindowRect(hwnd)
-        # Clamp window rect within virtual desktop
-        left = max(0, rect[0])
-        top = max(0, rect[1])
-        w = max(50, rect[2] - rect[0])
-        h = max(50, rect[3] - rect[1])
+        # Clamp window rect within full virtual desktop (supporting negative left/top monitors)
+        if not self.monitors:
+            self.refresh_monitors()
+        vmon = self.monitors[0] if self.monitors else {"left": 0, "top": 0, "width": 1920, "height": 1080}
+        v_left = int(vmon["left"])
+        v_top = int(vmon["top"])
+        v_right = v_left + int(vmon["width"])
+        v_bottom = v_top + int(vmon["height"])
+
+        left = max(v_left, min(int(rect[0]), v_right - 50))
+        top = max(v_top, min(int(rect[1]), v_bottom - 50))
+        right = min(v_right, max(left + 50, int(rect[2])))
+        bottom = min(v_bottom, max(top + 50, int(rect[3])))
+        w = max(50, right - left)
+        h = max(50, bottom - top)
         win_bbox = {"left": left, "top": top, "width": w, "height": h}
 
         with mss.MSS() as sct:

@@ -6,9 +6,6 @@
   <title>Aether Desktop</title>
   <link rel="stylesheet" href="style.css?v=4">
   <link rel="stylesheet" href="roleplay.css?v=1">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
   <div class="hud-window">
@@ -41,7 +38,7 @@
             <span class="tab-icon icon">🎮</span> GAMES
           </button>
           <button type="button" class="hud-tab nav-btn" data-tab="roleplay" id="btn-tab-roleplay">
-            <span class="tab-icon icon">🎲</span> ROLE PLAY
+            <span class="tab-icon icon">🎲</span> TTRPG
           </button>
         </div>
         <div class="hud-tabs-divider" role="separator"></div>
@@ -630,10 +627,6 @@
                   </div>
                 </div>
               </div>
-              <div class="rp-engine-row" title="Cortex reasoning model used while Game Master adventure mode is active (saved automatically)">
-                <label for="rp-ttrpg-model-select" class="rp-engine-label">🧠 DM Engine</label>
-                <select id="rp-ttrpg-model-select" class="rp-engine-select"></select>
-              </div>
               <button type="button" id="btn-start-resume-campaign" class="rp-adventure-btn start">
                 <span class="adventure-btn-icon">▶</span>
                 <span id="lbl-start-resume-text">START ADVENTURE</span>
@@ -1153,38 +1146,98 @@
 
             <div class="card-body">
               <div class="settings-grid form-grid">
-                <!-- Primary Model Dropdown -->
-                <div class="form-group">
+                <!-- Tier 1 Primary Model Dropdown -->
+                <div class="form-group full">
                   <label for="select-primary-model">Primary Model Endpoint</label>
                   <select id="select-primary-model" class="form-control hud-select">
-                    <option value="gemini-3.8-live" selected>Gemini 3.8 Live (Default)</option>
-                    <option value="gemini-4-hydrogen:instant">Gemini 4.0 Hydrogen Instant (Modular)</option>
-                    <option value="gemini-3.8-flash">Gemini 3.8 Flash (Modular High Speed)</option>
+                    <option value="gemini-3.8-live" selected>3.8 - Live (Default)</option>
+                    <option value="custom">Custom</option>
                   </select>
+                  <div id="primary-custom-model-group" class="custom-endpoint-group" style="display: none; margin-top: 8px;">
+                    <input type="text" id="input-primary-custom-model" class="form-control hud-input" placeholder="Enter custom Tier 1 endpoint (e.g. gemini-4.0-live)" autocomplete="off" />
+                  </div>
                   <span class="field-hint input-hint">Primary front-end engine for casual conversation, live desktop vision, and sub-second voice.</span>
                 </div>
 
-                <!-- Tier 2 Moderate Model Dropdown (Hydrogen) -->
-                <div class="form-group">
+                <!-- Tier 2 Moderate Model Dropdown (Hydrogen) + Reasoning Slider -->
+                <div class="form-group full" style="margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
                   <label for="select-moderate-model">Tier 2 Moderate Model Endpoint</label>
                   <select id="select-moderate-model" name="tier2_moderate_model" class="form-control hud-select">
-                    <option value="gemini-4-hydrogen:low">Gemini 4.0 Hydrogen Low</option>
-                    <option value="gemini-4-hydrogen:medium" selected>Gemini 4.0 Hydrogen Medium (Default)</option>
-                    <option value="gemini-4-hydrogen:high">Gemini 4.0 Hydrogen High</option>
-                    <option value="gemini-4-hydrogen:xhigh">Gemini 4.0 Hydrogen Extra</option>
+                    <option value="gemini-4-hydrogen" selected>4.0 - Hydrogen (Default)</option>
+                    <option value="custom">Custom</option>
                   </select>
-                  <span class="field-hint input-hint">Used for moderate reasoning tasks, tricky puzzles, coding helpers, and structured analysis.</span>
+                  <div id="moderate-custom-model-group" class="custom-endpoint-group" style="display: none; margin-top: 8px;">
+                    <input type="text" id="input-moderate-custom-model" class="form-control hud-input" placeholder="Enter custom Tier 2 endpoint (e.g. gemini-4.5-hydrogen)" autocomplete="off" />
+                  </div>
+                  <div class="tier-reasoning-slider-box" style="margin-top: 10px;">
+                    <div class="slider-header">
+                      <label for="slider-moderate-level">Tier 2 Reasoning Level</label>
+                      <span class="slider-val" id="val-moderate-level">Medium</span>
+                    </div>
+                    <input type="range" id="slider-moderate-level" min="0" max="3" step="1" value="1" class="hud-slider" style="width: 100%; margin: 6px 0 4px 0;" />
+                    <div class="slider-ticks">
+                      <span>Low</span>
+                      <span>Medium</span>
+                      <span>High</span>
+                      <span>Extra</span>
+                    </div>
+                  </div>
+                  <span class="field-hint input-hint" style="margin-top: 6px;">Used for moderate reasoning tasks, tricky puzzles, coding helpers, and structured analysis.</span>
                 </div>
 
-                <!-- Tier 3 Heavy Model Dropdown (Argon) -->
-                <div class="form-group full">
+                <!-- Tier 3 Heavy Model Dropdown (Neon / Carbon / Custom) + Reasoning Slider -->
+                <div class="form-group full" style="margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
                   <label for="select-heavy-model">Tier 3 Heavy Model Endpoint</label>
                   <select id="select-heavy-model" name="tier3_heavy_model" class="form-control hud-select">
-                    <option value="gemini-4-argon:low">Gemini 4.0 Argon Low</option>
-                    <option value="gemini-4-argon:medium" selected>Gemini 4.0 Argon Medium (Default)</option>
-                    <option value="gemini-4-argon:high">Gemini 4.0 Argon High</option>
+                    <option value="gemini-4-neon" selected>4.0 - Neon (Default)</option>
+                    <option value="gemini-4-carbon">4.0 - Carbon</option>
+                    <option value="custom">Custom</option>
                   </select>
-                  <span class="field-hint input-hint">Used for exhaustive research dossiers, deep system audits, and complex automation.</span>
+                  <div id="heavy-custom-model-group" class="custom-endpoint-group" style="display: none; margin-top: 8px;">
+                    <input type="text" id="input-heavy-custom-model" class="form-control hud-input" placeholder="Enter custom Tier 3 endpoint (e.g. gemini-4.5-neon)" autocomplete="off" />
+                  </div>
+                  <div class="tier-reasoning-slider-box" style="margin-top: 10px;">
+                    <div class="slider-header">
+                      <label for="slider-heavy-level">Tier 3 Reasoning Level</label>
+                      <span class="slider-val" id="val-heavy-level">High</span>
+                    </div>
+                    <input type="range" id="slider-heavy-level" min="0" max="3" step="1" value="2" class="hud-slider" style="width: 100%; margin: 6px 0 4px 0;" />
+                    <div class="slider-ticks">
+                      <span>Low</span>
+                      <span>Medium</span>
+                      <span>High</span>
+                      <span>Extra</span>
+                    </div>
+                  </div>
+                  <span class="field-hint input-hint" style="margin-top: 6px;">Used for exhaustive research dossiers, deep system audits, and complex automation.</span>
+                </div>
+
+                <!-- TTRPG Game Master Model Dropdown + Conditional Reasoning Slider -->
+                <div class="form-group full" style="margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
+                  <label for="select-ttrpg-model">TTRPG Game Master Model Endpoint</label>
+                  <select id="select-ttrpg-model" name="ttrpg_model_endpoint" class="form-control hud-select">
+                    <option value="gemini-3.8-flash">Gemini 3.8 Flash (Fastest)</option>
+                    <option value="gemini-4-hydrogen" selected>Gemini 4.0 Hydrogen (Default)</option>
+                    <option value="gemini-4-neon">Gemini 4.0 Neon</option>
+                    <option value="custom">Custom Endpoint</option>
+                  </select>
+                  <div id="ttrpg-custom-model-group" class="custom-endpoint-group" style="display: none; margin-top: 8px;">
+                    <input type="text" id="input-ttrpg-custom-model" class="form-control hud-input" placeholder="Enter custom TTRPG endpoint (e.g. gemini-4.5-hydrogen)" autocomplete="off" />
+                  </div>
+                  <div id="ttrpg-reasoning-slider-box" class="tier-reasoning-slider-box" style="margin-top: 10px;">
+                    <div class="slider-header">
+                      <label for="slider-ttrpg-level">TTRPG Reasoning Level</label>
+                      <span class="slider-val" id="val-ttrpg-level">Medium</span>
+                    </div>
+                    <input type="range" id="slider-ttrpg-level" min="0" max="3" step="1" value="1" class="hud-slider" style="width: 100%; margin: 6px 0 4px 0;" />
+                    <div class="slider-ticks">
+                      <span>Low</span>
+                      <span>Medium</span>
+                      <span>High</span>
+                      <span>Extra</span>
+                    </div>
+                  </div>
+                  <span class="field-hint input-hint" style="margin-top: 6px;">Dedicated Cortex engine used by the Live Game Master during active TTRPG adventures.</span>
                 </div>
               </div>
             </div>
@@ -3244,7 +3297,7 @@
                 <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">Establish starting locations, factions, opening quests, and investigation secrets.</div>
               </div>
               <span id="byoc-config-summary" class="system-tag" style="font-size: 0.68rem; padding: 4px 8px; background: rgba(56, 189, 248, 0.15); color: var(--accent-cyan); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 4px;">
-                Custom World: Default Template
+                Custom World: 0 Loc, 0 Faction, 0 Quest, 0 Clue
               </span>
             </div>
             <div style="display: flex; justify-content: flex-start; align-items: center; gap: 10px; margin-top: 2px;">
@@ -5856,6 +5909,8 @@
       </div>
     </div>
   </div>
+
+  <div id="dossierPrintMount" class="dossier-print-mount" aria-hidden="true"></div>
 
   <script src="settings.js"></script>
   <script src="games_tab.js"></script>

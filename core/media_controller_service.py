@@ -410,9 +410,11 @@ class MediaControllerService:
             except Exception as e:
                 logger.warning(f"[MEDIA] Direct WM_APPCOMMAND to HWND {target_hwnd} failed: {e}")
 
-        # 2. Always broadcast hardware media virtual key
-        key_sent = self._send_media_key(action)
-        return dispatched or key_sent
+        # 2. Only fall back to global hardware media key if direct window messaging was not dispatched
+        # (sending both causes double-toggles / double-skips on players handling both events)
+        if dispatched:
+            return True
+        return self._send_media_key(action)
 
     def _get_action_success_msg(self, action: str) -> str:
         action = action.lower().strip()
