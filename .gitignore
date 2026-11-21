@@ -60,3 +60,8 @@ config.json
 data/oauth_tokens.json
 data/chats/*.json
 data/dossiers/*.md
+
+# Sample test character sheets & build artifacts
+*.pdf
+char_*_root.json
+Installer/AppFiles/
