@@ -4117,3 +4117,57 @@ select option,
     font-weight: 600 !important;
   }
 }
+
+/* Floating Help Box Tooltip */
+.aether-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+}
+
+.aether-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  padding: 0;
+}
+
+.aether-help-popover {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  width: 280px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0f172a;
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  font-weight: 400;
+  z-index: 900;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+}
+
+.aether-help-wrap:hover .aether-help-popover,
+.aether-help-wrap:focus-within .aether-help-popover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}

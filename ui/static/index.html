@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aether Desktop</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
   <link rel="stylesheet" href="roleplay.css?v=1">
 </head>
 <body>
@@ -1607,10 +1607,38 @@
             </div>
           </div>
 
-          <!-- Card: Floating HUD Overlay & System Tray -->
+          <!-- Card: Main Window & System Tray -->
           <div class="hud-card">
             <div class="card-header">
-              <span class="card-title">FLOATING HUD OVERLAY & SYSTEM TRAY</span>
+              <span class="card-title">MAIN WINDOW &amp; SYSTEM TRAY</span>
+              <span class="card-tag">WINDOW</span>
+            </div>
+            <div class="card-body">
+              <div class="form-grid">
+                <div class="form-group full">
+                  <div style="display: flex; align-items: center;">
+                    <label class="hud-checkbox" style="margin: 0;">
+                      <input type="checkbox" id="minimizeToTrayCheck">
+                      <span>Minimize Main Program To System Tray</span>
+                    </label>
+                    <span class="aether-help-wrap">
+                      <button type="button" class="aether-help-btn" aria-label="Minimize to System Tray Help">?</button>
+                      <span class="aether-help-popover" role="tooltip">
+                        <strong>Checked:</strong> Minimizing or closing (<code>X</code>) hides the main Aether window to the Windows System Tray so voice, hotkeys, and Game Mode keep running.<br><br>
+                        <strong>Unchecked:</strong> Minimizing sends the main program to the Windows Taskbar (and clicking <code>X</code> exits Aether).
+                      </span>
+                    </span>
+                  </div>
+                  <span class="input-hint">Controls whether the main Aether window hides in the System Tray or minimizes to the Windows Taskbar.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: Floating HUD Overlay -->
+          <div class="hud-card">
+            <div class="card-header">
+              <span class="card-title">FLOATING HUD OVERLAY</span>
               <span class="card-tag">DESKTOP HUD</span>
             </div>
             <div class="card-body">
@@ -1623,14 +1651,6 @@
                     <option value="disabled">Disabled (Hidden)</option>
                   </select>
                   <span class="input-hint">Displays a sleek floating widget showing live speech, status, and task actions.</span>
-                </div>
-
-                <div class="form-group">
-                  <label class="hud-checkbox" style="margin-top: 26px;">
-                    <input type="checkbox" id="minimizeToTrayCheck">
-                    <span>Minimize To System Tray</span>
-                  </label>
-                  <span class="input-hint">Keeps Aether running in the background notification area when minimized.</span>
                 </div>
 
                 <div class="form-group">
@@ -6015,13 +6035,13 @@
 
   <div id="dossierPrintMount" class="dossier-print-mount" aria-hidden="true"></div>
 
-  <script src="settings.js?v=p7"></script>
-  <script src="games_tab.js?v=p7"></script>
-  <script src="programs_tab.js?v=p7"></script>
-  <script src="projects.js?v=p7"></script>
-  <script src="edit_character_modal.js?v=p7"></script>
-  <script src="roleplay.js?v=p7"></script>
-  <script src="main.js?v=p7"></script>
-  <script src="app.js?v=p7"></script>
+  <script src="settings.js?v=p8"></script>
+  <script src="games_tab.js?v=p8"></script>
+  <script src="programs_tab.js?v=p8"></script>
+  <script src="projects.js?v=p8"></script>
+  <script src="edit_character_modal.js?v=p8"></script>
+  <script src="roleplay.js?v=p8"></script>
+  <script src="main.js?v=p8"></script>
+  <script src="app.js?v=p8"></script>
 </body>
 </html>
