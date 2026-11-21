@@ -249,15 +249,6 @@ window.aetherUI = {
         }, { passive: true });
       }
     });
-
-    // Wire up "Open Programs Tab" button in settings
-    const btnGotoPrograms = document.getElementById("btn-goto-programs");
-    if (btnGotoPrograms) {
-      btnGotoPrograms.addEventListener("click", () => {
-        const tabBtn = document.getElementById("btn-tab-programs") || document.querySelector('[data-tab="tab-programs"]');
-        if (tabBtn) tabBtn.click();
-      });
-    }
   },
 
   // =========================================================================
