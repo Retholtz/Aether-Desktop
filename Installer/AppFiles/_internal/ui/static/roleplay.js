@@ -391,9 +391,6 @@ function renderCampaignHeader() {
         const storyTitle = document.getElementById("rp-story-title");
         if (storyTitle) storyTitle.textContent = `⚔️ ${meta.title || activeId} Chronicle`;
 
-        const bottomInput = document.getElementById("chatTextInput");
-        if (bottomInput) bottomInput.placeholder = `State your action to the Game Master (${meta.title || activeId})...`;
-
         if (activeId && window._loadedCampaignStoryId !== activeId) {
             window._loadedCampaignStoryId = activeId;
             loadCampaignStoryHistory(activeId);
@@ -537,7 +534,7 @@ function renderCampaignDocuments() {
         const row = document.createElement("div");
         row.className = "rp-doc-item";
         row.innerHTML = `
-            <div class="rp-doc-item-info" title="Click to preview ${escapeRpHtml(fname)}" onclick="handlePreviewRpDocument('${escapeRpHtml(fname)}')">
+            <div class="rp-doc-item-info" title="Click to preview ${escapeRpHtml(fname)}" data-rp-action="preview-doc" data-fname="${escapeRpHtml(fname)}">
                 <div class="rp-doc-filename">📄 ${escapeRpHtml(fname)}</div>
                 <div class="rp-doc-submeta">
                     <span class="rp-doc-badge">${escapeRpHtml(badgeLabel)}</span>
@@ -545,8 +542,8 @@ function renderCampaignDocuments() {
                 </div>
             </div>
             <div style="display: flex; align-items: center; gap: 4px;">
-                <button type="button" class="vital-step-btn" title="Have Aether DM review this document" onclick="handleReviewSingleRpDocument('${escapeRpHtml(fname)}', '${escapeRpHtml(catKey)}')">🧙‍♂️</button>
-                <button type="button" class="vital-step-btn" title="Remove document" onclick="handleDeleteRpDocument('${escapeRpHtml(fname)}')">✕</button>
+                <button type="button" class="vital-step-btn" title="Have Aether DM review this document" data-rp-action="review-doc" data-fname="${escapeRpHtml(fname)}" data-cat="${escapeRpHtml(catKey)}">🧙‍♂️</button>
+                <button type="button" class="vital-step-btn" title="Remove document" data-rp-action="delete-doc" data-fname="${escapeRpHtml(fname)}">✕</button>
             </div>
         `;
         listEl.appendChild(row);
@@ -673,7 +670,7 @@ function renderInitiativeLadder() {
             <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
                 ${hpDisplay}
                 <span class="ladder-roll-pill">${Number(item.roll || 0)}</span>
-                <button type="button" class="vital-step-btn" title="Remove from initiative" onclick="handleRemoveInitiative('${escapeRpHtml(item.name)}')">✕</button>
+                <button type="button" class="vital-step-btn" title="Remove from initiative" data-rp-action="remove-initiative" data-name="${escapeRpHtml(item.name)}">✕</button>
             </div>
         `;
         ladderEl.appendChild(row);
@@ -996,6 +993,22 @@ function toggleUnpreparedDrawer(charId) {
 }
 
 async function handleCardCastSpell(charId, spellName, spellLevel) {
+  const sendCampaignSpellPrompt = async (promptText) => {
+    const inputEl = document.getElementById("rpStoryChatInput");
+    const sendBtn = document.getElementById("btnSendRpStory");
+    if (inputEl && sendBtn) {
+      inputEl.value = promptText;
+      sendBtn.click();
+      return;
+    }
+    const cid = (typeof ttrpgData !== "undefined" && ttrpgData && ttrpgData.active_campaign)
+      || (window.ttrpgData && window.ttrpgData.active_campaign)
+      || (window.ttrpgData && window.ttrpgData.manifest && window.ttrpgData.manifest.active_campaign);
+    if (cid && window.pywebview?.api?.send_workspace_message) {
+      await window.pywebview.api.send_workspace_message('campaign', cid, promptText);
+    }
+  };
+
   if (spellLevel > 0) {
     // Leveled spell: Call cast_spell to deduct slot and prompt GM narrative
     if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.invoke_ttrpg_tool === "function") {
@@ -1010,23 +1023,10 @@ async function handleCardCastSpell(charId, spellName, spellLevel) {
         return;
       }
     }
-    const inputEl = document.getElementById("input-rp-dm-prompt");
-    if (inputEl) {
-      inputEl.value = `*[SPELL CAST]* ${charId} casts **${spellName}** (Level ${spellLevel}).`;
-      const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
-      if (sendBtn) sendBtn.click();
-    }
+    await sendCampaignSpellPrompt(`*[SPELL CAST]* ${charId} casts **${spellName}** (Level ${spellLevel}).`);
   } else {
-    // Cantrip: At-will cast
-    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.send_chat_message === "function") {
-      await window.pywebview.api.send_chat_message(`Cast cantrip: ${spellName}`);
-    }
-    const inputEl = document.getElementById("input-rp-dm-prompt");
-    if (inputEl) {
-      inputEl.value = `*[SPELL CAST]* ${charId} casts cantrip **${spellName}**.`;
-      const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
-      if (sendBtn) sendBtn.click();
-    }
+    // Cantrip: At-will cast routed into the active TTRPG campaign story chat
+    await sendCampaignSpellPrompt(`*[SPELL CAST]* ${charId} casts cantrip **${spellName}**.`);
   }
 }
 
@@ -1184,9 +1184,9 @@ function renderPartyRoster() {
                     <div class="vital-labels">
                         <span>${escapeRpHtml(m.label || mKey)}</span>
                         <div class="vital-controls-inline">
-                            <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', '${escapeRpHtml(mKey)}', -1, true)">-</button>
+                            <button type="button" class="vital-step-btn" data-rp-action="modify-stat" data-char-name="${escapeRpHtml(ch.name)}" data-stat="${escapeRpHtml(mKey)}" data-delta="-1" data-is-custom="1">-</button>
                             <span>${Number(m.current)} / ${Number(m.max)}</span>
-                            <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', '${escapeRpHtml(mKey)}', 1, true)">+</button>
+                            <button type="button" class="vital-step-btn" data-rp-action="modify-stat" data-char-name="${escapeRpHtml(ch.name)}" data-stat="${escapeRpHtml(mKey)}" data-delta="1" data-is-custom="1">+</button>
                         </div>
                     </div>
                     <div class="vital-progress-bg">
@@ -1237,7 +1237,7 @@ function renderPartyRoster() {
         const condBadges = conditions.map(cond => {
             const meta = getConditionMeta(cond);
             return `
-                <span class="condition-badge" title="${escapeRpHtml(meta.desc)} (Click to clear)" onclick="handleToggleCondition('${escapeRpHtml(ch.name)}', '${escapeRpHtml(cond)}', false)">
+                <span class="condition-badge" title="${escapeRpHtml(meta.desc)} (Click to clear)" data-rp-action="clear-condition" data-char-name="${escapeRpHtml(ch.name)}" data-cond="${escapeRpHtml(cond)}">
                     <span>${meta.icon}</span> <span>${escapeRpHtml(cond)}</span> <span style="font-weight: 700; margin-left: 2px; opacity: 0.7;">✕</span>
                 </span>
             `;
@@ -1432,7 +1432,7 @@ function renderPartyRoster() {
             if (charLevel >= 20) {
                 xpBadgeHtml = `<span class="rp-badge" style="background: rgba(250, 204, 21, 0.12); border: 1px solid rgba(250, 204, 21, 0.35); color: #facc15; font-size: 10px; padding: 1px 6px; white-space: nowrap;" title="Maximum Level (Level 20)">XP: ${Number(charXp).toLocaleString()} (Max)</span>`;
             } else if (charXp >= nextLvlXp) {
-                xpBadgeHtml = `<button type="button" class="rp-badge diff-easy" style="cursor: pointer; font-size: 10px; font-weight: bold; background: rgba(34, 197, 94, 0.22); border: 1px solid #22c55e; color: #4ade80; padding: 1px 7px; white-space: nowrap;" onclick="openLevelUpWizard('${escapeRpHtml(ch.name)}', 'campaign', { reason: 'Reached ${Number(charXp).toLocaleString()} XP milestone' })" title="Level Up Ready! Click to open Guided Level-Up Wizard">⭐ LEVEL UP READY (${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()})</button>`;
+                xpBadgeHtml = `<button type="button" class="rp-badge diff-easy" style="cursor: pointer; font-size: 10px; font-weight: bold; background: rgba(34, 197, 94, 0.22); border: 1px solid #22c55e; color: #4ade80; padding: 1px 7px; white-space: nowrap;" data-rp-action="open-level-up" data-char-name="${escapeRpHtml(ch.name)}" data-xp-reason="${escapeRpHtml(`Reached ${Number(charXp).toLocaleString()} XP milestone`)}" title="Level Up Ready! Click to open Guided Level-Up Wizard">⭐ LEVEL UP READY (${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()})</button>`;
             } else {
                 xpBadgeHtml = `<span class="rp-badge" style="background: rgba(148, 163, 184, 0.12); border: 1px solid rgba(148, 163, 184, 0.3); color: var(--text-secondary); font-size: 10px; padding: 1px 6px; white-space: nowrap;" title="XP: Current / Next Level">XP: ${Number(charXp).toLocaleString()} / ${Number(nextLvlXp).toLocaleString()}</span>`;
             }
@@ -1476,7 +1476,7 @@ function renderPartyRoster() {
                             <span style="color: #f87171; font-weight: 600;">Fail:</span> ${failPips}
                         </div>
                         ${(dsStatus === 'dying' && failCount < 3 && succCount < 3) ? `
-                            <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px; background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: var(--accent-rose);" onclick="handleRollDeathSave('${escapeRpHtml(ch.name)}')">🎲 Roll Save</button>
+                            <button type="button" class="cyber-btn-small" style="padding: 1px 6px; font-size: 9.5px; background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: var(--accent-rose);" data-rp-action="roll-death-save" data-char-name="${escapeRpHtml(ch.name)}">🎲 Roll Save</button>
                         ` : ''}
                     </div>
                 </div>
@@ -1497,11 +1497,11 @@ function renderPartyRoster() {
                         <div class="card-controls" style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
                             <button type="button" class="focus-speaker-btn cyber-btn-tiny" title="Set active single-mic focus">Focus</button>
                             <button type="button" class="set-caller-btn cyber-btn-tiny" title="Set as Party Caller">Crown</button>
-                            <button type="button" class="vital-step-btn" title="Save this hero permanently to the Character Vault" onclick="handleExportRosterCharToVault('${escapeRpHtml(ch.name)}')">🏛️</button>
-                            <button type="button" class="vital-step-btn" title="Award XP or Level Up" onclick="handlePromptProgressCharacter('${escapeRpHtml(ch.name)}')">⭐</button>
-                            <button type="button" class="vital-step-btn" title="View character sheet" onclick="handleOpenViewCharacterModal('${escapeRpHtml(ch.id || cid)}')">👁️</button>
-                            <button type="button" class="vital-step-btn" title="Edit character details" onclick="handleOpenEditCharacterModal('${escapeRpHtml(ch.id || cid)}')">✏️</button>
-                            <button type="button" class="vital-step-btn" title="Remove character" onclick="handleDeleteCharacter('${escapeRpHtml(ch.id || cid)}')">🗑️</button>
+                            <button type="button" class="vital-step-btn" title="Save this hero permanently to the Character Vault" data-rp-action="export-vault" data-char-name="${escapeRpHtml(ch.name)}">🏛️</button>
+                            <button type="button" class="vital-step-btn" title="Award XP or Level Up" data-rp-action="progress-char" data-char-name="${escapeRpHtml(ch.name)}">⭐</button>
+                            <button type="button" class="vital-step-btn" title="View character sheet" data-rp-action="view-char" data-char-id="${escapeRpHtml(ch.id || cid)}">👁️</button>
+                            <button type="button" class="vital-step-btn" title="Edit character details" data-rp-action="edit-char" data-char-id="${escapeRpHtml(ch.id || cid)}">✏️</button>
+                            <button type="button" class="vital-step-btn" title="Remove character" data-rp-action="delete-char" data-char-id="${escapeRpHtml(ch.id || cid)}">🗑️</button>
                         </div>
                     </div>
                     <div class="char-sub-archetype">${escapeRpHtml(ch.archetype || "Adventurer")} ${ch.player_name ? `• ${escapeRpHtml(ch.player_name)}` : ""}</div>
@@ -1523,9 +1523,9 @@ function renderPartyRoster() {
                     <div class="vital-labels">
                         <span>${escapeRpHtml(hp.label || "Health")}</span>
                         <div class="vital-controls-inline">
-                            <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', 'health', -1, false)">-</button>
+                            <button type="button" class="vital-step-btn" data-rp-action="modify-stat" data-char-name="${escapeRpHtml(ch.name)}" data-stat="health" data-delta="-1" data-is-custom="0">-</button>
                             <span>${Number(hp.current)} / ${Number(hp.max)}</span>
-                            <button type="button" class="vital-step-btn" onclick="handleModifyCharacterStat('${escapeRpHtml(ch.name)}', 'health', 1, false)">+</button>
+                            <button type="button" class="vital-step-btn" data-rp-action="modify-stat" data-char-name="${escapeRpHtml(ch.name)}" data-stat="health" data-delta="1" data-is-custom="0">+</button>
                         </div>
                     </div>
                     <div class="vital-progress-bg">
@@ -1544,7 +1544,7 @@ function renderPartyRoster() {
                 <!-- Conditions Row -->
                 <div class="conditions-wrap" style="margin-top: 8px;">
                     ${condBadges}
-                    <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 10.5px;" onclick="handlePromptAddCondition('${escapeRpHtml(ch.name)}')">+ Condition</button>
+                    <button type="button" class="cyber-btn-small" style="padding: 1px 7px; font-size: 10.5px;" data-rp-action="add-condition" data-char-name="${escapeRpHtml(ch.name)}">+ Condition</button>
                 </div>
             </div>
         `;
@@ -2937,11 +2937,19 @@ window.handleRollSpellDamage = function(charName, spellName, damageExpr) {
 window.handleCastSpell = function(charName, spellName, range, notes) {
     const rangeTxt = range ? ` (${range})` : "";
     const notesTxt = notes ? ` [${notes}]` : "";
-    const inputEl = document.getElementById("input-rp-dm-prompt");
-    if (inputEl) {
-        inputEl.value = `*[SPELL CAST]* ${charName} casts **${spellName}**${rangeTxt}${notesTxt}.`;
-        const sendBtn = document.getElementById("btn-send-rp-dm-prompt");
-        if (sendBtn) sendBtn.click();
+    const promptText = `*[SPELL CAST]* ${charName} casts **${spellName}**${rangeTxt}${notesTxt}.`;
+    const inputEl = document.getElementById("rpStoryChatInput");
+    const sendBtn = document.getElementById("btnSendRpStory");
+    if (inputEl && sendBtn) {
+        inputEl.value = promptText;
+        sendBtn.click();
+        return;
+    }
+    const cid = (typeof ttrpgData !== "undefined" && ttrpgData && ttrpgData.active_campaign)
+        || (window.ttrpgData && window.ttrpgData.active_campaign)
+        || (window.ttrpgData && window.ttrpgData.manifest && window.ttrpgData.manifest.active_campaign);
+    if (cid && window.pywebview?.api?.send_workspace_message) {
+        window.pywebview.api.send_workspace_message("campaign", cid, promptText);
     }
 };
 
@@ -5180,7 +5188,7 @@ document.addEventListener("DOMContentLoaded", () => {
             itemRow.innerHTML = `
                 <div class="rp-staged-file-info">
                     <span>${icon}</span>
-                    <span class="rp-staged-file-name" title="${item.name}">${item.name}</span>
+                    <span class="rp-staged-file-name" title="${escapeRpHtml(item.name)}">${escapeRpHtml(item.name)}</span>
                     <span class="rp-staged-file-size">(${sizeStr})</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
@@ -8439,7 +8447,7 @@ function renderByocLocations(worldState) {
         const connectionBtns = (activeLoc.connected_location_ids || []).map(cid => {
             const dest = locations[cid];
             const name = dest ? dest.name : cid;
-            return `<button type="button" class="action-btn" onclick="window.handleByocNavigateLocation('${cid}')">Travel to ${escapeRpHtml(name)} ▶</button>`;
+            return `<button type="button" class="action-btn" data-rp-action="byoc-nav" data-id="${escapeRpHtml(cid)}">Travel to ${escapeRpHtml(name)} ▶</button>`;
         }).join(" ");
 
         activeBox.innerHTML = `
@@ -8473,7 +8481,7 @@ function renderByocLocations(worldState) {
                         <span class="system-tag" style="font-size: 0.6rem; padding: 1px 4px;">${escapeRpHtml((loc.type || "node").toUpperCase())}</span>
                     </div>
                     ${isActive ? `<span style="font-size: 0.65rem; color: var(--accent-cyan); font-weight: 600;">CURRENT</span>` :
-                        `<button type="button" class="action-btn" onclick="window.handleByocNavigateLocation('${loc.id}')">Travel Here</button>`}
+                        `<button type="button" class="action-btn" data-rp-action="byoc-nav" data-id="${escapeRpHtml(loc.id)}">Travel Here</button>`}
                 </div>
                 ${loc.description ? `<div style="font-size: 0.7rem; color: var(--text-muted); line-height: 1.25;">${escapeRpHtml(loc.description)}</div>` : ""}
                 ${loc.hazards && loc.hazards.length ? `<div style="font-size: 0.68rem; color: #f87171;">⚠️ ${escapeRpHtml(loc.hazards.join(", "))}</div>` : ""}
@@ -8510,7 +8518,7 @@ function renderByocFactions(worldState) {
                 ${fac.public_reputation ? `<div style="font-size: 0.68rem; color: var(--text-dim);">${escapeRpHtml(fac.public_reputation)}</div>` : ""}
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
                     <select style="background: var(--bg-deep); border: 1px solid #334155; color: var(--text-secondary); font-size: 0.68rem; border-radius: 4px; padding: 2px 4px;"
-                            onchange="window.handleByocChangeFactionDisp('${fac.id}', this.value)">
+                            data-rp-change="byoc-faction-disp" data-id="${escapeRpHtml(fac.id)}">
                         <option value="allied" ${disp === 'allied' ? 'selected' : ''}>Allied</option>
                         <option value="friendly" ${disp === 'friendly' ? 'selected' : ''}>Friendly</option>
                         <option value="neutral" ${disp === 'neutral' ? 'selected' : ''}>Neutral</option>
@@ -8518,8 +8526,8 @@ function renderByocFactions(worldState) {
                         <option value="hostile" ${disp === 'hostile' ? 'selected' : ''}>Hostile</option>
                     </select>
                     <div style="display: flex; gap: 4px;">
-                        <button type="button" class="action-btn" onclick="window.handleByocAdjustFaction('${fac.id}', -5)">-5</button>
-                        <button type="button" class="action-btn" onclick="window.handleByocAdjustFaction('${fac.id}', 5)">+5</button>
+                        <button type="button" class="action-btn" data-rp-action="byoc-faction-adj" data-id="${escapeRpHtml(fac.id)}" data-delta="-5">-5</button>
+                        <button type="button" class="action-btn" data-rp-action="byoc-faction-adj" data-id="${escapeRpHtml(fac.id)}" data-delta="5">+5</button>
                     </div>
                 </div>
             </div>
@@ -8595,7 +8603,7 @@ function renderByocClues(worldState) {
         <div class="byoc-item-card" style="border-left: 3px solid #f59e0b; background: rgba(22, 19, 15, 0.7);">
             <div class="byoc-item-header">
                 <span style="font-weight: 600; font-size: 0.78rem; color: #f59e0b;">🔒 ${escapeRpHtml(c.title)}</span>
-                <button type="button" class="action-btn" onclick="window.handleByocRevealClue('${c.id}')">Reveal to Party</button>
+                <button type="button" class="action-btn" data-rp-action="byoc-reveal-clue" data-id="${escapeRpHtml(c.id)}">Reveal to Party</button>
             </div>
             <div style="font-size: 0.7rem; color: var(--text-muted); line-height: 1.25; font-style: italic;">${escapeRpHtml(c.content)}</div>
         </div>
@@ -11714,6 +11722,88 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     document.getElementById("btn-levelup-award-xp")?.addEventListener("click", awardXpFromWizard);
     document.getElementById("btn-commit-levelup")?.addEventListener("click", commitLevelUpWizard);
+
+    // Delegated click & change dispatcher for Roleplay UI elements (prevents inline-onclick XSS and handles apostrophes in names)
+    if (!window._aetherRpDelegatedBound) {
+        window._aetherRpDelegatedBound = true;
+        document.addEventListener("click", (ev) => {
+            const el = ev.target && ev.target.closest ? ev.target.closest("[data-rp-action]") : null;
+            if (!el) return;
+            const action = el.dataset.rpAction;
+            switch (action) {
+                case "preview-doc":
+                    if (typeof handlePreviewRpDocument === "function") handlePreviewRpDocument(el.dataset.fname || "");
+                    break;
+                case "review-doc":
+                    if (typeof handleReviewSingleRpDocument === "function") handleReviewSingleRpDocument(el.dataset.fname || "", el.dataset.cat || "");
+                    break;
+                case "delete-doc":
+                    if (typeof handleDeleteRpDocument === "function") handleDeleteRpDocument(el.dataset.fname || "");
+                    break;
+                case "remove-initiative":
+                    if (typeof handleRemoveInitiative === "function") handleRemoveInitiative(el.dataset.name || "");
+                    break;
+                case "modify-stat":
+                    if (typeof handleModifyCharacterStat === "function") {
+                        handleModifyCharacterStat(
+                            el.dataset.charName || "",
+                            el.dataset.stat || "health",
+                            Number(el.dataset.delta || 0),
+                            el.dataset.isCustom === "1"
+                        );
+                    }
+                    break;
+                case "clear-condition":
+                    if (typeof handleToggleCondition === "function") handleToggleCondition(el.dataset.charName || "", el.dataset.cond || "", false);
+                    break;
+                case "add-condition":
+                    if (typeof handlePromptAddCondition === "function") handlePromptAddCondition(el.dataset.charName || "");
+                    break;
+                case "open-level-up":
+                    if (typeof openLevelUpWizard === "function") {
+                        openLevelUpWizard(el.dataset.charName || "", "campaign", { reason: el.dataset.xpReason || "" });
+                    }
+                    break;
+                case "roll-death-save":
+                    if (typeof handleRollDeathSave === "function") handleRollDeathSave(el.dataset.charName || "");
+                    break;
+                case "export-vault":
+                    if (typeof handleExportRosterCharToVault === "function") handleExportRosterCharToVault(el.dataset.charName || "");
+                    break;
+                case "progress-char":
+                    if (typeof handlePromptProgressCharacter === "function") handlePromptProgressCharacter(el.dataset.charName || "");
+                    break;
+                case "view-char":
+                    if (typeof handleOpenViewCharacterModal === "function") handleOpenViewCharacterModal(el.dataset.charId || "");
+                    break;
+                case "edit-char":
+                    if (typeof handleOpenEditCharacterModal === "function") handleOpenEditCharacterModal(el.dataset.charId || "");
+                    break;
+                case "delete-char":
+                    if (typeof handleDeleteCharacter === "function") handleDeleteCharacter(el.dataset.charId || "");
+                    break;
+                case "byoc-nav":
+                    if (typeof window.handleByocNavigateLocation === "function") window.handleByocNavigateLocation(el.dataset.id || "");
+                    break;
+                case "byoc-faction-adj":
+                    if (typeof window.handleByocAdjustFaction === "function") window.handleByocAdjustFaction(el.dataset.id || "", Number(el.dataset.delta || 0));
+                    break;
+                case "byoc-reveal-clue":
+                    if (typeof window.handleByocRevealClue === "function") window.handleByocRevealClue(el.dataset.id || "");
+                    break;
+                default:
+                    break;
+            }
+        });
+
+        document.addEventListener("change", (ev) => {
+            const el = ev.target && ev.target.closest ? ev.target.closest("[data-rp-change]") : null;
+            if (!el) return;
+            if (el.dataset.rpChange === "byoc-faction-disp" && typeof window.handleByocChangeFactionDisp === "function") {
+                window.handleByocChangeFactionDisp(el.dataset.id || "", el.value);
+            }
+        });
+    }
 });
 
 

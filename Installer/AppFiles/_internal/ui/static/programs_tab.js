@@ -152,8 +152,8 @@ async function handleLaunchActiveProgram() {
     try {
         const res = await window.pywebview.api.launch_program(activeProgramId);
         if (res && res.status === 'success') {
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(res.message || "Launched successfully");
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(res.message || "Launched successfully");
             }
             setTimeout(async () => {
                 await refreshProgramsStatusOnly();
@@ -319,8 +319,8 @@ async function handleBrowseProgramExe(isAddModal = true) {
                 banner.style.display = 'flex';
             }
 
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(`Grabbed: ${res.file_name}`);
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(`Grabbed: ${res.file_name}`);
             }
         }
     } catch (e) {
@@ -481,8 +481,8 @@ async function handleConfirmAddProgram() {
             closeAddProgramModal();
             activeProgramId = res.program_id;
             await loadProgramsUI();
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(`Saved "${name}" to allowed programs.`);
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(`Saved "${name}" to allowed programs.`);
             }
         } else {
             alert((res && res.error) || 'Failed to add whitelisted program.');
@@ -599,13 +599,13 @@ async function loadInstalledProgramsForSync() {
             renderSyncProgramsList();
         } else {
             if (listEl) {
-                listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Failed to scan programs: ${(res && res.error) || 'Unknown error'}</div>`;
+                listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Failed to scan programs: ${escapeProgHtml((res && res.error) || 'Unknown error')}</div>`;
             }
         }
     } catch (err) {
         console.error("loadInstalledProgramsForSync error:", err);
         if (listEl) {
-            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Error scanning programs: ${err}</div>`;
+            listEl.innerHTML = `<div style="padding: 20px; text-align: center; color: #f87171;">Error scanning programs: ${escapeProgHtml(err)}</div>`;
         }
     }
 }
@@ -765,8 +765,8 @@ async function handleConfirmSyncPrograms() {
         if (res && res.success) {
             closeSyncProgramsModal();
             await loadProgramsUI();
-            if (window.AetherApp && typeof window.AetherApp.showToast === 'function') {
-                window.AetherApp.showToast(`Added ${res.added_count} programs to allowed whitelist.`);
+            if (window.aetherUI && typeof window.aetherUI.showToast === 'function') {
+                window.aetherUI.showToast(`Added ${res.added_count} programs to allowed whitelist.`);
             }
         } else {
             alert((res && res.error) || 'Failed to add programs in batch.');
