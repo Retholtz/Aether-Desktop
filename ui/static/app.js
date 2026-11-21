@@ -532,6 +532,47 @@ window.aetherUI = {
       });
     }
 
+    // Quick-Bind Mouse4/Mouse5 and Gamepad PTT presets
+    document.querySelectorAll(".ptt-quick-bind-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.stopKeybindRecording();
+        this.pttKey = btn.dataset.pttKey || "Mouse4";
+        this.pttKeyDisplay = btn.dataset.pttDisplay || this.pttKey;
+        this.pttVk = parseInt(btn.dataset.pttVk || "0", 10);
+        this.pttModifiers = [];
+        const disp = document.getElementById("pttKeybindDisplay");
+        if (disp) disp.innerText = this.pttKeyDisplay;
+        this.updatePttButtonUI();
+        this.saveSettings(true);
+        this.log(`PTT Keybind set to: ${this.pttKeyDisplay}`);
+      });
+    });
+
+    // Capture Mouse4/Mouse5/Middle clicks while PTT keybind recorder is active
+    window.addEventListener("mousedown", (e) => {
+      if (!this.isRecordingKeybind) return;
+      if (e.button === 1 || e.button === 3 || e.button === 4) {
+        e.preventDefault();
+        e.stopPropagation();
+        const mouseMap = {
+          1: { key: "Mouse3", display: "Middle Mouse", vk: 4 },
+          3: { key: "Mouse4", display: "Mouse4 (Side Back)", vk: 5 },
+          4: { key: "Mouse5", display: "Mouse5 (Side Forward)", vk: 6 },
+        };
+        const chosen = mouseMap[e.button];
+        if (chosen) {
+          this.pttKey = chosen.key;
+          this.pttKeyDisplay = chosen.display;
+          this.pttVk = chosen.vk;
+          this.pttModifiers = [];
+          this.stopKeybindRecording();
+          this.updatePttButtonUI();
+          this.saveSettings(true);
+          this.log(`PTT Keybind set to: ${this.pttKeyDisplay}`);
+        }
+      }
+    }, true);
+
     // HUD Mode Keybind Recorder Controls
     const hudModeBtn = document.getElementById("hudModeKeybindBtn");
     if (hudModeBtn) {

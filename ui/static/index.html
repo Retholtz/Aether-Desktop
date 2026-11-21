@@ -208,11 +208,13 @@
                   <input type="text" id="input-game-suppress-alerts" class="hud-select" style="width: 175px;" placeholder="e.g. EDCoPilot.exe" title="Comma-separated 3rd-party co-pilot executables (e.g. EDCoPilot.exe)" />
                 </div>
                 <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+                  <button type="button" id="btn-calibrate-hud-bars" class="btn-secondary-sm btn-secondary-pill" title="Capture a live gameplay frame and auto-detect health/stamina/resource HUD bar positions for your resolution">🎯 Calibrate HUD</button>
                   <button type="button" id="btn-autobuild-game-module" class="btn-secondary-sm btn-secondary-pill" title="Auto-detect companion bridges, wiki, and anti-cheat rules to draft a JSON Game Module">✨ Auto-Build Module</button>
                   <button type="button" id="btn-import-game-module" class="btn-secondary-sm btn-secondary-pill" title="Import a community .aethermodule.json pack">📥 Import Module</button>
                   <button type="button" id="btn-export-game-module" class="btn-secondary-sm btn-secondary-pill" title="Export a clean, shareable .aethermodule.json pack">📤 Export Module</button>
                 </div>
               </div>
+              <div id="game-uipi-warning-banner" class="hidden" style="margin-top: 8px; padding: 6px 10px; border-radius: 6px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; font-size: 0.78rem;"></div>
             </div>
 
             <!-- Empty State View when no games are configured -->
@@ -1341,7 +1343,14 @@
                       </button>
                       <button type="button" id="pttKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Space)">RESET</button>
                     </div>
-                    <span class="input-hint" id="pttKeybindHint">Click the keybind button and press any key (or combo like Ctrl+Space) to set your hotkey. Works globally across all apps.</span>
+                    <div class="ptt-quick-binds" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+                      <button type="button" class="hud-btn-ghost sm ptt-quick-bind-btn" data-ptt-key="Mouse4" data-ptt-display="Mouse4 (Side Back)" data-ptt-vk="5">🖱️ Mouse4</button>
+                      <button type="button" class="hud-btn-ghost sm ptt-quick-bind-btn" data-ptt-key="Mouse5" data-ptt-display="Mouse5 (Side Forward)" data-ptt-vk="6">🖱️ Mouse5</button>
+                      <button type="button" class="hud-btn-ghost sm ptt-quick-bind-btn" data-ptt-key="Gamepad_LB" data-ptt-display="Gamepad LB" data-ptt-vk="0">🎮 Gamepad LB</button>
+                      <button type="button" class="hud-btn-ghost sm ptt-quick-bind-btn" data-ptt-key="Gamepad_RB" data-ptt-display="Gamepad RB" data-ptt-vk="0">🎮 Gamepad RB</button>
+                      <button type="button" class="hud-btn-ghost sm ptt-quick-bind-btn" data-ptt-key="Gamepad_LS" data-ptt-display="Gamepad LS" data-ptt-vk="0">🎮 Gamepad LS</button>
+                    </div>
+                    <span class="input-hint" id="pttKeybindHint">Click the keybind button and press any key, Mouse4/Mouse5 side button, or pick a Gamepad button above. Works globally across all apps &amp; games.</span>
                   </div>
                 </div>
 
@@ -5930,13 +5939,13 @@
 
   <div id="dossierPrintMount" class="dossier-print-mount" aria-hidden="true"></div>
 
-  <script src="settings.js?v=p2"></script>
-  <script src="games_tab.js?v=p2"></script>
-  <script src="programs_tab.js?v=p2"></script>
-  <script src="projects.js?v=p2"></script>
-  <script src="edit_character_modal.js?v=p2"></script>
-  <script src="roleplay.js?v=p2"></script>
-  <script src="main.js?v=p2"></script>
-  <script src="app.js?v=p2"></script>
+  <script src="settings.js?v=p3"></script>
+  <script src="games_tab.js?v=p3"></script>
+  <script src="programs_tab.js?v=p3"></script>
+  <script src="projects.js?v=p3"></script>
+  <script src="edit_character_modal.js?v=p3"></script>
+  <script src="roleplay.js?v=p3"></script>
+  <script src="main.js?v=p3"></script>
+  <script src="app.js?v=p3"></script>
 </body>
 </html>

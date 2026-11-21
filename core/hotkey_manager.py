@@ -24,17 +24,48 @@ logger = logging.getLogger("Aether.HotkeyManager")
 
 # Win32 Constants
 WH_KEYBOARD_LL = 13
+WH_MOUSE_LL = 14
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
+WM_MBUTTONDOWN = 0x0207
+WM_MBUTTONUP = 0x0208
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
 WM_QUIT = 0x0012
+
+VK_MBUTTON = 0x04
+VK_XBUTTON1 = 0x05
+VK_XBUTTON2 = 0x06
+MOUSE_PTT_VKS = {VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2}
 
 VK_SHIFT = 0x10
 VK_CONTROL = 0x11
 VK_MENU = 0x12  # Alt
 VK_LWIN = 0x5B
 VK_RWIN = 0x5C
+
+# XInput Gamepad button masks for controller / HOTAS-mapped Push-to-Talk
+GAMEPAD_BUTTON_MASKS = {
+    "gamepad_dpad_up": 0x0001,
+    "gamepad_dpad_down": 0x0002,
+    "gamepad_dpad_left": 0x0004,
+    "gamepad_dpad_right": 0x0008,
+    "gamepad_start": 0x0010,
+    "gamepad_back": 0x0020,
+    "gamepad_view": 0x0020,
+    "gamepad_ls": 0x0040,
+    "gamepad_l3": 0x0040,
+    "gamepad_rs": 0x0080,
+    "gamepad_r3": 0x0080,
+    "gamepad_lb": 0x0100,
+    "gamepad_rb": 0x0200,
+    "gamepad_a": 0x1000,
+    "gamepad_b": 0x2000,
+    "gamepad_x": 0x4000,
+    "gamepad_y": 0x8000,
+}
 
 # 64-bit safe Win32 type definitions
 LRESULT = ctypes.c_longlong
@@ -48,6 +79,35 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
         ("flags", wintypes.DWORD),
         ("time", wintypes.DWORD),
         ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", wintypes.POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class _XINPUT_GAMEPAD(ctypes.Structure):
+    _fields_ = [
+        ("wButtons", wintypes.WORD),
+        ("bLeftTrigger", ctypes.c_ubyte),
+        ("bRightTrigger", ctypes.c_ubyte),
+        ("sThumbLX", ctypes.c_short),
+        ("sThumbLY", ctypes.c_short),
+        ("sThumbRX", ctypes.c_short),
+        ("sThumbRY", ctypes.c_short),
+    ]
+
+
+class _XINPUT_STATE(ctypes.Structure):
+    _fields_ = [
+        ("dwPacketNumber", wintypes.DWORD),
+        ("Gamepad", _XINPUT_GAMEPAD),
     ]
 
 
@@ -115,7 +175,24 @@ KEY_NAME_TO_VK = {
     "ctrl": VK_CONTROL,
     "shift": VK_SHIFT,
     "alt": VK_MENU,
+    # Mouse buttons (global WH_MOUSE_LL Push-to-Talk)
+    "mouse3": VK_MBUTTON,
+    "mbutton": VK_MBUTTON,
+    "middle": VK_MBUTTON,
+    "middle mouse": VK_MBUTTON,
+    "mouse4": VK_XBUTTON1,
+    "xbutton1": VK_XBUTTON1,
+    "mouse back": VK_XBUTTON1,
+    "mouse5": VK_XBUTTON2,
+    "xbutton2": VK_XBUTTON2,
+    "mouse forward": VK_XBUTTON2,
 }
+
+
+def parse_gamepad_button_mask(key_str: str) -> int:
+    """Returns the XInput bitmask if `key_str` refers to a gamepad button, else 0."""
+    cleaned = (key_str or "").strip().lower().replace(" ", "_").replace("-", "_")
+    return int(GAMEPAD_BUTTON_MASKS.get(cleaned, 0))
 
 
 def parse_keybind_string(key_str: str) -> tuple[int, List[str]]:
@@ -186,6 +263,7 @@ class HotkeyManager:
         self.target_vk = 0x20           # Default: VK_SPACE
         self.target_modifiers: List[str] = []
         self.key_display = "Space"
+        self.ptt_gamepad_mask: int = 0
 
         # HUD Overlay Mode Switch Hotkey (default Ctrl+Space)
         self.hud_mode_vk: Optional[int] = 0x20
@@ -200,18 +278,22 @@ class HotkeyManager:
         self._is_game_mode_key_down = False
 
         self._is_key_down = False
+        self._is_gamepad_down = False
         self._input_focused = False
         self._cached_child_pids: Set[int] = set()
         self._last_pid_cache_time: float = 0.0
         self._pid_refresh_in_progress: bool = False
         self._hook_handle = None
+        self._mouse_hook_handle = None
         self._hook_thread_id = None
         self._thread: Optional[threading.Thread] = None
+        self._gamepad_thread: Optional[threading.Thread] = None
         self._running = False
         self._ready_event = threading.Event()
 
-        # Prevent GC of ctypes callback function
+        # Prevent GC of ctypes callback functions
         self._hook_fn = HOOKPROC(self._low_level_keyboard_proc)
+        self._mouse_hook_fn = HOOKPROC(self._low_level_mouse_proc)
 
         # Initialize settings from config
         self._load_from_config()
@@ -242,11 +324,16 @@ class HotkeyManager:
         explicit_vk = audio_cfg.get("ptt_vk")
         explicit_mods = audio_cfg.get("ptt_modifiers")
 
-        if explicit_vk is not None:
+        key_str = str(audio_cfg.get("ptt_key") or self.key_display or "Space")
+        self.ptt_gamepad_mask = parse_gamepad_button_mask(key_str) or parse_gamepad_button_mask(self.key_display)
+
+        if self.ptt_gamepad_mask:
+            self.target_vk = 0
+            self.target_modifiers = []
+        elif explicit_vk is not None:
             self.target_vk = int(explicit_vk)
             self.target_modifiers = list(explicit_mods or [])
         else:
-            key_str = audio_cfg.get("ptt_key", "Space")
             self.target_vk, self.target_modifiers = parse_keybind_string(key_str)
 
         # HUD mode hotkey settings
@@ -275,8 +362,11 @@ class HotkeyManager:
 
         self.enabled = (self.audio_mode == "ptt")
         self._is_key_down = False
+        self._is_gamepad_down = False
         self._is_hud_key_down = False
         self._is_game_mode_key_down = False
+        if self._running and self.enabled and self.ptt_gamepad_mask:
+            self._ensure_gamepad_thread()
 
         logger.info(
             f"[HOTKEY] Config updated: PTT(mode={self.audio_mode}, ptt_type={self.ptt_type}, "
@@ -465,6 +555,128 @@ class HotkeyManager:
         user32 = ctypes.windll.user32
         return user32.CallNextHookEx(None, nCode, wParam, lParam)
 
+    def _low_level_mouse_proc(self, nCode: int, wParam: int, lParam: int) -> int:
+        """Low-level Windows mouse hook enabling Mouse4/Mouse5/Middle Push-to-Talk."""
+        if nCode >= 0 and self._running and self.enabled and self.target_vk in MOUSE_PTT_VKS:
+            try:
+                vk = 0
+                is_down = False
+                is_up = False
+                if wParam == WM_MBUTTONDOWN:
+                    vk, is_down = VK_MBUTTON, True
+                elif wParam == WM_MBUTTONUP:
+                    vk, is_up = VK_MBUTTON, True
+                elif wParam in (WM_XBUTTONDOWN, WM_XBUTTONUP):
+                    ms = MSLLHOOKSTRUCT.from_address(lParam)
+                    xbtn = (ms.mouseData >> 16) & 0xFFFF
+                    if xbtn == 1:
+                        vk = VK_XBUTTON1
+                    elif xbtn == 2:
+                        vk = VK_XBUTTON2
+                    is_down = (wParam == WM_XBUTTONDOWN)
+                    is_up = (wParam == WM_XBUTTONUP)
+
+                if vk and vk == self.target_vk:
+                    if is_down and self._check_modifiers(self.target_modifiers):
+                        if not self._is_key_down:
+                            self._is_key_down = True
+                            if self.ptt_type == "hold":
+                                self._dispatch_callback(
+                                    self.on_ptt_change,
+                                    True,
+                                    log_msg=f"[PTT] Mouse button ({self.key_display}) pressed -> Hold Speak ON",
+                                )
+                            elif self.ptt_type == "toggle":
+                                self._dispatch_callback(
+                                    self.on_ptt_toggle,
+                                    log_msg=f"[PTT] Mouse button ({self.key_display}) pressed -> Toggle Mic",
+                                )
+                    elif is_up and self._is_key_down:
+                        self._is_key_down = False
+                        if self.ptt_type == "hold":
+                            self._dispatch_callback(
+                                self.on_ptt_change,
+                                False,
+                                log_msg=f"[PTT] Mouse button ({self.key_display}) released -> Hold Speak OFF",
+                            )
+            except Exception as ex:
+                logger.error(f"[MOUSE HOTKEY PROC ERROR] {ex}")
+
+        user32 = ctypes.windll.user32
+        return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+    def _load_xinput(self):
+        for dll_name in ("xinput1_4", "xinput1_3", "xinput9_1_0"):
+            try:
+                dll = ctypes.WinDLL(dll_name)
+                if hasattr(dll, "XInputGetState"):
+                    dll.XInputGetState.argtypes = [wintypes.DWORD, ctypes.POINTER(_XINPUT_STATE)]
+                    dll.XInputGetState.restype = wintypes.DWORD
+                    return dll
+            except Exception:
+                continue
+        return None
+
+    def _poll_gamepad_once(self, xinput_dll) -> bool:
+        """Returns True if any connected XInput controller (0-3) is pressing `self.ptt_gamepad_mask`."""
+        mask = self.ptt_gamepad_mask
+        if not mask or xinput_dll is None:
+            return False
+        st = _XINPUT_STATE()
+        for idx in range(4):
+            try:
+                if xinput_dll.XInputGetState(idx, ctypes.byref(st)) == 0:
+                    if st.Gamepad.wButtons & mask:
+                        return True
+            except Exception:
+                continue
+        return False
+
+    def _gamepad_poll_loop(self):
+        """Lightweight 50Hz XInput poller active only when PTT is bound to a gamepad button."""
+        xinput_dll = self._load_xinput()
+        if xinput_dll is None:
+            logger.warning("[HOTKEY] XInput DLL not available; gamepad PTT disabled.")
+            return
+        while self._running:
+            if not self.enabled or not self.ptt_gamepad_mask:
+                time.sleep(0.2)
+                continue
+            pressed = self._poll_gamepad_once(xinput_dll)
+            if pressed and not self._is_gamepad_down:
+                self._is_gamepad_down = True
+                if self.ptt_type == "hold":
+                    self._dispatch_callback(
+                        self.on_ptt_change,
+                        True,
+                        log_msg=f"[PTT] Gamepad ({self.key_display}) pressed -> Hold Speak ON",
+                    )
+                elif self.ptt_type == "toggle":
+                    self._dispatch_callback(
+                        self.on_ptt_toggle,
+                        log_msg=f"[PTT] Gamepad ({self.key_display}) pressed -> Toggle Mic",
+                    )
+            elif not pressed and self._is_gamepad_down:
+                self._is_gamepad_down = False
+                if self.ptt_type == "hold":
+                    self._dispatch_callback(
+                        self.on_ptt_change,
+                        False,
+                        log_msg=f"[PTT] Gamepad ({self.key_display}) released -> Hold Speak OFF",
+                    )
+            time.sleep(0.02)
+
+    def _ensure_gamepad_thread(self):
+        if sys.platform != "win32":
+            return
+        if self._gamepad_thread is None or not self._gamepad_thread.is_alive():
+            self._gamepad_thread = threading.Thread(
+                target=self._gamepad_poll_loop,
+                name="PTT-GamepadPoller",
+                daemon=True,
+            )
+            self._gamepad_thread.start()
+
     def _run_hook_loop(self):
         """Background thread worker hosting the Windows message pump for the LL hook."""
         ensure_thread_desktop()
@@ -492,9 +704,20 @@ class HotkeyManager:
             0
         )
 
+        # Install low-level mouse hook alongside keyboard hook for Mouse4/Mouse5/Middle PTT
+        self._mouse_hook_handle = user32.SetWindowsHookExW(
+            WH_MOUSE_LL,
+            self._mouse_hook_fn,
+            h_mod,
+            0
+        )
+
         if not self._hook_handle:
             err = kernel32.GetLastError()
             logger.error(f"[HOTKEY] Failed to install SetWindowsHookExW (Error {err})")
+            if self._mouse_hook_handle:
+                user32.UnhookWindowsHookEx(self._mouse_hook_handle)
+                self._mouse_hook_handle = None
             self._ready_event.set()
             return
 
@@ -507,6 +730,9 @@ class HotkeyManager:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
 
+        if self._mouse_hook_handle:
+            user32.UnhookWindowsHookEx(self._mouse_hook_handle)
+            self._mouse_hook_handle = None
         if self._hook_handle:
             user32.UnhookWindowsHookEx(self._hook_handle)
             self._hook_handle = None
@@ -538,6 +764,8 @@ class HotkeyManager:
         self._thread = threading.Thread(target=self._run_hook_loop, name="PTT-HotkeyHook", daemon=True)
         self._thread.start()
         self._ready_event.wait(timeout=2.0)
+        if self.enabled and self.ptt_gamepad_mask:
+            self._ensure_gamepad_thread()
 
     def stop(self):
         """Stops the global keyboard listener and cleanly tears down the Windows hook."""

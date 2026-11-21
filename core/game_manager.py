@@ -44,6 +44,67 @@ DEFAULT_PROFILES = {
 }
 
 
+def is_current_process_elevated() -> bool:
+    """Returns True if Aether itself is running with Administrator privileges on Windows."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def is_pid_elevated(pid: int) -> Optional[bool]:
+    """
+    Checks whether a target process PID is running elevated (Admin).
+    Returns True/False, or None if indeterminate. When Aether is non-elevated,
+    OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) returning Access Denied (5)
+    against a user-session game process also indicates higher privilege / UIPI isolation.
+    """
+    if sys.platform != "win32" or not pid:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        TOKEN_QUERY = 0x0008
+        TokenElevation = 20
+
+        kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
+
+        h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h_proc:
+            err = kernel32.GetLastError()
+            # Access Denied from non-elevated Aether -> target process is elevated/protected
+            if err == 5 and not is_current_process_elevated():
+                return True
+            return None
+
+        try:
+            h_tok = wintypes.HANDLE()
+            if not advapi32.OpenProcessToken(h_proc, TOKEN_QUERY, ctypes.byref(h_tok)):
+                err = kernel32.GetLastError()
+                if err == 5 and not is_current_process_elevated():
+                    return True
+                return None
+            try:
+                elev = wintypes.DWORD(0)
+                ret_len = wintypes.DWORD(0)
+                ok = advapi32.GetTokenInformation(
+                    h_tok, TokenElevation, ctypes.byref(elev), ctypes.sizeof(elev), ctypes.byref(ret_len)
+                )
+                return bool(elev.value) if ok else None
+            finally:
+                kernel32.CloseHandle(h_tok)
+        finally:
+            kernel32.CloseHandle(h_proc)
+    except Exception:
+        return None
+
+
 def _save_atomic(file_path: str, data: Any):
     """Atomically writes JSON data to disk using process-specific temp file."""
     dirname = os.path.dirname(file_path)
@@ -521,6 +582,50 @@ class GameManager:
         profile["suppress_alerts_when_running"] = clean_list
         self._save_profiles(self.data)
         return {"success": True, "game_id": game_id, "suppress_alerts_when_running": clean_list}
+
+    def check_game_elevation(self, game_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Checks whether the specified (or active) running game is elevated (Administrator)
+        while Aether is non-elevated, which causes Windows UIPI to block hotkeys & macros.
+        """
+        gid = game_id or self.data.get("active_profile")
+        aether_admin = is_current_process_elevated()
+        result = {
+            "game_id": gid or "",
+            "aether_elevated": aether_admin,
+            "game_elevated": False,
+            "uipi_blocked": False,
+            "warning": "",
+        }
+        if not gid or sys.platform != "win32" or aether_admin:
+            return result
+
+        prof = self.get_profile(gid)
+        if not prof:
+            return result
+        target_proc = str(prof.get("process_name") or prof.get("executable") or "").strip().lower()
+        if not target_proc:
+            return result
+
+        try:
+            import psutil
+
+            for proc in psutil.process_iter(["pid", "name"]):
+                pname = (proc.info.get("name") or "").strip().lower()
+                if pname == target_proc or pname == f"{target_proc}.exe":
+                    if is_pid_elevated(proc.info["pid"]) is True:
+                        g_title = prof.get("display_name") or gid
+                        result["game_elevated"] = True
+                        result["uipi_blocked"] = True
+                        result["warning"] = (
+                            f"{g_title} is running as Administrator while Aether is not. "
+                            f"Windows UIPI may block Push-to-Talk hotkeys and DirectInput macros — "
+                            f"restart Aether as Administrator if inputs don't register."
+                        )
+                        return result
+        except Exception:
+            pass
+        return result
 
     def is_game_running(self, game_id: Optional[str] = None) -> bool:
         """

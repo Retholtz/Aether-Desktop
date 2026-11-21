@@ -361,6 +361,9 @@ function renderActiveGameDetail() {
         suppressInput.value = list.join(', ');
     }
 
+    // Check Admin / UIPI elevation status for the selected game
+    refreshGameElevationWarning(activeGameId);
+
     // Keybinds Table
     const tbody = document.getElementById('tbody-game-binds');
     if (tbody) {
@@ -970,6 +973,33 @@ function initGamesTabEvents() {
         }
     });
 
+    document.getElementById('btn-calibrate-hud-bars')?.addEventListener('click', async (e) => {
+        if (!activeGameId || !window.pywebview?.api?.calibrate_game_hud_bars) return;
+        const btn = e.currentTarget;
+        const origText = btn ? btn.textContent : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '🎯 Calibrating...';
+        }
+        try {
+            const res = await window.pywebview.api.calibrate_game_hud_bars(activeGameId);
+            if (res && res.success) {
+                if (window.aetherUI?.showToast) {
+                    window.aetherUI.showToast(res.message || 'HUD bars calibrated.');
+                }
+            } else {
+                alert((res && res.error) || 'Could not calibrate HUD bars.');
+            }
+        } catch (err) {
+            console.error("HUD bar calibration error:", err);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        }
+    });
+
     document.getElementById('btn-autobuild-game-module')?.addEventListener('click', async (e) => {
         if (!activeGameId || !window.pywebview?.api?.auto_build_game_module) return;
         const btn = e.currentTarget;
@@ -1056,6 +1086,28 @@ function startTelemetryPolling() {
             }
         }
     }, 2500);
+}
+
+async function refreshGameElevationWarning(gameId) {
+    const banner = document.getElementById('game-uipi-warning-banner');
+    if (!banner) return;
+    if (!gameId || !window.pywebview?.api?.check_game_elevation_status) {
+        banner.classList.add('hidden');
+        banner.textContent = '';
+        return;
+    }
+    try {
+        const res = await window.pywebview.api.check_game_elevation_status(gameId);
+        if (res && res.uipi_blocked && res.warning) {
+            banner.textContent = `⚠️ ${res.warning}`;
+            banner.classList.remove('hidden');
+        } else {
+            banner.classList.add('hidden');
+            banner.textContent = '';
+        }
+    } catch (_) {
+        banner.classList.add('hidden');
+    }
 }
 
 function updateTelemetryHUD(data) {

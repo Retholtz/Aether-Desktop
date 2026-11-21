@@ -4653,6 +4653,72 @@ class GuiBridge:
             model_endpoint=model_ep,
         )
 
+    def calibrate_game_hud_bars(self, game_id: str) -> dict:
+        """One-click Vision HUD bar calibration for the active game's resolution & aspect ratio."""
+        from core.game_modules import export_game_module, import_game_module
+        from core.model_discovery import get_configured_tier2_model
+        from core.telemetry.providers.vision_hud_provider import calibrate_hud_bars_live
+
+        prof = self.game_mgr.get_profile(game_id)
+        if not prof:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        client = getattr(eng, "genai_client", None) or getattr(eng, "client", None) if eng else None
+        if not client:
+            return {"success": False, "error": "Gemini client not initialized yet. Click Start Aether first."}
+
+        cfg = self.get_raw_config() if hasattr(self, "get_raw_config") else {}
+        model_ep = get_configured_tier2_model(cfg)[0]
+        target_proc = str(prof.get("process_name") or prof.get("executable") or "")
+        game_title = str(prof.get("display_name") or game_id)
+
+        bars = calibrate_hud_bars_live(
+            genai_client=client,
+            target_process=target_proc,
+            model_endpoint=model_ep,
+            game_name=game_title,
+        )
+        if not bars:
+            return {
+                "success": False,
+                "error": "No HUD bars detected on screen. Make sure live gameplay (not a menu/pause screen) is visible and try again.",
+            }
+
+        bar_dicts = [
+            {"name": b.name, "bbox_pct": list(b.bbox_pct), "color_profile": b.color_profile}
+            for b in bars
+        ]
+        tel = prof.setdefault("telemetry", {})
+        tel["provider_type"] = "vision_hud"
+        tel["hud_bars"] = bar_dicts
+
+        # Persist into both GameManager profile and user `.aethermodule.json`
+        exp = export_game_module(game_id, game_manager=self.game_mgr)
+        if exp.get("success"):
+            mod = exp["module"]
+            mod.setdefault("telemetry", {})["provider_type"] = "vision_hud"
+            mod["telemetry"]["hud_bars"] = bar_dicts
+            import_game_module(mod, game_manager=self.game_mgr)
+        else:
+            if hasattr(self.game_mgr, "save_profiles"):
+                self.game_mgr.save_profiles()
+
+        tel_svc = getattr(eng, "telemetry_service", None) if eng else getattr(self, "_telemetry_service", None)
+        if tel_svc is not None and tel_svc.enabled and tel_svc.active_game_id == (game_id or "").strip().lower().replace(" ", "_"):
+            tel_svc._profile_override = prof
+
+        return {
+            "success": True,
+            "game_id": game_id,
+            "bars": bar_dicts,
+            "message": f"Calibrated {len(bar_dicts)} HUD bar(s): {', '.join(b['name'] for b in bar_dicts)}.",
+        }
+
+    def check_game_elevation_status(self, game_id: Optional[str] = None) -> dict:
+        """Returns Admin/UIPI elevation status for the active or specified game."""
+        return self.game_mgr.check_game_elevation(game_id)
+
 
 
     def get_map_controls(self, game_id: Optional[str] = None) -> dict:
