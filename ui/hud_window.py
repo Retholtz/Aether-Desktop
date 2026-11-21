@@ -185,7 +185,8 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
         if not hwnd:
             return
 
-        # On Windows 11+ (build >= 22000), enable DWM native rounded corners cleanly
+        # On Windows 11+ (build >= 22000), enable DWM native rounded corners cleanly for card modes
+        norm_mode = (mode or "").lower()
         try:
             DWMWA_WINDOW_CORNER_PREFERENCE = 33
             DWMWCP_ROUND = 2
@@ -199,15 +200,16 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
             pass
 
         # Apply WS_EX_TOOLWINDOW so the floating HUD overlay doesn't pollute Windows 11 Alt+Tab / taskbar,
-        # and WS_EX_NOACTIVATE in mini pill mode so clicking/hovering during games won't steal focus.
+        # and WS_EX_NOACTIVATE in mini mode so it never steals game focus.
         try:
             import win32con
             ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
             new_style = (ex_style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
-            if (mode or "").lower() == "mini":
+            if norm_mode == "mini":
                 new_style |= win32con.WS_EX_NOACTIVATE
             else:
                 new_style &= ~win32con.WS_EX_NOACTIVATE
+            new_style &= ~win32con.WS_EX_TRANSPARENT
             if new_style != ex_style:
                 win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, new_style)
                 win32gui.SetWindowPos(
@@ -354,6 +356,12 @@ class HUDBridge:
         self._is_native_dragging = False
         self._normal_size = (440, 180)
         self._max_size = (560, 480)
+        self._dot_state = "standby"
+        self._dot_colors = None
+        self._dot_form = None
+        self._dot_bitmap = None
+        self._dot_visible = False
+        self._dot_last_phys_rect = None
 
     @property
     def _mini_size(self) -> tuple[int, int]:
@@ -372,17 +380,25 @@ class HUDBridge:
         return {"success": True, "agent_name": name if isinstance(name, str) else "Aether"}
 
     def get_overlay_config(self) -> dict:
-        """Returns initial overlay configuration including agent name, hud mode, and engine state."""
+        """Returns initial overlay configuration including agent name, hud mode, custom colors, and engine state."""
+        from ui.dot_overlay import DEFAULT_HUD_STATUS_COLORS, sanitize_hud_colors
+
         cfg = self._bridge.get_raw_config()
+        ui_cfg = cfg.get("ui", {}) or {}
         agent_name = cfg.get("api", {}).get("agent_name", "Aether")
-        hud_mode = cfg.get("ui", {}).get("hud_mode", "normal")
-        ui_theme = cfg.get("ui", {}).get("theme", "system")
+        hud_mode = ui_cfg.get("hud_mode", "normal")
+        ui_theme = ui_cfg.get("theme", "system")
+        hud_colors = sanitize_hud_colors(ui_cfg.get("hud_colors") or DEFAULT_HUD_STATUS_COLORS)
         is_running = getattr(self._bridge._engine, "is_running", False) if self._bridge._engine else False
         return {
             "success": True,
             "agent_name": agent_name,
             "hud_mode": hud_mode,
             "theme": ui_theme,
+            "hud_colors": hud_colors,
+            "dot_size": ui_cfg.get("dot_size", 22),
+            "dot_position": ui_cfg.get("dot_position", "top_right"),
+            "dot_monitor": ui_cfg.get("dot_monitor", "auto"),
             "is_running": is_running,
             "state": "listening" if is_running else "standby",
         }
@@ -403,42 +419,325 @@ class HUDBridge:
             return {"success": False, "error": str(e)}
         return {"success": False, "error": "Invalid coordinates"}
 
+    def _get_ui_dispatcher_form(self):
+        """Returns a live WinForms Form on the pywebview UI thread for safe BeginInvoke calls."""
+        for candidate in (getattr(self._bridge, "_window", None), self._window):
+            native = getattr(candidate, "native", None) if candidate is not None else None
+            if native is not None:
+                try:
+                    if not getattr(native, "IsDisposed", False) and not getattr(native, "Disposing", False):
+                        if getattr(native, "IsHandleCreated", True):
+                            return native
+                except Exception:
+                    continue
+        return None
+
+    def _run_on_ui_thread(self, fn) -> None:
+        """Schedules fn() asynchronously on the pywebview WinForms UI thread without blocking."""
+        if sys.platform != "win32":
+            return
+        host = self._get_ui_dispatcher_form()
+        if host is None:
+            return
+
+        def _safe():
+            try:
+                fn()
+            except Exception as err:
+                print(f"[HUD DOT UI ERROR] {err}")
+
+        try:
+            if getattr(host, "InvokeRequired", False) and hasattr(host, "BeginInvoke"):
+                from System import Action
+                host.BeginInvoke(Action(_safe))
+            else:
+                _safe()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _build_dot_bitmap(phys_d: int, hex_color: str):
+        """
+        Pre-renders a crisp, anti-aliased circular LED Bitmap on a TransparencyKey (#010203)
+        canvas. Because WinForms paints BackgroundImage natively in .NET/GDI+, zero Python
+        Paint callbacks ever run on the WinForms UI thread (preventing GIL deadlocks).
+        """
+        from System.Drawing import Bitmap, Color, Graphics, Pen, SolidBrush
+        from System.Drawing.Drawing2D import PixelOffsetMode, SmoothingMode
+
+        size = max(12, int(phys_d))
+        bmp = Bitmap(size, size)
+        gfx = Graphics.FromImage(bmp)
+        brush = None
+        highlight_brush = None
+        rim_pen = None
+        try:
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
+            gfx.Clear(Color.FromArgb(1, 2, 3))
+            gfx.SmoothingMode = SmoothingMode.AntiAlias
+            gfx.PixelOffsetMode = PixelOffsetMode.HighQuality
+
+            diameter = float(size) - 2.0
+            if diameter < 4.0:
+                diameter = float(size)
+            ox = (float(size) - diameter) / 2.0
+            oy = (float(size) - diameter) / 2.0
+
+            brush = SolidBrush(Color.FromArgb(255, r, g, b))
+            gfx.FillEllipse(brush, ox, oy, diameter, diameter)
+
+            # Subtle top-left specular glass highlight
+            hl_d = max(3.0, diameter * 0.36)
+            hl_x = ox + diameter * 0.18
+            hl_y = oy + diameter * 0.14
+            highlight_brush = SolidBrush(Color.FromArgb(105, 255, 255, 255))
+            gfx.FillEllipse(highlight_brush, hl_x, hl_y, hl_d, hl_d * 0.78)
+
+            # Crisp 1px dark rim keeps the circle distinct on bright & dark games
+            rim_pen = Pen(Color.FromArgb(220, 14, 18, 26), 1.25)
+            gfx.DrawEllipse(rim_pen, ox, oy, diameter, diameter)
+        finally:
+            for obj in (rim_pen, highlight_brush, brush, gfx):
+                if obj is not None:
+                    try:
+                        obj.Dispose()
+                    except Exception:
+                        pass
+        return bmp
+
+    def _update_dot_form_on_ui(self, px: int, py: int, phys_d: int, show: bool) -> None:
+        """Creates/updates the tiny circular WinForms Dot Form on the UI thread (zero Python Paint hooks)."""
+        from ui.dot_overlay import resolve_status_color
+
+        ui_cfg = self._bridge.get_raw_config().get("ui", {}) or {}
+        colors = self._dot_colors if isinstance(self._dot_colors, dict) else ui_cfg.get("hud_colors")
+        hex_color = resolve_status_color(self._dot_state, colors)
+
+        def _apply():
+            import ctypes
+            import win32con
+            import win32gui
+            import System.Windows.Forms as WF
+            from System.Drawing import Color, Point, Size
+
+            form = self._dot_form
+            if form is None or getattr(form, "IsDisposed", False):
+                form = WF.Form()
+                form.Text = "Aether Dot"
+                form.FormBorderStyle = getattr(WF.FormBorderStyle, "None")
+                form.ShowInTaskbar = False
+                form.TopMost = True
+                form.StartPosition = WF.FormStartPosition.Manual
+                form.MinimumSize = Size(1, 1)
+                form.BackgroundImageLayout = getattr(WF.ImageLayout, "None")
+                key_color = Color.FromArgb(1, 2, 3)
+                form.BackColor = key_color
+                form.TransparencyKey = key_color
+                self._dot_form = form
+
+            bmp = self._build_dot_bitmap(phys_d, hex_color)
+            old_bmp = self._dot_bitmap
+            form.BackgroundImage = bmp
+            self._dot_bitmap = bmp
+            if old_bmp is not None:
+                try:
+                    old_bmp.Dispose()
+                except Exception:
+                    pass
+
+            dim = max(12, int(phys_d))
+            form.Location = Point(int(px), int(py))
+            form.Size = Size(dim, dim)
+            hwnd = int(form.Handle.ToInt64())
+
+            # Disable Windows 11 DWM rounded border / shadow behind the circular TransparencyKey dot
+            try:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 2, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
+                )  # DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, 33, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
+                )  # DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND
+            except Exception:
+                pass
+
+            # Keep WS_EX_LAYERED (from TransparencyKey) + add TOOLWINDOW | NOACTIVATE | TRANSPARENT
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            new_style = (
+                (ex_style | win32con.WS_EX_TOOLWINDOW | win32con.WS_EX_NOACTIVATE | win32con.WS_EX_TRANSPARENT)
+                & ~win32con.WS_EX_APPWINDOW
+            )
+            if new_style != ex_style:
+                win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, new_style)
+
+            flags = win32con.SWP_NOACTIVATE | (win32con.SWP_SHOWWINDOW if show else win32con.SWP_HIDEWINDOW)
+            win32gui.SetWindowPos(
+                hwnd,
+                win32con.HWND_TOPMOST,
+                int(px),
+                int(py),
+                dim,
+                dim,
+                flags,
+            )
+            if show:
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+                form.Refresh()
+            else:
+                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            self._dot_visible = bool(show)
+
+        self._dot_last_phys_rect = (int(px), int(py), max(12, int(phys_d)))
+        self._run_on_ui_thread(_apply)
+
+    def hide_dot(self) -> None:
+        """Hides the circular Dot Form without affecting the WebView2 overlay window."""
+        self._dot_visible = False
+
+        def _hide():
+            form = self._dot_form
+            if form is not None and not getattr(form, "IsDisposed", False):
+                if getattr(form, "IsHandleCreated", False):
+                    import win32con
+                    import win32gui
+                    win32gui.ShowWindow(int(form.Handle.ToInt64()), win32con.SW_HIDE)
+
+        self._run_on_ui_thread(_hide)
+
+    def destroy_dot(self) -> None:
+        """Disposes the circular Dot Form and its Bitmap cleanly during shutdown."""
+        self._dot_visible = False
+
+        def _dispose():
+            form = self._dot_form
+            self._dot_form = None
+            bmp = self._dot_bitmap
+            self._dot_bitmap = None
+            if form is not None:
+                try:
+                    if not getattr(form, "IsDisposed", False):
+                        form.BackgroundImage = None
+                        form.Close()
+                        form.Dispose()
+                except Exception:
+                    pass
+            if bmp is not None:
+                try:
+                    bmp.Dispose()
+                except Exception:
+                    pass
+
+        self._run_on_ui_thread(_dispose)
+
+    def set_dot_status(self, state: Optional[str] = None, colors: Optional[dict] = None) -> None:
+        """Updates active status state and/or custom color palette for the circular Dot Form."""
+        if state is not None:
+            self._dot_state = str(state or "standby").lower().strip()
+        if isinstance(colors, dict):
+            from ui.dot_overlay import sanitize_hud_colors
+            self._dot_colors = sanitize_hud_colors(colors)
+        if not self._dot_visible or getattr(self, "_last_applied_mode", None) != "dot":
+            return
+        if self._dot_last_phys_rect is not None:
+            px, py, phys_d = self._dot_last_phys_rect
+            self._update_dot_form_on_ui(px, py, phys_d, show=True)
+
+    def apply_dot_layout(
+        self,
+        dot_size: Optional[int] = None,
+        dot_position: Optional[str] = None,
+        dot_monitor: Optional[str] = None,
+        active_game_process: Optional[str] = None,
+    ) -> dict:
+        """Positions, sizes, and displays the circular WinForms Dot indicator for the configured corner/monitor."""
+        from ui.dot_overlay import (
+            normalize_dot_position,
+            normalize_dot_size,
+            resolve_dot_position,
+        )
+
+        ui_cfg = self._bridge.get_raw_config().get("ui", {}) or {}
+        d_size = normalize_dot_size(dot_size if dot_size is not None else ui_cfg.get("dot_size", 22))
+        d_pos = normalize_dot_position(dot_position if dot_position is not None else ui_cfg.get("dot_position", "top_right"))
+        d_mon = str(dot_monitor if dot_monitor is not None else ui_cfg.get("dot_monitor", "auto"))
+
+        game_rect = None
+        if d_mon.lower() == "auto" and active_game_process and sys.platform == "win32":
+            try:
+                import win32gui
+                from tools.os_controls import find_window_hwnd
+                ghwnd = find_window_hwnd(active_game_process)
+                if ghwnd and win32gui.IsWindow(ghwnd):
+                    l, t, r, b = win32gui.GetWindowRect(ghwnd)
+                    if r > l and b > t:
+                        game_rect = (int(l), int(t), int(r), int(b))
+            except Exception:
+                game_rect = None
+
+        scale = _get_dpi_scale_for_window(self._window)
+        phys_d = max(12, int(round(d_size * scale)))
+        monitors = get_monitor_work_areas()
+        px, py = resolve_dot_position(
+            d_pos,
+            d_mon,
+            phys_d,
+            monitors=monitors,
+            active_window_rect=game_rect,
+        )
+        self._update_dot_form_on_ui(px, py, phys_d, show=True)
+        return {"success": True, "mode": "dot", "size": d_size, "x": px, "y": py}
+
     def set_mode(self, mode: str) -> dict:
-        """Resizes the HUD overlay window according to requested tier (mini, normal, max)."""
+        """Resizes the HUD overlay window according to requested tier (dot, mini, normal, max)."""
         mode = mode.lower() if mode else "normal"
-        if mode not in ("mini", "normal", "max"):
+        if mode not in ("dot", "mini", "normal", "max"):
             mode = "normal"
         if self._window:
             with self._mode_lock:
-                w, h = self._mini_wide_size if self._mini_fps_visible else self._mini_narrow_size
-                if mode == "normal":
-                    w, h = self._normal_size[0], self._normal_size[1]
-                elif mode == "max":
-                    w, h = self._max_size[0], self._max_size[1]
+                self._last_applied_mode = mode
+                if mode == "dot":
+                    if hasattr(self._bridge, "_safe_hide_overlay_window"):
+                        try:
+                            self._bridge._safe_hide_overlay_window()
+                        except Exception:
+                            pass
+                    self.apply_dot_layout()
+                else:
+                    self.hide_dot()
+                    w, h = self._mini_wide_size if self._mini_fps_visible else self._mini_narrow_size
+                    if mode == "normal":
+                        w, h = self._normal_size[0], self._normal_size[1]
+                    elif mode == "max":
+                        w, h = self._max_size[0], self._max_size[1]
 
-                scale = _get_dpi_scale_for_window(self._window)
-                phys_w = int(round(w * scale))
-                phys_h = int(round(h * scale))
+                    scale = _get_dpi_scale_for_window(self._window)
+                    phys_w = int(round(w * scale))
+                    phys_h = int(round(h * scale))
 
-                # Re-clamp position in physical pixels so expanding width/height never pushes window off screen
-                rect = _get_overlay_physical_rect(self._window)
-                if rect:
-                    cur_x, cur_y = rect[0], rect[1]
-                    cx, cy = clamp_window_position(cur_x, cur_y, width=phys_w, height=phys_h)
-                    if cx != cur_x or cy != cur_y:
-                        move_overlay_physical(self._window, cx, cy)
-                        self._bridge.save_overlay_position(cx, cy)
+                    rect = _get_overlay_physical_rect(self._window)
+                    if rect:
+                        cur_x, cur_y = rect[0], rect[1]
+                        cx, cy = clamp_window_position(cur_x, cur_y, width=phys_w, height=phys_h)
+                        if cx != cur_x or cy != cur_y:
+                            move_overlay_physical(self._window, cx, cy)
+                            self._bridge.save_overlay_position(cx, cy)
 
-                self._window.resize(w, h)
-                apply_hud_window_shape(self._window, mode)
+                    self._window.resize(w, h)
+                    apply_hud_window_shape(self._window, mode)
 
-                # Ensure overlay JavaScript switches CSS classes and DOM layout immediately
-                try:
-                    self._window.evaluate_js(
-                        f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
-                    )
-                except Exception:
-                    pass
+                    # Ensure overlay JavaScript switches CSS classes and DOM layout immediately (only if loaded/shown)
+                    events = getattr(self._window, "events", None)
+                    loaded_ok = (events is None or not hasattr(events, "loaded") or not hasattr(events.loaded, "is_set") or events.loaded.is_set())
+                    shown_ok = (events is None or not hasattr(events, "shown") or not hasattr(events.shown, "is_set") or events.shown.is_set())
+                    if loaded_ok and shown_ok:
+                        try:
+                            self._window.evaluate_js(
+                                f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{mode}'); }}"
+                            )
+                        except Exception:
+                            pass
 
         if hasattr(self._bridge, "on_hud_mode_changed"):
             self._bridge.on_hud_mode_changed(mode)
@@ -742,18 +1041,19 @@ class HudWindow:
         self.bridge.set_window(self.window)
 
         # 2. Create Floating HUD Overlay Window with dedicated HUDBridge
+        # Keep overlay_window at normal/mini/max card dimensions even when cfg_mode == "dot"
+        # (Dot Mode is rendered by HUDBridge's lightweight WinForms circular Form on the same UI thread).
         self.hud_bridge = HUDBridge(window=None, bridge=self.bridge)
         cfg_ui = self.bridge.get_raw_config().get("ui", {})
         cfg_mode = cfg_ui.get("hud_mode", "normal")
+        init_scale = _get_dpi_scale_for_window(None)
+        init_x = cfg_ui.get("overlay_x")
+        init_y = cfg_ui.get("overlay_y")
         init_w, init_h = (440, 180)
         if cfg_mode == "mini":
             init_w, init_h = (176, 56)
         elif cfg_mode == "max":
             init_w, init_h = (560, 480)
-
-        init_x = cfg_ui.get("overlay_x")
-        init_y = cfg_ui.get("overlay_y")
-        init_scale = _get_dpi_scale_for_window(None)
         phys_w = int(round(init_w * init_scale))
         phys_h = int(round(init_h * init_scale))
         cx, cy = clamp_window_position(init_x, init_y, width=phys_w, height=phys_h)
@@ -781,11 +1081,13 @@ class HudWindow:
 
         self.overlay_window = webview.create_window(**overlay_kwargs)
         self.hud_bridge._window = self.overlay_window
+        self.hud_bridge._last_applied_mode = cfg_mode
         self.bridge.set_overlay_window(self.overlay_window)
         self.bridge.set_hud_bridge(self.hud_bridge)
+        self.dot_overlay = None
 
-        # If clamped position differed from config, persist clamped physical coordinates
-        if init_x != cx or init_y != cy:
+        # If clamped position differed from config (for draggable modes only), persist clamped physical coordinates
+        if cfg_mode != "dot" and (init_x != cx or init_y != cy):
             self.bridge.save_overlay_position(cx, cy)
 
         # Wire window moved event for debounced position persistence (physical pixels, never mid-drag)
@@ -794,6 +1096,8 @@ class HudWindow:
 
         def _save_debounced_pos():
             if getattr(self.hud_bridge, "_is_native_dragging", False):
+                return
+            if getattr(self.hud_bridge, "_last_applied_mode", None) == "dot":
                 return
             if sys.platform == "win32":
                 try:
@@ -812,6 +1116,8 @@ class HudWindow:
 
         def _on_overlay_moved(x, y):
             if getattr(self.hud_bridge, "_is_native_dragging", False):
+                return
+            if getattr(self.hud_bridge, "_last_applied_mode", None) == "dot":
                 return
             try:
                 rect = _get_overlay_physical_rect(self.overlay_window)
@@ -1004,6 +1310,16 @@ class HudWindow:
                 self.bridge.save_overlay_position(mx, my)
             except Exception:
                 pass
+        try:
+            if getattr(self, "hud_bridge", None) and hasattr(self.hud_bridge, "destroy_dot"):
+                self.hud_bridge.destroy_dot()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "dot_overlay", None):
+                self.dot_overlay.destroy()
+        except Exception:
+            pass
         try:
             self.tray.stop()
         except Exception:

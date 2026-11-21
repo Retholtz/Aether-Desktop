@@ -288,6 +288,7 @@ class HotkeyManager:
         self._hook_thread_id = None
         self._thread: Optional[threading.Thread] = None
         self._gamepad_thread: Optional[threading.Thread] = None
+        self._mouse_poll_thread: Optional[threading.Thread] = None
         self._running = False
         self._ready_event = threading.Event()
 
@@ -367,6 +368,8 @@ class HotkeyManager:
         self._is_game_mode_key_down = False
         if self._running and self.enabled and self.ptt_gamepad_mask:
             self._ensure_gamepad_thread()
+        if self._running and self.enabled and self.target_vk in MOUSE_PTT_VKS:
+            self._ensure_mouse_poll_thread()
 
         logger.info(
             f"[HOTKEY] Config updated: PTT(mode={self.audio_mode}, ptt_type={self.ptt_type}, "
@@ -677,8 +680,59 @@ class HotkeyManager:
             )
             self._gamepad_thread.start()
 
+    def _mouse_ptt_poll_loop(self):
+        """
+        Lightweight 50Hz GetAsyncKeyState poller for Mouse3/Mouse4/Mouse5 Push-to-Talk.
+        Avoids installing a global WH_MOUSE_LL hook, which would intercept every high-rate
+        WM_MOUSEMOVE event through Python's GIL and cause OS-wide cursor lag.
+        """
+        user32 = ctypes.windll.user32
+        while self._running:
+            vk = self.target_vk
+            if not self.enabled or vk not in MOUSE_PTT_VKS:
+                time.sleep(0.2)
+                continue
+            try:
+                pressed = bool(user32.GetAsyncKeyState(int(vk)) & 0x8000)
+                if pressed and not self._is_key_down:
+                    if self._check_modifiers(self.target_modifiers):
+                        self._is_key_down = True
+                        if self.ptt_type == "hold":
+                            self._dispatch_callback(
+                                self.on_ptt_change,
+                                True,
+                                log_msg=f"[PTT] Mouse button ({self.key_display}) pressed -> Hold Speak ON",
+                            )
+                        elif self.ptt_type == "toggle":
+                            self._dispatch_callback(
+                                self.on_ptt_toggle,
+                                log_msg=f"[PTT] Mouse button ({self.key_display}) pressed -> Toggle Mic",
+                            )
+                elif not pressed and self._is_key_down:
+                    self._is_key_down = False
+                    if self.ptt_type == "hold":
+                        self._dispatch_callback(
+                            self.on_ptt_change,
+                            False,
+                            log_msg=f"[PTT] Mouse button ({self.key_display}) released -> Hold Speak OFF",
+                        )
+            except Exception as ex:
+                logger.debug(f"[MOUSE PTT POLL ERROR] {ex}")
+            time.sleep(0.02)
+
+    def _ensure_mouse_poll_thread(self):
+        if sys.platform != "win32":
+            return
+        if self._mouse_poll_thread is None or not self._mouse_poll_thread.is_alive():
+            self._mouse_poll_thread = threading.Thread(
+                target=self._mouse_ptt_poll_loop,
+                name="PTT-MousePoller",
+                daemon=True,
+            )
+            self._mouse_poll_thread.start()
+
     def _run_hook_loop(self):
-        """Background thread worker hosting the Windows message pump for the LL hook."""
+        """Background thread worker hosting the Windows message pump for the LL keyboard hook."""
         ensure_thread_desktop()
 
         user32 = ctypes.windll.user32
@@ -704,20 +758,13 @@ class HotkeyManager:
             0
         )
 
-        # Install low-level mouse hook alongside keyboard hook for Mouse4/Mouse5/Middle PTT
-        self._mouse_hook_handle = user32.SetWindowsHookExW(
-            WH_MOUSE_LL,
-            self._mouse_hook_fn,
-            h_mod,
-            0
-        )
+        # Do NOT install WH_MOUSE_LL globally (every 1000Hz WM_MOUSEMOVE would stall on Python's GIL
+        # and cause severe cursor lag). Mouse3/4/5 PTT is handled by `_mouse_ptt_poll_loop` instead.
+        self._mouse_hook_handle = None
 
         if not self._hook_handle:
             err = kernel32.GetLastError()
             logger.error(f"[HOTKEY] Failed to install SetWindowsHookExW (Error {err})")
-            if self._mouse_hook_handle:
-                user32.UnhookWindowsHookEx(self._mouse_hook_handle)
-                self._mouse_hook_handle = None
             self._ready_event.set()
             return
 
@@ -730,9 +777,6 @@ class HotkeyManager:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
 
-        if self._mouse_hook_handle:
-            user32.UnhookWindowsHookEx(self._mouse_hook_handle)
-            self._mouse_hook_handle = None
         if self._hook_handle:
             user32.UnhookWindowsHookEx(self._hook_handle)
             self._hook_handle = None
@@ -766,6 +810,8 @@ class HotkeyManager:
         self._ready_event.wait(timeout=2.0)
         if self.enabled and self.ptt_gamepad_mask:
             self._ensure_gamepad_thread()
+        if self.enabled and self.target_vk in MOUSE_PTT_VKS:
+            self._ensure_mouse_poll_thread()
 
     def stop(self):
         """Stops the global keyboard listener and cleanly tears down the Windows hook."""

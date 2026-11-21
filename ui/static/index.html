@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Aether Desktop</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
   <link rel="stylesheet" href="roleplay.css?v=1">
 </head>
 <body>
@@ -196,9 +196,18 @@
                 </div>
               </div>
 
-              <!-- Line 4: Agnostic Game Module & Anti-Cheat Input Safety -->
+              <!-- Line 4: Per-Game HUD Preference, Anti-Cheat Input Safety & Agnostic Game Modules -->
               <div class="game-banner-row game-banner-row-4" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
                 <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+                  <label for="select-game-hud-pref" style="font-size: 0.78rem; color: var(--text-muted);" title="Automatic HUD overlay tier used while this game is running.">HUD:</label>
+                  <select id="select-game-hud-pref" class="hud-select" style="width: auto; min-width: 170px;" title="Choose the HUD overlay view when this game runs, or Default to follow your global HUD setting.">
+                    <option value="default">Default (Global Setting)</option>
+                    <option value="none">None (Hidden)</option>
+                    <option value="dot">Dot</option>
+                    <option value="mini">Mini</option>
+                    <option value="normal">Normal</option>
+                    <option value="max">Max</option>
+                  </select>
                   <label for="select-game-input-mode" style="font-size: 0.78rem; color: var(--text-muted);" title="Use Spotter-Only in multiplayer anti-cheat games to prevent any synthetic key/mouse injection.">Input Safety:</label>
                   <select id="select-game-input-mode" class="hud-select" style="width: auto; min-width: 210px;" title="Autonomous allows macros/map clicks; Spotter-Only restricts Aether to read-only voice & vision guidance.">
                     <option value="autonomous">⚡ Autonomous Inputs</option>
@@ -1656,11 +1665,72 @@
                 <div class="form-group">
                   <label for="defaultHudModeSelect">Default HUD Overlay View Tier</label>
                   <select id="defaultHudModeSelect" class="hud-select">
+                    <option value="dot">Dot Mode (Floating Corner Indicator)</option>
                     <option value="mini">Mini Mode (Utilitarian Pill - 220x52)</option>
                     <option value="normal" selected>Normal Mode (Card Dock - 480x240)</option>
                     <option value="max">Max Mode (Teleprompter Transcript - 560x480)</option>
                   </select>
                   <span class="input-hint">Initial view mode of the HUD overlay window upon startup.</span>
+                </div>
+
+                <!-- Dot Mode Position, Monitor & Size -->
+                <div class="form-group">
+                  <label for="dotPositionSelect">Dot Corner Position</label>
+                  <select id="dotPositionSelect" class="hud-select">
+                    <option value="top_left">Upper Left Corner</option>
+                    <option value="top_right" selected>Upper Right Corner</option>
+                    <option value="bottom_left">Lower Left Corner</option>
+                    <option value="bottom_right">Lower Right Corner</option>
+                  </select>
+                  <span class="input-hint">Screen corner anchor for Dot Mode (click-through, never blocks clicks).</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="dotMonitorSelect">Dot Target Monitor</label>
+                  <select id="dotMonitorSelect" class="hud-select">
+                    <option value="auto" selected>Auto (Active Game / Primary Monitor)</option>
+                  </select>
+                  <span class="input-hint">Choose which monitor displays the Dot indicator (Monitor 1, 2, 3, etc.).</span>
+                </div>
+
+                <div class="form-group full">
+                  <div class="slider-header">
+                    <label for="dotSizeSlider">Dot Indicator Size (Dot Mode Only)</label>
+                    <span id="dotSizeVal" class="slider-val">22 px</span>
+                  </div>
+                  <input type="range" id="dotSizeSlider" class="hud-slider" min="12" max="48" step="2" value="22">
+                  <span class="input-hint">Adjusts the floating dot diameter in Dot Mode without changing Mini, Normal, or Max.</span>
+                </div>
+
+                <!-- Custom HUD Status Colors (Applies to Dot, Mini, Normal, and Max) -->
+                <div class="form-group full" style="margin-top: 4px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                    <label style="margin: 0;">HUD Status Colors (All HUD Modes)</label>
+                    <button type="button" id="btnResetHudColors" class="hud-btn-ghost sm" title="Restore default HUD status colors">RESET COLORS</button>
+                  </div>
+                  <div class="hud-color-swatches-row">
+                    <label class="hud-color-swatch-item" for="hudColorStandby" title="Click to choose Standby color">
+                      <input type="color" id="hudColorStandby" class="hud-color-swatch-input" value="#8e9bb0">
+                      <span>Standby</span>
+                    </label>
+                    <label class="hud-color-swatch-item" for="hudColorListening" title="Click to choose Listening color">
+                      <input type="color" id="hudColorListening" class="hud-color-swatch-input" value="#00d2ff">
+                      <span>Listening</span>
+                    </label>
+                    <label class="hud-color-swatch-item" for="hudColorThinking" title="Click to choose Thinking color">
+                      <input type="color" id="hudColorThinking" class="hud-color-swatch-input" value="#bd00ff">
+                      <span>Thinking</span>
+                    </label>
+                    <label class="hud-color-swatch-item" for="hudColorExecuting" title="Click to choose Executing color">
+                      <input type="color" id="hudColorExecuting" class="hud-color-swatch-input" value="#ff9f1c">
+                      <span>Executing</span>
+                    </label>
+                    <label class="hud-color-swatch-item" for="hudColorSpeaking" title="Click to choose Speaking color">
+                      <input type="color" id="hudColorSpeaking" class="hud-color-swatch-input" value="#06d6a0">
+                      <span>Speaking</span>
+                    </label>
+                  </div>
+                  <span class="input-hint">Click any color button to open the color wheel. Your chosen colors apply across Dot, Mini, Normal, and Max HUDs.</span>
                 </div>
 
                 <div class="form-group full" style="margin-top: 6px;">
@@ -1671,7 +1741,7 @@
                     </button>
                     <button type="button" id="hudModeKeybindResetBtn" class="hud-btn-ghost sm" title="Reset to default (Ctrl+Space)">RESET</button>
                   </div>
-                  <span class="input-hint" id="hudModeKeybindHint">Click the button and press any key or combo (default: Ctrl+Space) to cycle HUD modes (Mini &rarr; Normal &rarr; Max) globally across all apps.</span>
+                  <span class="input-hint" id="hudModeKeybindHint">Click the button and press any key or combo (default: Ctrl+Space) to cycle HUD modes (Dot &rarr; Mini &rarr; Normal &rarr; Max) globally across all apps.</span>
                 </div>
 
                 <div class="form-group full" style="margin-top: 6px;">
@@ -6035,13 +6105,13 @@
 
   <div id="dossierPrintMount" class="dossier-print-mount" aria-hidden="true"></div>
 
-  <script src="settings.js?v=p8"></script>
-  <script src="games_tab.js?v=p8"></script>
-  <script src="programs_tab.js?v=p8"></script>
-  <script src="projects.js?v=p8"></script>
-  <script src="edit_character_modal.js?v=p8"></script>
-  <script src="roleplay.js?v=p8"></script>
-  <script src="main.js?v=p8"></script>
-  <script src="app.js?v=p8"></script>
+  <script src="settings.js?v=p11"></script>
+  <script src="games_tab.js?v=p11"></script>
+  <script src="programs_tab.js?v=p11"></script>
+  <script src="projects.js?v=p11"></script>
+  <script src="edit_character_modal.js?v=p11"></script>
+  <script src="roleplay.js?v=p11"></script>
+  <script src="main.js?v=p11"></script>
+  <script src="app.js?v=p11"></script>
 </body>
 </html>

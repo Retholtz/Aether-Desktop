@@ -19,6 +19,7 @@
       --text-main: #f0f4f8;
       --text-secondary: #cbd5e1;
       --text-muted: #8e9bb0;
+      --status-standby: #8e9bb0;
       --status-listening: #00d2ff;
       --status-hearing: #ffd166;
       --status-thinking: #bd00ff;
@@ -849,21 +850,82 @@
       stroke: var(--accent, #00d2ff);
     }
 
+    /* Dot Mode Layout (Compact Corner Status Indicator) */
+    body.mode-dot,
+    body.mode-dot .overlay-card {
+      width: 100vw !important;
+      height: 100vh !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      border: none !important;
+      border-radius: 50% !important;
+      background: var(--current-status-color, #8e9bb0) !important;
+      box-shadow: inset 2px 2px 6px rgba(255, 255, 255, 0.35), inset -2px -2px 6px rgba(0, 0, 0, 0.35) !important;
+      cursor: default !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    body.mode-dot.status-standby,
+    body.mode-dot.status-standby .overlay-card {
+      background: var(--status-standby, #8e9bb0) !important;
+      filter: none !important;
+    }
+
+    body.mode-dot .mini-pill-content,
+    body.mode-dot .top-bar,
+    body.mode-dot .normal-exchange-pane,
+    body.mode-dot .transcript-pane,
+    body.mode-dot .agent-action-row,
+    body.mode-dot .hud-chat-form,
+    body.mode-dot .hud-resizer {
+      display: none !important;
+    }
+
+    .dot-mode-content {
+      display: none;
+      width: 100%;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+    }
+
+    body.mode-dot .dot-mode-content {
+      display: flex;
+    }
+
+    .dot-mode-core {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 32% 32%, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0) 58%);
+      transition: opacity 0.25s ease;
+    }
+
+    body.mode-dot:not(.status-standby) .overlay-card {
+      animation: dotPulseGlow 1.6s ease-in-out infinite;
+    }
+
+    @keyframes dotPulseGlow {
+      0%, 100% { filter: brightness(1.0); }
+      50% { filter: brightness(1.25); }
+    }
+
     /* Standby / Greyed-out State Styling */
     body.status-standby {
-      --current-status-color: #8e9bb0;
+      --current-status-color: var(--status-standby, #8e9bb0);
     }
 
     body.status-standby .status-dot,
     body.status-standby .mini-status-dot {
-      background: #8e9bb0 !important;
+      background: var(--status-standby, #8e9bb0) !important;
       box-shadow: none !important;
       animation: none !important;
     }
 
     body.status-standby .status-label,
     body.status-standby .mini-status-label {
-      color: #8e9bb0 !important;
+      color: var(--status-standby, #8e9bb0) !important;
     }
 
     body.status-standby .mini-title-label {
@@ -879,7 +941,12 @@
 </head>
 <body class="mode-normal status-standby">
   <div class="overlay-card pywebview-drag-region" id="overlayCard" title="Drag to reposition (Click pill to expand in Mini Mode)">
-    
+
+    <!-- Dot Mode Content (visible only in .mode-dot) -->
+    <div class="dot-mode-content" id="dotModeContent">
+      <div class="dot-mode-core" id="dotModeCore"></div>
+    </div>
+
     <!-- Mini Mode Pill Layout (visible only in .mode-mini) -->
     <div class="mini-pill-content pywebview-drag-region" id="miniPillContent">
       <div class="mini-status-dot" id="miniStatusDot"></div>
@@ -900,8 +967,9 @@
         <span class="hud-fps-badge" id="hudFpsBadge" style="display: none;">FPS: --</span>
       </div>
 
-      <!-- 3-Segment Toggle: [ — | ▢ | ⤢ ] -->
+      <!-- 4-Segment Toggle: [ • | — | ▢ | ⤢ ] -->
       <div class="mode-toggle-group">
+        <button class="mode-segment-btn" id="modeDotBtn" title="Dot Mode (Floating Corner Indicator)">•</button>
         <button class="mode-segment-btn" id="modeMiniBtn" title="Mini Mode (Utilitarian Pill)">—</button>
         <button class="mode-segment-btn active" id="modeNormalBtn" title="Normal Mode (Card Dock)">▢</button>
         <button class="mode-segment-btn" id="modeMaxBtn" title="Max Mode (Teleprompter Transcript)">⤢</button>
@@ -1045,6 +1113,7 @@
       const normalAgentTag = document.getElementById("normalAgentTag");
       const normalAgentText = document.getElementById("normalAgentText");
 
+      const modeDotBtn = document.getElementById("modeDotBtn");
       const modeMiniBtn = document.getElementById("modeMiniBtn");
       const modeNormalBtn = document.getElementById("modeNormalBtn");
       const modeMaxBtn = document.getElementById("modeMaxBtn");
@@ -1225,8 +1294,8 @@
 
       const stateStyles = {
         listening: { color: "#00d2ff", label: "LISTENING", icon: "👂" },
-        hearing: { color: "#ffd166", label: "HEARING SPEECH", icon: "🎙️" },
-        transcribing: { color: "#b388ff", label: "TRANSCRIBING", icon: "✍️" },
+        hearing: { color: "#00d2ff", label: "HEARING SPEECH", icon: "🎙️" },
+        transcribing: { color: "#bd00ff", label: "TRANSCRIBING", icon: "✍️" },
         thinking: { color: "#bd00ff", label: "THINKING", icon: "🧠" },
         executing: { color: "#ff9f1c", label: "EXECUTING TASK", icon: "⚙️" },
         speaking: { color: "#06d6a0", label: "SPEAKING", icon: "🔊" },
@@ -1237,6 +1306,39 @@
         offline: { color: "#8e9bb0", label: "STANDBY", icon: "💤" },
         error: { color: "#ef476f", label: "ERROR", icon: "⚠️" }
       };
+
+      function applyCustomStatusColors(colors) {
+        if (!colors || typeof colors !== "object") return;
+        const hexRe = /^#[0-9a-fA-F]{6}$/;
+        const standby = hexRe.test(colors.standby || "") ? colors.standby : "#8e9bb0";
+        const listening = hexRe.test(colors.listening || "") ? colors.listening : "#00d2ff";
+        const thinking = hexRe.test(colors.thinking || "") ? colors.thinking : "#bd00ff";
+        const executing = hexRe.test(colors.executing || "") ? colors.executing : "#ff9f1c";
+        const speaking = hexRe.test(colors.speaking || "") ? colors.speaking : "#06d6a0";
+
+        document.documentElement.style.setProperty("--status-standby", standby);
+        document.documentElement.style.setProperty("--status-listening", listening);
+        document.documentElement.style.setProperty("--status-hearing", listening);
+        document.documentElement.style.setProperty("--status-thinking", thinking);
+        document.documentElement.style.setProperty("--status-executing", executing);
+        document.documentElement.style.setProperty("--status-speaking", speaking);
+
+        stateStyles.standby.color = standby;
+        stateStyles.idle.color = standby;
+        stateStyles.disconnected.color = standby;
+        stateStyles.offline.color = standby;
+        stateStyles.listening.color = listening;
+        stateStyles.hearing.color = listening;
+        stateStyles.connected.color = listening;
+        stateStyles.thinking.color = thinking;
+        stateStyles.transcribing.color = thinking;
+        stateStyles.executing.color = executing;
+        stateStyles.speaking.color = speaking;
+
+        if (typeof setStatus === "function") {
+          setStatus(currentStatusState);
+        }
+      }
 
       // =========================================================================
       // Safe Markdown & Text Formatter for Rich Agent Responses
@@ -1360,9 +1462,10 @@
       // =========================================================================
       function applyModeClasses(mode) {
         currentMode = mode;
-        document.body.classList.remove("mode-mini", "mode-normal", "mode-max");
+        document.body.classList.remove("mode-dot", "mode-mini", "mode-normal", "mode-max");
         document.body.classList.add(`mode-${mode}`);
 
+        if (modeDotBtn) modeDotBtn.classList.toggle("active", mode === "dot");
         modeMiniBtn.classList.toggle("active", mode === "mini");
         modeNormalBtn.classList.toggle("active", mode === "normal");
         modeMaxBtn.classList.toggle("active", mode === "max");
@@ -1620,6 +1723,13 @@
             window.pywebview.api.save_hud_size(currentMode, finalW, finalH);
           }
         }
+      }
+
+      if (modeDotBtn) {
+        modeDotBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          switchMode("dot");
+        });
       }
 
       modeMiniBtn.addEventListener("click", (e) => {
@@ -1974,6 +2084,14 @@
             if (apiCfg.agent_name) {
               updateAgentName(apiCfg.agent_name);
             }
+            const uiCfg = (data && data.ui) || {};
+            if (uiCfg.hud_colors) {
+              applyCustomStatusColors(uiCfg.hud_colors);
+            }
+          } else if (type === "hud_colors_preview") {
+            if (data && data.hud_colors) {
+              applyCustomStatusColors(data.hud_colors);
+            }
           } else if (type === "hud_mode_changed") {
             if (data.mode) {
               applyModeClasses(data.mode);
@@ -2154,6 +2272,9 @@
             const pref = String(oCfg?.theme || "system").toLowerCase();
             const resolved = (pref === "light" || pref === "dark") ? pref : (windowsIsDark ? "dark" : "light");
             window.applyOverlayTheme(resolved);
+            if (oCfg && oCfg.hud_colors) {
+              applyCustomStatusColors(oCfg.hud_colors);
+            }
             if (oCfg && oCfg.state) {
               setStatus(oCfg.state);
             } else {

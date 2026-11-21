@@ -4171,3 +4171,52 @@ select option,
   visibility: visible;
   pointer-events: auto;
 }
+
+/* HUD Status Color Swatch Buttons */
+.hud-color-swatches-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.hud-color-swatch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-main);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.hud-color-swatch-item:hover {
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(30, 41, 59, 0.65);
+}
+
+.hud-color-swatch-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 26px;
+  height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.hud-color-swatch-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.hud-color-swatch-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}

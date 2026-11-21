@@ -967,9 +967,12 @@ class GuiBridge:
 
             return False
 
-        if hasattr(win, "events") and hasattr(win.events, "loaded"):
-
-            return win.events.loaded.is_set()
+        if hasattr(win, "events"):
+            if hasattr(win.events, "shown") and hasattr(win.events.shown, "is_set"):
+                if not win.events.shown.is_set():
+                    return False
+            if hasattr(win.events, "loaded") and hasattr(win.events.loaded, "is_set"):
+                return win.events.loaded.is_set()
 
         return True
 
@@ -1128,6 +1131,27 @@ class GuiBridge:
 
 
 
+            if event_type == "status" and isinstance(data, dict):
+                st_str = str(data.get("state") or "standby")
+                hud_b = getattr(self, "_hud_bridge", None)
+                if hud_b is not None and hasattr(hud_b, "set_dot_status"):
+                    try:
+                        hud_b.set_dot_status(state=st_str)
+                    except Exception:
+                        pass
+
+            if event_type == "mic_status" and isinstance(data, dict):
+                hud_b = getattr(self, "_hud_bridge", None)
+                if hud_b is not None and hasattr(hud_b, "set_dot_status"):
+                    try:
+                        if data.get("ptt_active"):
+                            hud_b.set_dot_status(state="hearing")
+                        else:
+                            eng_running = bool(getattr(self._engine, "is_running", False)) if self._engine else False
+                            hud_b.set_dot_status(state="listening" if eng_running else "standby")
+                    except Exception:
+                        pass
+
             if event_type == "game_mode_changed" and isinstance(data, dict):
                 gid = data.get("game_id") or data.get("active_profile") or ""
                 prof = self.game_mgr.get_profile(gid) if (gid and hasattr(self, "game_mgr") and self.game_mgr) else None
@@ -1139,12 +1163,24 @@ class GuiBridge:
                         self._hud_bridge.set_mini_fps_visible(show_fps)
                     except Exception:
                         pass
+                try:
+                    self._apply_game_hud_preference(
+                        game_id=gid,
+                        is_running=bool(data.get("is_running")),
+                        profile=prof,
+                    )
+                except Exception as hud_pref_err:
+                    logger.debug(f"[GAME HUD PREF] Error applying game HUD preference: {hud_pref_err}")
 
             if event_type == "config_updated" and isinstance(data, dict):
 
                 from core.config_manager import mask_sensitive_config
 
                 data = mask_sensitive_config(data)
+                try:
+                    self._sync_dot_overlay_config()
+                except Exception:
+                    pass
 
 
 
@@ -1910,17 +1946,34 @@ class GuiBridge:
 
             if "ui" in new_config:
 
-                self._config.setdefault("ui", {}).update(new_config["ui"])
+                ui_in = dict(new_config["ui"]) if isinstance(new_config["ui"], dict) else {}
+                from ui.dot_overlay import (
+                    normalize_dot_position,
+                    normalize_dot_size,
+                    sanitize_hud_colors,
+                )
+                if "dot_size" in ui_in:
+                    ui_in["dot_size"] = normalize_dot_size(ui_in["dot_size"])
+                if "dot_position" in ui_in:
+                    ui_in["dot_position"] = normalize_dot_position(ui_in["dot_position"])
+                if "dot_monitor" in ui_in:
+                    ui_in["dot_monitor"] = str(ui_in["dot_monitor"] or "auto")
+                if "hud_colors" in ui_in:
+                    ui_in["hud_colors"] = sanitize_hud_colors(ui_in["hud_colors"])
 
-                if "hud_mode" in new_config["ui"]:
+                self._config.setdefault("ui", {}).update(ui_in)
 
-                    target_mode = str(new_config["ui"]["hud_mode"]).lower()
+                if "hud_mode" in ui_in:
 
-                    if target_mode in ("mini", "normal", "max"):
+                    target_mode = str(ui_in["hud_mode"]).lower()
+
+                    if target_mode in ("dot", "mini", "normal", "max"):
 
                         self._current_hud_mode = target_mode
 
                         self._config["hud_mode"] = target_mode
+
+                self._sync_dot_overlay_config()
 
                 if hasattr(self._engine, "hotkey_manager") and self._engine.hotkey_manager:
 
@@ -2502,9 +2555,10 @@ class GuiBridge:
     def set_overlay_theme(self, theme: str) -> dict:
         """Pushes the resolved Light/Dark theme to the floating HUD overlay window."""
         mode = "light" if str(theme).lower() == "light" else "dark"
-        if getattr(self, "_overlay_window", None) is not None:
+        overlay_win = getattr(self, "_overlay_window", None)
+        if self._is_window_ready(overlay_win):
             try:
-                self._overlay_window.evaluate_js(
+                overlay_win.evaluate_js(
                     f"window.applyOverlayTheme && window.applyOverlayTheme({json.dumps(mode)})"
                 )
             except Exception:
@@ -2917,13 +2971,176 @@ class GuiBridge:
 
 
 
+    def set_dot_overlay(self, dot_overlay) -> None:
+        """Attaches the native click-through DotOverlayWindow managed by HudWindow."""
+        self._dot_overlay = dot_overlay
+        self._sync_dot_overlay_config()
+
+    def _sync_dot_overlay_config(self, active_game_process: Optional[str] = None) -> None:
+        """Applies latest dot size, corner position, monitor, and colors when Dot Mode is active."""
+        self._active_game_process_for_dot = active_game_process if active_game_process is not None else getattr(self, "_active_game_process_for_dot", "")
+        hud_b = getattr(self, "_hud_bridge", None)
+        if hud_b is not None and hasattr(hud_b, "set_dot_status"):
+            try:
+                ui_cfg = self.get_raw_config().get("ui", {}) or {}
+                if isinstance(ui_cfg.get("hud_colors"), dict):
+                    hud_b.set_dot_status(colors=ui_cfg["hud_colors"])
+            except Exception:
+                pass
+        if getattr(self, "_current_hud_mode", "normal") == "dot" and getattr(self, "_overlay_visible", False):
+            if hud_b is not None and hasattr(hud_b, "apply_dot_layout"):
+                try:
+                    hud_b.apply_dot_layout(active_game_process=self._active_game_process_for_dot)
+                except Exception:
+                    pass
+
+    def preview_hud_settings(self, ui_updates: dict) -> dict:
+        """Live-previews Dot size/position/monitor and custom HUD status colors across all HUD tiers."""
+        try:
+            from ui.dot_overlay import (
+                normalize_dot_position,
+                normalize_dot_size,
+                sanitize_hud_colors,
+            )
+            updates = ui_updates if isinstance(ui_updates, dict) else {}
+            hud_b = getattr(self, "_hud_bridge", None)
+            if "hud_colors" in updates:
+                clean_colors = sanitize_hud_colors(updates["hud_colors"])
+                if hud_b is not None and hasattr(hud_b, "set_dot_status"):
+                    hud_b.set_dot_status(colors=clean_colors)
+                self._on_engine_event("hud_colors_preview", {"hud_colors": clean_colors})
+            if getattr(self, "_current_hud_mode", "normal") == "dot" and getattr(self, "_overlay_visible", False):
+                if hud_b is not None and hasattr(hud_b, "apply_dot_layout"):
+                    hud_b.apply_dot_layout(
+                        dot_size=normalize_dot_size(updates["dot_size"]) if "dot_size" in updates else None,
+                        dot_position=normalize_dot_position(updates["dot_position"]) if "dot_position" in updates else None,
+                        dot_monitor=str(updates["dot_monitor"]) if "dot_monitor" in updates else None,
+                        active_game_process=getattr(self, "_active_game_process_for_dot", ""),
+                    )
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _apply_game_hud_preference(
+        self,
+        game_id: str,
+        is_running: bool,
+        profile: Optional[dict] = None,
+    ) -> None:
+        """
+        Applies per-game HUD preference ('default', 'none', 'dot', 'mini', 'normal', 'max')
+        when a game launches and restores the user's prior global HUD state when the game exits.
+        """
+        if not hasattr(self, "_game_hud_override_state"):
+            self._game_hud_override_state = None
+        if not hasattr(self, "_game_hud_override_game_id"):
+            self._game_hud_override_game_id = None
+
+        prof = profile or (self.game_mgr.get_profile(game_id) if (game_id and hasattr(self, "game_mgr") and self.game_mgr) else None)
+        proc_name = str((prof or {}).get("process_name") or (prof or {}).get("executable") or "") if is_running else ""
+        self._sync_dot_overlay_config(active_game_process=proc_name)
+
+        if not is_running:
+            saved = self._game_hud_override_state
+            if saved is not None:
+                self._game_hud_override_state = None
+                self._game_hud_override_game_id = None
+                prev_mode = saved.get("mode", "normal")
+                prev_vis = bool(saved.get("visible", False))
+                self.set_mode(prev_mode, persist=False)
+                if prev_vis:
+                    self.show_overlay()
+                else:
+                    self.hide_overlay()
+            return
+
+        pref = (
+            self.game_mgr.get_hud_preference(game_id)
+            if (game_id and hasattr(self, "game_mgr") and self.game_mgr and hasattr(self.game_mgr, "get_hud_preference"))
+            else "default"
+        )
+
+        if pref == "default":
+            # If user changed preference back to 'default' mid-game, restore saved global state
+            if self._game_hud_override_state is not None and self._game_hud_override_game_id == game_id:
+                saved = self._game_hud_override_state
+                self._game_hud_override_state = None
+                self._game_hud_override_game_id = None
+                self.set_mode(saved.get("mode", "normal"), persist=False)
+                if saved.get("visible"):
+                    self.show_overlay()
+                else:
+                    self.hide_overlay()
+            return
+
+        # Save user's prior global HUD state once before applying game override
+        if self._game_hud_override_state is None:
+            self._game_hud_override_state = {
+                "mode": getattr(self, "_current_hud_mode", self.get_raw_config().get("ui", {}).get("hud_mode", "normal")),
+                "visible": bool(getattr(self, "_overlay_visible", False)),
+            }
+        self._game_hud_override_game_id = game_id
+
+        if pref == "none":
+            self.hide_overlay()
+        elif pref in ("dot", "mini", "normal", "max"):
+            self._current_hud_mode = pref
+            self.show_overlay()
+            self.set_mode(pref, persist=False)
+
+    @staticmethod
+    def _is_webview_window_shown(win_obj) -> bool:
+        """
+        Returns True only if a pywebview Window is safe to call `.hide()` on without
+        blocking forever inside pywebview's `@_shown_call` (`events.shown.wait()`).
+        """
+        if win_obj is None:
+            return False
+        events = getattr(win_obj, "events", None)
+        shown_ev = getattr(events, "shown", None) if events is not None else None
+        if shown_ev is not None and hasattr(shown_ev, "is_set"):
+            try:
+                return bool(shown_ev.is_set())
+            except Exception:
+                return False
+        # Mock windows in unit tests don't have a real threading.Event on events.shown
+        return True
+
+    def _safe_hide_overlay_window(self) -> None:
+        """Safely hides the WebView2 overlay window without deadlocking if it was created hidden=True."""
+        overlay_win = getattr(self, "_overlay_window", None)
+        if overlay_win is None:
+            return
+        if not self._is_webview_window_shown(overlay_win):
+            return
+        try:
+            overlay_win.hide()
+        except Exception:
+            pass
+
     def show_overlay(self) -> dict:
 
-        """Explicitly displays the floating overlay window and ensures it is within visible monitor bounds."""
+        """Explicitly displays the floating overlay (circular WinForms Dot in dot mode, or WebView2 card in mini/normal/max)."""
 
         try:
 
+            cur_mode = getattr(self, "_current_hud_mode", "normal")
             overlay_win = getattr(self, "_overlay_window", None)
+            hud_b = getattr(self, "_hud_bridge", None)
+
+            if cur_mode == "dot":
+                self._safe_hide_overlay_window()
+                self._overlay_visible = True
+                if hud_b is not None and hasattr(hud_b, "set_mode"):
+                    hud_b.set_mode("dot")
+                return {"success": True}
+
+            if hud_b is not None and hasattr(hud_b, "hide_dot"):
+                try:
+                    hud_b.hide_dot()
+                except Exception:
+                    pass
+
             if overlay_win:
 
                 from ui.hud_window import (
@@ -2933,7 +3150,6 @@ class GuiBridge:
                     _get_dpi_scale_for_window,
                 )
 
-                cur_mode = getattr(self, "_current_hud_mode", "normal")
                 w, h = (180, 56) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
                 rect = _get_overlay_physical_rect(overlay_win)
                 if rect:
@@ -2956,7 +3172,7 @@ class GuiBridge:
 
                 self._overlay_visible = True
 
-                self.set_mode(cur_mode)
+                self.set_mode(cur_mode, persist=False)
 
             return {"success": True}
 
@@ -2968,15 +3184,24 @@ class GuiBridge:
 
     def hide_overlay(self) -> dict:
 
-        """Hides the floating overlay window."""
+        """Hides both the floating WebView2 overlay window and the circular Dot indicator."""
 
         try:
 
-            if getattr(self, "_overlay_window", None):
+            self._safe_hide_overlay_window()
 
-                self._overlay_window.hide()
+            hud_b = getattr(self, "_hud_bridge", None)
+            if hud_b is not None and hasattr(hud_b, "hide_dot"):
+                try:
+                    hud_b.hide_dot()
+                except Exception:
+                    pass
 
-                self._overlay_visible = False
+            if getattr(self, "_dot_overlay", None):
+
+                self._dot_overlay.hide()
+
+            self._overlay_visible = False
 
             return {"success": True}
 
@@ -2988,21 +3213,17 @@ class GuiBridge:
 
     def toggle_overlay(self) -> dict:
 
-        """Toggles visibility of the floating overlay."""
+        """Toggles visibility of the floating overlay (including Dot mode)."""
 
         try:
 
-            if getattr(self, "_overlay_window", None):
+            if getattr(self, "_overlay_visible", False):
 
-                if getattr(self, "_overlay_visible", False):
+                self.hide_overlay()
 
-                    self._overlay_window.hide()
+            else:
 
-                    self._overlay_visible = False
-
-                else:
-
-                    self.show_overlay()
+                self.show_overlay()
 
             return {"success": True, "visible": getattr(self, "_overlay_visible", False)}
 
@@ -3081,32 +3302,59 @@ class GuiBridge:
 
 
 
-    def set_mode(self, mode: str) -> dict:
+    def set_mode(self, mode: str, persist: bool = True) -> dict:
 
-        """Sets the HUD overlay view mode (mini, normal, max) and resizes window."""
+        """Sets the HUD overlay view mode (dot, mini, normal, max) and updates the active overlay window."""
 
         mode = mode.lower() if mode else "normal"
 
-        if mode not in ("mini", "normal", "max"):
+        if mode not in ("dot", "mini", "normal", "max"):
 
             mode = "normal"
 
         self._current_hud_mode = mode
 
-        with self._config_lock:
+        if persist:
+            with self._config_lock:
 
-            self._config.setdefault("ui", {})["hud_mode"] = mode
+                self._config.setdefault("ui", {})["hud_mode"] = mode
 
-            self._config["hud_mode"] = mode
+                self._config["hud_mode"] = mode
 
-            sync_config_schema(self._config)
+                sync_config_schema(self._config)
 
-            save_config_atomic(self._config, self._config_path)
+                save_config_atomic(self._config, self._config_path)
 
+        overlay_win = getattr(self, "_overlay_window", None)
+        is_vis = bool(getattr(self, "_overlay_visible", False))
 
+        if mode == "dot":
+            self._safe_hide_overlay_window()
+            if self._hud_bridge:
+                try:
+                    if is_vis:
+                        self._hud_bridge.set_mode("dot")
+                    elif hasattr(self._hud_bridge, "hide_dot"):
+                        self._hud_bridge.hide_dot()
+                except Exception as ex:
+                    logger.warning(f"[HUD BRIDGE DOT ERROR] {ex}")
+            self.on_hud_mode_changed("dot")
+            self._on_engine_event("hud_mode_changed", {"mode": "dot"})
+            return {"success": True, "mode": "dot"}
 
-        # Delegate resize to hud_bridge if registered, or direct to overlay_window
+        if self._hud_bridge and hasattr(self._hud_bridge, "hide_dot"):
+            try:
+                self._hud_bridge.hide_dot()
+            except Exception:
+                pass
 
+        if is_vis and overlay_win:
+            try:
+                overlay_win.show()
+            except Exception:
+                pass
+
+        # Delegate resize/positioning to hud_bridge if registered, or direct to overlay_window
         if self._hud_bridge:
 
             try:
@@ -3117,31 +3365,29 @@ class GuiBridge:
 
                 logger.warning(f"[HUD BRIDGE RESIZE ERROR] {ex}")
 
-        elif getattr(self, "_overlay_window", None):
+        elif overlay_win:
 
             try:
 
                 if mode == "mini":
 
-                    self._overlay_window.resize(210, 56)
+                    overlay_win.resize(210, 56)
 
                 elif mode == "normal":
 
-                    self._overlay_window.resize(440, 180)
+                    overlay_win.resize(440, 180)
 
                 elif mode == "max":
 
-                    self._overlay_window.resize(560, 480)
+                    overlay_win.resize(560, 480)
 
                 from ui.hud_window import apply_hud_window_shape
 
-                apply_hud_window_shape(self._overlay_window, mode)
+                apply_hud_window_shape(overlay_win, mode)
 
             except Exception as ex:
 
                 logger.warning(f"[OVERLAY RESIZE ERROR] {ex}")
-
-
 
         self.on_hud_mode_changed(mode)
 
@@ -3153,9 +3399,9 @@ class GuiBridge:
 
     def cycle_hud_mode(self) -> str:
 
-        """Cycles through HUD modes: mini -> normal -> max -> mini."""
+        """Cycles through HUD modes: dot -> mini -> normal -> max -> dot."""
 
-        order = ["mini", "normal", "max"]
+        order = ["dot", "mini", "normal", "max"]
 
         cur = getattr(self, "_current_hud_mode", "normal")
 
@@ -3169,14 +3415,7 @@ class GuiBridge:
 
             next_mode = "normal"
 
-
-
-        if not getattr(self, "_overlay_visible", False):
-
-            self.show_overlay()
-
-
-
+        self._overlay_visible = True
         self.set_mode(next_mode)
 
         return next_mode
@@ -3189,13 +3428,16 @@ class GuiBridge:
 
         clean_mode = str(mode or "normal").lower().strip()
 
-        if clean_mode not in ("mini", "normal", "max"):
+        if clean_mode not in ("dot", "mini", "normal", "max"):
 
             clean_mode = "normal"
 
         self._current_hud_mode = clean_mode
 
-        if getattr(self, "_overlay_window", None):
+        if clean_mode == "dot":
+            return
+
+        if self._is_window_ready(getattr(self, "_overlay_window", None)):
 
             with self._js_lock:
 
@@ -4569,6 +4811,18 @@ class GuiBridge:
             eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
             if eng is not None:
                 eng._reset_context_flag = True
+        return res
+
+    def set_game_hud_preference(self, game_id: str, hud_pref: str) -> dict:
+        """Sets per-game HUD tier preference ('default', 'none', 'dot', 'mini', 'normal', 'max')."""
+        res = self.game_mgr.set_hud_preference(game_id, hud_pref)
+        if res.get("success"):
+            try:
+                is_running = bool(self.game_mgr.is_game_running(game_id))
+                if is_running:
+                    self._apply_game_hud_preference(game_id=game_id, is_running=True)
+            except Exception:
+                pass
         return res
 
     def _sync_telemetry_profile_override(self, game_id: str) -> None:

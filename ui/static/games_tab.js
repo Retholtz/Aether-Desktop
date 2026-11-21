@@ -242,6 +242,25 @@ function renderActiveGameDetail() {
     const titleEl = document.getElementById('game-active-title');
     if (titleEl) titleEl.textContent = profile.display_name || activeGameId;
 
+    // Per-Game HUD Preference Selector
+    const hudPrefSelect = document.getElementById('select-game-hud-pref');
+    if (hudPrefSelect) {
+        hudPrefSelect.value = profile.hud_preference || 'default';
+        hudPrefSelect.onchange = async (e) => {
+            const newPref = e.target.value;
+            try {
+                if (window.pywebview?.api?.set_game_hud_preference) {
+                    const res = await window.pywebview.api.set_game_hud_preference(activeGameId, newPref);
+                    if (res && res.success) {
+                        profile.hud_preference = res.hud_preference || newPref;
+                    }
+                }
+            } catch (err) {
+                console.error("Failed setting game HUD preference:", err);
+            }
+        };
+    }
+
     const multiCharChk = document.getElementById('chk-game-multiple-characters');
     if (multiCharChk) {
         multiCharChk.checked = Boolean(profile.multiple_main_characters);

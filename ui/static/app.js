@@ -1530,6 +1530,26 @@ window.aetherUI = {
       if (Array.from(select.options).some(o => String(o.value) === String(curVal))) {
         select.value = String(curVal);
       }
+
+      // Also populate Dot Target Monitor dropdown (Auto + Monitor 1, 2, 3, ...)
+      const dotMonSelect = document.getElementById("dotMonitorSelect");
+      if (dotMonSelect) {
+        const curDotMon = String(this.currentConfig?.ui?.dot_monitor || dotMonSelect.value || "auto");
+        dotMonSelect.innerHTML = `
+          <option value="auto">Auto (Active Game / Primary Monitor)</option>
+        `;
+        monitors.forEach(m => {
+          if (m.id !== "auto" && m.id !== "all") {
+            const opt = document.createElement("option");
+            opt.value = String(m.id);
+            opt.innerText = `${m.name} (${m.details})`;
+            dotMonSelect.appendChild(opt);
+          }
+        });
+        if (Array.from(dotMonSelect.options).some(o => String(o.value) === curDotMon)) {
+          dotMonSelect.value = curDotMon;
+        }
+      }
     } catch (e) {
       console.error("Failed to load monitors:", e);
     }
@@ -1805,6 +1825,86 @@ window.aetherUI = {
         this.hudMode = resolvedHudMode;
         const hudModeSel = document.getElementById("defaultHudModeSelect");
         if (hudModeSel) hudModeSel.value = resolvedHudMode;
+
+        // Dot Mode Position, Monitor, Size & 5 Custom Status Colors
+        const dotPosSel = document.getElementById("dotPositionSelect");
+        if (dotPosSel) dotPosSel.value = cfg.ui.dot_position || "top_right";
+
+        const dotMonSel = document.getElementById("dotMonitorSelect");
+        if (dotMonSel) {
+          const targetMon = String(cfg.ui.dot_monitor || "auto");
+          if (Array.from(dotMonSel.options).some(o => String(o.value) === targetMon)) {
+            dotMonSel.value = targetMon;
+          }
+        }
+
+        const dotSizeVal = Number(cfg.ui.dot_size || 22);
+        const dotSlider = document.getElementById("dotSizeSlider");
+        const dotSliderDisp = document.getElementById("dotSizeVal");
+        if (dotSlider) dotSlider.value = String(dotSizeVal);
+        if (dotSliderDisp) dotSliderDisp.innerText = `${dotSizeVal} px`;
+
+        const defaultHudColors = {
+          standby: "#8e9bb0",
+          listening: "#00d2ff",
+          thinking: "#bd00ff",
+          executing: "#ff9f1c",
+          speaking: "#06d6a0"
+        };
+        const savedColors = Object.assign({}, defaultHudColors, cfg.ui.hud_colors || {});
+        const colorFieldMap = {
+          standby: "hudColorStandby",
+          listening: "hudColorListening",
+          thinking: "hudColorThinking",
+          executing: "hudColorExecuting",
+          speaking: "hudColorSpeaking"
+        };
+        Object.entries(colorFieldMap).forEach(([k, elId]) => {
+          const inp = document.getElementById(elId);
+          if (inp) inp.value = savedColors[k] || defaultHudColors[k];
+        });
+
+        if (!this._dotHudControlsWired) {
+          this._dotHudControlsWired = true;
+          const collectHudColors = () => ({
+            standby: document.getElementById("hudColorStandby")?.value || defaultHudColors.standby,
+            listening: document.getElementById("hudColorListening")?.value || defaultHudColors.listening,
+            thinking: document.getElementById("hudColorThinking")?.value || defaultHudColors.thinking,
+            executing: document.getElementById("hudColorExecuting")?.value || defaultHudColors.executing,
+            speaking: document.getElementById("hudColorSpeaking")?.value || defaultHudColors.speaking
+          });
+          let hudPreviewTimer = null;
+          const pushHudPreview = () => {
+            if (hudPreviewTimer) clearTimeout(hudPreviewTimer);
+            hudPreviewTimer = setTimeout(() => {
+              hudPreviewTimer = null;
+              if (window.pywebview?.api?.preview_hud_settings) {
+                window.pywebview.api.preview_hud_settings({
+                  dot_size: parseInt(document.getElementById("dotSizeSlider")?.value || "22", 10),
+                  dot_position: document.getElementById("dotPositionSelect")?.value || "top_right",
+                  dot_monitor: document.getElementById("dotMonitorSelect")?.value || "auto",
+                  hud_colors: collectHudColors()
+                });
+              }
+            }, 70);
+          };
+          dotSlider?.addEventListener("input", () => {
+            if (dotSliderDisp) dotSliderDisp.innerText = `${dotSlider.value} px`;
+            pushHudPreview();
+          });
+          dotPosSel?.addEventListener("change", pushHudPreview);
+          dotMonSel?.addEventListener("change", pushHudPreview);
+          Object.values(colorFieldMap).forEach(elId => {
+            document.getElementById(elId)?.addEventListener("input", pushHudPreview);
+          });
+          document.getElementById("btnResetHudColors")?.addEventListener("click", () => {
+            Object.entries(colorFieldMap).forEach(([k, elId]) => {
+              const inp = document.getElementById(elId);
+              if (inp) inp.value = defaultHudColors[k];
+            });
+            pushHudPreview();
+          });
+        }
 
         const themePref = cfg.ui.theme || "system";
         const themeSel = document.getElementById("select-ui-theme");
@@ -2126,6 +2226,16 @@ window.aetherUI = {
           floating_overlay: document.getElementById("floatingOverlayMode")?.value || this.currentConfig?.ui?.floating_overlay || "on_minimize",
           minimize_to_tray: document.getElementById("minimizeToTrayCheck") ? document.getElementById("minimizeToTrayCheck").checked : (this.currentConfig?.ui?.minimize_to_tray ?? true),
           hud_mode: document.getElementById("defaultHudModeSelect")?.value || this.hudMode || this.currentConfig?.ui?.hud_mode || "normal",
+          dot_size: document.getElementById("dotSizeSlider") ? parseInt(document.getElementById("dotSizeSlider").value, 10) : (this.currentConfig?.ui?.dot_size ?? 22),
+          dot_position: document.getElementById("dotPositionSelect")?.value || this.currentConfig?.ui?.dot_position || "top_right",
+          dot_monitor: document.getElementById("dotMonitorSelect")?.value || this.currentConfig?.ui?.dot_monitor || "auto",
+          hud_colors: {
+            standby: document.getElementById("hudColorStandby")?.value || this.currentConfig?.ui?.hud_colors?.standby || "#8e9bb0",
+            listening: document.getElementById("hudColorListening")?.value || this.currentConfig?.ui?.hud_colors?.listening || "#00d2ff",
+            thinking: document.getElementById("hudColorThinking")?.value || this.currentConfig?.ui?.hud_colors?.thinking || "#bd00ff",
+            executing: document.getElementById("hudColorExecuting")?.value || this.currentConfig?.ui?.hud_colors?.executing || "#ff9f1c",
+            speaking: document.getElementById("hudColorSpeaking")?.value || this.currentConfig?.ui?.hud_colors?.speaking || "#06d6a0"
+          },
           hud_mode_hotkey: this.hudModeKey || this.currentConfig?.ui?.hud_mode_hotkey || "Ctrl+Space",
           hud_mode_key_display: this.hudModeKeyDisplay || this.currentConfig?.ui?.hud_mode_key_display || "Ctrl+Space",
           hud_mode_vk: this.hudModeVk !== undefined ? this.hudModeVk : (this.currentConfig?.ui?.hud_mode_vk ?? 32),
@@ -2164,12 +2274,15 @@ window.aetherUI = {
         }
         await this.loadConfig();
 
-        // Dynamically reflect floating overlay setting change
+        // Dynamically reflect floating overlay & mode setting change
         const overlayMode = payload.ui.floating_overlay;
         if (overlayMode === "always") {
+          await window.pywebview.api.set_mode(payload.ui.hud_mode);
           window.pywebview.api.show_overlay();
         } else if (overlayMode === "disabled") {
           window.pywebview.api.hide_overlay();
+        } else if (payload.ui.hud_mode) {
+          window.pywebview.api.set_mode(payload.ui.hud_mode);
         }
 
         return true;

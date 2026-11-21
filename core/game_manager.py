@@ -550,6 +550,32 @@ class GameManager:
         self._save_profiles(self.data)
         return {"success": True, "game_id": game_id, "input_mode": norm}
 
+    ALLOWED_HUD_PREFERENCES = ("default", "none", "dot", "mini", "normal", "max")
+
+    def get_hud_preference(self, game_id: Optional[str] = None) -> str:
+        """Returns per-game HUD preference ('default', 'none', 'dot', 'mini', 'normal', 'max')."""
+        gid = game_id or self.data.get("active_profile")
+        if not gid:
+            return "default"
+        profile = self.get_profile(gid) or {}
+        pref = str(profile.get("hud_preference") or "default").strip().lower()
+        return pref if pref in self.ALLOWED_HUD_PREFERENCES else "default"
+
+    def set_hud_preference(self, game_id: str, hud_pref: str) -> dict:
+        """Sets per-game HUD preference ('default', 'none', 'dot', 'mini', 'normal', 'max')."""
+        norm = str(hud_pref or "default").strip().lower()
+        if norm not in self.ALLOWED_HUD_PREFERENCES:
+            return {
+                "success": False,
+                "error": f"Invalid HUD preference '{hud_pref}'. Allowed: {', '.join(self.ALLOWED_HUD_PREFERENCES)}.",
+            }
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        profile["hud_preference"] = norm
+        self._save_profiles(self.data)
+        return {"success": True, "game_id": game_id, "hud_preference": norm}
+
     def get_suppress_alerts(self, game_id: Optional[str] = None) -> List[str]:
         """Returns 3rd-party co-pilot process names that suppress duplicate Aether voice alerts."""
         gid = game_id or self.data.get("active_profile")

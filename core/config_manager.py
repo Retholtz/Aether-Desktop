@@ -178,9 +178,23 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     ui_cfg.setdefault("floating_overlay", "on_minimize")
     ui_cfg.setdefault("minimize_to_tray", True)
     ui_cfg.setdefault("theme", "system")
-    hud_mode = ui_cfg.get("hud_mode") or cfg.get("hud_mode") or "normal"
+    hud_mode = str(ui_cfg.get("hud_mode") or cfg.get("hud_mode") or "normal").lower().strip()
+    if hud_mode not in ("dot", "mini", "normal", "max"):
+        hud_mode = "normal"
     ui_cfg["hud_mode"] = hud_mode
     cfg["hud_mode"] = hud_mode
+
+    # Dot Mode & Custom HUD Status Colors
+    from ui.dot_overlay import (
+        DEFAULT_HUD_STATUS_COLORS,
+        normalize_dot_position,
+        normalize_dot_size,
+        sanitize_hud_colors,
+    )
+    ui_cfg["dot_size"] = normalize_dot_size(ui_cfg.get("dot_size", 22))
+    ui_cfg["dot_position"] = normalize_dot_position(ui_cfg.get("dot_position", "top_right"))
+    ui_cfg["dot_monitor"] = str(ui_cfg.get("dot_monitor") or "auto")
+    ui_cfg["hud_colors"] = sanitize_hud_colors(ui_cfg.get("hud_colors") or DEFAULT_HUD_STATUS_COLORS)
 
     hud_mode_hotkey = ui_cfg.get("hud_mode_hotkey") or cfg.get("hud_mode_hotkey") or "Ctrl+Space"
     ui_cfg["hud_mode_hotkey"] = hud_mode_hotkey

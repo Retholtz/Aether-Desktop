@@ -115,6 +115,7 @@ class SystemTrayManager:
             pystray.MenuItem(
                 "HUD Mode",
                 pystray.Menu(
+                    pystray.MenuItem("Dot Mode (Corner Indicator)", lambda icon, item: self.on_set_hud_mode("dot") if self.on_set_hud_mode else None),
                     pystray.MenuItem("Mini Mode (Pill)", lambda icon, item: self.on_set_hud_mode("mini") if self.on_set_hud_mode else None),
                     pystray.MenuItem("Normal Mode (Card)", lambda icon, item: self.on_set_hud_mode("normal") if self.on_set_hud_mode else None),
                     pystray.MenuItem("Max Mode (Transcript)", lambda icon, item: self.on_set_hud_mode("max") if self.on_set_hud_mode else None),
