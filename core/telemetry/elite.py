@@ -29,7 +29,7 @@ STATUS_FLAGS = {
     "lights_on": 0x00000100,
     "cargo_scoop_open": 0x00000200,
     "silent_running": 0x00000400,
-    "scooping_fuel": 0x00080000,
+    "scooping_fuel": 0x00000800,
     "srv_handbrake": 0x00001000,
     "srv_turret": 0x00002000,
     "srv_under_ship": 0x00004000,
@@ -48,6 +48,26 @@ STATUS_FLAGS = {
     "analysis_mode": 0x08000000,
     "night_vision": 0x10000000,
     "fsd_jump": 0x40000000,
+}
+
+STATUS_FLAGS2 = {
+    "on_foot": 0x00000001,
+    "in_taxi": 0x00000002,
+    "in_multicrew": 0x00000004,
+    "on_foot_in_station": 0x00000008,
+    "on_foot_on_planet": 0x00000010,
+    "aim_down_sight": 0x00000020,
+    "low_oxygen": 0x00000040,
+    "low_health": 0x00000080,
+    "cold": 0x00000100,
+    "hot": 0x00000200,
+    "very_cold": 0x00000400,
+    "very_hot": 0x00000800,
+    "glide_mode": 0x00001000,
+    "on_foot_in_hangar": 0x00002000,
+    "on_foot_social_space": 0x00004000,
+    "on_foot_exterior": 0x00008000,
+    "breathable_atmosphere": 0x00010000,
 }
 
 
@@ -206,15 +226,22 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
                     return
                 data = json.loads(content)
 
-            raw_flags = data.get("Flags", 0)
+            raw_flags = int(data.get("Flags", 0))
+            raw_flags2 = int(data.get("Flags2", 0)) if data.get("Flags2") is not None else 0
             with self._lock:
                 for flag_name, bitmask in STATUS_FLAGS.items():
                     self.flags[flag_name] = bool(raw_flags & bitmask)
+                for flag_name, bitmask in STATUS_FLAGS2.items():
+                    self.flags[flag_name] = bool(raw_flags2 & bitmask)
 
                 # Sync flags into state dict
                 self.state["docked"] = self.flags.get("docked", False)
                 self.state["supercruise"] = self.flags.get("supercruise", False)
                 self.state["shields_up"] = self.flags.get("shields_up", True)
+                self.state["on_foot"] = self.flags.get("on_foot", False)
+
+                if isinstance(data.get("Fuel"), dict) and "FuelMain" in data["Fuel"]:
+                    self.state["fuel_main"] = data["Fuel"]["FuelMain"]
 
                 # Pips [sys, eng, wep]
                 if "Pips" in data and isinstance(data["Pips"], list) and len(data["Pips"]) == 3:
@@ -224,8 +251,48 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
                 self.state["gui_focus"] = data.get("GuiFocus", 0)
                 self.state["active"] = True
                 self.state["last_updated"] = time.time()
+
+            # Lightweight poll of sibling NavRoute.json & Cargo.json for instant route/hold context
+            self._poll_companion_files()
         except Exception:
             pass
+
+    def _poll_companion_files(self) -> None:
+        """Reads NavRoute.json and Cargo.json when present in the journal directory."""
+        nav_path = os.path.join(self.journal_dir, "NavRoute.json")
+        if os.path.isfile(nav_path):
+            try:
+                with open(nav_path, "r", encoding="utf-8", errors="replace") as f:
+                    nav_data = json.loads(f.read().strip() or "{}")
+                route = nav_data.get("Route") or []
+                if isinstance(route, list) and route:
+                    dest = route[-1].get("StarSystem") if isinstance(route[-1], dict) else None
+                    with self._lock:
+                        self.state["route_destination"] = dest
+                        self.state["route_jumps"] = max(0, len(route) - 1)
+            except Exception:
+                pass
+
+        cargo_path = os.path.join(self.journal_dir, "Cargo.json")
+        if os.path.isfile(cargo_path):
+            try:
+                with open(cargo_path, "r", encoding="utf-8", errors="replace") as f:
+                    cargo_data = json.loads(f.read().strip() or "{}")
+                inv = cargo_data.get("Inventory") or []
+                with self._lock:
+                    if "Count" in cargo_data:
+                        self.state["cargo_count"] = int(cargo_data["Count"])
+                    if isinstance(inv, list):
+                        self.state["cargo_items"] = [
+                            {
+                                "name": item.get("Name_Localised") or item.get("Name"),
+                                "count": item.get("Count", 0),
+                            }
+                            for item in inv[:15]
+                            if isinstance(item, dict)
+                        ]
+            except Exception:
+                pass
 
     def _rehydrate_initial_state(self) -> None:
         """Fast-forwards through recent journal events to seed system and ship info."""
@@ -343,11 +410,15 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
             hardpoints_str = "DEPLOYED" if fl.get("hardpoints_deployed") else "RETRACTED"
             scoop_str = "OPEN" if fl.get("cargo_scoop_open") else "CLOSED"
 
+            route_line = ""
+            if st.get("route_destination"):
+                route_line = f"\n- Plotted Route: {st['route_destination']} ({st.get('route_jumps', 0)} jumps)"
+
             return (
                 f"[LIVE GAME TELEMETRY: Elite Dangerous]\n"
                 f"- Location: {st['star_system']} (Near: {st['body']}) | Status: {status_desc}\n"
                 f"- Ship: {st['ship_name']} ({st['ship_type']}) | Hull: {int(st['hull_health']*100)}% | Shields: {'ONLINE' if st['shields_up'] else 'OFFLINE'}\n"
                 f"- Ship State: Gear: {gear_str} | Hardpoints: {hardpoints_str} | Cargo Scoop: {scoop_str}\n"
-                f"- Cargo Hold: {st['cargo_count']} items | Pips (Sys/Eng/Wep): {st['pips']}\n"
+                f"- Cargo Hold: {st['cargo_count']} items | Pips (Sys/Eng/Wep): {st['pips']}{route_line}\n"
                 f"- Last In-Game Event: {st['last_event']}"
             )

@@ -20,6 +20,13 @@ class GameTelemetryProfile(BaseModel):
     provider_type: str = "vision_hud"  # "native_file" or "vision_hud"
     poll_interval_sec: float = 0.5
     native_file_path: Optional[str] = None
+    companion_files: List[str] = Field(default_factory=list)
+    bitmask_mappings: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    state_rules: List[Dict[str, Any]] = Field(default_factory=list)
+    vital_mappings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    resource_mappings: Dict[str, str] = Field(default_factory=dict)
+    alert_rules: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    suppress_alerts_when_running: List[str] = Field(default_factory=list)
     hud_bars: List[HudBarRegion] = Field(default_factory=list)
 
 

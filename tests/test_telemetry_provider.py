@@ -19,8 +19,8 @@ class TestAgnosticTelemetryProvider(unittest.TestCase):
         """Verify native Status.json bitmasks decode shields_offline, overheating, and in_combat."""
         with tempfile.TemporaryDirectory() as tmpdir:
             status_file = Path(tmpdir) / "Status.json"
-            # Flags: Overheating (1<<20) + InDanger (1<<30), ShieldsUp (1<<16) is 0
-            flags_val = (1 << 20) | (1 << 30)
+            # Real Frontier Status.json Flags: Overheating (1<<20) + IsInDanger (1<<22), ShieldsUp (1<<3) is 0
+            flags_val = (1 << 20) | (1 << 22)
             status_file.write_text(json.dumps({
                 "Flags": flags_val,
                 "Fuel": {"FuelMain": 14.5},

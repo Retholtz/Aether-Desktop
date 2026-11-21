@@ -38,33 +38,164 @@ class UniversalGameNavigator:
         client=None,
         model_endpoint: str = "gemini-4-hydrogen",
         target_process: str = "",
-        map_controls: Optional[Dict[str, Any]] = None
+        map_controls: Optional[Dict[str, Any]] = None,
+        game_name: str = "",
     ):
         from core.model_discovery import resolve_model_profile
         self.client = client
         self.model_endpoint = resolve_model_profile(model_endpoint, default_model="gemini-4-hydrogen")[0]
         self.target_process = target_process
         self.map_controls = map_controls or {}
+        self.game_name = (game_name or "").strip()
+        self._last_capture_origin: Tuple[int, int] = (0, 0)
 
-    def capture_viewport(self) -> tuple[bytes, int, int]:
-        """Captures the primary monitor and returns JPEG bytes and resolution (width, height)."""
+    def _resolve_target_monitor(self, sct) -> Dict[str, int]:
+        """
+        Resolves the monitor dictionary containing the active game window (if `target_process`
+        is open on a secondary monitor), falling back cleanly to the primary monitor.
+        """
+        monitors = getattr(sct, "monitors", None) or []
+        if len(monitors) <= 1:
+            return monitors[0] if monitors else {"left": 0, "top": 0, "width": 1920, "height": 1080}
+
+        default_mon = monitors[1]
+        proc = (self.target_process or "").strip()
+        if not proc:
+            return default_mon
+
+        try:
+            import win32gui
+            from tools.os_controls import find_window_hwnd
+
+            hwnd = find_window_hwnd(proc)
+            if hwnd and win32gui.IsWindow(hwnd):
+                l, t, r, b = win32gui.GetWindowRect(hwnd)
+                if r > l and b > t:
+                    cx = (l + r) // 2
+                    cy = (t + b) // 2
+                    for mon in monitors[1:]:
+                        ml, mt = mon["left"], mon["top"]
+                        if ml <= cx < ml + mon["width"] and mt <= cy < mt + mon["height"]:
+                            return mon
+        except Exception:
+            pass
+        return default_mon
+
+    def _norm_to_screen_px(self, x_norm: float, y_norm: float, width: int, height: int) -> Tuple[int, int]:
+        """Converts normalized 0-1000 viewport coordinates to absolute desktop physical coordinates."""
+        ox, oy = self._last_capture_origin
+        px = ox + int((float(x_norm) / 1000.0) * width)
+        py = oy + int((float(y_norm) / 1000.0) * height)
+        return px, py
+
+    def _build_low_latency_json_config(self):
+        """Returns a low-latency JSON GenerateContentConfig (temperature=0.0, thinking_level='low')."""
+        try:
+            from google.genai import types
+
+            cfg_kwargs: Dict[str, Any] = {
+                "response_mime_type": "application/json",
+                "temperature": 0.0,
+            }
+            if hasattr(types, "ThinkingConfig"):
+                try:
+                    cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+                except Exception:
+                    pass
+            return types.GenerateContentConfig(**cfg_kwargs)
+        except Exception:
+            return {"response_mime_type": "application/json", "temperature": 0.0}
+
+    def _call_vision_json(self, img_bytes: bytes, prompt: str) -> Dict[str, Any]:
+        """Executes a low-latency structured-JSON multimodal call and parses the response."""
+        try:
+            from google.genai import types
+            part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+            contents = [part, prompt]
+        except Exception:
+            contents = [
+                {
+                    "parts": [
+                        {"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}},
+                        {"text": prompt},
+                    ]
+                }
+            ]
+
+        res = self.client.models.generate_content(
+            model=self.model_endpoint,
+            contents=contents,
+            config=self._build_low_latency_json_config(),
+        )
+        raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+            raw_text = re.sub(r"\s*```$", "", raw_text)
+        return json.loads(raw_text) if raw_text else {}
+
+    def _fetch_landmark_web_context(self, landmark_description: str) -> str:
+        """
+        Optionally fetches a concise 1-2 sentence regional bearing hint via Google Search
+        so fog-of-war / unmarked landmarks (e.g. 'Legendary Bear') can be dead-reckoned accurately.
+        """
+        if not self.client or not self.game_name or not landmark_description:
+            return ""
+        try:
+            from google.genai import types
+
+            cfg_kwargs: Dict[str, Any] = {
+                "tools": [types.Tool(google_search=types.GoogleSearch())],
+                "temperature": 0.0,
+            }
+            if hasattr(types, "ThinkingConfig"):
+                try:
+                    cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+                except Exception:
+                    pass
+            prompt = (
+                f'In the video game "{self.game_name}", where on the world map is "{landmark_description}" located? '
+                f"Reply in 1-2 short sentences naming the region/province, nearby major landmarks, and cardinal direction."
+            )
+            res = self.client.models.generate_content(
+                model=self.model_endpoint,
+                contents=prompt,
+                config=types.GenerateContentConfig(**cfg_kwargs),
+            )
+            return (res.text or "").strip() if res and hasattr(res, "text") else ""
+        except Exception:
+            return ""
+
+    def capture_viewport(self, max_dim: int = 1280) -> tuple[bytes, int, int]:
+        """
+        Captures the monitor containing the active game window (multi-monitor aware),
+        downscales the JPEG to `<= max_dim` for low-latency vision grounding, and returns
+        `(jpeg_bytes, viewport_width, viewport_height)` while recording `_last_capture_origin`.
+        """
         ensure_thread_desktop()
         try:
             with mss.mss() as sct:
-                monitor = sct.monitors[1]
+                monitor = self._resolve_target_monitor(sct)
                 shot = sct.grab(monitor)
                 img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                orig_w, orig_h = monitor["width"], monitor["height"]
+                self._last_capture_origin = (int(monitor.get("left", 0)), int(monitor.get("top", 0)))
+                if max_dim and max(img.size) > max_dim:
+                    img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
                 buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=85)
-                return buf.getvalue(), monitor["width"], monitor["height"]
+                img.save(buf, format="JPEG", quality=80)
+                return buf.getvalue(), orig_w, orig_h
         except Exception:
             try:
                 img = ImageGrab.grab()
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=85)
                 w, h = img.size
+                self._last_capture_origin = (0, 0)
+                if max_dim and max(img.size) > max_dim:
+                    img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=80)
                 return buf.getvalue(), w, h
             except Exception:
+                self._last_capture_origin = (0, 0)
                 return b"", 1920, 1080
 
     def discover_hud_controls(self, img_bytes: bytes) -> Dict[str, Any]:
@@ -94,30 +225,7 @@ class UniversalGameNavigator:
             return {"waypoint_button": "right", "pan_button": "right", "center_player_key": None, "zoom_method": "mouse_wheel"}
 
         try:
-            try:
-                from google.genai import types
-                part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                contents = [part, prompt]
-            except Exception:
-                contents = [
-                    {
-                        "parts": [
-                            {"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}},
-                            {"text": prompt}
-                        ]
-                    }
-                ]
-
-            res = self.client.models.generate_content(
-                model=self.model_endpoint,
-                contents=contents,
-                config={"response_mime_type": "application/json"}
-            )
-            raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
-            if raw_text.startswith("```"):
-                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                raw_text = re.sub(r"\s*```$", "", raw_text)
-            parsed = json.loads(raw_text)
+            parsed = self._call_vision_json(img_bytes, prompt)
             if "pan_button" not in parsed or not parsed["pan_button"]:
                 parsed["pan_button"] = "right"
             return parsed
@@ -166,30 +274,7 @@ class UniversalGameNavigator:
             return {"action": "VERIFIED_DONE"}
 
         try:
-            try:
-                from google.genai import types
-                part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                contents = [part, prompt]
-            except Exception:
-                contents = [
-                    {
-                        "parts": [
-                            {"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}},
-                            {"text": prompt}
-                        ]
-                    }
-                ]
-
-            res = self.client.models.generate_content(
-                model=self.model_endpoint,
-                contents=contents,
-                config={"response_mime_type": "application/json"}
-            )
-            raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
-            if raw_text.startswith("```"):
-                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                raw_text = re.sub(r"\s*```$", "", raw_text)
-            return json.loads(raw_text)
+            return self._call_vision_json(img_bytes, prompt)
         except Exception as e:
             print(f"[ERROR] [NAV_EVAL] Vision evaluation failed: {e}")
             return {"action": "VERIFIED_DONE"}
@@ -205,6 +290,11 @@ class UniversalGameNavigator:
         Learns UI controls on the fly and adjusts until the goal is verified.
         """
         print(f"[INFO] [NAV_LOOP] Starting autonomous vision navigation for: '{target_description}'")
+
+        # 0. Enrich unmarked landmarks with a quick regional web hint if none provided
+        effective_web_context = (web_context or "").strip()
+        if not effective_web_context and self.game_name:
+            effective_web_context = self._fetch_landmark_web_context(target_description)
 
         # 1. Capture initial frame and discover HUD controls
         frame_bytes, width, height = self.capture_viewport()
@@ -238,7 +328,7 @@ class UniversalGameNavigator:
         # 2. Iterative Exploration Loop
         for iteration in range(1, max_iterations + 1):
             frame_bytes, width, height = self.capture_viewport()
-            decision = self.evaluate_viewport_step(frame_bytes, target_description, web_context)
+            decision = self.evaluate_viewport_step(frame_bytes, target_description, effective_web_context)
             action = decision.get("action")
             print(f"[LOOP #{iteration}] Assessment: {decision.get('analysis')} | Action: {action}")
 
@@ -292,8 +382,7 @@ class UniversalGameNavigator:
                 pt = decision.get("point")
                 if pt:
                     y_norm, x_norm = pt
-                    target_px = int((x_norm / 1000.0) * width)
-                    target_py = int((y_norm / 1000.0) * height)
+                    target_px, target_py = self._norm_to_screen_px(x_norm, y_norm, width, height)
                     move_cursor_to_point(target_px, target_py, screen_width=width, screen_height=height)
                     time.sleep(0.1)
                     click_mouse(waypoint_btn)
@@ -342,25 +431,7 @@ class UniversalGameNavigator:
         }}
         """
         try:
-            try:
-                from google.genai import types
-                part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                contents = [part, prompt]
-            except Exception:
-                contents = [
-                    {"parts": [{"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}}, {"text": prompt}]}
-                ]
-
-            res = self.client.models.generate_content(
-                model=self.model_endpoint,
-                contents=contents,
-                config={"response_mime_type": "application/json"}
-            )
-            raw = res.text.strip() if res and hasattr(res, "text") and res.text else ""
-            if raw.startswith("```"):
-                raw = re.sub(r"^```(?:json)?\s*", "", raw)
-                raw = re.sub(r"\s*```$", "", raw)
-            data = json.loads(raw) if raw else {}
+            data = self._call_vision_json(img_bytes, prompt)
             return {
                 "status": "success",
                 "found": data.get("found_on_screen", False),
@@ -438,13 +509,15 @@ class GameNavigator(UniversalGameNavigator):
         client=None,
         model_endpoint: str = "gemini-4-hydrogen",
         target_process: str = "",
-        map_controls: Optional[Dict[str, Any]] = None
+        map_controls: Optional[Dict[str, Any]] = None,
+        game_name: str = "",
     ):
         super().__init__(
             client=client,
             model_endpoint=model_endpoint,
             target_process=target_process,
-            map_controls=map_controls
+            map_controls=map_controls,
+            game_name=game_name,
         )
 
     def capture_screen(self) -> Tuple[bytes, int, int]:
@@ -499,15 +572,16 @@ class GameNavigator(UniversalGameNavigator):
             drag_mouse_relative(dx, dy, button=actual_button, steps=14)
             time.sleep(0.3)
 
-    def locate_landmark_point(self, landmark_description: str) -> Optional[Tuple[int, int]]:
+    def locate_landmark_point(self, landmark_description: str, web_context: str = "") -> Optional[Tuple[int, int]]:
         """Uses visual grounding or regional dead-reckoning to find landmark coordinates."""
         if not self.client:
             print("[WARN] [GAME_NAV] No Gemini client provided for visual landmark grounding.")
             return None
 
         img_bytes, width, height = self.capture_screen()
+        intel_block = f"\nRegional Intel / Known Location Hint:\n{web_context}\n" if web_context else ""
         prompt = f"""
-Analyze this in-game world map screenshot. Locate the visual landmark, territory, or icon corresponding to: "{landmark_description}".
+Analyze this in-game world map screenshot. Locate the visual landmark, territory, or icon corresponding to: "{landmark_description}".{intel_block}
 If the exact landmark or vendor icon is locked behind Fog-of-War or uncharted terrain:
 - Identify the parent territory label (e.g. city or region name) or nearest visible boundary.
 - Estimate the projected point inside that territory (dead-reckoning).
@@ -518,37 +592,10 @@ Values must be normalized between 0 and 1000.
 If neither the landmark nor its containing region/anchor can be found, return {{"found": false}}.
 """
         try:
-            try:
-                from google.genai import types
-                part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                contents = [part, prompt]
-            except Exception:
-                contents = [
-                    {
-                        "parts": [
-                            {"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}},
-                            {"text": prompt}
-                        ]
-                    }
-                ]
-
-            res = self.client.models.generate_content(
-                model=self.model_endpoint,
-                contents=contents,
-                config={"response_mime_type": "application/json"}
-            )
-
-            raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
-            if raw_text.startswith("```"):
-                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                raw_text = re.sub(r"\s*```$", "", raw_text)
-
-            data = json.loads(raw_text) if raw_text else {}
+            data = self._call_vision_json(img_bytes, prompt)
             if data.get("found") and "point" in data and len(data["point"]) == 2:
                 y_norm, x_norm = data["point"]
-                px = int((x_norm / 1000.0) * width)
-                py = int((y_norm / 1000.0) * height)
-                return px, py
+                return self._norm_to_screen_px(x_norm, y_norm, width, height)
         except Exception as e:
             print(f"[ERROR] [GAME_NAV] Vision grounding failed: {e}")
         return None
@@ -576,27 +623,7 @@ If neither the landmark nor its containing region/anchor can be found, return {{
         - If a pin was placed far from the landmark, set "marker_visible": true, "accurate": false, "correction_needed": true, and provide the correct point.
         """
         try:
-            try:
-                from google.genai import types
-                part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                contents = [part, prompt]
-            except Exception:
-                contents = [
-                    {"parts": [{"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}}, {"text": prompt}]}
-                ]
-
-            res = self.client.models.generate_content(
-                model=self.model_endpoint,
-                contents=contents,
-                config={"response_mime_type": "application/json"}
-            )
-            raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
-            if raw_text.startswith("```"):
-                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-                raw_text = re.sub(r"\s*```$", "", raw_text)
-
-            data = json.loads(raw_text) if raw_text else {}
-            return data
+            return self._call_vision_json(img_bytes, prompt)
         except Exception as e:
             print(f"[WARN] [GAME_NAV] Marker verification parse error: {e}")
             return {"accurate": False, "marker_visible": False, "correction_needed": False, "correct_point": None}
@@ -614,24 +641,7 @@ If neither the landmark nor its containing region/anchor can be found, return {{
                 "territory map, or navigation map interface? "
                 "Return strictly JSON: {\"is_map\": true} or {\"is_map\": false}"
             )
-            try:
-                from google.genai import types
-                part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-                contents = [part, prompt]
-            except Exception:
-                contents = [
-                    {"parts": [{"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}}, {"text": prompt}]}
-                ]
-            res = self.client.models.generate_content(
-                model=self.model_endpoint,
-                contents=contents,
-                config={"response_mime_type": "application/json"}
-            )
-            raw = res.text.strip() if res and hasattr(res, "text") and res.text else ""
-            if raw.startswith("```"):
-                raw = re.sub(r"^```(?:json)?\s*", "", raw)
-                raw = re.sub(r"\s*```$", "", raw)
-            data = json.loads(raw) if raw else {}
+            data = self._call_vision_json(img_bytes, prompt)
             if "is_map" in data:
                 return bool(data["is_map"])
             return None
@@ -721,12 +731,21 @@ If neither the landmark nor its containing region/anchor can be found, return {{
         if general_direction:
             self.pan_map(general_direction, distance=400, button=pan_button)
 
-        # 3. Locate landmark on viewport
+        # 3. Locate landmark on viewport (enrich with regional web hint on miss for fog-of-war dead-reckoning)
         coords = self.locate_landmark_point(landmark_description)
+        web_hint = ""
+        if not coords and self.game_name:
+            web_hint = self._fetch_landmark_web_context(landmark_description)
+            if web_hint:
+                coords = self.locate_landmark_point(landmark_description, web_context=web_hint)
         if not coords and not general_direction:
             for test_dir in ["north", "south", "east", "west"]:
                 self.pan_map(test_dir, distance=300, button=pan_button)
-                coords = self.locate_landmark_point(landmark_description)
+                coords = (
+                    self.locate_landmark_point(landmark_description, web_context=web_hint)
+                    if web_hint
+                    else self.locate_landmark_point(landmark_description)
+                )
                 if coords:
                     break
 
@@ -790,8 +809,7 @@ If neither the landmark nor its containing region/anchor can be found, return {{
             if isinstance(correct_pt, (list, tuple)) and len(correct_pt) == 2:
                 _, width, height = self.capture_screen()
                 c_y_norm, c_x_norm = correct_pt
-                corr_px = int((c_x_norm / 1000.0) * width)
-                corr_py = int((c_y_norm / 1000.0) * height)
+                corr_px, corr_py = self._norm_to_screen_px(c_x_norm, c_y_norm, width, height)
 
                 move_mouse_absolute(corr_px, corr_py)
                 time.sleep(0.15)

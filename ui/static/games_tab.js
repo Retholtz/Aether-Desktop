@@ -36,7 +36,7 @@ function getCurrentlySelectedGameId() {
         const keys = Object.keys(currentGamesData.profiles);
         if (keys.length > 0) return keys[0];
     }
-    return "crimson_desert";
+    return null;
 }
 window.getCurrentlySelectedGameId = getCurrentlySelectedGameId;
 
@@ -914,7 +914,7 @@ function startTelemetryPolling() {
         if (activeGameId && window.pywebview && window.pywebview.api) {
             try {
                 const telemetry = await window.pywebview.api.get_game_telemetry();
-                if (activeGameId === 'elite_dangerous') {
+                if (telemetry && telemetry.active) {
                     updateTelemetryHUD(telemetry);
                 }
                 if (telemetry) {
@@ -942,7 +942,13 @@ function startTelemetryPolling() {
 function updateTelemetryHUD(data) {
     const banner = document.getElementById('game-process-indicator');
     if (banner && data && data.active) {
-        banner.textContent = `${data.star_system} | ${data.docked ? 'Docked (' + data.station + ')' : (data.supercruise ? 'Supercruise' : 'Normal Space')}`;
+        if (data.status_summary) {
+            banner.textContent = data.status_summary;
+        } else if (data.star_system) {
+            banner.textContent = `${data.star_system} | ${data.docked ? 'Docked (' + data.station + ')' : (data.supercruise ? 'Supercruise' : 'Normal Space')}`;
+        } else {
+            banner.textContent = 'Telemetry Active';
+        }
         banner.className = 'badge-status badge-online';
     }
 }

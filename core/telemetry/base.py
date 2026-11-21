@@ -57,6 +57,25 @@ class BaseTelemetryAdapter(ABC):
         """Returns a formatted telemetry summary string for LLM system context."""
         pass
 
+    def get_status_summary(self) -> str:
+        """
+        Returns a concise single-line HUD status badge string for any active telemetry
+        adapter (used generically by the Games tab UI without game-specific branching).
+        """
+        st = self.get_state()
+        if not st.get("active"):
+            return ""
+        loc = st.get("star_system") or st.get("zone") or st.get("region") or ""
+        if st.get("docked") and st.get("station"):
+            phase = f"Docked ({st['station']})"
+        elif st.get("supercruise"):
+            phase = "Supercruise"
+        elif st.get("status_text"):
+            phase = str(st["status_text"])
+        else:
+            phase = "Active"
+        return f"{loc} | {phase}" if loc else phase
+
     def get_location(self) -> Dict[str, Any]:
         """
         Returns normalized location dict:

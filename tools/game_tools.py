@@ -48,17 +48,19 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         copilot_entries = game_manager.get_copilot_log(active_id) if active_id else []
         recent_obs = copilot_entries[-5:] if copilot_entries else []
 
-        if active_id == "elite_dangerous" and game_manager.ed_watcher:
-            res = dict(game_manager.ed_watcher.state)
+        adapter = getattr(game_manager, "active_telemetry_adapter", None) or getattr(game_manager, "ed_watcher", None)
+        profile = game_manager.get_profile(active_id) if active_id else None
+        if adapter and (adapter.is_active() or (hasattr(adapter, "state") and adapter.state.get("active"))):
+            res = dict(adapter.get_state() if hasattr(adapter, "get_state") else adapter.state)
             res["active_profile"] = active_id
             res["game_mode_enabled"] = enabled
             res["is_game_mode_active"] = is_active
             res["is_game_running"] = is_running
-            prof = game_manager.get_profile(active_id) if active_id else None
-            res["scratchpad"] = prof.get("scratchpad_raw", "") if prof else ""
+            res["scratchpad"] = profile.get("scratchpad_raw", "") if profile else ""
             res["recent_copilot_observations"] = recent_obs
+            if hasattr(adapter, "get_status_summary"):
+                res["status_summary"] = adapter.get_status_summary()
             return res
-        profile = game_manager.get_profile(active_id) if active_id else None
         return {
             "game": profile.get("display_name") if profile else "None",
             "active_profile": active_id,
@@ -441,14 +443,16 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         model_endpoint = _resolve_tier2_game_model(engine)
         active_id = ""
         target_process = ""
+        game_name = ""
         map_controls = None
         if game_manager:
             active_id = game_manager.data.get("active_profile", "")
             prof = game_manager.get_profile(active_id) if active_id else None
             if prof:
                 target_process = prof.get("process_name") or prof.get("display_name") or ""
+                game_name = prof.get("display_name") or active_id
                 map_controls = prof.get("map_controls")
-        nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
+        nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls, game_name=game_name)
         if active_id and game_manager:
             nav_mode = game_manager.get_navigation_mode(active_id)
             if nav_mode == "co_pilot_spotter":
@@ -646,6 +650,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         )
         model_endpoint = _resolve_tier2_game_model(engine)
         target_process = ""
+        game_name = ""
         map_controls = None
         nav_mode = "controller"
         if game_manager:
@@ -653,9 +658,10 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             prof = game_manager.get_profile(active_id) if active_id else None
             if prof:
                 target_process = prof.get("process_name") or prof.get("display_name") or ""
+                game_name = prof.get("display_name") or active_id
                 map_controls = prof.get("map_controls")
             nav_mode = game_manager.get_navigation_mode(active_id)
-        nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
+        nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls, game_name=game_name)
         if nav_mode == "co_pilot_spotter":
             return nav.spot_and_guide_map_location(landmark_description=target_description)
         elif nav_mode == "search_bar":
