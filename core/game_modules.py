@@ -23,9 +23,17 @@ def _normalize_id(val: str) -> str:
 
 
 def get_game_modules_dirs() -> List[str]:
-    """Returns candidate module directories (bundled read-only + user writable)."""
+    """
+    Returns candidate module directories in load order:
+    1. Bundled read-only defaults (`assets/game_modules`, tracked in Git & PyInstaller)
+    2. User-writable / community-imported overrides (`data/game_modules`)
+    """
     dirs: List[str] = []
-    for candidate in (resource_path("data", "game_modules"), app_path("data", "game_modules")):
+    for candidate in (
+        resource_path("assets", "game_modules"),
+        resource_path("data", "game_modules"),
+        app_path("data", "game_modules"),
+    ):
         norm = os.path.normpath(candidate)
         if norm not in dirs and os.path.isdir(norm):
             dirs.append(norm)

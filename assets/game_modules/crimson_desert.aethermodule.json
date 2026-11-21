@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "module_id": "crimson_desert",
+  "display_name": "Crimson Desert",
+  "game_ids": [
+    "crimson_desert"
+  ],
+  "executables": [
+    "CrimsonDesert.exe"
+  ],
+  "steam_appid": 3321460,
+  "universe_name": "Pywel",
+  "input_mode": "autonomous",
+  "suppress_alerts_when_running": [],
+  "telemetry": {
+    "adapter": "none",
+    "provider_type": "vision_hud",
+    "poll_interval_sec": 0.4,
+    "hud_bars": [
+      {
+        "name": "health",
+        "bbox_pct": [0.04, 0.05, 0.18, 0.015],
+        "color_profile": "red"
+      },
+      {
+        "name": "stamina",
+        "bbox_pct": [0.04, 0.072, 0.15, 0.012],
+        "color_profile": "green"
+      },
+      {
+        "name": "spirit",
+        "bbox_pct": [0.04, 0.092, 0.14, 0.012],
+        "color_profile": "yellow"
+      }
+    ],
+    "alert_rules": {
+      "spirit_pct": {
+        "key": "spirit_low",
+        "warn_below": 0.08,
+        "min_visible": 0.03,
+        "reset_above": 0.35,
+        "priority": 55,
+        "critical": false,
+        "prompt": "Co-pilot alert: Spirit energy depleted. Mention briefly in 6 words."
+      }
+    }
+  }
+}

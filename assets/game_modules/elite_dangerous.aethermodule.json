@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "module_id": "elite_dangerous",
+  "display_name": "Elite Dangerous",
+  "game_ids": [
+    "elite_dangerous",
+    "elite_dangerous_64"
+  ],
+  "executables": [
+    "EliteDangerous64.exe",
+    "EDLaunch.exe"
+  ],
+  "universe_name": "Milky Way",
+  "input_mode": "autonomous",
+  "suppress_alerts_when_running": [
+    "EDCoPilot.exe"
+  ],
+  "companion_resources": {
+    "market": {
+      "name": "Inara",
+      "domain": "inara.cz"
+    },
+    "navigation": {
+      "name": "Spansh",
+      "domain": "spansh.co.uk"
+    },
+    "outfitting": {
+      "name": "Inara Outfitting",
+      "domain": "inara.cz"
+    }
+  },
+  "telemetry": {
+    "adapter": "elite_journal",
+    "provider_type": "native_file",
+    "poll_interval_sec": 0.5,
+    "dir": "%USERPROFILE%\\Saved Games\\Frontier Developments\\Elite Dangerous",
+    "native_file_path": "%USERPROFILE%\\Saved Games\\Frontier Developments\\Elite Dangerous\\Status.json",
+    "companion_files": [
+      "NavRoute.json",
+      "Cargo.json",
+      "Market.json"
+    ],
+    "bitmask_mappings": {
+      "Flags": {
+        "docked": 1,
+        "landed": 2,
+        "landing_gear_down": 4,
+        "shields_up": 8,
+        "supercruise": 16,
+        "flight_assist_off": 32,
+        "hardpoints_deployed": 64,
+        "in_wing": 128,
+        "lights_on": 256,
+        "cargo_scoop_open": 512,
+        "silent_running": 1024,
+        "scooping_fuel": 2048,
+        "srv_handbrake": 4096,
+        "srv_turret": 8192,
+        "srv_under_ship": 16384,
+        "srv_drive_assist": 32768,
+        "fsd_mass_locked": 65536,
+        "fsd_charging": 131072,
+        "fsd_cooldown": 262144,
+        "low_fuel": 524288,
+        "overheating": 1048576,
+        "has_lat_long": 2097152,
+        "is_in_danger": 4194304,
+        "being_interdicted": 8388608,
+        "in_main_ship": 16777216,
+        "in_fighter": 33554432,
+        "in_srv": 67108864,
+        "analysis_mode": 134217728,
+        "night_vision": 268435456,
+        "fsd_jump": 1073741824
+      },
+      "Flags2": {
+        "on_foot": 1,
+        "in_taxi": 2,
+        "in_multicrew": 4,
+        "on_foot_in_station": 8,
+        "on_foot_on_planet": 16,
+        "aim_down_sight": 32,
+        "low_oxygen": 64,
+        "low_health": 128,
+        "cold": 256,
+        "hot": 512,
+        "very_cold": 1024,
+        "very_hot": 2048,
+        "glide_mode": 4096,
+        "on_foot_in_hangar": 8192,
+        "on_foot_social_space": 16384,
+        "on_foot_exterior": 32768,
+        "breathable_atmosphere": 65536
+      }
+    },
+    "state_rules": [
+      { "flag": "shields_up", "when": false, "state": "shields_offline", "require_flag": "in_main_ship", "default_if_missing": true },
+      { "flag": "overheating", "when": true, "state": "overheating" },
+      { "flag": "low_fuel", "when": true, "state": "low_fuel" },
+      { "flag": "fsd_mass_locked", "when": true, "state": "mass_locked" },
+      { "flag": "is_in_danger", "when": true, "state": "in_combat" },
+      { "flag": "being_interdicted", "when": true, "state": "being_interdicted" },
+      { "flag": "low_oxygen", "when": true, "state": "low_oxygen" },
+      { "flag": "low_health", "when": true, "state": "on_foot_low_health" }
+    ],
+    "vital_mappings": {
+      "shield_pct": { "from_flag": "shields_up" },
+      "hull_pct": { "path": "HullHealth", "scale_if_gt_1": 100.0 },
+      "health_pct": { "path": "Health", "scale_if_gt_1": 100.0 },
+      "oxygen_pct": { "path": "Oxygen", "scale_if_gt_1": 100.0 }
+    },
+    "resource_mappings": {
+      "fuel_tons": "Fuel.FuelMain",
+      "fuel_reservoir": "Fuel.FuelReservoir",
+      "pips": "Pips",
+      "gui_focus": "GuiFocus",
+      "balance_credits": "Balance",
+      "legal_state": "LegalState"
+    },
+    "alert_rules": {
+      "state_shields_offline": {
+        "priority": 95,
+        "critical": true,
+        "prompt": "Co-pilot alert: Shields just went offline! Warn the player immediately in 6 words."
+      },
+      "state_overheating": {
+        "priority": 85,
+        "critical": true,
+        "prompt": "Co-pilot alert: Thermal overload / overheating! Warn the player in 6 words."
+      },
+      "state_being_interdicted": {
+        "priority": 96,
+        "critical": true,
+        "prompt": "Co-pilot alert: Interdiction detected! Warn the player immediately in 6 words."
+      },
+      "state_low_oxygen": {
+        "priority": 97,
+        "critical": true,
+        "prompt": "Co-pilot alert: Suit oxygen critical! Warn the player in 6 words."
+      },
+      "state_low_fuel": {
+        "priority": 50,
+        "critical": false,
+        "prompt": "Co-pilot alert: Fuel reserves below 25%. Notify the player briefly."
+      },
+      "state_mass_locked": {
+        "priority": 40,
+        "critical": false,
+        "prompt": "Co-pilot alert: Frame Shift Drive is mass locked. Mention briefly."
+      }
+    }
+  }
+}
