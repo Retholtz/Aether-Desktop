@@ -16,6 +16,67 @@ from core.screen_stream import ensure_thread_desktop
 from ui.tray import SystemTrayManager
 
 
+_CACHED_USER32 = None
+
+
+def _get_user32():
+    """
+    Returns an isolated, 64-bit-typed ctypes.WinDLL('user32') handle.
+    Unlike pywin32's win32gui (which holds the Python GIL during cross-thread
+    SetWindowLong/SetWindowPos calls and can deadlock against WinForms/WebView2),
+    ctypes.WinDLL ALWAYS releases the GIL before invoking Win32 APIs.
+    """
+    global _CACHED_USER32
+    if _CACHED_USER32 is not None:
+        return _CACHED_USER32
+    import ctypes
+    from ctypes import wintypes
+
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    u32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    u32.FindWindowW.restype = wintypes.HWND
+    u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    u32.ShowWindow.restype = wintypes.BOOL
+    u32.SetWindowPos.argtypes = [
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    u32.SetWindowPos.restype = wintypes.BOOL
+    u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    u32.GetWindowRect.restype = wintypes.BOOL
+    u32.IsWindow.argtypes = [wintypes.HWND]
+    u32.IsWindow.restype = wintypes.BOOL
+    if hasattr(u32, "GetWindowLongPtrW"):
+        u32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+        u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        u32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+        u32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    else:
+        u32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        u32.GetWindowLongW.restype = ctypes.c_long
+        u32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        u32.SetWindowLongW.restype = ctypes.c_long
+    _CACHED_USER32 = u32
+    return u32
+
+
+def _get_win_exstyle(u32, hwnd: int, gwl_exstyle: int) -> int:
+    if hasattr(u32, "GetWindowLongPtrW"):
+        return int(u32.GetWindowLongPtrW(int(hwnd), int(gwl_exstyle)))
+    return int(u32.GetWindowLongW(int(hwnd), int(gwl_exstyle)))
+
+
+def _set_win_exstyle(u32, hwnd: int, gwl_exstyle: int, new_style: int) -> int:
+    if hasattr(u32, "SetWindowLongPtrW"):
+        return int(u32.SetWindowLongPtrW(int(hwnd), int(gwl_exstyle), int(new_style)))
+    return int(u32.SetWindowLongW(int(hwnd), int(gwl_exstyle), int(new_style)))
+
+
 def force_foreground_window(hwnd: int, maximize: bool = False):
     """
     Brings a window to the foreground and unminimizes/maximizes it reliably on Windows,
@@ -25,10 +86,10 @@ def force_foreground_window(hwnd: int, maximize: bool = False):
         return
     try:
         import ctypes
-        import win32gui
         import win32con
 
         user32 = ctypes.windll.user32
+        u32 = _get_user32()
         user32.AllowSetForegroundWindow(-1)
 
         cur_thread_id = user32.GetCurrentThreadId()
@@ -41,7 +102,7 @@ def force_foreground_window(hwnd: int, maximize: bool = False):
 
         try:
             cmd = win32con.SW_MAXIMIZE if maximize else win32con.SW_RESTORE
-            win32gui.ShowWindow(hwnd, cmd)
+            u32.ShowWindow(int(hwnd), cmd)
             user32.BringWindowToTop(hwnd)
             user32.SetForegroundWindow(hwnd)
         finally:
@@ -64,8 +125,8 @@ def _get_overlay_hwnd(window: Optional[webview.Window]) -> Optional[int]:
                     return hwnd
             except Exception:
                 pass
-        import win32gui
-        hwnd = win32gui.FindWindow(None, "Aether Overlay")
+        u32 = _get_user32()
+        hwnd = u32.FindWindowW(None, "Aether Overlay")
         return int(hwnd) if hwnd else None
     except Exception:
         return None
@@ -172,16 +233,16 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
         return
     try:
         import ctypes
-        import win32gui
 
+        u32 = _get_user32()
         hwnd = None
         if hasattr(window, "native") and window.native and hasattr(window.native, "Handle"):
             try:
-                hwnd = window.native.Handle.ToInt64()
+                hwnd = int(window.native.Handle.ToInt64())
             except Exception:
                 hwnd = None
         if not hwnd:
-            hwnd = win32gui.FindWindow(None, "Aether Overlay")
+            hwnd = int(u32.FindWindowW(None, "Aether Overlay") or 0)
         if not hwnd:
             return
 
@@ -191,7 +252,7 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
             DWMWA_WINDOW_CORNER_PREFERENCE = 33
             DWMWCP_ROUND = 2
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd,
+                ctypes.c_void_p(hwnd),
                 DWMWA_WINDOW_CORNER_PREFERENCE,
                 ctypes.byref(ctypes.c_int(DWMWCP_ROUND)),
                 ctypes.sizeof(ctypes.c_int)
@@ -201,9 +262,11 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
 
         # Apply WS_EX_TOOLWINDOW so the floating HUD overlay doesn't pollute Windows 11 Alt+Tab / taskbar,
         # and WS_EX_NOACTIVATE in mini mode so it never steals game focus.
+        # Uses GIL-releasing ctypes User32 calls (NEVER win32gui.SetWindowLong/SetWindowPos, which hold
+        # the Python GIL while sending cross-thread WM_STYLECHANGING and deadlock WinForms/WebView2).
         try:
             import win32con
-            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            ex_style = _get_win_exstyle(u32, hwnd, win32con.GWL_EXSTYLE)
             new_style = (ex_style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
             if norm_mode == "mini":
                 new_style |= win32con.WS_EX_NOACTIVATE
@@ -211,8 +274,8 @@ def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
                 new_style &= ~win32con.WS_EX_NOACTIVATE
             new_style &= ~win32con.WS_EX_TRANSPARENT
             if new_style != ex_style:
-                win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, new_style)
-                win32gui.SetWindowPos(
+                _set_win_exstyle(u32, hwnd, win32con.GWL_EXSTYLE, new_style)
+                u32.SetWindowPos(
                     hwnd,
                     win32con.HWND_TOPMOST,
                     0, 0, 0, 0,
@@ -452,18 +515,28 @@ class HUDBridge:
                 host.BeginInvoke(Action(_safe))
             else:
                 _safe()
-        except Exception:
-            pass
+        except Exception as err:
+            print(f"[HUD DOT DISPATCH ERROR] {err}")
 
     @staticmethod
-    def _build_dot_bitmap(phys_d: int, hex_color: str):
+    def _build_dot_bitmap(phys_d: int, hex_color: str, sd_mod=None, sd2d_mod=None):
         """
         Pre-renders a crisp, anti-aliased circular LED Bitmap on a TransparencyKey (#010203)
         canvas. Because WinForms paints BackgroundImage natively in .NET/GDI+, zero Python
         Paint callbacks ever run on the WinForms UI thread (preventing GIL deadlocks).
         """
-        from System.Drawing import Bitmap, Color, Graphics, Pen, SolidBrush
-        from System.Drawing.Drawing2D import PixelOffsetMode, SmoothingMode
+        if sd_mod is None:
+            import System.Drawing as sd_mod
+        if sd2d_mod is None:
+            import System.Drawing.Drawing2D as sd2d_mod
+
+        Bitmap = sd_mod.Bitmap
+        Color = sd_mod.Color
+        Graphics = sd_mod.Graphics
+        Pen = sd_mod.Pen
+        SolidBrush = sd_mod.SolidBrush
+        PixelOffsetMode = sd2d_mod.PixelOffsetMode
+        SmoothingMode = sd2d_mod.SmoothingMode
 
         size = max(12, int(phys_d))
         bmp = Bitmap(size, size)
@@ -508,20 +581,35 @@ class HUDBridge:
         return bmp
 
     def _update_dot_form_on_ui(self, px: int, py: int, phys_d: int, show: bool) -> None:
-        """Creates/updates the tiny circular WinForms Dot Form on the UI thread (zero Python Paint hooks)."""
+        """Creates/updates the tiny circular WinForms Dot Form on the UI thread (zero Python Paint hooks or UI-thread imports)."""
+        if sys.platform != "win32":
+            return
         from ui.dot_overlay import resolve_status_color
 
         ui_cfg = self._bridge.get_raw_config().get("ui", {}) or {}
         colors = self._dot_colors if isinstance(self._dot_colors, dict) else ui_cfg.get("hud_colors")
         hex_color = resolve_status_color(self._dot_state, colors)
 
-        def _apply():
+        # Resolve ALL Python / .NET imports on the caller thread BEFORE BeginInvoke
+        # so the WinForms STA UI thread never contends for Python's import lock during startup.
+        try:
             import ctypes
             import win32con
-            import win32gui
             import System.Windows.Forms as WF
-            from System.Drawing import Color, Point, Size
+            import System.Drawing as SD
+            import System.Drawing.Drawing2D as SD2D
+            u32 = _get_user32()
+        except Exception as err:
+            print(f"[HUD DOT IMPORT ERROR] {err}")
+            return
 
+        Color = SD.Color
+        Point = SD.Point
+        Size = SD.Size
+        dim = max(12, int(phys_d))
+        bmp = self._build_dot_bitmap(dim, hex_color, sd_mod=SD, sd2d_mod=SD2D)
+
+        def _apply():
             form = self._dot_form
             if form is None or getattr(form, "IsDisposed", False):
                 form = WF.Form()
@@ -537,7 +625,6 @@ class HUDBridge:
                 form.TransparencyKey = key_color
                 self._dot_form = form
 
-            bmp = self._build_dot_bitmap(phys_d, hex_color)
             old_bmp = self._dot_bitmap
             form.BackgroundImage = bmp
             self._dot_bitmap = bmp
@@ -547,7 +634,6 @@ class HUDBridge:
                 except Exception:
                     pass
 
-            dim = max(12, int(phys_d))
             form.Location = Point(int(px), int(py))
             form.Size = Size(dim, dim)
             hwnd = int(form.Handle.ToInt64())
@@ -555,25 +641,25 @@ class HUDBridge:
             # Disable Windows 11 DWM rounded border / shadow behind the circular TransparencyKey dot
             try:
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 2, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
+                    ctypes.c_void_p(hwnd), 2, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
                 )  # DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                    hwnd, 33, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
+                    ctypes.c_void_p(hwnd), 33, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
                 )  # DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND
             except Exception:
                 pass
 
             # Keep WS_EX_LAYERED (from TransparencyKey) + add TOOLWINDOW | NOACTIVATE | TRANSPARENT
-            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            ex_style = _get_win_exstyle(u32, hwnd, win32con.GWL_EXSTYLE)
             new_style = (
                 (ex_style | win32con.WS_EX_TOOLWINDOW | win32con.WS_EX_NOACTIVATE | win32con.WS_EX_TRANSPARENT)
                 & ~win32con.WS_EX_APPWINDOW
             )
             if new_style != ex_style:
-                win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, new_style)
+                _set_win_exstyle(u32, hwnd, win32con.GWL_EXSTYLE, new_style)
 
             flags = win32con.SWP_NOACTIVATE | (win32con.SWP_SHOWWINDOW if show else win32con.SWP_HIDEWINDOW)
-            win32gui.SetWindowPos(
+            u32.SetWindowPos(
                 hwnd,
                 win32con.HWND_TOPMOST,
                 int(px),
@@ -583,26 +669,31 @@ class HUDBridge:
                 flags,
             )
             if show:
-                win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
-                form.Refresh()
+                u32.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+                form.Invalidate()
             else:
-                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+                u32.ShowWindow(hwnd, win32con.SW_HIDE)
             self._dot_visible = bool(show)
 
-        self._dot_last_phys_rect = (int(px), int(py), max(12, int(phys_d)))
+        self._dot_last_phys_rect = (int(px), int(py), dim)
         self._run_on_ui_thread(_apply)
 
     def hide_dot(self) -> None:
         """Hides the circular Dot Form without affecting the WebView2 overlay window."""
         self._dot_visible = False
+        if sys.platform != "win32":
+            return
+        try:
+            import win32con
+            u32 = _get_user32()
+        except Exception:
+            return
 
         def _hide():
             form = self._dot_form
             if form is not None and not getattr(form, "IsDisposed", False):
                 if getattr(form, "IsHandleCreated", False):
-                    import win32con
-                    import win32gui
-                    win32gui.ShowWindow(int(form.Handle.ToInt64()), win32con.SW_HIDE)
+                    u32.ShowWindow(int(form.Handle.ToInt64()), win32con.SW_HIDE)
 
         self._run_on_ui_thread(_hide)
 
@@ -1233,7 +1324,20 @@ class HudWindow:
         cfg = self.bridge.get_raw_config().get("ui", {})
         overlay_mode = cfg.get("floating_overlay", "on_minimize")
         raw_cfg = self.bridge.get_raw_config()
-        if overlay_mode == "always" or (raw_cfg.get("start_minimized", False) and overlay_mode == "on_minimize"):
+        should_show_overlay = overlay_mode == "always" or (
+            raw_cfg.get("start_minimized", False) and overlay_mode == "on_minimize"
+        )
+        if should_show_overlay:
+            cur_mode = str(cfg.get("hud_mode", "normal") or "normal").lower()
+            if cur_mode == "dot":
+                for win_obj in (self.window, self.overlay_window):
+                    ev = getattr(getattr(win_obj, "events", None), "loaded", None)
+                    if isinstance(ev, threading.Event) or (ev is not None and hasattr(ev, "wait") and hasattr(ev, "is_set")):
+                        try:
+                            ev.wait(8.0)
+                        except Exception:
+                            pass
+                time.sleep(0.25)
             self.bridge.show_overlay()
 
         # Hook Windows session/shutdown events so minimize_to_tray never blocks OS shutdown/logoff
