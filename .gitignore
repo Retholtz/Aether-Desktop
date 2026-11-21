@@ -64,4 +64,10 @@ data/dossiers/*.md
 # Sample test character sheets & build artifacts
 *.pdf
 char_*_root.json
+
+# WiX Installer build outputs & prerequisites
 Installer/AppFiles/
+Installer/Prereqs/*.exe
+Installer/*.msi
+Installer/*.exe
+Installer/*.wixpdb

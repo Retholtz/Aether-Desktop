@@ -1,0 +1,61 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="Aether Installer"
+          Version="1.0.0.0"
+          Manufacturer="Retholtz"
+          UpgradeCode="C7E91B42-3D84-4F19-A625-91B4E802D3F7">
+
+    <!-- Default install folder: change to "C:\Aether" if you prefer the root drive -->
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]Aether" bal:Overridable="yes" />
+    
+    <!-- Checkboxes (1 = Checked by default) -->
+    <Variable Name="InstallViGEmBus" Type="numeric" Value="1" bal:Overridable="yes" />
+    <Variable Name="InstallDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication LicenseUrl=""
+                                          Theme="hyperlinkLicense"
+                                          ThemeFile="CustomHyperlinkTheme.xml"
+                                          LogoFile="logo.png"
+                                          SuppressOptionsUI="yes" />
+   </BootstrapperApplication>
+
+    <Chain>
+      <!-- 1. Microsoft Edge WebView2 Evergreen Bootstrapper -->
+      <ExePackage Id="WebView2Runtime"
+                  SourceFile="Prereqs\MicrosoftEdgeWebview2Setup.exe"
+                  InstallArguments="/silent /install"
+                  DetectCondition="none"
+                  Permanent="yes">
+        <!-- 0x8004090d (-2147219187) = WebView2 is already installed -->
+        <ExitCode Value="-2147219187" Behavior="success" />
+      </ExePackage>
+
+      <!-- 2. Microsoft Visual C++ Redistributable (x64) -->
+      <ExePackage Id="VCRedistX64"
+                  SourceFile="Prereqs\VC_redist.x64.exe"
+                  InstallArguments="/install /quiet /norestart"
+                  DetectCondition="none"
+                  Permanent="yes">
+        <!-- 1638 = Newer version already installed; 3010 = Success, reboot required -->
+        <ExitCode Value="1638" Behavior="success" />
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+      </ExePackage>
+
+      <!-- 3. ViGEmBus Virtual Gamepad Driver (Optional, Checked by Default) -->
+      <ExePackage Id="ViGEmBusDriver"
+                  SourceFile="Prereqs\ViGEmBus_1.22.0_x64_x86_arm64.exe"
+                  InstallArguments="/qn /norestart"
+                  InstallCondition="InstallViGEmBus = 1"
+                  DetectCondition="none"
+                  Vital="no"
+                  Permanent="yes" />
+
+      <!-- 4. Aether Application MSI -->
+      <MsiPackage Id="MainAppMsi" SourceFile="Aether.msi">
+        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
+        <MsiProperty Name="INSTALLDESKTOPSHORTCUT" Value="[InstallDesktopShortcut]" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

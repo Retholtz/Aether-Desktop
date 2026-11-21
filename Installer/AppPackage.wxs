@@ -1,0 +1,53 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Aether"
+           Manufacturer="Retholtz"
+           Version="1.0.0.0"
+           UpgradeCode="ED1A2A3B-6F97-4DA0-B36B-97325B08CDC9">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Default to creating Desktop Shortcut (1 = Yes, 0 = No) -->
+    <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" />
+
+    <!-- Standard MSI UI with folder selection -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Aether" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Aether" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- Harvest all files in AppFiles\ and attach shortcuts -->
+    <Feature Id="MainFeature" Title="Aether Application" Level="1">
+      <Files Include="AppFiles\**" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <!-- Start Menu Shortcut -->
+    <Component Id="StartMenuShortcut" Directory="ApplicationProgramsFolder" Guid="4F5B1A7C-B73A-4DB4-B4A3-0B573888386E">
+      <Shortcut Id="AppStartMenuShortcut"
+                Name="Aether"
+                Target="[INSTALLFOLDER]AetherDesktop.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="CleanUpShortCut" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Aether\Installer" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Desktop Shortcut -->
+    <Component Id="DesktopShortcut" Directory="DesktopFolder" Condition="INSTALLDESKTOPSHORTCUT = 1" Guid="8D35F96D-5A9B-4D74-9482-2307D4E69518">
+      <Shortcut Id="AppDesktopShortcut"
+                Name="Aether"
+                Target="[INSTALLFOLDER]AetherDesktop.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\Aether\Installer" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>
