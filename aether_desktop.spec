@@ -23,6 +23,9 @@ datas = [
 if os.path.isfile("models/wespeaker_en_voxceleb_CAM++.onnx"):
     datas.append(("models/wespeaker_en_voxceleb_CAM++.onnx", "models"))
 
+if os.path.isdir("assets/game_modules"):
+    datas.append(("assets/game_modules", "assets/game_modules"))
+
 binaries = []
 for bin_path in (
     "assets/bin/PresentMon.exe",
