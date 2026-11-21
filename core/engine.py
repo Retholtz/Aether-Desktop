@@ -2657,19 +2657,24 @@ class AetherEngine:
                 pass
 
     def _on_game_mode_changed(self, enabled: bool, game_id: str, game_name: str, is_running: bool = False):
+        prof = (
+            self.game_engine.manager.get_profile(game_id) or {}
+            if (hasattr(self, "game_engine") and hasattr(self.game_engine, "manager") and game_id)
+            else {}
+        )
+        raw_running = (
+            self.game_engine.manager.is_game_running(game_id)
+            if (hasattr(self, "game_engine") and hasattr(self.game_engine, "manager") and game_id)
+            else False
+        )
+        running_state = bool(is_running) or (raw_running is True)
+
         if hasattr(self, "hardware_service") and self.hardware_service:
-            prof = self.game_engine.manager.get_profile(game_id) or {}
             fps_enabled = prof.get("fps_monitoring", True)
             raw_exe = prof.get("executable") or prof.get("process_name") or f"{game_id}.exe"
             exe_name = os.path.basename(raw_exe)
-            raw_running = (
-                self.game_engine.manager.is_game_running(game_id)
-                if (hasattr(self, "game_engine") and hasattr(self.game_engine, "manager"))
-                else False
-            )
-            running_state = bool(is_running) or (raw_running is True)
-
             should_monitor = bool(fps_enabled and running_state)
+            dispatched_async = False
             try:
                 loop = asyncio.get_running_loop()
                 if loop and loop.is_running():
@@ -2677,15 +2682,105 @@ class AetherEngine:
                         loop.create_task(self.hardware_service.start_fps_monitoring(exe_name))
                     else:
                         loop.create_task(self.hardware_service.stop_fps_monitoring())
-                    return
+                    dispatched_async = True
             except RuntimeError:
                 pass
 
-            # Fallback for non-asyncio threads (GameForegroundWatcher, GuiBridge, Standby)
-            if should_monitor and hasattr(self.hardware_service, "start_fps_monitoring_sync"):
-                self.hardware_service.start_fps_monitoring_sync(exe_name)
-            elif not should_monitor and hasattr(self.hardware_service, "stop_fps_monitoring_sync"):
-                self.hardware_service.stop_fps_monitoring_sync()
+            if not dispatched_async:
+                # Fallback for non-asyncio threads (GameForegroundWatcher, GuiBridge, Standby)
+                if should_monitor and hasattr(self.hardware_service, "start_fps_monitoring_sync"):
+                    self.hardware_service.start_fps_monitoring_sync(exe_name)
+                elif not should_monitor and hasattr(self.hardware_service, "stop_fps_monitoring_sync"):
+                    self.hardware_service.stop_fps_monitoring_sync()
+
+        # Proactive 3rd-Party Companion App Launch Check (once per game session)
+        self._check_proactive_companion_launch(
+            enabled=enabled,
+            game_id=game_id,
+            game_name=game_name or prof.get("display_name") or game_id,
+            running_state=running_state,
+        )
+
+    def _check_proactive_companion_launch(
+        self,
+        enabled: bool,
+        game_id: str,
+        game_name: str,
+        running_state: bool,
+    ) -> bool:
+        """
+        When a linked game starts, checks its configured 3rd-party companion apps.
+        If any app with `prompt_to_launch=True` is NOT running, schedules a single
+        concise voice prompt asking the user if Aether should start it.
+        Resets automatically when the game exits so the next play session prompts again.
+        """
+        if not hasattr(self, "_prompted_companion_games"):
+            self._prompted_companion_games = set()
+
+        if not game_id:
+            return False
+
+        if not running_state:
+            self._prompted_companion_games.discard(game_id)
+            return False
+
+        if not enabled or not getattr(self, "is_running", False):
+            return False
+
+        if game_id in self._prompted_companion_games:
+            return False
+
+        game_mgr = getattr(getattr(self, "game_engine", None), "manager", None) or getattr(self, "game_mgr", None)
+        if not game_mgr or not hasattr(game_mgr, "get_missing_promptable_companion_apps"):
+            return False
+
+        try:
+            missing = game_mgr.get_missing_promptable_companion_apps(game_id)
+        except Exception as e:
+            logger.debug(f"[COMPANION APPS] Failed checking companion status for {game_id}: {e}")
+            return False
+
+        if not missing:
+            return False
+
+        self._prompted_companion_games.add(game_id)
+
+        app_names = [a.get("name") or a.get("executable") for a in missing if a.get("name") or a.get("executable")]
+        if not app_names:
+            return False
+
+        if len(app_names) == 1:
+            names_str = app_names[0]
+            verb = "is not active. Would you like me to start it?"
+        elif len(app_names) == 2:
+            names_str = f"{app_names[0]} and {app_names[1]}"
+            verb = "are not active. Would you like me to start them?"
+        else:
+            names_str = ", ".join(app_names[:-1]) + f", and {app_names[-1]}"
+            verb = "are not active. Would you like me to start them?"
+
+        user_name = self._get_monitor_user_name() if hasattr(self, "_get_monitor_user_name") else ""
+        greeting = f"Hey {user_name}, " if user_name else "Hey, "
+        sample_line = f"{greeting}{names_str} {verb}"
+        directive = (
+            f"Co-pilot companion check for {game_name}: Linked 3rd-party helper app(s) ({names_str}) are not currently running. "
+            f"Ask the user briefly in one friendly sentence like: \"{sample_line}\" "
+            f"If they say yes, call `launch_game_companion_app` for each requested app."
+        )
+
+        try:
+            running_loop = asyncio.get_running_loop()
+            if running_loop and running_loop.is_running():
+                running_loop.create_task(self.inject_tactical_alert(directive))
+                return True
+        except RuntimeError:
+            pass
+
+        engine_loop = getattr(self, "_loop", None)
+        if engine_loop and getattr(engine_loop, "is_running", lambda: False)():
+            asyncio.run_coroutine_threadsafe(self.inject_tactical_alert(directive), engine_loop)
+            return True
+        return False
 
     def _on_steam_friend_status_change(self, change: dict):
         """Dispatches a proactive notification when a Steam friend changes status or in-game presence."""

@@ -196,16 +196,14 @@
                 </div>
               </div>
 
-              <!-- Line 4: Agnostic Game Module, Anti-Cheat Safety & 3rd-Party Co-Pilot Coexistence -->
+              <!-- Line 4: Agnostic Game Module & Anti-Cheat Input Safety -->
               <div class="game-banner-row game-banner-row-4" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
                 <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
                   <label for="select-game-input-mode" style="font-size: 0.78rem; color: var(--text-muted);" title="Use Spotter-Only in multiplayer anti-cheat games to prevent any synthetic key/mouse injection.">Input Safety:</label>
-                  <select id="select-game-input-mode" class="hud-select" title="Autonomous allows macros/map clicks; Spotter-Only restricts Aether to read-only voice & vision guidance.">
+                  <select id="select-game-input-mode" class="hud-select" style="width: auto; min-width: 210px;" title="Autonomous allows macros/map clicks; Spotter-Only restricts Aether to read-only voice & vision guidance.">
                     <option value="autonomous">⚡ Autonomous Inputs</option>
                     <option value="spotter_only">🛡️ Spotter Only (Anti-Cheat Safe)</option>
                   </select>
-                  <label for="input-game-suppress-alerts" style="font-size: 0.78rem; color: var(--text-muted);" title="Comma-separated 3rd-party co-pilot processes (e.g. EDCoPilot.exe) that mute duplicate Aether ship/HUD voice callouts while running.">Quiet When Running:</label>
-                  <input type="text" id="input-game-suppress-alerts" class="hud-select" style="width: 175px;" placeholder="e.g. EDCoPilot.exe" title="Comma-separated 3rd-party co-pilot executables (e.g. EDCoPilot.exe)" />
                 </div>
                 <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
                   <button type="button" id="btn-calibrate-hud-bars" class="btn-secondary-sm btn-secondary-pill" title="Capture a live gameplay frame and auto-detect health/stamina/resource HUD bar positions for your resolution">🎯 Calibrate HUD</button>
@@ -228,6 +226,22 @@
             </div>
 
             <div id="game-details-content">
+              <!-- 3rd-Party Companion Apps Card -->
+              <section class="game-card" id="card-game-companion-apps">
+                <div class="game-card-header card-header-flex">
+                  <div>
+                    <h3>3RD-PARTY COMPANION APPS</h3>
+                    <p class="subtitle field-hint">Link helper tools (e.g. EDMC, EDDiscovery, SRV Survey, EDCoPilot, Little Navmap). Aether tracks whether they are running, can ask to launch inactive ones when you start the game, and mutes duplicate callouts when toggled.</p>
+                  </div>
+                  <div class="header-action-group card-header-actions">
+                    <button type="button" id="btn-add-companion-app" class="btn-primary-sm btn-primary-blue" title="Link a 3rd-party helper program to this game">+ Add 3rd-Party Program</button>
+                  </div>
+                </div>
+                <div id="game-companion-apps-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+                  <!-- Dynamically rendered by games_tab.js -->
+                </div>
+              </section>
+
               <!-- Keybinds & Voice Triggers Card -->
               <section class="game-card">
                 <div class="game-card-header card-header-flex">
@@ -2962,6 +2976,77 @@
       <div class="modal-footer">
         <button type="button" id="btn-cancel-add-game" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
         <button type="button" id="btn-confirm-add-game" class="btn-primary-sm" style="padding: 7px 18px;">Add Game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add 3rd-Party Companion Program -->
+  <div id="modal-add-companion-app" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">🧩</span>
+          <h3 style="margin: 0; font-size: 1rem; color: var(--text-main);">Add 3rd-Party Program</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-add-companion-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label for="input-companion-app-name" class="modal-label">Program Display Name <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-companion-app-name" class="modal-input" placeholder="e.g. EDMC, EDDiscovery, SRV Survey, EDCoPilot" autocomplete="off" />
+          <span class="modal-hint">The name Aether uses when referencing or offering to launch this helper app.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-companion-app-proc" class="modal-label">Executable / Path <span style="color: #ef4444;">*</span></label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="input-companion-app-proc" class="modal-input" style="flex: 1;" placeholder="e.g. C:\...\EDMarketConnector.exe" autocomplete="off" />
+            <button type="button" id="btn-browse-companion-exe" class="btn-secondary-sm" title="Browse File Explorer to locate helper executable">
+              📁 Browse...
+            </button>
+            <button type="button" id="btn-toggle-companion-running-procs" class="btn-secondary-sm" title="Choose from currently running applications">
+              ⚡ Running Apps
+            </button>
+          </div>
+          <span class="modal-hint">Saving the full .exe path lets Aether start the app for you when you say yes.</span>
+        </div>
+
+        <!-- Quick Pick Running Process Expandable Panel for Companion App -->
+        <div id="panel-companion-running-processes" class="running-proc-panel hidden">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">Active Running Applications &amp; Processes</span>
+            <button type="button" id="btn-refresh-companion-running-procs" class="btn-text-action" title="Refresh process list">🔄 Refresh</button>
+          </div>
+          <input type="text" id="input-filter-companion-running-proc" class="modal-input" placeholder="Search processes..." style="font-size: 0.8rem; padding: 6px 10px; margin-bottom: 8px;" />
+          <div id="list-companion-running-processes" class="running-proc-list">
+            <div style="padding: 12px; text-align: center; color: var(--text-dim); font-size: 0.8rem;">Loading running processes...</div>
+          </div>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-companion-app-purpose" class="modal-label">Purpose / Role (Optional)</label>
+          <input type="text" id="input-companion-app-purpose" class="modal-input" placeholder="e.g. Market &amp; Inara sync, Exobiology tracker, Ship voice co-pilot" autocomplete="off" />
+          <span class="modal-hint">Helps Aether understand when and how to leverage this tool during gameplay.</span>
+        </div>
+
+        <div class="modal-field" style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.84rem; color: var(--text-main);">
+            <input type="checkbox" id="chk-companion-prompt-launch" checked />
+            <span>Prompt to launch when game starts if not running</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.84rem; color: var(--text-main);">
+            <input type="checkbox" id="chk-companion-mute-alerts" />
+            <span>Mute duplicate Aether alerts while this program is running</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.84rem; color: var(--text-main);">
+            <input type="checkbox" id="chk-companion-quiet-running" />
+            <span>Quiet when running (stay passive and only speak when directly addressed)</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-add-companion" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-add-companion" class="btn-primary-sm" style="padding: 7px 18px;">Add Program</button>
       </div>
     </div>
   </div>
@@ -5939,13 +6024,13 @@
 
   <div id="dossierPrintMount" class="dossier-print-mount" aria-hidden="true"></div>
 
-  <script src="settings.js?v=p3"></script>
-  <script src="games_tab.js?v=p3"></script>
-  <script src="programs_tab.js?v=p3"></script>
-  <script src="projects.js?v=p3"></script>
-  <script src="edit_character_modal.js?v=p3"></script>
-  <script src="roleplay.js?v=p3"></script>
-  <script src="main.js?v=p3"></script>
-  <script src="app.js?v=p3"></script>
+  <script src="settings.js?v=p5"></script>
+  <script src="games_tab.js?v=p5"></script>
+  <script src="programs_tab.js?v=p5"></script>
+  <script src="projects.js?v=p5"></script>
+  <script src="edit_character_modal.js?v=p5"></script>
+  <script src="roleplay.js?v=p5"></script>
+  <script src="main.js?v=p5"></script>
+  <script src="app.js?v=p5"></script>
 </body>
 </html>

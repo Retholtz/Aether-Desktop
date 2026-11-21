@@ -166,11 +166,17 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         cat_resource = companion_resources.get(category, {})
         domain = cat_resource.get("domain") or cat_resource.get("url")
         if not domain and profile:
-            # Fallback to interactive_map or first companion app
-            comp_apps = profile.get("companion_apps", {})
-            if comp_apps:
+            # Fallback to interactive_map or first companion app (supports list or legacy dict)
+            comp_apps = profile.get("companion_apps")
+            if isinstance(comp_apps, dict) and comp_apps:
                 first_app = next(iter(comp_apps.values()))
-                domain = first_app.get("url") or first_app.get("domain")
+                if isinstance(first_app, dict):
+                    domain = first_app.get("url") or first_app.get("domain")
+            elif isinstance(comp_apps, list) and comp_apps:
+                for entry in comp_apps:
+                    if isinstance(entry, dict) and (entry.get("url") or entry.get("domain")):
+                        domain = entry.get("url") or entry.get("domain")
+                        break
 
         client = (
             getattr(engine, "genai_client", None)
@@ -703,6 +709,25 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             return nav.search_and_route_destination(destination_name=target_description)
         return nav.run_vision_navigation_loop(target_description=target_description, web_context=web_context)
 
+    @dispatcher.register(
+        name="launch_game_companion_app",
+        description="Launches a 3rd-party companion/helper program linked to the active game profile (e.g. EDMC, EDDiscovery, SRV Survey, EDCoPilot, Little Navmap). Safe to use in both Autonomous and Spotter-Only modes.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "app_name": {
+                    "type": "string",
+                    "description": "Display name, ID, or executable name of the linked 3rd-party companion program to start."
+                }
+            },
+            "required": ["app_name"]
+        }
+    )
+    def launch_game_companion_app(app_name: str) -> dict:
+        if not game_manager or not hasattr(game_manager, "launch_companion_app"):
+            return {"success": False, "error": "Game manager unavailable."}
+        return game_manager.launch_companion_app(app_name)
+
     return {
         "get_current_game_telemetry": get_current_game_telemetry,
         "get_current_game_status": get_current_game_status,
@@ -721,4 +746,5 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "pan_game_map": pan_game_map,
         "place_map_marker": place_map_marker,
         "center_map_on_player": center_map_on_player,
+        "launch_game_companion_app": launch_game_companion_app,
     }

@@ -242,6 +242,17 @@ def build_telemetry_profile_from_module(
             if str(p).strip() and str(p).strip() not in suppress_list:
                 suppress_list.append(str(p).strip())
 
+    # Also include any linked 3rd-party companion apps with `mute_aether_alerts` or `quiet_when_running`
+    for src in (profile, mod):
+        if isinstance(src, dict):
+            raw_apps = src.get("companion_apps")
+            app_iter = raw_apps if isinstance(raw_apps, list) else (list(raw_apps.values()) if isinstance(raw_apps, dict) else [])
+            for app in app_iter:
+                if isinstance(app, dict) and (app.get("mute_aether_alerts") or app.get("quiet_when_running")):
+                    exe = os.path.basename(str(app.get("executable") or "").strip())
+                    if exe and exe.lower() not in {s.lower() for s in suppress_list}:
+                        suppress_list.append(exe)
+
     http_url = merged.get("http_endpoint")
     if http_url and not is_safe_localhost_url(str(http_url)):
         logger.warning("Ignoring non-localhost http_endpoint in module '%s': %s", game_id, http_url)
@@ -317,6 +328,45 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         if str(p).strip()
     ]
 
+    # Sanitize companion_apps (strip any untrusted local drive paths from shareable modules!)
+    sanitized_companion_apps: List[Dict[str, Any]] = []
+    raw_comp_apps = raw_data.get("companion_apps")
+    if isinstance(raw_comp_apps, dict):
+        raw_comp_iter = [{"id": k, **(v if isinstance(v, dict) else {})} for k, v in raw_comp_apps.items()]
+    elif isinstance(raw_comp_apps, list):
+        raw_comp_iter = [x for x in raw_comp_apps if isinstance(x, dict)]
+    else:
+        raw_comp_iter = []
+
+    seen_app_ids = set()
+    for app in raw_comp_iter:
+        app_name = str(app.get("name") or app.get("display_name") or "").strip()
+        app_exe = os.path.basename(str(app.get("executable") or "").strip())
+        if not app_name and app_exe:
+            app_name = os.path.splitext(app_exe)[0]
+        if not app_name and not app_exe:
+            continue
+        app_id = _normalize_id(str(app.get("id") or app_name or app_exe))
+        if not app_id or app_id in seen_app_ids:
+            continue
+        seen_app_ids.add(app_id)
+        mute_flag = bool(app.get("mute_aether_alerts", False))
+        quiet_flag = bool(app.get("quiet_when_running", False))
+        sanitized_entry: Dict[str, Any] = {
+            "id": app_id,
+            "name": app_name,
+            "executable": app_exe,
+            "purpose": str(app.get("purpose") or "").strip(),
+            "mute_aether_alerts": mute_flag,
+            "quiet_when_running": quiet_flag,
+            "prompt_to_launch": bool(app.get("prompt_to_launch", True)),
+        }
+        if app.get("url"):
+            sanitized_entry["url"] = str(app["url"]).strip()
+        sanitized_companion_apps.append(sanitized_entry)
+        if (mute_flag or quiet_flag) and app_exe and app_exe.lower() not in {s.lower() for s in suppress}:
+            suppress.append(app_exe)
+
     tel_in = raw_data.get("telemetry") if isinstance(raw_data.get("telemetry"), dict) else {}
     provider_type = str(tel_in.get("provider_type") or "vision_hud").strip().lower()
     if provider_type not in ALLOWED_PROVIDER_TYPES:
@@ -362,6 +412,7 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         "universe_name": str(raw_data.get("universe_name") or "").strip(),
         "input_mode": input_mode,
         "suppress_alerts_when_running": suppress,
+        "companion_apps": sanitized_companion_apps,
         "companion_resources": raw_data.get("companion_resources")
         if isinstance(raw_data.get("companion_resources"), dict)
         else {},
@@ -440,6 +491,33 @@ def import_game_module(
                     existing["executable"] = exe_name
                 existing["input_mode"] = clean_mod["input_mode"]
                 existing["suppress_alerts_when_running"] = list(clean_mod["suppress_alerts_when_running"])
+                if clean_mod.get("companion_apps"):
+                    existing_apps = (
+                        game_manager._normalize_companion_apps(existing.get("companion_apps"))
+                        if hasattr(game_manager, "_normalize_companion_apps")
+                        else (existing.get("companion_apps") if isinstance(existing.get("companion_apps"), list) else [])
+                    )
+                    by_id = {a["id"]: dict(a) for a in existing_apps if isinstance(a, dict) and a.get("id")}
+                    by_exe = {
+                        os.path.basename(str(a.get("executable") or "")).lower(): a["id"]
+                        for a in existing_apps
+                        if isinstance(a, dict) and a.get("executable")
+                    }
+                    for incoming in clean_mod["companion_apps"]:
+                        inc_id = incoming.get("id")
+                        inc_exe_low = os.path.basename(str(incoming.get("executable") or "")).lower()
+                        match_id = inc_id if inc_id in by_id else by_exe.get(inc_exe_low)
+                        if match_id and match_id in by_id:
+                            # Preserve user's local .exe path while merging module metadata
+                            merged_app = dict(incoming)
+                            merged_app["id"] = match_id
+                            merged_app["path"] = by_id[match_id].get("path", "")
+                            by_id[match_id] = merged_app
+                        elif inc_id:
+                            new_app = dict(incoming)
+                            new_app["path"] = ""
+                            by_id[inc_id] = new_app
+                    existing["companion_apps"] = list(by_id.values())
                 if clean_mod.get("companion_resources"):
                     existing["companion_resources"] = dict(clean_mod["companion_resources"])
                 if clean_mod.get("map_controls"):
@@ -507,6 +585,11 @@ def export_game_module(game_id: str, game_manager=None) -> Dict[str, Any]:
             list(prof["suppress_alerts_when_running"])
             if isinstance(prof.get("suppress_alerts_when_running"), list)
             else list(base_mod.get("suppress_alerts_when_running") or [])
+        ),
+        "companion_apps": (
+            prof.get("companion_apps")
+            if prof.get("companion_apps")
+            else (base_mod.get("companion_apps") or [])
         ),
         "companion_resources": prof.get("companion_resources") or base_mod.get("companion_resources") or {},
         "map_controls": prof.get("map_controls") or base_mod.get("map_controls") or {},

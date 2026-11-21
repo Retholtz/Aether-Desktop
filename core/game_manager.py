@@ -578,10 +578,451 @@ class GameManager:
             raw_list = [str(p).strip() for p in processes if str(p).strip()]
         else:
             raw_list = []
-        clean_list = [os.path.basename(p) for p in raw_list if os.path.basename(p)]
+        clean_list = []
+        seen_lower = set()
+        for p in raw_list:
+            base = os.path.basename(p)
+            if base and base.lower() not in seen_lower:
+                clean_list.append(base)
+                seen_lower.add(base.lower())
         profile["suppress_alerts_when_running"] = clean_list
+
+        # Keep companion_apps mute_aether_alerts flags in sync with manual edits
+        apps = self._normalize_companion_apps(profile.get("companion_apps"))
+        if apps:
+            for app in apps:
+                exe_low = os.path.basename(str(app.get("executable") or "")).lower()
+                if exe_low:
+                    app["mute_aether_alerts"] = exe_low in seen_lower
+            profile["companion_apps"] = apps
+
         self._save_profiles(self.data)
-        return {"success": True, "game_id": game_id, "suppress_alerts_when_running": clean_list}
+        return {
+            "success": True,
+            "game_id": game_id,
+            "suppress_alerts_when_running": clean_list,
+            "companion_apps": apps,
+        }
+
+    # --- 3rd-Party Companion Apps Management (Game-Agnostic) ---
+
+    @staticmethod
+    def _normalize_companion_app_id(raw_id: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", str(raw_id or "").strip().lower()).strip("_")
+        return slug
+
+    def _normalize_companion_apps(self, raw: Any) -> List[Dict[str, Any]]:
+        """
+        Normalizes `profile['companion_apps']` into a clean list of dicts while
+        remaining backward-compatible with legacy dict-based flight-deck entries.
+        """
+        items: List[Dict[str, Any]] = []
+        seen_ids = set()
+
+        def _append_entry(raw_key: str, entry: Dict[str, Any]):
+            if not isinstance(entry, dict):
+                return
+            name = str(entry.get("name") or entry.get("display_name") or raw_key or "").strip()
+            raw_path = str(entry.get("path") or "").strip()
+            raw_exe = str(entry.get("executable") or "").strip()
+            if not raw_path and raw_exe and (os.sep in raw_exe or "/" in raw_exe or ":" in raw_exe):
+                raw_path = os.path.normpath(raw_exe)
+            exe = os.path.basename(raw_exe or raw_path).strip()
+            if not name and exe:
+                name = os.path.splitext(exe)[0]
+            if not name and not exe:
+                return
+            app_id = self._normalize_companion_app_id(entry.get("id") or raw_key or name or exe)
+            if not app_id:
+                app_id = f"app_{len(items) + 1}"
+            base_id = app_id
+            suffix = 2
+            while app_id in seen_ids:
+                app_id = f"{base_id}_{suffix}"
+                suffix += 1
+            seen_ids.add(app_id)
+
+            norm: Dict[str, Any] = {
+                "id": app_id,
+                "name": name,
+                "executable": exe,
+                "path": raw_path,
+                "purpose": str(entry.get("purpose") or "").strip(),
+                "mute_aether_alerts": bool(entry.get("mute_aether_alerts", False)),
+                "quiet_when_running": bool(entry.get("quiet_when_running", False)),
+                "prompt_to_launch": bool(entry.get("prompt_to_launch", True)),
+            }
+            if entry.get("url"):
+                norm["url"] = str(entry["url"]).strip()
+            if entry.get("default_monitor") is not None:
+                norm["default_monitor"] = entry["default_monitor"]
+            items.append(norm)
+
+        if isinstance(raw, list):
+            for entry in raw:
+                if isinstance(entry, dict):
+                    _append_entry("", entry)
+        elif isinstance(raw, dict):
+            for k, v in raw.items():
+                if isinstance(v, dict):
+                    _append_entry(str(k), v)
+
+        return items
+
+    def _sync_companion_mute_alerts(
+        self,
+        profile: Dict[str, Any],
+        removed_muted_exes: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Synchronizes companion app `mute_aether_alerts` toggles with `suppress_alerts_when_running`."""
+        apps = self._normalize_companion_apps(profile.get("companion_apps"))
+        profile["companion_apps"] = apps
+
+        current = list(profile.get("suppress_alerts_when_running") or [])
+        muted_by_apps = {
+            os.path.basename(a["executable"]).lower(): os.path.basename(a["executable"])
+            for a in apps
+            if (a.get("mute_aether_alerts") or a.get("quiet_when_running")) and a.get("executable")
+        }
+        unmuted_by_apps = {
+            os.path.basename(a["executable"]).lower()
+            for a in apps
+            if not (a.get("mute_aether_alerts") or a.get("quiet_when_running")) and a.get("executable")
+        }
+        for r_exe in (removed_muted_exes or []):
+            r_low = os.path.basename(str(r_exe or "")).lower()
+            if r_low:
+                unmuted_by_apps.add(r_low)
+
+        result: List[str] = []
+        seen = set()
+        for proc in current:
+            base = os.path.basename(str(proc or "").strip())
+            low = base.lower()
+            if not base or low in seen:
+                continue
+            if low in unmuted_by_apps and low not in muted_by_apps:
+                continue
+            result.append(base)
+            seen.add(low)
+
+        for low, base in muted_by_apps.items():
+            if low not in seen:
+                result.append(base)
+                seen.add(low)
+
+        profile["suppress_alerts_when_running"] = result
+        return result
+
+    @staticmethod
+    def _get_running_process_names_lower() -> set:
+        """Returns a lowercase set of currently running process basenames."""
+        try:
+            import psutil
+
+            return {
+                (p.info.get("name") or "").strip().lower()
+                for p in psutil.process_iter(["name"])
+                if p.info.get("name")
+            }
+        except Exception:
+            return set()
+
+    def get_companion_apps(self, game_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Returns normalized 3rd-party companion apps configured for `game_id`."""
+        gid = game_id or self.data.get("active_profile")
+        if not gid:
+            return []
+        profile = self.get_profile(gid) or {}
+        apps = self._normalize_companion_apps(profile.get("companion_apps"))
+        if not apps:
+            try:
+                from core.game_modules import get_module_for_game
+                mod = get_module_for_game(gid, profile=profile)
+                if mod and mod.get("companion_apps"):
+                    apps = self._normalize_companion_apps(mod.get("companion_apps"))
+            except Exception:
+                pass
+        return apps
+
+    def get_companion_apps_with_status(
+        self,
+        game_id: Optional[str] = None,
+        running_procs: Optional[set] = None,
+    ) -> List[Dict[str, Any]]:
+        """Returns linked 3rd-party companion apps enriched with live `running: bool` status."""
+        apps = self.get_companion_apps(game_id)
+        if not apps:
+            return []
+        running_set = (
+            {str(p).lower() for p in running_procs}
+            if running_procs is not None
+            else self._get_running_process_names_lower()
+        )
+        enriched = []
+        for app in apps:
+            item = dict(app)
+            exe_low = os.path.basename(str(item.get("executable") or "")).lower()
+            exe_stem = os.path.splitext(exe_low)[0] if exe_low else ""
+            is_running = False
+            if exe_low:
+                is_running = (
+                    exe_low in running_set
+                    or (f"{exe_low}.exe" in running_set)
+                    or (exe_stem and f"{exe_stem}.exe" in running_set)
+                )
+            item["running"] = bool(is_running)
+            enriched.append(item)
+        return enriched
+
+    def get_missing_promptable_companion_apps(
+        self,
+        game_id: Optional[str] = None,
+        running_procs: Optional[set] = None,
+    ) -> List[Dict[str, Any]]:
+        """Returns linked companion apps that have `prompt_to_launch=True` and are currently NOT running."""
+        apps = self.get_companion_apps_with_status(game_id, running_procs=running_procs)
+        return [
+            a for a in apps
+            if a.get("prompt_to_launch", True) and not a.get("running", False)
+        ]
+
+    def is_quiet_companion_running(
+        self,
+        game_id: Optional[str] = None,
+        running_procs: Optional[set] = None,
+    ) -> Optional[str]:
+        """Returns the name of any running companion app with `quiet_when_running=True`, or None."""
+        for app in self.get_companion_apps_with_status(game_id, running_procs=running_procs):
+            if app.get("quiet_when_running") and app.get("running"):
+                return str(app.get("name") or app.get("executable") or app.get("id"))
+        return None
+
+    def add_companion_app(
+        self,
+        game_id: str,
+        name: str,
+        executable_or_path: str = "",
+        purpose: str = "",
+        mute_aether_alerts: bool = False,
+        prompt_to_launch: bool = True,
+        quiet_when_running: bool = False,
+    ) -> dict:
+        """Links a 3rd-party companion program to a game profile."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+
+        raw_target = str(executable_or_path or "").strip().strip('"')
+        full_path = ""
+        if raw_target and (os.sep in raw_target or "/" in raw_target or ":" in raw_target):
+            full_path = os.path.normpath(raw_target)
+        exe_name = os.path.basename(raw_target).strip()
+        if exe_name and "." not in exe_name and not raw_target.startswith(("http://", "https://")):
+            exe_name = f"{exe_name}.exe"
+
+        clean_name = str(name or "").strip()
+        if not clean_name and exe_name:
+            clean_name = os.path.splitext(exe_name)[0]
+        if not clean_name:
+            return {"success": False, "error": "Companion app name or executable is required."}
+
+        apps = self._normalize_companion_apps(profile.get("companion_apps"))
+        app_id = self._normalize_companion_app_id(clean_name or exe_name)
+        existing_idx = None
+        for idx, existing in enumerate(apps):
+            if existing["id"] == app_id or (exe_name and existing.get("executable", "").lower() == exe_name.lower()):
+                existing_idx = idx
+                break
+
+        entry = {
+            "id": apps[existing_idx]["id"] if existing_idx is not None else app_id,
+            "name": clean_name,
+            "executable": exe_name,
+            "path": full_path or (apps[existing_idx].get("path", "") if existing_idx is not None else ""),
+            "purpose": str(purpose or "").strip(),
+            "mute_aether_alerts": bool(mute_aether_alerts),
+            "quiet_when_running": bool(quiet_when_running),
+            "prompt_to_launch": bool(prompt_to_launch),
+        }
+        if existing_idx is not None:
+            apps[existing_idx] = entry
+        else:
+            apps.append(entry)
+
+        profile["companion_apps"] = apps
+        suppress_list = self._sync_companion_mute_alerts(profile)
+        self._save_profiles(self.data)
+        return {
+            "success": True,
+            "game_id": game_id,
+            "app": entry,
+            "companion_apps": self.get_companion_apps_with_status(game_id),
+            "suppress_alerts_when_running": suppress_list,
+        }
+
+    def update_companion_app(self, game_id: str, app_id: str, updates: Dict[str, Any]) -> dict:
+        """Updates properties (mute_aether_alerts, prompt_to_launch, purpose, path, etc.) on a linked companion app."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        apps = self._normalize_companion_apps(profile.get("companion_apps"))
+        target = None
+        norm_lookup = self._normalize_companion_app_id(app_id)
+        for app in apps:
+            if app["id"] == app_id or app["id"] == norm_lookup:
+                target = app
+                break
+        if target is None:
+            return {"success": False, "error": f"Companion app '{app_id}' not found."}
+
+        if isinstance(updates, dict):
+            if "name" in updates and str(updates["name"]).strip():
+                target["name"] = str(updates["name"]).strip()
+            if "purpose" in updates:
+                target["purpose"] = str(updates["purpose"] or "").strip()
+            if "path" in updates:
+                raw_p = str(updates["path"] or "").strip().strip('"')
+                target["path"] = os.path.normpath(raw_p) if raw_p else ""
+                if raw_p and not target.get("executable"):
+                    target["executable"] = os.path.basename(raw_p)
+            if "executable" in updates and str(updates["executable"]).strip():
+                target["executable"] = os.path.basename(str(updates["executable"]).strip())
+            if "mute_aether_alerts" in updates:
+                target["mute_aether_alerts"] = bool(updates["mute_aether_alerts"])
+            if "quiet_when_running" in updates:
+                target["quiet_when_running"] = bool(updates["quiet_when_running"])
+            if "prompt_to_launch" in updates:
+                target["prompt_to_launch"] = bool(updates["prompt_to_launch"])
+
+        profile["companion_apps"] = apps
+        suppress_list = self._sync_companion_mute_alerts(profile)
+        self._save_profiles(self.data)
+        return {
+            "success": True,
+            "game_id": game_id,
+            "app": target,
+            "companion_apps": self.get_companion_apps_with_status(game_id),
+            "suppress_alerts_when_running": suppress_list,
+        }
+
+    def remove_companion_app(self, game_id: str, app_id: str) -> dict:
+        """Removes a linked 3rd-party companion program from a game profile."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        apps = self._normalize_companion_apps(profile.get("companion_apps"))
+        norm_lookup = self._normalize_companion_app_id(app_id)
+        removed_muted = []
+        kept = []
+        removed = False
+        for app in apps:
+            if app["id"] == app_id or app["id"] == norm_lookup:
+                removed = True
+                if (app.get("mute_aether_alerts") or app.get("quiet_when_running")) and app.get("executable"):
+                    removed_muted.append(app["executable"])
+            else:
+                kept.append(app)
+        if not removed:
+            return {"success": False, "error": f"Companion app '{app_id}' not found."}
+
+        profile["companion_apps"] = kept
+        suppress_list = self._sync_companion_mute_alerts(profile, removed_muted_exes=removed_muted)
+        self._save_profiles(self.data)
+        return {
+            "success": True,
+            "game_id": game_id,
+            "companion_apps": self.get_companion_apps_with_status(game_id),
+            "suppress_alerts_when_running": suppress_list,
+        }
+
+    def launch_companion_app(self, app_id_or_name: str, game_id: Optional[str] = None) -> dict:
+        """
+        Safely launches a user-configured 3rd-party companion app linked to the game profile.
+        Only launches apps explicitly present in `companion_apps` for security.
+        """
+        gid = game_id or self.data.get("active_profile")
+        if not gid:
+            return {"success": False, "error": "No active game profile selected."}
+        apps = self.get_companion_apps_with_status(gid)
+        if not apps:
+            return {"success": False, "error": f"No 3rd-party companion apps configured for '{gid}'."}
+
+        q_raw = str(app_id_or_name or "").strip().lower()
+        q_slug = self._normalize_companion_app_id(q_raw)
+        match = None
+        for app in apps:
+            a_id = app["id"].lower()
+            a_name = app["name"].lower()
+            a_exe = os.path.basename(app.get("executable") or "").lower()
+            a_stem = os.path.splitext(a_exe)[0] if a_exe else ""
+            if q_raw in (a_id, a_name, a_exe, a_stem) or (q_slug and q_slug == a_id):
+                match = app
+                break
+        if match is None:
+            for app in apps:
+                if q_raw and (q_raw in app["name"].lower() or q_raw in app.get("executable", "").lower()):
+                    match = app
+                    break
+
+        if match is None:
+            available = ", ".join(a["name"] for a in apps)
+            return {
+                "success": False,
+                "error": f"Companion app '{app_id_or_name}' is not linked to this game. Linked apps: {available}.",
+            }
+
+        if match.get("running"):
+            return {
+                "success": True,
+                "already_running": True,
+                "app": match,
+                "message": f"{match['name']} is already running.",
+            }
+
+        import shutil
+        import subprocess
+
+        launch_target = ""
+        saved_path = str(match.get("path") or "").strip()
+        if saved_path and os.path.isfile(saved_path):
+            launch_target = saved_path
+        elif match.get("executable"):
+            resolved = shutil.which(match["executable"])
+            if resolved:
+                launch_target = resolved
+
+        if not launch_target:
+            return {
+                "success": False,
+                "app": match,
+                "error": (
+                    f"No executable path is saved for {match['name']} ({match.get('executable') or 'unknown'}). "
+                    f"Use Browse in the Games tab to link its .exe path so Aether can launch it."
+                ),
+            }
+
+        try:
+            cwd = os.path.dirname(launch_target) or None
+            if sys.platform == "win32":
+                subprocess.Popen(
+                    [launch_target],
+                    cwd=cwd,
+                    creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                    close_fds=True,
+                )
+            else:
+                subprocess.Popen([launch_target], cwd=cwd, close_fds=True)
+            return {
+                "success": True,
+                "launched": True,
+                "app": match,
+                "path": launch_target,
+                "message": f"Started {match['name']}.",
+            }
+        except Exception as e:
+            return {"success": False, "app": match, "error": f"Failed to launch {match['name']}: {e}"}
 
     def check_game_elevation(self, game_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -978,16 +1419,45 @@ class GameManager:
                 log_lines.append(f"- [{cat}]{loc}: {entry.get('summary', '')}")
             parts.append("CO-PILOT INTEL & OBSERVED LANDMARKS / CLUES (PAST DISCOVERIES):\n" + "\n".join(log_lines))
 
-        # Companion Flight-Deck Tools & MFD Consoles
-        companions = profile.get("companion_apps", {})
+        # Linked 3rd-Party Companion Apps & Flight-Deck Tools (Live Running Status)
+        companions = self.get_companion_apps_with_status(active_id)
         if companions:
             comp_lines = []
-            for c_id, c_data in companions.items():
-                dname = c_data.get("display_name", c_id)
-                target = c_data.get("url") or c_data.get("executable", c_id)
-                def_mon = c_data.get("default_monitor", 2)
-                comp_lines.append(f'- "{dname}" ({c_id}) -> target: "{target}" (recommended display: Monitor {def_mon})')
-            parts.append("COMPANION FLIGHT-DECK TOOLS & MFD CONSOLES (Available to launch/navigate on any monitor):\n" + "\n".join(comp_lines))
+            active_quiet_apps = []
+            for c_data in companions:
+                dname = c_data.get("name", c_data.get("id", "Companion App"))
+                target = c_data.get("url") or c_data.get("executable") or c_data.get("id", "")
+                status_tag = "[RUNNING]" if c_data.get("running") else "[NOT RUNNING]"
+                purpose_str = f" — {c_data['purpose']}" if c_data.get("purpose") else ""
+                mute_note = " (Mutes duplicate Aether alerts while running)" if c_data.get("mute_aether_alerts") else ""
+                quiet_note = " (Quiet when running)" if c_data.get("quiet_when_running") else ""
+                mon_note = f" (Monitor {c_data['default_monitor']})" if c_data.get("default_monitor") is not None else ""
+                if c_data.get("quiet_when_running") and c_data.get("running"):
+                    active_quiet_apps.append(dname)
+                comp_lines.append(
+                    f'- "{dname}" ({target}) {status_tag}{purpose_str}{mute_note}{quiet_note}{mon_note}'
+                )
+            quiet_directive = ""
+            if active_quiet_apps:
+                quiet_directive = (
+                    f"\n- QUIET MODE ACTIVE ({', '.join(active_quiet_apps)} running): "
+                    f"Stay quiet and passive — do NOT volunteer unsolicited commentary or alerts; respond only when directly addressed by the player."
+                )
+            parts.append(
+                "LINKED 3RD-PARTY COMPANION APPS & FLIGHT-DECK TOOLS:\n"
+                + "\n".join(comp_lines)
+                + "\n- For [RUNNING] apps: actively leverage or reference them in-game when helpful (and defer duplicate telemetry callouts if marked muted).\n"
+                + "- For [NOT RUNNING] apps: if the player asks to start one (or accepts an offer to start it), call `launch_game_companion_app(app_name)` directly."
+                + quiet_directive
+            )
+
+        # Input Safety Mode Reminder
+        if self.get_input_mode(active_id) == "spotter_only":
+            parts.append(
+                "INPUT SAFETY MODE: SPOTTER-ONLY (ANTI-CHEAT SAFE)\n"
+                "- Synthetic keyboard/mouse/gamepad macros are STRICTLY DISABLED for this game.\n"
+                "- Provide read-only voice guidance, visual HUD/map spotting, and companion-app assistance only."
+            )
 
         # 5. Co-Pilot Role Directive
         parts.append(

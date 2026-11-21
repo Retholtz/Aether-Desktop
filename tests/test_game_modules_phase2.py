@@ -254,7 +254,7 @@ class TestPhase2FrontendControls(unittest.TestCase):
         js = (REPO_ROOT / "ui" / "static" / "games_tab.js").read_text(encoding="utf-8")
         for el_id in (
             "select-game-input-mode",
-            "input-game-suppress-alerts",
+            "chk-companion-quiet-running",
             "btn-autobuild-game-module",
             "btn-import-game-module",
             "btn-export-game-module",

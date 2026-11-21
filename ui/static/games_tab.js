@@ -364,6 +364,10 @@ function renderActiveGameDetail() {
     // Check Admin / UIPI elevation status for the selected game
     refreshGameElevationWarning(activeGameId);
 
+    // 3rd-Party Companion Apps List (render cached first, then refresh live running status)
+    renderCompanionAppsList(Array.isArray(profile.companion_apps) ? profile.companion_apps : []);
+    refreshCompanionAppsStatus(activeGameId);
+
     // Keybinds Table
     const tbody = document.getElementById('tbody-game-binds');
     if (tbody) {
@@ -928,12 +932,33 @@ function initGamesTabEvents() {
                     const res = await window.pywebview.api.set_game_suppress_alerts(targetGameId, rawVal);
                     if (res && res.success && currentGamesData?.profiles?.[targetGameId]) {
                         currentGamesData.profiles[targetGameId].suppress_alerts_when_running = res.suppress_alerts_when_running || [];
+                        if (Array.isArray(res.companion_apps)) {
+                            currentGamesData.profiles[targetGameId].companion_apps = res.companion_apps;
+                            refreshCompanionAppsStatus(targetGameId);
+                        }
                     }
                 }
             } catch (err) {
                 console.error("Failed saving alert suppression processes:", err);
             }
         }, 500);
+    });
+
+    // 3rd-Party Companion App Modal Triggers & Controls
+    document.getElementById('btn-add-companion-app')?.addEventListener('click', openAddCompanionAppModal);
+    document.getElementById('btn-close-add-companion-modal')?.addEventListener('click', closeAddCompanionAppModal);
+    document.getElementById('btn-cancel-add-companion')?.addEventListener('click', closeAddCompanionAppModal);
+    document.getElementById('btn-confirm-add-companion')?.addEventListener('click', confirmAddCompanionApp);
+    document.getElementById('btn-browse-companion-exe')?.addEventListener('click', handleBrowseCompanionExe);
+    document.getElementById('btn-toggle-companion-running-procs')?.addEventListener('click', toggleCompanionRunningProcesses);
+    document.getElementById('btn-refresh-companion-running-procs')?.addEventListener('click', loadCompanionRunningProcesses);
+    document.getElementById('input-filter-companion-running-proc')?.addEventListener('input', (e) => {
+        if (cachedRunningProcesses) {
+            renderCompanionRunningProcessesList(cachedRunningProcesses, e.target.value);
+        }
+    });
+    document.getElementById('modal-add-companion-app')?.addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'modal-add-companion-app') closeAddCompanionAppModal();
     });
 
     // Game Module Import / Export / Auto-Build Buttons
@@ -1006,7 +1031,7 @@ function initGamesTabEvents() {
         const origText = btn ? btn.textContent : '';
         if (btn) {
             btn.disabled = true;
-            btn.textContent = '✨ Building...';
+            btn.textContent = '✨ Building (Auto-Starting Aether)...';
         }
         try {
             const res = await window.pywebview.api.auto_build_game_module(activeGameId);
@@ -1081,11 +1106,401 @@ function startTelemetryPolling() {
                         }
                     }
                 }
+                // Refresh live running indicators for linked 3rd-party companion apps
+                refreshCompanionAppsStatus(activeGameId);
             } catch (e) {
                 // Ignore background poll errors
             }
         }
     }, 2500);
+}
+
+// --- 3rd-Party Companion Apps UI & Modal Controller ---
+
+async function refreshCompanionAppsStatus(gameId) {
+    if (!gameId || !window.pywebview?.api?.get_game_companion_apps) return;
+    try {
+        const res = await window.pywebview.api.get_game_companion_apps(gameId);
+        if (res && res.success && gameId === activeGameId) {
+            const apps = Array.isArray(res.apps) ? res.apps : [];
+            if (currentGamesData?.profiles?.[gameId]) {
+                currentGamesData.profiles[gameId].companion_apps = apps;
+            }
+            renderCompanionAppsList(apps);
+        }
+    } catch (_) {
+        // Ignore transient poll errors
+    }
+}
+
+function renderCompanionAppsList(apps) {
+    const container = document.getElementById('game-companion-apps-list');
+    if (!container) return;
+    const list = Array.isArray(apps) ? apps : [];
+
+    if (list.length === 0) {
+        container.innerHTML = `
+            <div style="padding: 14px 12px; border: 1px dashed rgba(148, 163, 184, 0.2); border-radius: 8px; text-align: center; color: var(--text-muted); font-size: 0.82rem;">
+                No 3rd-party companion programs linked yet. Click <strong>+ Add 3rd-Party Program</strong> to link tools like EDMC, EDDiscovery, SRV Survey, or EDCoPilot.
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = '';
+    list.forEach(app => {
+        const row = document.createElement('div');
+        row.className = 'companion-app-row';
+        row.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.16);';
+
+        const isRunning = Boolean(app.running);
+        const exeLabel = app.executable ? `<code>${escapeGameHtml(app.executable)}</code>` : '';
+        const purposeLabel = app.purpose ? `<span style="color: var(--text-muted); font-size: 0.78rem;">— ${escapeGameHtml(app.purpose)}</span>` : '';
+        const hasPath = Boolean(app.path);
+
+        const leftDiv = document.createElement('div');
+        leftDiv.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 220px;';
+        leftDiv.innerHTML = `
+            <span class="badge-status ${isRunning ? 'badge-online' : 'badge-offline'}" style="font-size: 0.68rem; padding: 2px 7px;">
+                ${isRunning ? 'RUNNING' : 'IDLE'}
+            </span>
+            <strong style="color: var(--text-main); font-size: 0.88rem;">${escapeGameHtml(app.name || app.id)}</strong>
+            ${exeLabel}
+            ${purposeLabel}
+        `;
+
+        const rightDiv = document.createElement('div');
+        rightDiv.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; gap: 10px;';
+
+        // Prompt to Launch toggle
+        const promptLabel = document.createElement('label');
+        promptLabel.style.cssText = 'display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; color: var(--text-secondary); cursor: pointer;';
+        promptLabel.title = 'Ask to start this program when the game launches if it is not running';
+        const promptChk = document.createElement('input');
+        promptChk.type = 'checkbox';
+        promptChk.checked = app.prompt_to_launch !== false;
+        promptChk.onchange = () => toggleCompanionAppFlag(app.id, 'prompt_to_launch', promptChk.checked);
+        promptLabel.appendChild(promptChk);
+        promptLabel.appendChild(document.createTextNode('Prompt on Launch'));
+
+        // Mute Alerts toggle
+        const muteLabel = document.createElement('label');
+        muteLabel.style.cssText = 'display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; color: var(--text-secondary); cursor: pointer;';
+        muteLabel.title = 'Mute duplicate Aether ship/HUD voice alerts while this program is running';
+        const muteChk = document.createElement('input');
+        muteChk.type = 'checkbox';
+        muteChk.checked = Boolean(app.mute_aether_alerts);
+        muteChk.onchange = () => toggleCompanionAppFlag(app.id, 'mute_aether_alerts', muteChk.checked);
+        muteLabel.appendChild(muteChk);
+        muteLabel.appendChild(document.createTextNode('Mute Alerts'));
+
+        // Quiet When Running toggle
+        const quietLabel = document.createElement('label');
+        quietLabel.style.cssText = 'display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; color: var(--text-secondary); cursor: pointer;';
+        quietLabel.title = 'Keep Aether quiet/passive (no unsolicited alerts or chatter) while this program is running';
+        const quietChk = document.createElement('input');
+        quietChk.type = 'checkbox';
+        quietChk.checked = Boolean(app.quiet_when_running);
+        quietChk.onchange = () => toggleCompanionAppFlag(app.id, 'quiet_when_running', quietChk.checked);
+        quietLabel.appendChild(quietChk);
+        quietLabel.appendChild(document.createTextNode('Quiet When Running'));
+
+        // Launch button
+        const launchBtn = document.createElement('button');
+        launchBtn.type = 'button';
+        launchBtn.className = 'btn-secondary-sm';
+        launchBtn.textContent = isRunning ? 'Active' : '▶ Launch';
+        launchBtn.disabled = isRunning;
+        launchBtn.title = hasPath ? `Launch ${app.path}` : `Launch ${app.executable || app.name}`;
+        launchBtn.onclick = () => launchCompanionApp(app.id);
+
+        // Remove button
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'btn-danger-sm';
+        delBtn.textContent = 'Delete';
+        delBtn.onclick = () => removeCompanionApp(app.id, app.name || app.id);
+
+        rightDiv.appendChild(promptLabel);
+        rightDiv.appendChild(muteLabel);
+        rightDiv.appendChild(quietLabel);
+        rightDiv.appendChild(launchBtn);
+        rightDiv.appendChild(delBtn);
+
+        row.appendChild(leftDiv);
+        row.appendChild(rightDiv);
+        container.appendChild(row);
+    });
+}
+
+async function toggleCompanionAppFlag(appId, field, value) {
+    if (!activeGameId || !window.pywebview?.api?.update_game_companion_app) return;
+    try {
+        const res = await window.pywebview.api.update_game_companion_app(activeGameId, appId, { [field]: Boolean(value) });
+        if (res && res.success) {
+            const prof = currentGamesData?.profiles?.[activeGameId];
+            if (prof) {
+                if (Array.isArray(res.companion_apps)) prof.companion_apps = res.companion_apps;
+                if (Array.isArray(res.suppress_alerts_when_running)) {
+                    prof.suppress_alerts_when_running = res.suppress_alerts_when_running;
+                    const suppressInput = document.getElementById('input-game-suppress-alerts');
+                    if (suppressInput) suppressInput.value = res.suppress_alerts_when_running.join(', ');
+                }
+            }
+            if (Array.isArray(res.companion_apps)) renderCompanionAppsList(res.companion_apps);
+        }
+    } catch (err) {
+        console.error("Failed updating companion app toggle:", err);
+    }
+}
+
+async function launchCompanionApp(appId) {
+    if (!activeGameId || !window.pywebview?.api?.launch_game_companion_app) return;
+    try {
+        const res = await window.pywebview.api.launch_game_companion_app(activeGameId, appId);
+        if (res && res.success) {
+            if (window.aetherUI?.showToast) {
+                window.aetherUI.showToast(res.message || 'Launched companion program.');
+            }
+            setTimeout(() => refreshCompanionAppsStatus(activeGameId), 1200);
+        } else {
+            alert((res && res.error) || 'Could not launch companion program.');
+        }
+    } catch (err) {
+        console.error("Failed launching companion app:", err);
+    }
+}
+
+async function removeCompanionApp(appId, appName) {
+    if (!activeGameId || !window.pywebview?.api?.remove_game_companion_app) return;
+    if (!confirm(`Remove 3rd-party program "${appName}" from this game?`)) return;
+    try {
+        const res = await window.pywebview.api.remove_game_companion_app(activeGameId, appId);
+        if (res && res.success) {
+            const prof = currentGamesData?.profiles?.[activeGameId];
+            if (prof) {
+                prof.companion_apps = res.companion_apps || [];
+                if (Array.isArray(res.suppress_alerts_when_running)) {
+                    prof.suppress_alerts_when_running = res.suppress_alerts_when_running;
+                    const suppressInput = document.getElementById('input-game-suppress-alerts');
+                    if (suppressInput) suppressInput.value = res.suppress_alerts_when_running.join(', ');
+                }
+            }
+            renderCompanionAppsList(res.companion_apps || []);
+        }
+    } catch (err) {
+        console.error("Failed removing companion app:", err);
+    }
+}
+
+function openAddCompanionAppModal() {
+    if (!activeGameId) return;
+    const modal = document.getElementById('modal-add-companion-app');
+    if (!modal) return;
+    const nameInput = document.getElementById('input-companion-app-name');
+    const procInput = document.getElementById('input-companion-app-proc');
+    const purposeInput = document.getElementById('input-companion-app-purpose');
+    const promptChk = document.getElementById('chk-companion-prompt-launch');
+    const muteChk = document.getElementById('chk-companion-mute-alerts');
+    const quietChk = document.getElementById('chk-companion-quiet-running');
+    const procPanel = document.getElementById('panel-companion-running-processes');
+    if (nameInput) {
+        nameInput.value = '';
+        nameInput.style.borderColor = '';
+    }
+    if (procInput) {
+        procInput.value = '';
+        procInput.style.borderColor = '';
+    }
+    if (purposeInput) purposeInput.value = '';
+    if (promptChk) promptChk.checked = true;
+    if (muteChk) muteChk.checked = false;
+    if (quietChk) quietChk.checked = false;
+    if (procPanel) procPanel.classList.add('hidden');
+    modal.classList.remove('hidden');
+    if (nameInput) nameInput.focus();
+}
+
+function closeAddCompanionAppModal() {
+    const modal = document.getElementById('modal-add-companion-app');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function handleBrowseCompanionExe() {
+    try {
+        const fn = window.pywebview?.api?.browse_companion_executable || window.pywebview?.api?.browse_game_executable;
+        if (!fn) return;
+        const res = await fn();
+        if (res && res.success) {
+            const procInput = document.getElementById('input-companion-app-proc');
+            const nameInput = document.getElementById('input-companion-app-name');
+            if (procInput) {
+                procInput.value = res.file_path || res.file_name || '';
+                procInput.style.borderColor = '#10b981';
+                setTimeout(() => { if (procInput) procInput.style.borderColor = ''; }, 2500);
+                procInput.scrollLeft = procInput.scrollWidth;
+            }
+            if (nameInput && !nameInput.value.trim()) {
+                nameInput.value = res.suggested_name || '';
+            }
+        }
+    } catch (err) {
+        console.error("Failed browsing companion executable:", err);
+    }
+}
+
+async function toggleCompanionRunningProcesses() {
+    const panel = document.getElementById('panel-companion-running-processes');
+    if (!panel) return;
+    if (panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden');
+        await loadCompanionRunningProcesses();
+    } else {
+        panel.classList.add('hidden');
+    }
+}
+
+async function loadCompanionRunningProcesses() {
+    const list = document.getElementById('list-companion-running-processes');
+    if (!list) return;
+    list.innerHTML = '<div style="padding: 12px; text-align: center; color: var(--text-dim); font-size: 0.8rem;">Scanning running processes...</div>';
+    try {
+        const res = await window.pywebview.api.get_running_processes();
+        cachedRunningProcesses = res;
+        const filterVal = document.getElementById('input-filter-companion-running-proc')?.value || '';
+        renderCompanionRunningProcessesList(res, filterVal);
+    } catch (err) {
+        list.innerHTML = '<div style="padding: 12px; text-align: center; color: #f87171; font-size: 0.8rem;">Could not load running processes.</div>';
+    }
+}
+
+function renderCompanionRunningProcessesList(data, filterText = '') {
+    const list = document.getElementById('list-companion-running-processes');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const q = (filterText || '').toLowerCase().trim();
+    const apps = (data && data.applications) || [];
+    const procs = (data && data.processes) || [];
+    const pathMap = (data && data.process_paths) || {};
+
+    const filteredApps = apps.filter(a => !q || a.name.toLowerCase().includes(q) || (a.title && a.title.toLowerCase().includes(q)));
+    const filteredProcs = procs.filter(p => !q || p.toLowerCase().includes(q));
+
+    if (filteredApps.length === 0 && filteredProcs.length === 0) {
+        list.innerHTML = '<div style="padding: 12px; text-align: center; color: var(--text-dim); font-size: 0.8rem;">No matching processes found.</div>';
+        return;
+    }
+
+    if (filteredApps.length > 0) {
+        const header = document.createElement('div');
+        header.style.cssText = 'padding: 6px 10px; background: rgba(59, 130, 246, 0.08); font-size: 0.72rem; color: #60a5fa; font-weight: 700;';
+        header.textContent = 'RUNNING WINDOWED APPLICATIONS';
+        list.appendChild(header);
+
+        filteredApps.forEach(app => {
+            const item = document.createElement('div');
+            item.className = 'proc-item';
+            item.innerHTML = `
+                <span class="proc-item-title">🪟 ${escapeGameHtml(app.title || app.name)}</span>
+                <span class="proc-item-exe">${escapeGameHtml(app.name)}</span>
+            `;
+            const targetPath = app.exe_path || pathMap[app.name.toLowerCase()] || app.name;
+            item.onclick = () => selectCompanionRunningProcess(targetPath, app.name, app.title);
+            list.appendChild(item);
+        });
+    }
+
+    if (filteredProcs.length > 0) {
+        const header = document.createElement('div');
+        header.style.cssText = 'padding: 6px 10px; background: var(--bg-panel); font-size: 0.72rem; color: var(--text-muted); font-weight: 700;';
+        header.textContent = 'ALL RUNNING PROCESSES';
+        list.appendChild(header);
+
+        filteredProcs.forEach(pname => {
+            const item = document.createElement('div');
+            item.className = 'proc-item';
+            item.innerHTML = `
+                <span class="proc-item-title" style="color: var(--text-secondary);">⚡ ${escapeGameHtml(pname)}</span>
+                <span class="proc-item-exe">${escapeGameHtml(pname)}</span>
+            `;
+            const targetPath = pathMap[pname.toLowerCase()] || pname;
+            item.onclick = () => selectCompanionRunningProcess(targetPath, pname, '');
+            list.appendChild(item);
+        });
+    }
+}
+
+function selectCompanionRunningProcess(targetPath, exeName, windowTitle = '') {
+    const procInput = document.getElementById('input-companion-app-proc');
+    const nameInput = document.getElementById('input-companion-app-name');
+    const panel = document.getElementById('panel-companion-running-processes');
+    if (procInput) {
+        procInput.value = targetPath || exeName;
+        procInput.scrollLeft = procInput.scrollWidth;
+    }
+    if (nameInput && !nameInput.value.trim()) {
+        const cleaned = (windowTitle || exeName.replace(/\.exe$/i, '')).split(' - ')[0].trim();
+        nameInput.value = cleaned;
+    }
+    if (panel) panel.classList.add('hidden');
+}
+
+async function confirmAddCompanionApp() {
+    if (!activeGameId || !window.pywebview?.api?.add_game_companion_app) return;
+    const nameInput = document.getElementById('input-companion-app-name');
+    const procInput = document.getElementById('input-companion-app-proc');
+    const purposeInput = document.getElementById('input-companion-app-purpose');
+    const promptChk = document.getElementById('chk-companion-prompt-launch');
+    const muteChk = document.getElementById('chk-companion-mute-alerts');
+    const quietChk = document.getElementById('chk-companion-quiet-running');
+
+    const name = (nameInput?.value || '').trim();
+    const procOrPath = (procInput?.value || '').trim();
+    const purpose = (purposeInput?.value || '').trim();
+    const promptToLaunch = promptChk ? Boolean(promptChk.checked) : true;
+    const muteAlerts = muteChk ? Boolean(muteChk.checked) : false;
+    const quietWhenRunning = quietChk ? Boolean(quietChk.checked) : false;
+
+    if (!name && !procOrPath) {
+        if (nameInput) {
+            nameInput.style.borderColor = '#ef4444';
+            nameInput.focus();
+        }
+        return;
+    }
+
+    try {
+        const res = await window.pywebview.api.add_game_companion_app(
+            activeGameId,
+            name,
+            procOrPath,
+            purpose,
+            muteAlerts,
+            promptToLaunch,
+            quietWhenRunning
+        );
+        if (res && res.success) {
+            const prof = currentGamesData?.profiles?.[activeGameId];
+            if (prof) {
+                prof.companion_apps = res.companion_apps || [];
+                if (Array.isArray(res.suppress_alerts_when_running)) {
+                    prof.suppress_alerts_when_running = res.suppress_alerts_when_running;
+                    const suppressInput = document.getElementById('input-game-suppress-alerts');
+                    if (suppressInput) suppressInput.value = res.suppress_alerts_when_running.join(', ');
+                }
+            }
+            renderCompanionAppsList(res.companion_apps || []);
+            closeAddCompanionAppModal();
+            if (window.aetherUI?.showToast) {
+                window.aetherUI.showToast(`Linked 3rd-party program: ${res.app?.name || name}`);
+            }
+        } else {
+            alert((res && res.error) || 'Failed to add 3rd-party program.');
+        }
+    } catch (err) {
+        console.error("Failed adding companion app:", err);
+    }
 }
 
 async function refreshGameElevationWarning(gameId) {

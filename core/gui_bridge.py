@@ -4571,16 +4571,97 @@ class GuiBridge:
                 eng._reset_context_flag = True
         return res
 
+    def _sync_telemetry_profile_override(self, game_id: str) -> None:
+        """Refreshes active telemetry service profile override after profile edits."""
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        tel = getattr(eng, "telemetry_service", None) if eng else getattr(self, "_telemetry_service", None)
+        prof = self.game_mgr.get_profile(game_id)
+        norm_gid = (game_id or "").strip().lower().replace(" ", "_")
+        if tel is not None and tel.enabled and tel.active_game_id == norm_gid:
+            tel._profile_override = prof
+
     def set_game_suppress_alerts(self, game_id: str, processes_csv: Any) -> dict:
         """Sets 3rd-party companion processes (e.g. EDCoPilot.exe) that suppress duplicate voice alerts."""
         res = self.game_mgr.set_suppress_alerts(game_id, processes_csv)
         if res.get("success"):
-            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
-            tel = getattr(eng, "telemetry_service", None) if eng else getattr(self, "_telemetry_service", None)
-            prof = self.game_mgr.get_profile(game_id)
-            if tel is not None and tel.enabled and tel.active_game_id == (game_id or "").strip().lower().replace(" ", "_"):
-                tel._profile_override = prof
+            self._sync_telemetry_profile_override(game_id)
         return res
+
+    def browse_companion_executable(self) -> dict:
+        """Opens a native Windows file picker for selecting a 3rd-party companion program executable."""
+        selected_path = self._open_native_file_dialog("Select 3rd-Party Companion Program")
+        if selected_path:
+            file_name = os.path.basename(selected_path)
+            base_name = os.path.splitext(file_name)[0]
+            cleaned = re.sub(r'([a-z])([A-Z0-9])', r'\1 \2', base_name)
+            cleaned = cleaned.replace('_', ' ').replace('-', ' ').strip()
+            suggested_name = cleaned.title() if cleaned else base_name
+            return {
+                "success": True,
+                "file_path": selected_path,
+                "file_name": file_name,
+                "suggested_name": suggested_name,
+                "directory": os.path.dirname(selected_path),
+            }
+        return {"success": False, "cancelled": True}
+
+    def get_game_companion_apps(self, game_id: str) -> dict:
+        """Returns linked 3rd-party companion apps for `game_id` with live running status."""
+        if not game_id:
+            return {"success": False, "apps": [], "error": "No game_id specified."}
+        apps = self.game_mgr.get_companion_apps_with_status(game_id)
+        return {"success": True, "game_id": game_id, "apps": apps}
+
+    def add_game_companion_app(
+        self,
+        game_id: str,
+        name: str,
+        executable_or_path: str = "",
+        purpose: str = "",
+        mute_aether_alerts: bool = False,
+        prompt_to_launch: bool = True,
+        quiet_when_running: bool = False,
+    ) -> dict:
+        """Links a 3rd-party companion program to a game profile."""
+        res = self.game_mgr.add_companion_app(
+            game_id=game_id,
+            name=name,
+            executable_or_path=executable_or_path,
+            purpose=purpose,
+            mute_aether_alerts=bool(mute_aether_alerts),
+            prompt_to_launch=bool(prompt_to_launch),
+            quiet_when_running=bool(quiet_when_running),
+        )
+        if res.get("success"):
+            self._sync_telemetry_profile_override(game_id)
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if eng is not None:
+                eng._reset_context_flag = True
+        return res
+
+    def update_game_companion_app(self, game_id: str, app_id: str, updates: dict) -> dict:
+        """Updates a linked 3rd-party companion program (mute toggle, proactive launch toggle, etc.)."""
+        res = self.game_mgr.update_companion_app(game_id, app_id, updates if isinstance(updates, dict) else {})
+        if res.get("success"):
+            self._sync_telemetry_profile_override(game_id)
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if eng is not None:
+                eng._reset_context_flag = True
+        return res
+
+    def remove_game_companion_app(self, game_id: str, app_id: str) -> dict:
+        """Removes a linked 3rd-party companion program from a game profile."""
+        res = self.game_mgr.remove_companion_app(game_id, app_id)
+        if res.get("success"):
+            self._sync_telemetry_profile_override(game_id)
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if eng is not None:
+                eng._reset_context_flag = True
+        return res
+
+    def launch_game_companion_app(self, game_id: str, app_id_or_name: str) -> dict:
+        """Starts a linked 3rd-party companion program directly from the Games tab."""
+        return self.game_mgr.launch_companion_app(app_id_or_name, game_id=game_id)
 
     def list_installed_game_modules(self) -> dict:
         """Returns metadata for all installed bundled + user Game Modules."""
@@ -4639,19 +4720,52 @@ class GuiBridge:
             return {"success": False, "error": f"Export dialog failed: {e}"}
 
     def auto_build_game_module(self, game_id: str) -> dict:
-        """Auto-detects companion bridges, wiki/universe, and anti-cheat safety to draft a Game Module."""
+        """
+        Auto-detects companion bridges, wiki/universe, and anti-cheat safety to draft a Game Module.
+        If Aether is not running yet, starts Aether automatically so the web-grounded Gemini lookup executes.
+        """
+        import time as _time
         from core.game_modules import auto_build_game_module as _auto_build
         from core.model_discovery import get_configured_tier2_model
+
         eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
-        client = getattr(eng, "genai_client", None) or getattr(eng, "client", None) if eng else None
+        started_aether = False
+
+        if eng is not None and not getattr(eng, "is_running", False):
+            logger.info("[GAME MODULE] Aether not running; starting Aether before Auto-Build Gemini lookup.")
+            try:
+                start_res = self.start_assistant()
+                if isinstance(start_res, dict) and start_res.get("success"):
+                    started_aether = True
+            except Exception as e:
+                logger.warning(f"[GAME MODULE] Could not auto-start Aether before Auto-Build: {e}")
+
+        # Resolve (or wait briefly for) the live GenAI client
+        client = None
+        if eng is not None:
+            deadline = _time.monotonic() + (1.5 if started_aether else 0.0)
+            while True:
+                client = getattr(eng, "genai_client", None) or getattr(eng, "client", None)
+                if client is not None or _time.monotonic() >= deadline:
+                    break
+                _time.sleep(0.15)
+
         cfg = self.get_raw_config() if hasattr(self, "get_raw_config") else {}
         model_ep = get_configured_tier2_model(cfg)[0]
-        return _auto_build(
+        res = _auto_build(
             game_id=game_id,
             game_manager=self.game_mgr,
             genai_client=client,
             model_endpoint=model_ep,
         )
+        if isinstance(res, dict):
+            res["started_aether"] = started_aether
+            res["used_gemini_lookup"] = bool(client is not None)
+            if started_aether:
+                notes = list(res.get("notes") or [])
+                notes.insert(0, "Started Aether to run web-grounded Gemini module lookup.")
+                res["notes"] = notes
+        return res
 
     def calibrate_game_hud_bars(self, game_id: str) -> dict:
         """One-click Vision HUD bar calibration for the active game's resolution & aspect ratio."""
@@ -5114,77 +5228,48 @@ class GuiBridge:
 
 
         applications = []
-
         seen_names = set()
-
         user_processes = []
-
-
+        process_paths = {}
 
         try:
-
-            for p in psutil.process_iter(['pid', 'name']):
-
+            for p in psutil.process_iter(['pid', 'name', 'exe']):
                 try:
-
                     pname = p.info.get('name') or ''
-
                     pid = p.info.get('pid')
-
+                    pexe = p.info.get('exe') or ''
                     if not pname or pname.lower() in system_procs:
-
                         continue
 
-
+                    if pexe and pname.lower() not in process_paths:
+                        process_paths[pname.lower()] = os.path.normpath(pexe)
 
                     # If has a visible window, treat as primary application
-
                     if pid in window_titles:
-
                         w_title = window_titles[pid]
-
                         applications.append({
-
                             "pid": pid,
-
                             "name": pname,
-
-                            "title": w_title
-
+                            "title": w_title,
+                            "exe_path": os.path.normpath(pexe) if pexe else ""
                         })
 
-
-
                     if pname.lower() not in seen_names:
-
                         seen_names.add(pname.lower())
-
                         user_processes.append(pname)
-
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
-
                     pass
-
         except Exception as e:
-
             logger.debug(f"[BRIDGE] Error scanning processes: {e}")
 
-
-
         applications.sort(key=lambda a: a.get("title", "").lower())
-
         user_processes.sort(key=lambda s: s.lower())
 
-
-
         return {
-
             "success": True,
-
             "applications": applications,
-
-            "processes": user_processes
-
+            "processes": user_processes,
+            "process_paths": process_paths
         }
 
 
