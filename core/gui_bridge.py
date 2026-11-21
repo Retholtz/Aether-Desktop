@@ -4553,7 +4553,7 @@ class GuiBridge:
             telemetry_svc = self._telemetry_service
 
         loop = getattr(engine, "_loop", None) or getattr(self, "_loop", None)
-        telemetry_svc.set_enabled(game_id, enabled_bool, loop=loop)
+        telemetry_svc.set_enabled(game_id, enabled_bool, loop=loop, profile_override=prof)
 
         return {
             "status": "success",
@@ -4561,6 +4561,97 @@ class GuiBridge:
             "game_id": game_id,
             "telemetry_enabled": enabled_bool,
         }
+
+    def set_game_input_mode(self, game_id: str, input_mode: str) -> dict:
+        """Sets per-game input safety mode ('autonomous' or 'spotter_only')."""
+        res = self.game_mgr.set_input_mode(game_id, input_mode)
+        if res.get("success"):
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if eng is not None:
+                eng._reset_context_flag = True
+        return res
+
+    def set_game_suppress_alerts(self, game_id: str, processes_csv: Any) -> dict:
+        """Sets 3rd-party companion processes (e.g. EDCoPilot.exe) that suppress duplicate voice alerts."""
+        res = self.game_mgr.set_suppress_alerts(game_id, processes_csv)
+        if res.get("success"):
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            tel = getattr(eng, "telemetry_service", None) if eng else getattr(self, "_telemetry_service", None)
+            prof = self.game_mgr.get_profile(game_id)
+            if tel is not None and tel.enabled and tel.active_game_id == (game_id or "").strip().lower().replace(" ", "_"):
+                tel._profile_override = prof
+        return res
+
+    def list_installed_game_modules(self) -> dict:
+        """Returns metadata for all installed bundled + user Game Modules."""
+        from core.game_modules import list_unique_game_modules
+        return {"success": True, "modules": list_unique_game_modules()}
+
+    def import_game_module_json(self, raw_json: Any) -> dict:
+        """Imports a declarative `.aethermodule.json` string or dict and assimilates it."""
+        from core.game_modules import import_game_module
+        return import_game_module(raw_json, game_manager=self.game_mgr)
+
+    def import_game_module_dialog(self) -> dict:
+        """Opens a native file picker to import a `.aethermodule.json` community module."""
+        try:
+            import webview
+            win = getattr(self, "_window", None)
+            if not win:
+                return {"success": False, "error": "Main window not available for file picker."}
+            selected = win.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=("Aether Game Modules (*.aethermodule.json;*.json)", "All files (*.*)"),
+            )
+            if not selected:
+                return {"success": False, "cancelled": True}
+            fpath = selected[0] if isinstance(selected, (list, tuple)) else str(selected)
+            from core.game_modules import import_game_module
+            return import_game_module(fpath, game_manager=self.game_mgr)
+        except Exception as e:
+            return {"success": False, "error": f"Import dialog failed: {e}"}
+
+    def export_game_module_dialog(self, game_id: str) -> dict:
+        """Exports the active game profile as a clean, shareable `.aethermodule.json` file."""
+        from core.game_modules import export_game_module
+        exp = export_game_module(game_id, game_manager=self.game_mgr)
+        if not exp.get("success"):
+            return exp
+        try:
+            import webview
+            win = getattr(self, "_window", None)
+            if not win:
+                return exp
+            default_name = f"{exp['module_id']}.aethermodule.json"
+            dest = win.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=default_name,
+                file_types=("Aether Game Modules (*.aethermodule.json;*.json)",),
+            )
+            if not dest:
+                return {"success": False, "cancelled": True}
+            out_path = dest[0] if isinstance(dest, (list, tuple)) else str(dest)
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(exp["module"], f, indent=2)
+            return {"success": True, "module_id": exp["module_id"], "exported_path": out_path}
+        except Exception as e:
+            return {"success": False, "error": f"Export dialog failed: {e}"}
+
+    def auto_build_game_module(self, game_id: str) -> dict:
+        """Auto-detects companion bridges, wiki/universe, and anti-cheat safety to draft a Game Module."""
+        from core.game_modules import auto_build_game_module as _auto_build
+        from core.model_discovery import get_configured_tier2_model
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        client = getattr(eng, "genai_client", None) or getattr(eng, "client", None) if eng else None
+        cfg = self.get_raw_config() if hasattr(self, "get_raw_config") else {}
+        model_ep = get_configured_tier2_model(cfg)[0]
+        return _auto_build(
+            game_id=game_id,
+            game_manager=self.game_mgr,
+            genai_client=client,
+            model_endpoint=model_ep,
+        )
 
 
 

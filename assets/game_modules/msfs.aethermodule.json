@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "module_id": "msfs",
+  "display_name": "Microsoft Flight Simulator",
+  "game_ids": [
+    "msfs",
+    "msfs_2020",
+    "msfs_2024",
+    "microsoft_flight_simulator"
+  ],
+  "executables": [
+    "FlightSimulator.exe",
+    "FlightSimulator2024.exe"
+  ],
+  "universe_name": "Real-World Aviation",
+  "input_mode": "autonomous",
+  "suppress_alerts_when_running": [],
+  "companion_resources": {
+    "navigation": {
+      "name": "SkyVector",
+      "domain": "skyvector.com"
+    },
+    "market": {
+      "name": "SimBrief",
+      "domain": "simbrief.com"
+    }
+  },
+  "telemetry": {
+    "adapter": "none",
+    "provider_type": "localhost_http",
+    "poll_interval_sec": 1.0,
+    "http_endpoint": "http://127.0.0.1:8965/api/sim/info",
+    "http_timeout_sec": 1.5,
+    "vital_mappings": {
+      "fuel_pct": {
+        "path": "fuel_total_percent",
+        "scale_if_gt_1": 100.0
+      }
+    },
+    "resource_mappings": {
+      "indicated_altitude_ft": "indicated_altitude",
+      "ground_speed_kts": "ground_speed",
+      "heading_deg": "heading",
+      "vertical_speed_fpm": "vertical_speed",
+      "on_ground": "on_ground"
+    },
+    "threshold_state_rules": [
+      {
+        "path": "fuel_pct",
+        "op": "<",
+        "value": 0.15,
+        "state": "low_fuel"
+      }
+    ],
+    "alert_rules": {
+      "state_low_fuel": {
+        "priority": 80,
+        "critical": true,
+        "prompt": "Co-pilot alert: Aircraft fuel reserves below 15%. Warn the pilot briefly."
+      }
+    }
+  }
+}

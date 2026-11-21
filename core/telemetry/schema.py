@@ -17,12 +17,15 @@ HudBarCalibration = HudBarRegion
 
 class GameTelemetryProfile(BaseModel):
     game_id: str
-    provider_type: str = "vision_hud"  # "native_file" or "vision_hud"
+    provider_type: str = "vision_hud"  # "native_file", "localhost_http", or "vision_hud"
     poll_interval_sec: float = 0.5
     native_file_path: Optional[str] = None
+    http_endpoint: Optional[str] = None
+    http_timeout_sec: float = 1.5
     companion_files: List[str] = Field(default_factory=list)
     bitmask_mappings: Dict[str, Dict[str, int]] = Field(default_factory=dict)
     state_rules: List[Dict[str, Any]] = Field(default_factory=list)
+    threshold_state_rules: List[Dict[str, Any]] = Field(default_factory=list)
     vital_mappings: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     resource_mappings: Dict[str, str] = Field(default_factory=dict)
     alert_rules: Dict[str, Dict[str, Any]] = Field(default_factory=dict)

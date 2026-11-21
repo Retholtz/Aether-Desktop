@@ -10,17 +10,17 @@ import asyncio
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from core.game_modules import build_telemetry_profile_from_module, load_all_telemetry_profiles
 from core.logger import get_logger
 from core.telemetry.copilot_gate import CopilotEventGate
 from core.telemetry.providers.file_provider import NativeFileTelemetryProvider
+from core.telemetry.providers.http_provider import LocalhostHttpTelemetryProvider
 from core.telemetry.providers.vision_hud_provider import VisionHudTelemetryProvider
 from core.telemetry.schema import GameTelemetryProfile
 
 logger = get_logger("TelemetryService")
 
-# Dynamically populated from data/game_modules/*.aethermodule.json (kept as module attr for legacy callers)
-DEFAULT_PROFILES: Dict[str, GameTelemetryProfile] = load_all_telemetry_profiles()
+# Dynamically populated on demand from bundled + user `.aethermodule.json` files
+DEFAULT_PROFILES: Dict[str, GameTelemetryProfile] = {}
 
 
 def _is_any_process_running(process_names: List[str]) -> bool:
@@ -98,9 +98,12 @@ class TelemetryService:
             logger.debug("Telemetry enabled without an active asyncio loop; background poll deferred.")
 
     def _resolve_active_profile(self) -> GameTelemetryProfile:
+        from core.game_modules import build_telemetry_profile_from_module
+
         gid = self.active_game_id or "generic"
         resolved = build_telemetry_profile_from_module(gid, profile=self._profile_override)
         if resolved is not None:
+            DEFAULT_PROFILES[gid] = resolved
             return resolved
         fallback = DEFAULT_PROFILES.get(gid)
         if fallback is not None:
@@ -111,11 +114,12 @@ class TelemetryService:
     async def _poll_loop(self):
         profile = self._resolve_active_profile()
 
-        provider = (
-            NativeFileTelemetryProvider(profile)
-            if profile.provider_type == "native_file"
-            else VisionHudTelemetryProvider(profile)
-        )
+        if profile.provider_type == "native_file":
+            provider = NativeFileTelemetryProvider(profile)
+        elif profile.provider_type == "localhost_http":
+            provider = LocalhostHttpTelemetryProvider(profile)
+        else:
+            provider = VisionHudTelemetryProvider(profile)
 
         while self.enabled:
             try:

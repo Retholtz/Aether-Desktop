@@ -93,6 +93,12 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def trigger_game_action(phrase: str) -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic key/mouse macros are disabled because this game is in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
         return game_manager.trigger_action(phrase)
 
     @dispatcher.register(
@@ -454,6 +460,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 map_controls = prof.get("map_controls")
         nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls, game_name=game_name)
         if active_id and game_manager:
+            if hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+                return nav.spot_and_guide_map_location(landmark_description=landmark)
             nav_mode = game_manager.get_navigation_mode(active_id)
             if nav_mode == "co_pilot_spotter":
                 return nav.spot_and_guide_map_location(landmark_description=landmark)
@@ -485,6 +493,12 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def pan_game_map(direction: str, distance: int = 350) -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Map panning inputs are disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
         from core.game_nav import GameNavigator
         client = (
             getattr(engine, "genai_client", None)
@@ -522,6 +536,12 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def place_map_marker(x: Optional[int] = None, y: Optional[int] = None) -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic mouse clicks are disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
         from tools.os_controls import move_mouse_absolute, click_mouse_button
         ctrl = {}
         if game_manager:
@@ -546,6 +566,12 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def center_map_on_player() -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic keystrokes are disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
         from tools.os_controls import pulse_key
         ctrl = {}
         if game_manager:
@@ -605,6 +631,12 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def search_and_route_destination(destination_name: str) -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic search-bar typing is disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
         from core.game_nav import GameNavigator
         client = (
             getattr(engine, "genai_client", None)
@@ -649,6 +681,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             or getattr(dispatcher, "genai_client", None)
         )
         model_endpoint = _resolve_tier2_game_model(engine)
+        active_id = ""
         target_process = ""
         game_name = ""
         map_controls = None
@@ -662,6 +695,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 map_controls = prof.get("map_controls")
             nav_mode = game_manager.get_navigation_mode(active_id)
         nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls, game_name=game_name)
+        if game_manager and active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return nav.spot_and_guide_map_location(landmark_description=target_description)
         if nav_mode == "co_pilot_spotter":
             return nav.spot_and_guide_map_location(landmark_description=target_description)
         elif nav_mode == "search_bar":

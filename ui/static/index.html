@@ -195,6 +195,24 @@
                   </button>
                 </div>
               </div>
+
+              <!-- Line 4: Agnostic Game Module, Anti-Cheat Safety & 3rd-Party Co-Pilot Coexistence -->
+              <div class="game-banner-row game-banner-row-4" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+                  <label for="select-game-input-mode" style="font-size: 0.78rem; color: var(--text-muted);" title="Use Spotter-Only in multiplayer anti-cheat games to prevent any synthetic key/mouse injection.">Input Safety:</label>
+                  <select id="select-game-input-mode" class="hud-select" title="Autonomous allows macros/map clicks; Spotter-Only restricts Aether to read-only voice & vision guidance.">
+                    <option value="autonomous">⚡ Autonomous Inputs</option>
+                    <option value="spotter_only">🛡️ Spotter Only (Anti-Cheat Safe)</option>
+                  </select>
+                  <label for="input-game-suppress-alerts" style="font-size: 0.78rem; color: var(--text-muted);" title="Comma-separated 3rd-party co-pilot processes (e.g. EDCoPilot.exe) that mute duplicate Aether ship/HUD voice callouts while running.">Quiet When Running:</label>
+                  <input type="text" id="input-game-suppress-alerts" class="hud-select" style="width: 175px;" placeholder="e.g. EDCoPilot.exe" title="Comma-separated 3rd-party co-pilot executables (e.g. EDCoPilot.exe)" />
+                </div>
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+                  <button type="button" id="btn-autobuild-game-module" class="btn-secondary-sm btn-secondary-pill" title="Auto-detect companion bridges, wiki, and anti-cheat rules to draft a JSON Game Module">✨ Auto-Build Module</button>
+                  <button type="button" id="btn-import-game-module" class="btn-secondary-sm btn-secondary-pill" title="Import a community .aethermodule.json pack">📥 Import Module</button>
+                  <button type="button" id="btn-export-game-module" class="btn-secondary-sm btn-secondary-pill" title="Export a clean, shareable .aethermodule.json pack">📤 Export Module</button>
+                </div>
+              </div>
             </div>
 
             <!-- Empty State View when no games are configured -->
@@ -5912,13 +5930,13 @@
 
   <div id="dossierPrintMount" class="dossier-print-mount" aria-hidden="true"></div>
 
-  <script src="settings.js?v=b5"></script>
-  <script src="games_tab.js?v=b5"></script>
-  <script src="programs_tab.js?v=b5"></script>
-  <script src="projects.js?v=b5"></script>
-  <script src="edit_character_modal.js?v=b5"></script>
-  <script src="roleplay.js?v=b5"></script>
-  <script src="main.js?v=b5"></script>
-  <script src="app.js?v=b5"></script>
+  <script src="settings.js?v=p2"></script>
+  <script src="games_tab.js?v=p2"></script>
+  <script src="programs_tab.js?v=p2"></script>
+  <script src="projects.js?v=p2"></script>
+  <script src="edit_character_modal.js?v=p2"></script>
+  <script src="roleplay.js?v=p2"></script>
+  <script src="main.js?v=p2"></script>
+  <script src="app.js?v=p2"></script>
 </body>
 </html>

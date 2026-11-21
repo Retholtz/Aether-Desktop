@@ -457,6 +457,71 @@ class GameManager:
         self._save_profiles(self.data)
         return {"success": True, "game_id": game_id, "navigation_mode": norm_mode}
 
+    def get_input_mode(self, game_id: Optional[str] = None) -> str:
+        """Retrieves input safety mode ('autonomous' or 'spotter_only'). Checks profile then module."""
+        gid = game_id or self.data.get("active_profile")
+        if not gid:
+            return "autonomous"
+        profile = self.get_profile(gid) or {}
+        mode = str(profile.get("input_mode") or "").lower().strip()
+        if mode in ("autonomous", "spotter_only"):
+            return mode
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(gid, profile=profile)
+            if mod and str(mod.get("input_mode") or "").lower().strip() == "spotter_only":
+                return "spotter_only"
+        except Exception:
+            pass
+        return "autonomous"
+
+    def set_input_mode(self, game_id: str, mode: str) -> dict:
+        """Sets input safety mode ('autonomous' or 'spotter_only') for a game profile."""
+        norm = (mode or "").lower().strip()
+        if norm not in ("autonomous", "spotter_only"):
+            return {"success": False, "error": f"Invalid input mode '{mode}'. Must be 'autonomous' or 'spotter_only'."}
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        profile["input_mode"] = norm
+        if norm == "spotter_only":
+            profile["navigation_mode"] = "co_pilot_spotter"
+        self._save_profiles(self.data)
+        return {"success": True, "game_id": game_id, "input_mode": norm}
+
+    def get_suppress_alerts(self, game_id: Optional[str] = None) -> List[str]:
+        """Returns 3rd-party co-pilot process names that suppress duplicate Aether voice alerts."""
+        gid = game_id or self.data.get("active_profile")
+        if not gid:
+            return []
+        profile = self.get_profile(gid) or {}
+        if isinstance(profile.get("suppress_alerts_when_running"), list):
+            return list(profile["suppress_alerts_when_running"])
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(gid, profile=profile)
+            if mod and isinstance(mod.get("suppress_alerts_when_running"), list):
+                return list(mod["suppress_alerts_when_running"])
+        except Exception:
+            pass
+        return []
+
+    def set_suppress_alerts(self, game_id: str, processes: Any) -> dict:
+        """Sets 3rd-party companion process names (list or comma/semicolon string) that suppress duplicate alerts."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        if isinstance(processes, str):
+            raw_list = [p.strip() for p in re.split(r"[,;]+", processes) if p.strip()]
+        elif isinstance(processes, list):
+            raw_list = [str(p).strip() for p in processes if str(p).strip()]
+        else:
+            raw_list = []
+        clean_list = [os.path.basename(p) for p in raw_list if os.path.basename(p)]
+        profile["suppress_alerts_when_running"] = clean_list
+        self._save_profiles(self.data)
+        return {"success": True, "game_id": game_id, "suppress_alerts_when_running": clean_list}
+
     def is_game_running(self, game_id: Optional[str] = None) -> bool:
         """
         Checks if a configured game (or the active/specified game) is currently running on the system.

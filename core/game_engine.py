@@ -408,6 +408,9 @@ class GameEngine:
         # 5. Fast-Path DirectInput Macro & Sequence Dispatch
         active_game = self.manager.data.get("active_profile")
         if active_game:
+            # Anti-cheat safety guardrail: never inject synthetic keystrokes in spotter_only mode
+            if hasattr(self.manager, "get_input_mode") and self.manager.get_input_mode(active_game) == "spotter_only":
+                return GameInterceptionResult(handled=False)
             clean_macro = re.sub(r'^[,\.\s]+|[,\.\s]+$', '', lower_prompt).strip()
             if clean_macro.startswith(agent_name.lower()):
                 clean_macro = clean_macro[len(agent_name):].strip().lstrip(",. ")

@@ -8,6 +8,7 @@ let currentGamesData = null;
 let activeGameId = null;
 let scratchpadDebounceTimer = null;
 let callsignDebounceTimer = null;
+let suppressAlertsDebounceTimer = null;
 
 function updateFpsPillUI(isEnabled) {
     const btn = document.getElementById('fps-toggle-btn');
@@ -326,6 +327,38 @@ function renderActiveGameDetail() {
                 console.error("Failed setting navigation mode:", err);
             }
         };
+    }
+
+    // Input Safety Mode (Autonomous vs Spotter-Only Anti-Cheat Safe)
+    const inputModeSelect = document.getElementById('select-game-input-mode');
+    if (inputModeSelect) {
+        inputModeSelect.value = profile.input_mode || 'autonomous';
+        inputModeSelect.onchange = async (e) => {
+            const newMode = e.target.value;
+            try {
+                if (window.pywebview?.api?.set_game_input_mode) {
+                    const res = await window.pywebview.api.set_game_input_mode(activeGameId, newMode);
+                    if (res && res.success) {
+                        profile.input_mode = newMode;
+                        if (newMode === 'spotter_only' && navSelect) {
+                            profile.navigation_mode = 'co_pilot_spotter';
+                            navSelect.value = 'co_pilot_spotter';
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Failed setting input safety mode:", err);
+            }
+        };
+    }
+
+    // 3rd-Party Co-Pilot Quiet / Alert Suppression List
+    const suppressInput = document.getElementById('input-game-suppress-alerts');
+    if (suppressInput) {
+        const list = Array.isArray(profile.suppress_alerts_when_running)
+            ? profile.suppress_alerts_when_running
+            : [];
+        suppressInput.value = list.join(', ');
     }
 
     // Keybinds Table
@@ -878,6 +911,92 @@ function initGamesTabEvents() {
                 console.error("Failed saving game callsign:", err);
             }
         }, 450);
+    });
+
+    // 3rd-Party Co-Pilot Alert Suppression Autosave
+    document.getElementById('input-game-suppress-alerts')?.addEventListener('input', (e) => {
+        if (!activeGameId) return;
+        clearTimeout(suppressAlertsDebounceTimer);
+        const targetGameId = activeGameId;
+        const rawVal = e.target.value;
+        suppressAlertsDebounceTimer = setTimeout(async () => {
+            try {
+                if (window.pywebview?.api?.set_game_suppress_alerts) {
+                    const res = await window.pywebview.api.set_game_suppress_alerts(targetGameId, rawVal);
+                    if (res && res.success && currentGamesData?.profiles?.[targetGameId]) {
+                        currentGamesData.profiles[targetGameId].suppress_alerts_when_running = res.suppress_alerts_when_running || [];
+                    }
+                }
+            } catch (err) {
+                console.error("Failed saving alert suppression processes:", err);
+            }
+        }, 500);
+    });
+
+    // Game Module Import / Export / Auto-Build Buttons
+    document.getElementById('btn-import-game-module')?.addEventListener('click', async () => {
+        if (!window.pywebview?.api?.import_game_module_dialog) return;
+        try {
+            const res = await window.pywebview.api.import_game_module_dialog();
+            if (res && res.cancelled) return;
+            if (res && res.success) {
+                await loadGamesUI();
+                if (res.module_id) await switchActiveGame(res.module_id);
+                if (window.aetherUI?.showToast) {
+                    window.aetherUI.showToast(`Imported game module: ${res.display_name || res.module_id}`);
+                }
+            } else {
+                alert((res && res.error) || 'Failed to import game module.');
+            }
+        } catch (err) {
+            console.error("Import game module error:", err);
+        }
+    });
+
+    document.getElementById('btn-export-game-module')?.addEventListener('click', async () => {
+        if (!activeGameId || !window.pywebview?.api?.export_game_module_dialog) return;
+        try {
+            const res = await window.pywebview.api.export_game_module_dialog(activeGameId);
+            if (res && res.cancelled) return;
+            if (res && res.success) {
+                if (window.aetherUI?.showToast) {
+                    window.aetherUI.showToast(`Exported module to ${res.exported_path}`);
+                }
+            } else {
+                alert((res && res.error) || 'Failed to export game module.');
+            }
+        } catch (err) {
+            console.error("Export game module error:", err);
+        }
+    });
+
+    document.getElementById('btn-autobuild-game-module')?.addEventListener('click', async (e) => {
+        if (!activeGameId || !window.pywebview?.api?.auto_build_game_module) return;
+        const btn = e.currentTarget;
+        const origText = btn ? btn.textContent : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = '✨ Building...';
+        }
+        try {
+            const res = await window.pywebview.api.auto_build_game_module(activeGameId);
+            if (res && res.success) {
+                await loadGamesUI();
+                const summary = (res.notes && res.notes.length) ? res.notes.join(' ') : 'Module drafted and assimilated.';
+                if (window.aetherUI?.showToast) {
+                    window.aetherUI.showToast(`Auto-Built ${res.display_name}: ${summary}`);
+                }
+            } else {
+                alert((res && res.error) || 'Auto-Build module failed.');
+            }
+        } catch (err) {
+            console.error("Auto-build game module error:", err);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        }
     });
 
     // Scratchpad Autosave
