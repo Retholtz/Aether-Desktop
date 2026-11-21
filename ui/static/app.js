@@ -2743,6 +2743,7 @@ window.aetherUI = {
 
   installPendingUpdate: async function() {
     const url = this._pendingUpdateInfo?.download_url || "";
+    const expectedSha256 = this._pendingUpdateInfo?.expected_sha256 || "";
     if (!window.pywebview?.api?.download_and_install_update) return;
 
     const installBtn = document.getElementById("btn-install-update");
@@ -2763,7 +2764,7 @@ window.aetherUI = {
     if (laterBtn) laterBtn.disabled = true;
 
     try {
-      const res = await window.pywebview.api.download_and_install_update(url);
+      const res = await window.pywebview.api.download_and_install_update(url, expectedSha256);
       if (res && !res.success) {
         this.handleUpdateProgress({ stage: "error", message: res.error || "Update failed." });
       }

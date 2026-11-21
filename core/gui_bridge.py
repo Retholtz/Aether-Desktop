@@ -10042,9 +10042,10 @@ class GuiBridge:
 
         target_url = str(download_url or "").strip()
         target_sha256 = str(expected_sha256 or "").strip()
-        if not target_url:
+        if not target_url or not target_sha256:
             check_res = _check_updates()
-            target_url = str(check_res.get("download_url") or "").strip()
+            if not target_url:
+                target_url = str(check_res.get("download_url") or "").strip()
             if not target_sha256:
                 target_sha256 = str(check_res.get("expected_sha256") or "").strip()
         if not target_url:
