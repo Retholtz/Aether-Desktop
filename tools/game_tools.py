@@ -728,6 +728,41 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             return {"success": False, "error": "Game manager unavailable."}
         return game_manager.launch_companion_app(app_name)
 
+    @dispatcher.register(
+        name="calibrate_hud_bars",
+        description="Captures the current live gameplay screen immediately (without Alt+Tabbing) and auto-calibrates HUD vital/resource bar positions (health, stamina, mana, shield, etc.) for the active game's exact resolution and aspect ratio. Call this whenever the player says 'calibrate my HUD', 'calibrate HUD bars', or 'detect my health bar'. 100% read-only and safe in both Autonomous and Spotter-Only modes.",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    )
+    def calibrate_hud_bars() -> dict:
+        if not game_manager:
+            return {"success": False, "error": "Game manager unavailable."}
+        active_id = game_manager.data.get("active_profile", "")
+        if not active_id:
+            return {"success": False, "error": "No active game profile selected."}
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        if not client:
+            return {"success": False, "error": "Gemini vision client unavailable."}
+        from core.telemetry.providers.vision_hud_provider import calibrate_and_persist_game_hud
+        model_endpoint = _resolve_tier2_game_model(engine)
+        tel_svc = getattr(engine, "telemetry_service", None) if engine else None
+        return calibrate_and_persist_game_hud(
+            game_id=active_id,
+            game_manager=game_manager,
+            genai_client=client,
+            model_endpoint=model_endpoint,
+            telemetry_service=tel_svc,
+            focus_game=False,
+            countdown_sec=0.0,
+        )
+
     return {
         "get_current_game_telemetry": get_current_game_telemetry,
         "get_current_game_status": get_current_game_status,
@@ -747,4 +782,5 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "place_map_marker": place_map_marker,
         "center_map_on_player": center_map_on_player,
         "launch_game_companion_app": launch_game_companion_app,
+        "calibrate_hud_bars": calibrate_hud_bars,
     }

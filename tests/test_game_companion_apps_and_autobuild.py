@@ -317,6 +317,90 @@ class TestCompanionAppsLifecycle(unittest.TestCase):
         self.assertIn("launch_game_companion_app", js)
         self.assertIn("renderCompanionAppsList", js)
         self.assertIn("Quiet When Running", js)
+        self.assertIn("calibrate_hud_bars", GameEngine.CORE_GAME_TOOL_NAMES)
+
+
+class TestHudCalibrationFocusAndVoice(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.profiles_path = os.path.join(self._tmp.name, "games_profiles.json")
+        self.gm = GameManager(profiles_path=self.profiles_path)
+        self.gm.add_game("Crimson Desert", "CrimsonDesert.exe")
+        self.gm.set_active_profile("crimson_desert")
+        self.gm.set_input_mode("crimson_desert", "spotter_only")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_ui_button_auto_starts_focuses_game_and_waits_countdown(self):
+        from core.gui_bridge import GuiBridge
+        from core.telemetry.schema import HudBarRegion
+
+        bridge = GuiBridge.__new__(GuiBridge)
+        fake_client = MagicMock(name="FakeGenAIClient")
+        fake_engine = SimpleNamespace(is_running=False, genai_client=None, client=None, telemetry_service=None)
+
+        def _fake_start():
+            fake_engine.is_running = True
+            fake_engine.genai_client = fake_client
+            return {"success": True, "status": "starting"}
+
+        bridge._engine = fake_engine
+        bridge.start_assistant = MagicMock(side_effect=_fake_start)
+        bridge.game_mgr = self.gm
+        bridge.get_raw_config = MagicMock(return_value={})
+
+        fake_bars = [HudBarRegion(name="health", bbox_pct=(0.05, 0.90, 0.20, 0.02), color_profile="red")]
+
+        with patch("tools.os_controls.focus_window", return_value={"status": "success"}) as mock_focus, \
+             patch("time.sleep") as mock_sleep, \
+             patch("core.game_nav.UniversalGameNavigator.capture_viewport", return_value=(b"\xff\xd8\xff", 1280, 720)), \
+             patch("core.telemetry.providers.vision_hud_provider.calibrate_hud_bars_from_frame", return_value=fake_bars), \
+             patch("core.game_modules.get_user_modules_dir", return_value=self._tmp.name):
+            res = bridge.calibrate_game_hud_bars("crimson_desert", focus_game=True, countdown_sec=3.0)
+
+        self.assertTrue(res["success"])
+        self.assertTrue(res["started_aether"])
+        self.assertTrue(res["focused_game"])
+        bridge.start_assistant.assert_called_once()
+        mock_focus.assert_called_once()
+        mock_sleep.assert_called_once_with(3.0)
+        self.assertEqual(res["bars"][0]["name"], "health")
+
+    def test_voice_tool_calibrates_instantly_in_spotter_only_without_focus_swap(self):
+        from tools.game_tools import register_game_tools
+        from core.telemetry.schema import HudBarRegion
+
+        registered = {}
+
+        class _FakeDispatcher:
+            genai_client = MagicMock(name="VoiceGenAIClient")
+
+            def register(self, name, description="", parameters=None):
+                def _wrap(fn):
+                    registered[name] = fn
+                    return fn
+                return _wrap
+
+        fake_engine = SimpleNamespace(genai_client=_FakeDispatcher.genai_client, config={}, telemetry_service=None)
+        register_game_tools(_FakeDispatcher(), self.gm, engine=fake_engine)
+        self.assertIn("calibrate_hud_bars", registered)
+
+        fake_bars = [
+            HudBarRegion(name="health", bbox_pct=(0.04, 0.90, 0.18, 0.015), color_profile="red"),
+            HudBarRegion(name="stamina", bbox_pct=(0.04, 0.93, 0.16, 0.012), color_profile="green"),
+        ]
+        with patch("tools.os_controls.focus_window") as mock_focus, \
+             patch("time.sleep") as mock_sleep, \
+             patch("core.game_nav.UniversalGameNavigator.capture_viewport", return_value=(b"\xff\xd8\xff", 1280, 720)), \
+             patch("core.telemetry.providers.vision_hud_provider.calibrate_hud_bars_from_frame", return_value=fake_bars), \
+             patch("core.game_modules.get_user_modules_dir", return_value=self._tmp.name):
+            res = registered["calibrate_hud_bars"]()
+
+        self.assertTrue(res["success"])
+        self.assertEqual([b["name"] for b in res["bars"]], ["health", "stamina"])
+        mock_focus.assert_not_called()
+        mock_sleep.assert_not_called()
 
 
 if __name__ == "__main__":

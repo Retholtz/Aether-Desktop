@@ -122,14 +122,55 @@ If no HUD bars are visible (e.g. menu, cutscene, or map screen), return {{"bars"
         return []
 
 
+def focus_game_window_for_calibration(target_process: str = "", game_name: str = "") -> bool:
+    """
+    Attempts to restore and bring the target game window to the foreground so
+    single-monitor or Alt+Tabbed players get a clean live HUD capture.
+    """
+    candidates = []
+    if target_process:
+        candidates.append(target_process)
+        stem = target_process.rsplit(".", 1)[0]
+        if stem and stem.lower() != target_process.lower():
+            candidates.append(stem)
+    if game_name and game_name not in candidates:
+        candidates.append(game_name)
+
+    if not candidates:
+        return False
+
+    try:
+        from tools.os_controls import focus_window
+
+        for query in candidates:
+            res = focus_window(query)
+            if isinstance(res, dict) and res.get("status") == "success":
+                return True
+    except Exception as e:
+        logger.debug("Could not auto-focus game window for HUD calibration: %s", e)
+    return False
+
+
 def calibrate_hud_bars_live(
     genai_client: Any,
     target_process: str = "",
     model_endpoint: str = "gemini-4-hydrogen",
     game_name: str = "",
+    focus_game: bool = False,
+    countdown_sec: float = 0.0,
 ) -> List[HudBarRegion]:
-    """Captures the active game viewport (multi-monitor aware) and calibrates HUD bars."""
+    """
+    Captures the active game viewport (multi-monitor aware) and calibrates HUD bars.
+    When `focus_game=True`, swaps focus back to the game window and waits `countdown_sec`
+    seconds (allowing the player to unpause if the game paused on Alt+Tab) before snapping.
+    """
+    import time
     from core.game_nav import UniversalGameNavigator
+
+    if focus_game:
+        focus_game_window_for_calibration(target_process=target_process, game_name=game_name)
+    if countdown_sec and countdown_sec > 0:
+        time.sleep(float(countdown_sec))
 
     nav = UniversalGameNavigator(
         client=genai_client,
@@ -146,6 +187,87 @@ def calibrate_hud_bars_live(
         model_endpoint=model_endpoint,
         game_name=game_name,
     )
+
+
+def calibrate_and_persist_game_hud(
+    game_id: str,
+    game_manager: Any,
+    genai_client: Any,
+    model_endpoint: str = "gemini-4-hydrogen",
+    telemetry_service: Any = None,
+    focus_game: bool = False,
+    countdown_sec: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    Shared HUD calibration workflow used by both the Games tab button (with auto-focus +
+    countdown) and the in-game voice command `calibrate_hud_bars` (instant capture).
+    """
+    from core.game_modules import export_game_module, import_game_module
+
+    prof = game_manager.get_profile(game_id) if (game_manager and game_id) else None
+    if not prof:
+        return {"success": False, "error": f"Game profile '{game_id}' not found."}
+    if not genai_client:
+        return {"success": False, "error": "Gemini client not initialized yet."}
+
+    target_proc = str(prof.get("process_name") or prof.get("executable") or "")
+    game_title = str(prof.get("display_name") or game_id)
+
+    focused_game = False
+    if focus_game:
+        focused_game = focus_game_window_for_calibration(
+            target_process=target_proc,
+            game_name=game_title,
+        )
+
+    bars = calibrate_hud_bars_live(
+        genai_client=genai_client,
+        target_process=target_proc,
+        model_endpoint=model_endpoint,
+        game_name=game_title,
+        focus_game=False,  # already focused above so we can report `focused_game` accurately
+        countdown_sec=countdown_sec,
+    )
+    if not bars:
+        return {
+            "success": False,
+            "focused_game": focused_game,
+            "error": (
+                "No HUD bars detected on screen. Make sure live gameplay (not a menu or pause screen) "
+                "is visible — or say 'Aether, calibrate my HUD' while playing."
+            ),
+        }
+
+    bar_dicts = [
+        {"name": b.name, "bbox_pct": list(b.bbox_pct), "color_profile": b.color_profile}
+        for b in bars
+    ]
+    tel = prof.setdefault("telemetry", {})
+    tel["provider_type"] = "vision_hud"
+    tel["hud_bars"] = bar_dicts
+
+    # Persist into both GameManager profile and user `.aethermodule.json`
+    exp = export_game_module(game_id, game_manager=game_manager)
+    if exp.get("success"):
+        mod = exp["module"]
+        mod.setdefault("telemetry", {})["provider_type"] = "vision_hud"
+        mod["telemetry"]["hud_bars"] = bar_dicts
+        import_game_module(mod, game_manager=game_manager)
+    elif hasattr(game_manager, "save_profiles"):
+        game_manager.save_profiles()
+
+    norm_gid = (game_id or "").strip().lower().replace(" ", "_")
+    if telemetry_service is not None and telemetry_service.enabled and telemetry_service.active_game_id == norm_gid:
+        telemetry_service._profile_override = prof
+
+    bar_names = ", ".join(b["name"] for b in bar_dicts)
+    return {
+        "success": True,
+        "game_id": game_id,
+        "focused_game": focused_game,
+        "bars": bar_dicts,
+        "message": f"Calibrated {len(bar_dicts)} HUD bar(s): {bar_names}.",
+    }
 
 try:
     import mss

@@ -53,6 +53,7 @@ class GameEngine:
         "place_map_marker",
         "center_map_on_player",
         "inspect_screen_context",
+        "calibrate_hud_bars",
         "launch_game_companion_app",
         "launch_application",
         "navigate_browser",

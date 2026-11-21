@@ -4767,67 +4767,79 @@ class GuiBridge:
                 res["notes"] = notes
         return res
 
-    def calibrate_game_hud_bars(self, game_id: str) -> dict:
-        """One-click Vision HUD bar calibration for the active game's resolution & aspect ratio."""
-        from core.game_modules import export_game_module, import_game_module
+    def calibrate_game_hud_bars(
+        self,
+        game_id: str,
+        focus_game: bool = True,
+        countdown_sec: float = 3.0,
+    ) -> dict:
+        """
+        One-click Vision HUD bar calibration for the active game's resolution & aspect ratio.
+        Automatically starts Aether if needed, brings the game window back to the foreground,
+        waits a brief countdown (so the player can unpause if needed), captures the HUD,
+        and announces completion verbally so you don't have to Alt+Tab back.
+        """
+        import time as _time
         from core.model_discovery import get_configured_tier2_model
-        from core.telemetry.providers.vision_hud_provider import calibrate_hud_bars_live
+        from core.telemetry.providers.vision_hud_provider import calibrate_and_persist_game_hud
 
         prof = self.game_mgr.get_profile(game_id)
         if not prof:
             return {"success": False, "error": f"Game profile '{game_id}' not found."}
 
         eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
-        client = getattr(eng, "genai_client", None) or getattr(eng, "client", None) if eng else None
+        started_aether = False
+        if eng is not None and not getattr(eng, "is_running", False):
+            logger.info("[HUD CALIBRATION] Aether not running; starting Aether before HUD calibration.")
+            try:
+                start_res = self.start_assistant()
+                if isinstance(start_res, dict) and start_res.get("success"):
+                    started_aether = True
+            except Exception as e:
+                logger.warning(f"[HUD CALIBRATION] Could not auto-start Aether: {e}")
+
+        client = None
+        if eng is not None:
+            deadline = _time.monotonic() + (1.5 if started_aether else 0.0)
+            while True:
+                client = getattr(eng, "genai_client", None) or getattr(eng, "client", None)
+                if client is not None or _time.monotonic() >= deadline:
+                    break
+                _time.sleep(0.15)
+
         if not client:
-            return {"success": False, "error": "Gemini client not initialized yet. Click Start Aether first."}
+            return {"success": False, "error": "Gemini client not initialized yet. Check your API key or click Start Aether first."}
 
         cfg = self.get_raw_config() if hasattr(self, "get_raw_config") else {}
         model_ep = get_configured_tier2_model(cfg)[0]
-        target_proc = str(prof.get("process_name") or prof.get("executable") or "")
-        game_title = str(prof.get("display_name") or game_id)
-
-        bars = calibrate_hud_bars_live(
-            genai_client=client,
-            target_process=target_proc,
-            model_endpoint=model_ep,
-            game_name=game_title,
-        )
-        if not bars:
-            return {
-                "success": False,
-                "error": "No HUD bars detected on screen. Make sure live gameplay (not a menu/pause screen) is visible and try again.",
-            }
-
-        bar_dicts = [
-            {"name": b.name, "bbox_pct": list(b.bbox_pct), "color_profile": b.color_profile}
-            for b in bars
-        ]
-        tel = prof.setdefault("telemetry", {})
-        tel["provider_type"] = "vision_hud"
-        tel["hud_bars"] = bar_dicts
-
-        # Persist into both GameManager profile and user `.aethermodule.json`
-        exp = export_game_module(game_id, game_manager=self.game_mgr)
-        if exp.get("success"):
-            mod = exp["module"]
-            mod.setdefault("telemetry", {})["provider_type"] = "vision_hud"
-            mod["telemetry"]["hud_bars"] = bar_dicts
-            import_game_module(mod, game_manager=self.game_mgr)
-        else:
-            if hasattr(self.game_mgr, "save_profiles"):
-                self.game_mgr.save_profiles()
-
         tel_svc = getattr(eng, "telemetry_service", None) if eng else getattr(self, "_telemetry_service", None)
-        if tel_svc is not None and tel_svc.enabled and tel_svc.active_game_id == (game_id or "").strip().lower().replace(" ", "_"):
-            tel_svc._profile_override = prof
 
-        return {
-            "success": True,
-            "game_id": game_id,
-            "bars": bar_dicts,
-            "message": f"Calibrated {len(bar_dicts)} HUD bar(s): {', '.join(b['name'] for b in bar_dicts)}.",
-        }
+        res = calibrate_and_persist_game_hud(
+            game_id=game_id,
+            game_manager=self.game_mgr,
+            genai_client=client,
+            model_endpoint=model_ep,
+            telemetry_service=tel_svc,
+            focus_game=bool(focus_game),
+            countdown_sec=float(countdown_sec or 0.0),
+        )
+        res["started_aether"] = started_aether
+
+        # Speak a brief confirmation while the player is focused back in the game
+        if eng is not None and getattr(eng, "is_running", False) and hasattr(eng, "_speak_feedback"):
+            eng_loop = getattr(eng, "_loop", None) or getattr(self, "_loop", None)
+            if eng_loop and getattr(eng_loop, "is_running", lambda: False)():
+                spoken = (
+                    f"HUD calibration complete. Locked onto {', '.join(b['name'] for b in res['bars'])}."
+                    if res.get("success")
+                    else "HUD calibration didn't spot any bars. Make sure you're unpaused in live gameplay and say calibrate my HUD."
+                )
+                try:
+                    asyncio.run_coroutine_threadsafe(eng._speak_feedback(spoken), eng_loop)
+                except Exception:
+                    pass
+
+        return res
 
     def check_game_elevation_status(self, game_id: Optional[str] = None) -> dict:
         """Returns Admin/UIPI elevation status for the active or specified game."""

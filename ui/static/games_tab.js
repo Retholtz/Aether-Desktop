@@ -1004,7 +1004,10 @@ function initGamesTabEvents() {
         const origText = btn ? btn.textContent : '';
         if (btn) {
             btn.disabled = true;
-            btn.textContent = '🎯 Calibrating...';
+            btn.textContent = '🎯 Focusing Game (3s)...';
+        }
+        if (window.aetherUI?.showToast) {
+            window.aetherUI.showToast('Switching to game — unpause if needed. Capturing live HUD in 3 seconds...');
         }
         try {
             const res = await window.pywebview.api.calibrate_game_hud_bars(activeGameId);
