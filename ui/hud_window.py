@@ -1010,15 +1010,25 @@ class HudWindow:
             pass
 
         def _invoke_on_ui_or_direct(win_obj, fn):
-            native = getattr(win_obj, "native", None) if win_obj is not None else None
-            if native is not None and getattr(native, "InvokeRequired", False) and hasattr(native, "BeginInvoke"):
+            def _safe_run():
                 try:
-                    from System import Action
-                    native.BeginInvoke(Action(fn))
-                    return
+                    fn()
                 except Exception:
                     pass
-            fn()
+
+            native = getattr(win_obj, "native", None) if win_obj is not None else None
+            if native is not None:
+                try:
+                    if getattr(native, "IsDisposed", False) or getattr(native, "Disposing", False):
+                        return
+                    if getattr(native, "InvokeRequired", False) and hasattr(native, "BeginInvoke"):
+                        if getattr(native, "IsHandleCreated", True):
+                            from System import Action
+                            native.BeginInvoke(Action(_safe_run))
+                            return
+                except Exception:
+                    return
+            _safe_run()
 
         try:
             if self.overlay_window:
@@ -1026,15 +1036,28 @@ class HudWindow:
         except Exception:
             pass
         if destroy_main:
-            try:
-                if self.window:
-                    _invoke_on_ui_or_direct(self.window, self.window.destroy)
-            except Exception:
-                pass
             if sys.platform == "win32" and has_native_ui:
                 try:
                     from System.Windows.Forms import Application
-                    _invoke_on_ui_or_direct(self.window, Application.Exit)
+
+                    def _exit_winforms():
+                        try:
+                            if self.window:
+                                self.window.destroy()
+                        except Exception:
+                            pass
+                        try:
+                            Application.Exit()
+                        except Exception:
+                            pass
+
+                    _invoke_on_ui_or_direct(self.window, _exit_winforms)
+                except Exception:
+                    pass
+            else:
+                try:
+                    if self.window:
+                        _invoke_on_ui_or_direct(self.window, self.window.destroy)
                 except Exception:
                     pass
 
