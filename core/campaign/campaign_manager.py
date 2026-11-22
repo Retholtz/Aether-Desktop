@@ -76,7 +76,10 @@ class CampaignStoreFacade:
     discovered clues, journal, stored items).
     Manages data/campaigns/{id}/campaign_state.json alongside legacy campaign.json and state.json.
     """
-    def __init__(self, campaign_id: str = "default_campaign", storage_root: str = "data/campaigns"):
+    def __init__(self, campaign_id: str = "default_campaign", storage_root: Optional[str] = None):
+        from core.paths import user_data_path
+        if storage_root is None:
+            storage_root = user_data_path("data", "campaigns")
         self.campaign_id = campaign_id
         self.storage_root = storage_root
         self.storage_dir = os.path.join(storage_root, campaign_id)

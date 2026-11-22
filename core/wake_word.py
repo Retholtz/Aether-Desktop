@@ -49,11 +49,11 @@ class AudioGateState(Enum):
     ACTIVE_CONVERSATION = "ACTIVE_CONVERSATION"
 
 
-from core.paths import app_path, get_bundle_dir, resource_path
+from core.paths import get_bundle_dir, resource_path, user_data_path
 
 PROJECT_ROOT = get_bundle_dir()
 SOUNDS_DIR = resource_path("ui", "sounds")
-WRITABLE_SOUNDS_DIR = app_path("data", "sounds")
+WRITABLE_SOUNDS_DIR = user_data_path("data", "sounds")
 
 
 def ensure_wake_sleep_sounds(base_dir: Optional[str] = None) -> Tuple[str, str, str]:

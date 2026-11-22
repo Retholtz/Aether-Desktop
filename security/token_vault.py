@@ -14,13 +14,13 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from core.paths import get_app_dir
+from core.paths import get_app_dir, get_user_data_dir
 from security.crypto import unprotect_secret as decrypt_secret
 
 CRYPTPROTECT_UI_FORBIDDEN = 0x01
 VAULT_ENTROPY = b"AetherDesktop_OAuthTokenVault_Entropy_2026_v1"
 
-BASE_DIR = get_app_dir()
+BASE_DIR = get_user_data_dir()
 DEFAULT_VAULT_PATH = os.path.join(BASE_DIR, "data", "oauth_tokens.json")
 
 

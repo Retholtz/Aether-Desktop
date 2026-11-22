@@ -332,12 +332,15 @@ class CombatManager:
         self,
         branch_choice: str,
         campaign_id: str = "default_campaign",
-        storage_root: str = "data/campaigns"
+        storage_root: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Executes fail-forward narrative branching upon Total Party Kill.
         Branches: 'prison_break', 'patron_pact', 'underworld_odyssey', 'archive'.
         """
+        if storage_root is None:
+            from core.paths import user_data_path
+            storage_root = user_data_path("data", "campaigns")
         choice = branch_choice.strip().lower()
         pcs = [c for c in self.turn_order if c.is_player]
 

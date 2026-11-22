@@ -442,13 +442,15 @@ class GuiBridge:
 
     """
 
-    def __init__(self, config_path: Any = "config.json", loop: Optional[asyncio.AbstractEventLoop] = None, engine: Any = None):
-
-        if not isinstance(config_path, str):
-
+    def __init__(self, config_path: Any = None, loop: Optional[asyncio.AbstractEventLoop] = None, engine: Any = None):
+        from core.paths import is_frozen, user_data_path
+        if config_path is None:
+            config_path = user_data_path("config.json")
+        elif not isinstance(config_path, str):
             engine = config_path
-
-            config_path = "config.json"
+            config_path = user_data_path("config.json")
+        elif config_path == "config.json" and is_frozen():
+            config_path = user_data_path("config.json")
 
 
 
@@ -4956,7 +4958,8 @@ class GuiBridge:
 
         try:
 
-            games_dir = getattr(self.game_mgr, "games_dir", None) or os.path.join(getattr(self.game_mgr, "base_dir", "."), "data", "games")
+            from core.paths import get_user_data_dir
+            games_dir = getattr(self.game_mgr, "games_dir", None) or os.path.join(getattr(self.game_mgr, "base_dir", get_user_data_dir()), "data", "games")
 
             gpath = os.path.join(games_dir, f"{game_id}.json")
 
@@ -4980,7 +4983,8 @@ class GuiBridge:
 
         try:
 
-            profiles_json = os.path.join(getattr(self.game_mgr, "base_dir", "."), "data", "games_profiles.json")
+            from core.paths import get_user_data_dir
+            profiles_json = os.path.join(getattr(self.game_mgr, "base_dir", get_user_data_dir()), "data", "games_profiles.json")
 
             if os.path.exists(profiles_json):
 

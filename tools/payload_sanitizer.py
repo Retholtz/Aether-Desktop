@@ -11,7 +11,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from core.paths import get_app_dir
+from core.paths import get_user_data_dir
 
 # Default scratchpad cache path
 DEFAULT_CACHE_REL_PATH = os.path.join("data", "scratchpad", "last_tool_output.txt")
@@ -245,7 +245,7 @@ def sanitize_tool_result(
 
     if exceeds:
         if base_dir is None:
-            base_dir = get_app_dir()
+            base_dir = get_user_data_dir()
 
         if cache_path:
             target_cache_path = cache_path

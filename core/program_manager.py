@@ -19,11 +19,13 @@ import sys
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.paths import user_data_path
+
 logger = logging.getLogger("Aether.ProgramManager")
 
-PROGRAMS_PATH = os.path.join("data", "programs.json")
-GAMES_DIR = os.path.join("data", "games")
-GAMES_PROFILES_PATH = os.path.join("data", "games_profiles.json")
+PROGRAMS_PATH = user_data_path("data", "programs.json")
+GAMES_DIR = user_data_path("data", "games")
+GAMES_PROFILES_PATH = user_data_path("data", "games_profiles.json")
 
 DEFAULT_PROGRAMS = {
     "active_program": "google_chrome",

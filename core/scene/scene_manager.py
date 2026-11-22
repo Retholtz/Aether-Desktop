@@ -18,7 +18,10 @@ class SubScene(BaseModel):
 
 
 class SceneManager:
-    def __init__(self, campaign_id: str = "default_campaign", base_data_dir: str = "data/campaigns"):
+    def __init__(self, campaign_id: str = "default_campaign", base_data_dir: Optional[str] = None):
+        from core.paths import user_data_path
+        if base_data_dir is None:
+            base_data_dir = user_data_path("data", "campaigns")
         self.campaign_id = campaign_id
         self.scene_file = os.path.join(base_data_dir, campaign_id, "scene_state.json")
         self.active_containers: Dict[str, List[Dict[str, Any]]] = {}

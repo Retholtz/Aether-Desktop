@@ -1,15 +1,27 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="Aether"
            Manufacturer="Retholtz"
-           Version="1.0.0.0"
+           Version="1.0.0.2"
            UpgradeCode="ED1A2A3B-6F97-4DA0-B36B-97325B08CDC9">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- Default to creating Desktop Shortcut (1 = Yes, 0 = No) -->
-    <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" />
+    <!-- Properties passed from Bundle.wxs -->
+    <Property Id="INSTALLDESKTOPSHORTCUT" Value="1" Secure="yes" />
+    <Property Id="REMOVEUSERDATA" Value="0" Secure="yes" />
+
+    <!-- Paths used for optional data cleanup on uninstall -->
+    <Property Id="AETHER_LOCALAPPDATA" Value="%LOCALAPPDATA%\Aether" />
+    <Property Id="AETHER_DATAFOLDER">
+      <RegistrySearch Id="FindAetherDataFolder"
+                      Root="HKLM"
+                      Key="Software\Aether\Installer"
+                      Name="DataFolder"
+                      Type="raw" />
+    </Property>
 
     <!-- Standard MSI UI with folder selection -->
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
@@ -24,11 +36,12 @@
 
     <StandardDirectory Id="DesktopFolder" />
 
-    <!-- Harvest all files in AppFiles\ and attach shortcuts -->
+    <!-- Harvest all files in AppFiles\ and attach shortcuts & cleanup -->
     <Feature Id="MainFeature" Title="Aether Application" Level="1">
       <Files Include="AppFiles\**" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="DesktopShortcut" />
+      <ComponentRef Id="CleanupUserData" />
     </Feature>
 
     <!-- Start Menu Shortcut -->
@@ -48,6 +61,24 @@
                 Target="[INSTALLFOLDER]AetherDesktop.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKCU" Key="Software\Aether\Installer" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Optional User Data Cleanup (Uninstall only, never runs during upgrades) -->
+    <Component Id="CleanupUserData" Directory="INSTALLFOLDER" Guid="B3A7E291-5C48-4F6D-9E12-7A8B6C5D4E3F">
+      <RegistryValue Root="HKLM"
+                     Key="Software\Aether\Installer"
+                     Name="DataFolder"
+                     Type="string"
+                     Value="[INSTALLFOLDER]data"
+                     KeyPath="yes" />
+      <util:RemoveFolderEx Id="RemoveLocalAppData"
+                           On="uninstall"
+                           Property="AETHER_LOCALAPPDATA"
+                           Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND REMOVEUSERDATA = 1" />
+      <util:RemoveFolderEx Id="RemoveInstallDataFolder"
+                           On="uninstall"
+                           Property="AETHER_DATAFOLDER"
+                           Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE AND REMOVEUSERDATA = 1" />
     </Component>
   </Package>
 </Wix>

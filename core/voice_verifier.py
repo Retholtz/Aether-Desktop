@@ -12,14 +12,14 @@ except ImportError:
     sherpa_onnx = None
 
 from core.logger import get_logger
-from core.paths import app_path, resource_path
+from core.paths import resource_path, user_data_path
 
 logger = get_logger("VoiceVerifier")
 
 DEFAULT_MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_CAM++.onnx"
 BUNDLED_MODEL_PATH = resource_path("models", "wespeaker_en_voxceleb_CAM++.onnx")
-DEFAULT_MODEL_PATH = app_path("models", "wespeaker_en_voxceleb_CAM++.onnx")
-DEFAULT_PROFILE_PATH = app_path("profile", "user_voiceprint.npy")
+DEFAULT_MODEL_PATH = user_data_path("models", "wespeaker_en_voxceleb_CAM++.onnx")
+DEFAULT_PROFILE_PATH = user_data_path("profile", "user_voiceprint.npy")
 
 class VoiceProfileVerifier:
     """

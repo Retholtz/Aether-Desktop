@@ -138,9 +138,10 @@ class ProjectFileMetadata:
 
 
 class ProjectService:
-    def __init__(self, base_dir: str = "data/projects", manifest_path: str = "data/projects.json"):
-        self.base_dir = os.path.abspath(base_dir)
-        self.manifest_path = os.path.abspath(manifest_path)
+    def __init__(self, base_dir: Optional[str] = None, manifest_path: Optional[str] = None):
+        from core.paths import user_data_path
+        self.base_dir = os.path.abspath(base_dir or user_data_path("data", "projects"))
+        self.manifest_path = os.path.abspath(manifest_path or user_data_path("data", "projects.json"))
         self.data: Dict[str, Any] = {"active_project": None, "projects": {}}
         self._session: Optional[aiohttp.ClientSession] = None
 

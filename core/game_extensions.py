@@ -22,7 +22,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from core.logger import get_logger
-from core.paths import app_path
+from core.paths import user_data_path
 
 logger = get_logger("GameExtensions")
 
@@ -70,7 +70,7 @@ class GameExtension:
 
 
 def get_extensions_dir(base_dir: Optional[str] = None) -> str:
-    path = base_dir or app_path("data", "game_extensions")
+    path = base_dir or user_data_path("data", "game_extensions")
     os.makedirs(path, exist_ok=True)
     return path
 

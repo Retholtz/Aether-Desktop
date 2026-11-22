@@ -46,8 +46,10 @@ class NotebookLMService:
             return ""
         try:
             import json
-            if os.path.exists("config.json"):
-                with open("config.json", "r", encoding="utf-8") as f:
+            from core.paths import user_data_path
+            cfg_path = user_data_path("config.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 enc = cfg.get("api", {}).get("api_key_encrypted", "")
                 if enc:

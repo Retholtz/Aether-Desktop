@@ -177,15 +177,23 @@ MERCHANT_LOCATION_PRESETS: List[Dict[str, Any]] = [
 class TTRPGService:
     def __init__(
         self,
-        data_dir: str = "data/campaigns",
-        manifest_path: str = "data/campaigns.json",
+        data_dir: Optional[str] = None,
+        manifest_path: Optional[str] = None,
         client_getter: Optional[Any] = None,
         storage_dir: Optional[str] = None
     ):
-        target_dir = storage_dir if storage_dir is not None else data_dir
+        from core.paths import user_data_path
+        default_data_dir = user_data_path("data", "campaigns")
+        default_manifest_path = user_data_path("data", "campaigns.json")
+        target_dir = storage_dir if storage_dir is not None else (data_dir or default_data_dir)
         self.data_dir = os.path.abspath(target_dir)
-        prod_data_dir = os.path.abspath("data/campaigns")
-        if (storage_dir is not None or self.data_dir != prod_data_dir) and manifest_path == "data/campaigns.json":
+        prod_data_dir = os.path.abspath(default_data_dir)
+        if manifest_path is None:
+            if storage_dir is not None or self.data_dir != prod_data_dir:
+                manifest_path = os.path.join(self.data_dir, "campaigns.json")
+            else:
+                manifest_path = default_manifest_path
+        elif (storage_dir is not None or self.data_dir != prod_data_dir) and manifest_path == "data/campaigns.json":
             manifest_path = os.path.join(self.data_dir, "campaigns.json")
         self.manifest_path = os.path.abspath(manifest_path)
         self.manifest: Dict[str, Any] = {"active_campaign": None, "campaigns": {}}

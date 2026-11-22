@@ -12,9 +12,9 @@ import json
 import time
 from typing import List, Dict, Any, Optional, Tuple
 
-from core.paths import app_path
+from core.paths import user_data_path
 
-MANIFEST_PATH = app_path("data", "models_manifest.json")
+MANIFEST_PATH = user_data_path("data", "models_manifest.json")
 
 PRIMARY_CURATED_PROFILES: List[Dict[str, Any]] = [
     {"id": "gemini-3.8-live", "display_name": "3.8 - Live (Default)"},

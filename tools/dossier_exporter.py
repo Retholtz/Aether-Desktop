@@ -4,10 +4,10 @@ import time
 import subprocess
 from typing import Dict, Any, List, Optional
 
-from core.paths import app_path
+from core.paths import user_data_path
 
-DOSSIER_DIR = app_path("data", "dossiers")
-LATEST_DOSSIER_LINK = app_path("data", "scratchpad", "latest_dossier.md")
+DOSSIER_DIR = user_data_path("data", "dossiers")
+LATEST_DOSSIER_LINK = user_data_path("data", "scratchpad", "latest_dossier.md")
 
 
 def _safe_dossier_path(filename: str) -> Optional[str]:

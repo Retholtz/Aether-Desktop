@@ -100,7 +100,14 @@ ensure_thread_desktop()
 
 from core.config_manager import load_config
 from core.gui_bridge import GuiBridge
-from core.paths import get_app_dir, is_frozen
+from core.paths import (
+    get_app_dir,
+    get_logs_dir,
+    get_user_data_dir,
+    get_webview_cache_dir,
+    is_frozen,
+    user_data_path,
+)
 from tools.script_runner import prune_script_cache
 from ui.hud_window import HudWindow
 from core.user_memory import (
@@ -111,12 +118,42 @@ from core.user_memory import (
 )
 
 
+def _log_fatal_startup_error(exc: BaseException, show_dialog: bool = True) -> None:
+    """Writes full startup failure tracebacks to %LOCALAPPDATA%\\Aether\\logs\\startup.log."""
+    import datetime
+    import traceback
+
+    tb_text = traceback.format_exc()
+    try:
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        logs_dir = os.path.join(base, "Aether", "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        log_path = os.path.join(logs_dir, "startup.log")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n[{timestamp}] FATAL STARTUP ERROR:\n{tb_text}\n")
+    except Exception:
+        pass
+
+    if show_dialog and sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"Aether Desktop failed to start.\n\n{exc}\n\nDetails were written to %LOCALAPPDATA%\\Aether\\logs\\startup.log.",
+                "Aether Desktop Startup Error",
+                0x10,
+            )
+        except Exception:
+            pass
+
+
 def initialize_window(window):
     """
     Checks start_minimized upon application boot to hide or minimize the
     main application window immediately.
     """
-    cfg = load_config(os.path.join(get_app_dir(), "config.json"))
+    cfg = load_config(user_data_path("config.json"))
     should_minimize = cfg.get("start_minimized", False)
 
     if should_minimize:
@@ -185,6 +222,10 @@ def run_asyncio_loop(loop: asyncio.AbstractEventLoop):
 
 def main():
     base_dir = get_app_dir()
+    get_user_data_dir()
+    get_logs_dir()
+    webview_cache_dir = get_webview_cache_dir()
+    os.environ["WEBVIEW2_USER_DATA_FOLDER"] = webview_cache_dir
 
     # Check for elevation argument (--elevate or --admin)
     if "--elevate" in sys.argv or "--admin" in sys.argv:
@@ -289,7 +330,7 @@ def main():
     bg_thread.start()
 
     # 2. Initialize JSON-RPC GUI bridge
-    config_path = os.path.join(base_dir, "config.json")
+    config_path = user_data_path("config.json")
     bridge = GuiBridge(config_path=config_path, loop=loop)
     if hasattr(bridge._engine, "hotkey_manager") and bridge._engine.hotkey_manager:
         bridge._engine.hotkey_manager.start()
@@ -390,4 +431,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as _fatal_exc:
+        _log_fatal_startup_error(_fatal_exc, show_dialog=True)
+        sys.exit(1)

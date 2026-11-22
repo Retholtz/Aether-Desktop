@@ -108,8 +108,8 @@ def search_past_sessions(query: str, limit: int = 4, db_path: Optional[str] = No
     if db_path is None and query and query.strip():
         q_raw = query.strip().lower()
         q_terms = [w.lower() for w in query.strip().split() if len(w) >= 3]
-        from core.paths import get_app_dir
-        base_dir = get_app_dir()
+        from core.paths import get_user_data_dir
+        base_dir = get_user_data_dir()
 
         try:
             dossier_dir = os.path.join(base_dir, "data", "dossiers")

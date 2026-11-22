@@ -19,13 +19,16 @@ def archive_to_graveyard(
     character_id: str,
     character_data: Dict[str, Any],
     cause_of_death: str = "Slain in combat",
-    storage_root: str = "data/campaigns"
+    storage_root: Optional[str] = None
 ) -> str:
     """
     Archives a slain character to the campaign graveyard folder.
     Removes the character from the active campaign roster in state.json and campaign_state.json.
     Returns: The file path of the archived character.
     """
+    if storage_root is None:
+        from core.paths import user_data_path
+        storage_root = user_data_path("data", "campaigns")
     graveyard_dir = os.path.join(storage_root, campaign_id, "graveyard")
     os.makedirs(graveyard_dir, exist_ok=True)
 

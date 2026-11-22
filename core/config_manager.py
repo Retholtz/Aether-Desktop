@@ -509,11 +509,18 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 
+def _resolve_config_path(config_path: Optional[str] = None) -> str:
+    from core.paths import is_frozen, user_data_path
+    if config_path is None or (config_path == "config.json" and is_frozen()):
+        return user_data_path("config.json")
+    return config_path
+
+
 class ConfigManager:
     """Loads, synchronizes, and persists configuration settings to config.json."""
 
-    def __init__(self, config_path: str = "config.json"):
-        self.config_path = config_path
+    def __init__(self, config_path: Optional[str] = None):
+        self.config_path = _resolve_config_path(config_path)
         self.config: Dict[str, Any] = self.load()
 
     def load(self) -> Dict[str, Any]:
@@ -808,12 +815,12 @@ def mask_sensitive_config(config_data: Dict[str, Any]) -> Dict[str, Any]:
     return safe_cfg
 
 
-def save_config_atomic(config_data: dict, config_path: str = "config.json"):
+def save_config_atomic(config_data: dict, config_path: Optional[str] = None):
     """
     Writes configuration to a temporary file before atomically renaming it.
     Prevents corrupting config.json if the process is killed mid-write.
     """
-    abs_config_path = os.path.abspath(config_path)
+    abs_config_path = os.path.abspath(_resolve_config_path(config_path))
     base_dir = os.path.dirname(abs_config_path)
     os.makedirs(base_dir, exist_ok=True)
 
@@ -847,11 +854,11 @@ def save_config_atomic(config_data: dict, config_path: str = "config.json"):
             print(f"[CONFIG_MANAGER] Failed to apply startup configuration: {e}")
 
 
-def load_config(config_path: str = "config.json") -> Dict[str, Any]:
-    return ConfigManager(config_path=config_path).load()
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    return ConfigManager(config_path=_resolve_config_path(config_path)).load()
 
 
-def save_config(updates: Dict[str, Any], config_path: str = "config.json") -> Dict[str, Any]:
-    mgr = ConfigManager(config_path=config_path)
+def save_config(updates: Dict[str, Any], config_path: Optional[str] = None) -> Dict[str, Any]:
+    mgr = ConfigManager(config_path=_resolve_config_path(config_path))
     return mgr.save(updates)
 

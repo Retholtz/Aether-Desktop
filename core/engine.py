@@ -640,8 +640,11 @@ class AetherEngine:
         config_getter: Optional[Callable[[], dict]] = None,
         on_event: Optional[Callable[[str, dict], None]] = None,
         on_whitelist_update: Optional[Callable[[list], dict]] = None,
-        config_path: str = "config.json"
+        config_path: Optional[str] = None
     ):
+        from core.paths import is_frozen, user_data_path
+        if config_path is None or (config_path == "config.json" and is_frozen()):
+            config_path = user_data_path("config.json")
         self.config_getter = config_getter or (lambda: {})
         self.on_event = on_event or (lambda ev, data: None)
         self.on_whitelist_update = on_whitelist_update
@@ -872,8 +875,11 @@ class AetherEngine:
             self.hardware_service = None
 
         # Projects Workspace & NotebookLM Cloud RAG Integration
+        from core.paths import user_data_path
         proj_cfg = self.settings.get("integrations", {}).get("projects", {})
         base_dir = proj_cfg.get("base_dir", "data/projects")
+        if not os.path.isabs(base_dir):
+            base_dir = user_data_path(base_dir)
         nb_cfg = proj_cfg.get("notebooklm", {})
         nb_api_key = nb_cfg.get("api_key") or os.getenv("GEMINI_API_KEY", "")
         if not nb_api_key and callable(self.config_getter):
@@ -883,7 +889,7 @@ class AetherEngine:
                     nb_api_key = unprotect_secret(enc)
             except Exception:
                 pass
-        self.project_service = ProjectService(base_dir=base_dir, manifest_path="data/projects.json")
+        self.project_service = ProjectService(base_dir=base_dir, manifest_path=user_data_path("data", "projects.json"))
         self.notebooklm_service = NotebookLMService(api_key=nb_api_key)
         self.notebook_service = self.notebooklm_service
         register_project_tools(self.dispatcher, self.project_service, self.notebooklm_service)

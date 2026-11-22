@@ -23,13 +23,13 @@ def delegate_heavy_task(
     """Synchronous entrypoint for automation scripts delegating heavy reasoning to Gemini 4 Argon."""
     import json
     import os
-    from core.paths import get_app_dir
+    from core.paths import get_user_data_dir
     from tools.dispatcher import ToolDispatcher
 
     should_paste = paste_to_target if paste_to_active_doc is None else bool(paste_to_active_doc)
 
     def _load_default_config() -> dict:
-        cfg_path = os.path.join(get_app_dir(), "config.json")
+        cfg_path = os.path.join(get_user_data_dir(), "config.json")
         try:
             from core.config_manager import load_config
             return load_config(cfg_path)

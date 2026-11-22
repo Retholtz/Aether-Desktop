@@ -10,7 +10,7 @@ import os
 import tempfile
 from typing import Any, Dict, Optional
 
-from core.paths import app_path
+from core.paths import user_data_path
 
 # Re-export config_manager symbols for compatibility
 try:
@@ -26,7 +26,7 @@ try:
 except ImportError:
     pass
 
-SETTINGS_PATH = app_path("data", "settings.json")
+SETTINGS_PATH = user_data_path("data", "settings.json")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "integrations": {

@@ -2,16 +2,17 @@
      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Bundle Name="Aether Installer"
-          Version="1.0.0.1"
+          Version="1.0.0.2"
           Manufacturer="Retholtz"
           UpgradeCode="C7E91B42-3D84-4F19-A625-91B4E802D3F7">
 
-    <!-- Default install folder: change to "C:\Aether" if you prefer the root drive -->
-    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]Aether" bal:Overridable="yes" />
+    <!-- Default install folder: C:\Program Files\Aether -->
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]Aether" bal:Overridable="yes" Persisted="yes" />
 
-    <!-- Checkboxes (1 = Checked by default) -->
+    <!-- Checkboxes (1 = Checked by default, 0 = Unchecked by default) -->
     <Variable Name="InstallViGEmBus" Type="numeric" Value="1" bal:Overridable="yes" />
     <Variable Name="InstallDesktopShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
+    <Variable Name="RemoveUserData" Type="numeric" Value="0" bal:Overridable="yes" />
 
     <!-- Check if WebView2 Runtime is already installed per-machine (x64 Windows) -->
     <util:RegistrySearch Id="WebView2MachineSearch"
@@ -30,9 +31,9 @@
     </BootstrapperApplication>
 
     <Chain>
-      <!-- 1. Microsoft Edge WebView2 Evergreen Standalone Installer (x64, Elevated Per-Machine) -->
+      <!-- 1. Microsoft Edge WebView2 Evergreen Bootstrapper (1.7 MB, Elevated Per-Machine) -->
       <ExePackage Id="WebView2Runtime"
-                  SourceFile="Prereqs\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+                  SourceFile="Prereqs\MicrosoftEdgeWebview2Setup.exe"
                   InstallArguments="/silent /install"
                   DetectCondition="WebView2Version AND WebView2Version &lt;&gt; &quot;0.0.0.0&quot;"
                   PerMachine="yes"
@@ -67,6 +68,7 @@
       <MsiPackage Id="MainAppMsi" SourceFile="Aether.msi">
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
         <MsiProperty Name="INSTALLDESKTOPSHORTCUT" Value="[InstallDesktopShortcut]" />
+        <MsiProperty Name="REMOVEUSERDATA" Value="[RemoveUserData]" />
       </MsiPackage>
     </Chain>
   </Bundle>

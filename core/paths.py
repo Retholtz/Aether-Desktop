@@ -20,9 +20,19 @@ def get_bundle_dir() -> str:
     Returns the root directory containing bundled read-only resources
     (ui/static, ui/sounds, assets/, models/).
     """
-    if is_frozen() and hasattr(sys, "_MEIPASS"):
-        return sys._MEIPASS
+    if is_frozen():
+        if hasattr(sys, "_MEIPASS"):
+            return sys._MEIPASS
+        return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def get_resource_dir() -> str:
+    """
+    Alias for get_bundle_dir(): read-only bundled resource root
+    (sys._MEIPASS or executable folder when frozen, repo root in dev mode).
+    """
+    return get_bundle_dir()
 
 
 def get_app_dir() -> str:
@@ -62,3 +72,24 @@ def app_path(*parts: str) -> str:
 def user_data_path(*parts: str) -> str:
     """Joins path components relative to the writable per-user data directory."""
     return os.path.join(get_user_data_dir(), *parts)
+
+
+def get_webview_cache_dir() -> str:
+    """
+    Returns the dedicated writable WebView2 user data directory at
+    %LOCALAPPDATA%\\Aether\\WebView2 (created on demand).
+    """
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    cache_dir = os.path.join(base, "Aether", "WebView2")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+
+def get_logs_dir() -> str:
+    """
+    Returns the guaranteed-writable logs directory
+    (%LOCALAPPDATA%\\Aether\\logs when frozen, repo_root/logs in dev mode).
+    """
+    logs_dir = user_data_path("logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    return logs_dir

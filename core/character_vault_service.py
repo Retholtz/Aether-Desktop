@@ -128,8 +128,9 @@ GENRE_DISPLAY_MAP = {
 
 
 class CharacterVaultService:
-    def __init__(self, vault_dir: str = "data/vault/characters"):
-        self.vault_dir = os.path.abspath(vault_dir)
+    def __init__(self, vault_dir: Optional[str] = None):
+        from core.paths import user_data_path
+        self.vault_dir = os.path.abspath(vault_dir or user_data_path("data", "vault", "characters"))
         os.makedirs(self.vault_dir, exist_ok=True)
 
     def _file_path(self, char_id: str, genre: Optional[str] = None) -> str:

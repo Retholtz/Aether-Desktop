@@ -14,7 +14,7 @@ import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.logger import get_logger
-from core.paths import app_path, resource_path
+from core.paths import resource_path, user_data_path
 from core.telemetry.schema import GameTelemetryProfile, HudBarRegion
 
 logger = get_logger("GameModules")
@@ -88,7 +88,7 @@ def get_game_modules_dirs() -> List[str]:
     for candidate in (
         resource_path("assets", "game_modules"),
         resource_path("data", "game_modules"),
-        app_path("data", "game_modules"),
+        user_data_path("data", "game_modules"),
     ):
         norm = os.path.normpath(candidate)
         if norm not in dirs and os.path.isdir(norm):
@@ -97,7 +97,7 @@ def get_game_modules_dirs() -> List[str]:
 
 
 def get_user_modules_dir() -> str:
-    path = app_path("data", "game_modules")
+    path = user_data_path("data", "game_modules")
     os.makedirs(path, exist_ok=True)
     return path
 

@@ -88,8 +88,9 @@ def resolve_compendium_entry(entries: List[Dict[str, Any]], name_or_index: str) 
 
 
 class HomebrewManager:
-    def __init__(self, store_path: str = "data/homebrew/dnd5e_homebrew.json"):
-        self.store_path = os.path.abspath(store_path)
+    def __init__(self, store_path: Optional[str] = None):
+        from core.paths import user_data_path
+        self.store_path = os.path.abspath(store_path or user_data_path("data", "homebrew", "dnd5e_homebrew.json"))
         os.makedirs(os.path.dirname(self.store_path), exist_ok=True)
         self.data: Dict[str, List[Dict[str, Any]]] = self._load()
 

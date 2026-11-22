@@ -9,9 +9,10 @@ import sys
 import threading
 import time
 import webview
+from pathlib import Path
 from typing import Optional
 
-from core.paths import get_bundle_dir
+from core.paths import get_resource_dir, get_webview_cache_dir
 from core.screen_stream import ensure_thread_desktop
 from ui.tray import SystemTrayManager
 
@@ -1114,15 +1115,22 @@ class HudWindow:
         if hasattr(self.bridge, "set_hud_window"):
             self.bridge.set_hud_window(self)
 
+        # Ensure WebView2 user data folder is directed to writable %LOCALAPPDATA%\Aether\WebView2
+        # BEFORE calling webview.create_window() or webview.start().
+        webview_cache_dir = get_webview_cache_dir()
+        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = webview_cache_dir
+
         # Determine path to static UI assets
-        base_dir = get_bundle_dir()
+        base_dir = get_resource_dir()
         self.html_path = os.path.join(base_dir, "ui", "static", "index.html")
         self.overlay_html_path = os.path.join(base_dir, "ui", "static", "overlay.html")
+        self.html_url = Path(self.html_path).resolve().as_uri()
+        self.overlay_html_url = Path(self.overlay_html_path).resolve().as_uri()
 
         # 1. Create Main Application Window
         self.window = webview.create_window(
             title=self.title,
-            url=self.html_path,
+            url=self.html_url,
             js_api=self.bridge,
             width=self.width,
             height=self.height,
@@ -1155,7 +1163,7 @@ class HudWindow:
 
         overlay_kwargs = {
             "title": "Aether Overlay",
-            "url": self.overlay_html_path,
+            "url": self.overlay_html_url,
             "js_api": self.hud_bridge,
             "width": init_w,
             "height": init_h,
@@ -1582,18 +1590,19 @@ class HudWindow:
         """Starts the PyWebView main GUI event loop and system tray."""
         import logging
         import traceback
-        from core.paths import app_path
 
         logging.getLogger("pywebview").setLevel(logging.DEBUG)
-        storage_dir = app_path("data", "webview_profile")
+        storage_dir = get_webview_cache_dir()
+        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = storage_dir
         self._clear_stale_webview_cache(storage_dir)
         self._ensure_webview_pdf_default_preference(storage_dir)
-        print(f"[HUD] Launching pywebview window from {self.html_path}...")
+        print(f"[HUD] Launching pywebview window from {self.html_url}...")
         self.tray.start()
         try:
             webview.start(
                 self._on_started,
                 debug=debug,
+                gui="edgechromium",
                 private_mode=False,
                 storage_path=storage_dir,
             )

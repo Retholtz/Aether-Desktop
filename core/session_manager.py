@@ -8,7 +8,7 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from core.paths import app_path
+from core.paths import user_data_path
 from core.logger import get_logger
 
 logger = get_logger("SessionManager")
@@ -25,7 +25,7 @@ class SessionManager:
     def __init__(self, sessions_dir: Optional[str] = None):
         self._lock = threading.RLock()
         if sessions_dir is None:
-            self.sessions_dir = app_path("data", "sessions")
+            self.sessions_dir = user_data_path("data", "sessions")
         else:
             self.sessions_dir = os.path.abspath(sessions_dir)
         os.makedirs(self.sessions_dir, exist_ok=True)

@@ -20,10 +20,11 @@ from typing import Dict, Any, Optional, List, Callable
 from core.telemetry import create_telemetry_adapter, BaseTelemetryAdapter
 from core.binds_scanners import scan_profile_bindings
 from core.game_macro_runner import MacroRunner
+from core.paths import user_data_path
 
-GAMES_DIR = os.path.join("data", "games")
+GAMES_DIR = user_data_path("data", "games")
 GAMES_STATE_FILE = "active_state.json"
-GAMES_PROFILES_PATH = os.path.join("data", "games_profiles.json")
+GAMES_PROFILES_PATH = user_data_path("data", "games_profiles.json")
 
 LAUNCHER_GAME_PAIRS = {
     "edlaunch.exe": "elitedangerous64.exe",
