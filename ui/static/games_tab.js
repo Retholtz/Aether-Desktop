@@ -387,52 +387,11 @@ function renderActiveGameDetail() {
     renderCompanionAppsList(Array.isArray(profile.companion_apps) ? profile.companion_apps : []);
     refreshCompanionAppsStatus(activeGameId);
 
-    // Keybinds Table
-    const tbody = document.getElementById('tbody-game-binds');
-    if (tbody) {
-        tbody.innerHTML = '';
-        const keybinds = profile.keybinds || {};
-        const phrases = Object.keys(keybinds);
+    // Keybinds Table (with live filter + count badge)
+    renderKeybindsTable(profile);
 
-        if (phrases.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No voice macros configured yet. Click <strong>+ Add Keybind</strong> or <strong>Scan / Sync</strong>.</td></tr>`;
-        } else {
-            phrases.forEach(phrase => {
-                const bind = keybinds[phrase];
-                const tr = document.createElement('tr');
-
-                const modsText = (bind.modifiers && bind.modifiers.length > 0) ? bind.modifiers.join(' + ').toUpperCase() : 'None';
-                const keyText = (bind.key || '').toUpperCase();
-
-                tr.innerHTML = `
-                    <td><strong>"${escapeGameHtml(phrase)}"</strong></td>
-                    <td><code>${escapeGameHtml(modsText)}</code></td>
-                    <td><code>${escapeGameHtml(keyText)}</code></td>
-                    <td>${escapeGameHtml(bind.description || '')}</td>
-                    <td class="macro-actions-cell"></td>
-                `;
-                const actionsCell = tr.querySelector('.macro-actions-cell');
-                if (actionsCell) {
-                    const testBtn = document.createElement('button');
-                    testBtn.type = 'button';
-                    testBtn.className = 'btn-secondary-sm';
-                    testBtn.textContent = 'Test';
-                    testBtn.onclick = () => testMacro(phrase);
-
-                    const delBtn = document.createElement('button');
-                    delBtn.type = 'button';
-                    delBtn.className = 'btn-danger-sm';
-                    delBtn.style.marginLeft = '4px';
-                    delBtn.textContent = 'Delete';
-                    delBtn.onclick = () => deleteMacro(phrase);
-
-                    actionsCell.appendChild(testBtn);
-                    actionsCell.appendChild(delBtn);
-                }
-                tbody.appendChild(tr);
-            });
-        }
-    }
+    // Custom Visual & Multi-Step Macros Table
+    refreshGameMacrosTable(activeGameId, profile);
 
     // Scratchpad
     const pad = document.getElementById('game-scratchpad-input');
@@ -442,6 +401,363 @@ function renderActiveGameDetail() {
 
     // Co-Pilot Intel & Log
     renderCopilotLog(profile.copilot_log || []);
+}
+
+let currentGameMacrosMap = {};
+
+function renderKeybindsTable(profile) {
+    const tbody = document.getElementById('tbody-game-binds');
+    const countBadge = document.getElementById('badge-keybinds-count');
+    const filterInput = document.getElementById('input-filter-keybinds');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    const keybinds = (profile && profile.keybinds) ? profile.keybinds : {};
+    const allPhrases = Object.keys(keybinds);
+    if (countBadge) countBadge.textContent = String(allPhrases.length);
+
+    const q = (filterInput && filterInput.value ? filterInput.value : '').trim().toLowerCase();
+    const phrases = q
+        ? allPhrases.filter(ph => {
+            const b = keybinds[ph] || {};
+            return ph.toLowerCase().includes(q)
+                || String(b.key || '').toLowerCase().includes(q)
+                || String(b.description || '').toLowerCase().includes(q);
+        })
+        : allPhrases;
+
+    if (phrases.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">${allPhrases.length === 0 ? 'No keybinds configured yet. Click <strong>+ Add Keybind</strong> or <strong>Scan / Sync</strong>.' : 'No keybinds match your filter.'}</td></tr>`;
+        return;
+    }
+
+    phrases.forEach(phrase => {
+        const bind = keybinds[phrase];
+        const tr = document.createElement('tr');
+
+        const modsText = (bind.modifiers && bind.modifiers.length > 0) ? bind.modifiers.join(' + ').toUpperCase() : 'None';
+        const keyText = (bind.key || '').toUpperCase();
+
+        tr.innerHTML = `
+            <td><strong>"${escapeGameHtml(phrase)}"</strong></td>
+            <td><code>${escapeGameHtml(modsText)}</code></td>
+            <td><code>${escapeGameHtml(keyText)}</code></td>
+            <td>${escapeGameHtml(bind.description || '')}</td>
+            <td class="macro-actions-cell"></td>
+        `;
+        const actionsCell = tr.querySelector('.macro-actions-cell');
+        if (actionsCell) {
+            const testBtn = document.createElement('button');
+            testBtn.type = 'button';
+            testBtn.className = 'btn-secondary-sm';
+            testBtn.textContent = 'Test';
+            testBtn.onclick = () => testMacro(phrase);
+
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn-danger-sm';
+            delBtn.style.marginLeft = '4px';
+            delBtn.textContent = 'Delete';
+            delBtn.onclick = () => deleteMacro(phrase);
+
+            actionsCell.appendChild(testBtn);
+            actionsCell.appendChild(delBtn);
+        }
+        tbody.appendChild(tr);
+    });
+}
+
+function summarizeMacroSteps(steps) {
+    if (!Array.isArray(steps) || steps.length === 0) return '0 steps';
+    const labels = steps.slice(0, 3).map(s => {
+        if (!s || typeof s !== 'object') return 'step';
+        const act = String(s.action || 'press').toLowerCase();
+        if (act === 'vision_click') return `👁 Click "${s.target || 'UI'}"`;
+        if (act === 'press') return `⌨ ${String(s.key || '').toUpperCase()}${(s.repeat && s.repeat > 1) ? ` ×${s.repeat}` : ''}`;
+        if (act === 'trigger_bind') return `🔗 ${s.phrase || s.bind || 'bind'}${(s.repeat && s.repeat > 1) ? ` ×${s.repeat}` : ''}`;
+        if (act === 'wait') return `⏱ ${s.delay_ms || 0}ms`;
+        if (act === 'paste' || act === 'type') return `📝 ${act}`;
+        return act;
+    });
+    const extra = steps.length > 3 ? ` +${steps.length - 3} more` : '';
+    return `${steps.length} step${steps.length === 1 ? '' : 's'}: ${labels.join(' → ')}${extra}`;
+}
+
+async function refreshGameMacrosTable(gameId, profile) {
+    let macros = (profile && profile.sequences) ? { ...profile.sequences } : {};
+    try {
+        if (window.pywebview?.api?.get_game_macros && gameId) {
+            const res = await window.pywebview.api.get_game_macros(gameId);
+            if (res && res.success && res.macros) {
+                macros = res.macros;
+            }
+        }
+    } catch (e) {
+        console.error("get_game_macros error:", e);
+    }
+    currentGameMacrosMap = macros;
+    renderGameMacrosTable(macros);
+}
+
+function renderGameMacrosTable(macros) {
+    const tbody = document.getElementById('tbody-game-macros');
+    const badge = document.getElementById('badge-macros-count');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    const names = Object.keys(macros || {});
+    if (badge) badge.textContent = String(names.length);
+
+    if (names.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">No custom macros yet. Click <strong>+ Add Macro</strong> or ask Aether by voice to create one.</td></tr>`;
+        return;
+    }
+
+    names.forEach(name => {
+        const m = macros[name] || {};
+        const tr = document.createElement('tr');
+        const aliases = Array.isArray(m.aliases) && m.aliases.length > 0
+            ? `<div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 2px;">Aliases: ${m.aliases.map(a => `"${escapeGameHtml(a)}"`).join(', ')}</div>`
+            : '';
+        const cond = m.condition
+            ? `<span class="badge-status badge-info" style="font-size: 0.65rem; margin-left: 6px;">${escapeGameHtml(m.condition)}</span>`
+            : '';
+        const srcTag = m.source === 'module_default'
+            ? `<span style="font-size: 0.65rem; color: var(--text-dim); margin-left: 6px;">(Module)</span>`
+            : '';
+
+        tr.innerHTML = `
+            <td><strong>"${escapeGameHtml(name)}"</strong>${srcTag}${cond}</td>
+            <td>
+                <div>${escapeGameHtml(m.description || '')}</div>
+                ${aliases}
+            </td>
+            <td style="font-size: 0.78rem; color: var(--text-muted);">${escapeGameHtml(summarizeMacroSteps(m.steps))}</td>
+            <td class="custom-macro-actions-cell"></td>
+        `;
+        const actionsCell = tr.querySelector('.custom-macro-actions-cell');
+        if (actionsCell) {
+            const testBtn = document.createElement('button');
+            testBtn.type = 'button';
+            testBtn.className = 'btn-secondary-sm';
+            testBtn.textContent = 'Test';
+            testBtn.onclick = () => testMacro(name);
+
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'btn-secondary-sm';
+            editBtn.style.marginLeft = '4px';
+            editBtn.textContent = 'Edit';
+            editBtn.onclick = () => openMacroModal(name, m);
+
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn-danger-sm';
+            delBtn.style.marginLeft = '4px';
+            delBtn.textContent = 'Delete';
+            delBtn.onclick = () => deleteGameMacro(name);
+
+            actionsCell.appendChild(testBtn);
+            actionsCell.appendChild(editBtn);
+            actionsCell.appendChild(delBtn);
+        }
+        tbody.appendChild(tr);
+    });
+}
+
+function openMacroModal(existingName = '', existingDef = null) {
+    if (!activeGameId) {
+        alert("Please select a game profile first.");
+        return;
+    }
+    const modal = document.getElementById('modal-edit-macro');
+    if (!modal) return;
+
+    const titleEl = document.getElementById('modal-edit-macro-title');
+    const oldEl = document.getElementById('input-macro-old-name');
+    const nameEl = document.getElementById('input-macro-name');
+    const aliasEl = document.getElementById('input-macro-aliases');
+    const descEl = document.getElementById('input-macro-desc');
+    const condEl = document.getElementById('input-macro-condition');
+    const ackEl = document.getElementById('input-macro-ack');
+    const stepsEl = document.getElementById('textarea-macro-steps');
+    const aiEl = document.getElementById('input-macro-ai-prompt');
+    const shotChk = document.getElementById('chk-macro-ai-screenshot');
+    const errEl = document.getElementById('macro-steps-error');
+
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (aiEl) aiEl.value = '';
+    if (shotChk) {
+        const isRunning = Boolean(currentGamesData?.running_status?.[activeGameId]);
+        shotChk.checked = isRunning;
+    }
+
+    const isEdit = Boolean(existingName && existingDef);
+    if (titleEl) titleEl.textContent = isEdit ? `Edit Macro: ${existingName}` : 'Add Custom Macro';
+    if (oldEl) oldEl.value = isEdit ? existingName : '';
+    if (nameEl) { nameEl.value = isEdit ? existingName : ''; nameEl.style.borderColor = ''; }
+    if (aliasEl) aliasEl.value = isEdit && Array.isArray(existingDef.aliases) ? existingDef.aliases.join(', ') : '';
+    if (descEl) descEl.value = isEdit ? (existingDef.description || '') : '';
+    if (condEl) condEl.value = isEdit ? (existingDef.condition || '') : '';
+    if (ackEl) ackEl.value = isEdit ? (existingDef.ack || '') : '';
+    if (stepsEl) {
+        const defaultSteps = isEdit && Array.isArray(existingDef.steps)
+            ? existingDef.steps
+            : [{ action: "vision_click", target: "Auto Launch button", button: "left", hold_ms: 100, abort_if_not_found: true, delay_ms: 200 }];
+        stepsEl.value = JSON.stringify(defaultSteps, null, 2);
+    }
+
+    modal.classList.remove('hidden');
+    if (nameEl) nameEl.focus();
+}
+
+function closeMacroModal() {
+    const modal = document.getElementById('modal-edit-macro');
+    if (modal) modal.classList.add('hidden');
+}
+
+function insertMacroStepSnippet(kind) {
+    const stepsEl = document.getElementById('textarea-macro-steps');
+    if (!stepsEl) return;
+    const snippets = {
+        vision_click: { action: "vision_click", target: "Button label on screen", button: "left", hold_ms: 100, abort_if_not_found: true, delay_ms: 200 },
+        press: { action: "press", key: "x", modifiers: [], hold_ms: 80, repeat: 5, interval_ms: 20, delay_ms: 100 },
+        trigger_bind: { action: "trigger_bind", phrase: "divert power to engines", repeat: 1, interval_ms: 50, delay_ms: 100 },
+        wait: { action: "wait", delay_ms: 500 },
+        paste: { action: "paste", text: "Text to paste", delay_ms: 150 },
+    };
+    const snippet = snippets[kind];
+    if (!snippet) return;
+    let arr = [];
+    try {
+        const parsed = JSON.parse(stepsEl.value || '[]');
+        if (Array.isArray(parsed)) arr = parsed;
+    } catch (_) {
+        arr = [];
+    }
+    arr.push(snippet);
+    stepsEl.value = JSON.stringify(arr, null, 2);
+}
+
+async function handleGenerateMacroSteps() {
+    const aiInput = document.getElementById('input-macro-ai-prompt');
+    const shotChk = document.getElementById('chk-macro-ai-screenshot');
+    const btn = document.getElementById('btn-generate-macro-steps');
+    const statusEl = document.getElementById('macro-ai-status');
+    const instruction = (aiInput?.value || '').trim();
+    const includeScreenshot = Boolean(shotChk && shotChk.checked);
+    if (!instruction) {
+        if (aiInput) aiInput.focus();
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+    if (statusEl) {
+        statusEl.textContent = includeScreenshot
+            ? 'Capturing live game screen & drafting macro steps...'
+            : 'Aether is drafting your macro steps...';
+    }
+
+    try {
+        const res = await window.pywebview.api.generate_game_macro_from_text(activeGameId, instruction, includeScreenshot);
+        if (res && res.success && res.macro) {
+            const m = res.macro;
+            const nameEl = document.getElementById('input-macro-name');
+            const aliasEl = document.getElementById('input-macro-aliases');
+            const descEl = document.getElementById('input-macro-desc');
+            const condEl = document.getElementById('input-macro-condition');
+            const ackEl = document.getElementById('input-macro-ack');
+            const stepsEl = document.getElementById('textarea-macro-steps');
+
+            if (nameEl && m.name && !nameEl.value.trim()) nameEl.value = m.name;
+            if (aliasEl && Array.isArray(m.aliases)) aliasEl.value = m.aliases.join(', ');
+            if (descEl && m.description) descEl.value = m.description;
+            if (condEl && m.condition !== undefined) condEl.value = m.condition || '';
+            if (ackEl && m.ack) ackEl.value = m.ack;
+            if (stepsEl && Array.isArray(m.steps)) stepsEl.value = JSON.stringify(m.steps, null, 2);
+            if (statusEl) {
+                statusEl.textContent = res.used_screenshot
+                    ? 'Draft ready (analyzed live game screenshot)! Review or tweak below, then click Save Macro.'
+                    : 'Draft ready! Review or edit the steps below, then click Save Macro.';
+            }
+        } else {
+            if (statusEl) statusEl.textContent = (res && res.error) || 'Could not generate macro steps.';
+        }
+    } catch (e) {
+        console.error("generate_game_macro_from_text error:", e);
+        if (statusEl) statusEl.textContent = 'Error generating macro steps.';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✨ Generate'; }
+    }
+}
+
+async function handleConfirmSaveMacro() {
+    const oldName = (document.getElementById('input-macro-old-name')?.value || '').trim();
+    const nameEl = document.getElementById('input-macro-name');
+    const aliasEl = document.getElementById('input-macro-aliases');
+    const descEl = document.getElementById('input-macro-desc');
+    const condEl = document.getElementById('input-macro-condition');
+    const ackEl = document.getElementById('input-macro-ack');
+    const stepsEl = document.getElementById('textarea-macro-steps');
+    const errEl = document.getElementById('macro-steps-error');
+
+    const name = (nameEl?.value || '').trim();
+    if (!name) {
+        if (nameEl) { nameEl.style.borderColor = '#ef4444'; nameEl.focus(); }
+        return;
+    }
+
+    let parsedSteps = null;
+    try {
+        parsedSteps = JSON.parse(stepsEl?.value || '[]');
+        if (!Array.isArray(parsedSteps) || parsedSteps.length === 0) {
+            throw new Error('Steps must be a non-empty JSON array.');
+        }
+        if (errEl) errEl.style.display = 'none';
+    } catch (parseErr) {
+        if (errEl) {
+            errEl.textContent = `Invalid steps JSON: ${parseErr.message}`;
+            errEl.style.display = 'block';
+        }
+        return;
+    }
+
+    const aliases = (aliasEl?.value || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const desc = (descEl?.value || '').trim() || name;
+    const condition = (condEl?.value || '').trim();
+    const ack = (ackEl?.value || '').trim();
+
+    try {
+        const res = await window.pywebview.api.save_game_macro(
+            activeGameId, name, parsedSteps, desc, condition, ack, aliases, oldName
+        );
+        if (res && res.success) {
+            currentGameMacrosMap = res.macros || {};
+            if (currentGamesData?.profiles?.[activeGameId]) {
+                currentGamesData.profiles[activeGameId].sequences = res.macros || {};
+            }
+            closeMacroModal();
+            renderGameMacrosTable(currentGameMacrosMap);
+        } else if (errEl) {
+            errEl.textContent = (res && res.error) || 'Failed to save macro.';
+            errEl.style.display = 'block';
+        }
+    } catch (e) {
+        console.error("save_game_macro error:", e);
+    }
+}
+
+async function deleteGameMacro(name) {
+    if (!activeGameId || !name) return;
+    if (!confirm(`Delete custom macro "${name}"?`)) return;
+    try {
+        const res = await window.pywebview.api.delete_game_macro(activeGameId, name);
+        if (res && res.success) {
+            currentGameMacrosMap = res.macros || {};
+            renderGameMacrosTable(currentGameMacrosMap);
+        }
+    } catch (e) {
+        console.error("delete_game_macro error:", e);
+    }
 }
 
 function renderCopilotLog(entries) {
@@ -852,6 +1168,20 @@ function initGamesTabEvents() {
     document.getElementById('btn-close-add-keybind-modal')?.addEventListener('click', closeAddKeybindModal);
     document.getElementById('btn-cancel-add-keybind')?.addEventListener('click', closeAddKeybindModal);
     document.getElementById('btn-confirm-add-keybind')?.addEventListener('click', handleConfirmAddKeybind);
+    document.getElementById('input-filter-keybinds')?.addEventListener('input', () => {
+        const prof = currentGamesData?.profiles?.[activeGameId];
+        if (prof) renderKeybindsTable(prof);
+    });
+
+    // Modal Add / Edit Custom Macro actions
+    document.getElementById('btn-add-macro')?.addEventListener('click', () => openMacroModal());
+    document.getElementById('btn-close-edit-macro-modal')?.addEventListener('click', closeMacroModal);
+    document.getElementById('btn-cancel-edit-macro')?.addEventListener('click', closeMacroModal);
+    document.getElementById('btn-confirm-save-macro')?.addEventListener('click', handleConfirmSaveMacro);
+    document.getElementById('btn-generate-macro-steps')?.addEventListener('click', handleGenerateMacroSteps);
+    document.querySelectorAll('.btn-macro-snippet').forEach(btn => {
+        btn.addEventListener('click', () => insertMacroStepSnippet(btn.dataset.snippet));
+    });
 
     // Close modals on clicking overlay backdrop
     document.getElementById('modal-add-game')?.addEventListener('click', (e) => {
@@ -860,12 +1190,16 @@ function initGamesTabEvents() {
     document.getElementById('modal-add-keybind')?.addEventListener('click', (e) => {
         if (e.target.id === 'modal-add-keybind') closeAddKeybindModal();
     });
+    document.getElementById('modal-edit-macro')?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal-edit-macro') closeMacroModal();
+    });
 
     // Close modals on Escape key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeAddGameModal();
             closeAddKeybindModal();
+            closeMacroModal();
         }
     });
 

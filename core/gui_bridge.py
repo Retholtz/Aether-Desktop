@@ -4400,9 +4400,285 @@ class GuiBridge:
 
     def test_game_macro(self, phrase: str) -> dict:
 
-        """Tests execution of a keybind via DirectInput hardware scancode."""
+        """Tests execution of a keybind or visual/keystroke macro."""
 
-        return self.game_mgr.trigger_action(phrase)
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        client = getattr(eng, "genai_client", None) or getattr(eng, "client", None) if eng else None
+        return self.game_mgr.trigger_action(phrase, vision_client=client)
+
+    def get_game_macros(self, game_id: str) -> dict:
+        """Returns merged module-default and user-created custom macros (sequences) for a game."""
+        profile = self.game_mgr.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": "Profile not found", "macros": {}}
+
+        merged: Dict[str, Any] = {}
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            if isinstance(mod, dict) and isinstance(mod.get("sequences"), dict):
+                for sname, sdef in mod["sequences"].items():
+                    if isinstance(sdef, dict):
+                        entry = dict(sdef)
+                        entry.setdefault("source", "module_default")
+                        merged[str(sname).lower().strip()] = entry
+        except Exception:
+            pass
+
+        disabled = set(str(x).lower().strip() for x in (profile.get("disabled_module_sequences") or []))
+        for d_name in disabled:
+            merged.pop(d_name, None)
+
+        if isinstance(profile.get("sequences"), dict):
+            for sname, sdef in profile["sequences"].items():
+                if isinstance(sdef, dict):
+                    entry = dict(sdef)
+                    entry.setdefault("source", "user_macro")
+                    merged[str(sname).lower().strip()] = entry
+
+        return {"success": True, "game_id": game_id, "macros": merged}
+
+    def save_game_macro(
+        self,
+        game_id: str,
+        name: str,
+        steps: Any,
+        description: str = "",
+        condition: str = "",
+        ack: str = "",
+        aliases: Optional[list] = None,
+        old_name: str = "",
+    ) -> dict:
+        """Creates or updates a user-generated visual/keystroke macro (sequence) in a game profile."""
+        profile = self.game_mgr.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": "Profile not found"}
+
+        clean_name = str(name or "").lower().strip()
+        if not clean_name:
+            return {"success": False, "error": "Macro name cannot be empty."}
+
+        parsed_steps = steps
+        if isinstance(steps, str):
+            try:
+                parsed_steps = json.loads(steps)
+            except Exception as e:
+                return {"success": False, "error": f"Invalid JSON in steps: {e}"}
+        if not isinstance(parsed_steps, list) or len(parsed_steps) == 0:
+            return {"success": False, "error": "Macro must include at least one step."}
+
+        clean_aliases = []
+        if isinstance(aliases, str):
+            clean_aliases = [a.lower().strip() for a in aliases.split(",") if a.strip()]
+        elif isinstance(aliases, list):
+            clean_aliases = [str(a).lower().strip() for a in aliases if str(a).strip()]
+
+        entry: Dict[str, Any] = {
+            "description": str(description or clean_name.title()).strip(),
+            "steps": parsed_steps,
+            "source": "user_macro",
+        }
+        if str(condition or "").strip():
+            entry["condition"] = str(condition).strip()
+        if str(ack or "").strip():
+            entry["ack"] = str(ack).strip()
+        if clean_aliases:
+            entry["aliases"] = clean_aliases
+
+        seqs = profile.setdefault("sequences", {})
+        clean_old = str(old_name or "").lower().strip()
+        if clean_old and clean_old != clean_name and clean_old in seqs:
+            del seqs[clean_old]
+        # Re-enable if previously disabled as a module default
+        disabled = [x for x in (profile.get("disabled_module_sequences") or []) if str(x).lower().strip() != clean_name]
+        if "disabled_module_sequences" in profile:
+            profile["disabled_module_sequences"] = disabled
+
+        seqs[clean_name] = entry
+        self.game_mgr._save_profiles(self.game_mgr.data, target_game_id=game_id)
+
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        if eng is not None:
+            eng._reset_context_flag = True
+            if hasattr(eng, "invalidate_live_session"):
+                eng.invalidate_live_session(reason="Game Macro Saved")
+
+        return self.get_game_macros(game_id)
+
+    def delete_game_macro(self, game_id: str, name: str) -> dict:
+        """Deletes a user macro (or hides a bundled module-default macro) for a game profile."""
+        profile = self.game_mgr.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": "Profile not found"}
+
+        clean_name = str(name or "").lower().strip()
+        seqs = profile.get("sequences") or {}
+        removed = False
+        if clean_name in seqs:
+            del seqs[clean_name]
+            removed = True
+
+        # Check if a bundled module default has the same name; if so, record in disabled_module_sequences
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            mod_seqs = {str(k).lower().strip() for k in ((mod or {}).get("sequences") or {}).keys()}
+            if clean_name in mod_seqs:
+                disabled = list(profile.get("disabled_module_sequences") or [])
+                if clean_name not in disabled:
+                    disabled.append(clean_name)
+                profile["disabled_module_sequences"] = disabled
+                removed = True
+        except Exception:
+            pass
+
+        if not removed:
+            return {"success": False, "error": f"Macro '{clean_name}' not found."}
+
+        self.game_mgr._save_profiles(self.game_mgr.data, target_game_id=game_id)
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        if eng is not None:
+            eng._reset_context_flag = True
+            if hasattr(eng, "invalidate_live_session"):
+                eng.invalidate_live_session(reason="Game Macro Deleted")
+
+        return self.get_game_macros(game_id)
+
+    def generate_game_macro_from_text(
+        self,
+        game_id: str,
+        instruction: str,
+        include_screenshot: bool = False,
+    ) -> dict:
+        """
+        Compiles a plain-English user request into a structured declarative macro JSON via Gemini Hydrogen.
+        When `include_screenshot=True` and the game is running, captures a live frame of the game monitor
+        (briefly focusing the game window only if needed on a single-monitor setup, then restoring Aether)
+        so Gemini can see exact visible UI labels, menus, and buttons.
+        """
+        raw_inst = str(instruction or "").strip()
+        if not raw_inst:
+            return {"success": False, "error": "Please describe what the macro should do."}
+
+        profile = self.game_mgr.get_profile(game_id) if game_id else {}
+        game_name = (profile or {}).get("display_name") or game_id or "PC Game"
+        target_proc = (profile or {}).get("process_name") or (profile or {}).get("executable") or ""
+        sample_binds = list(((profile or {}).get("keybinds") or {}).keys())[:60]
+
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        client = getattr(eng, "genai_client", None) or getattr(eng, "client", None) if eng else None
+        if not client:
+            return {"success": False, "error": "Gemini client unavailable to generate macro steps."}
+
+        screenshot_bytes: Optional[bytes] = None
+        if include_screenshot and target_proc:
+            try:
+                import time as _time
+                from core.game_nav import UniversalGameNavigator
+                prev_hwnd = None
+                switched_focus = False
+                try:
+                    import win32gui
+                    from tools.os_controls import find_window_hwnd, focus_window
+                    prev_hwnd = win32gui.GetForegroundWindow()
+                    game_hwnd = find_window_hwnd(target_proc)
+                    if game_hwnd and win32gui.IsWindow(game_hwnd) and game_hwnd != prev_hwnd:
+                        # Only switch focus if Aether & game overlap on the same monitor
+                        same_monitor = True
+                        try:
+                            import mss
+                            gl, gt, gr, gb = win32gui.GetWindowRect(game_hwnd)
+                            al, at, ar, ab = win32gui.GetWindowRect(prev_hwnd) if prev_hwnd else (0, 0, 0, 0)
+                            gcx, gcy = (gl + gr) // 2, (gt + gb) // 2
+                            acx, acy = (al + ar) // 2, (at + ab) // 2
+                            with mss.mss() as sct:
+                                g_mon = next((i for i, m in enumerate(sct.monitors[1:]) if m["left"] <= gcx < m["left"] + m["width"] and m["top"] <= gcy < m["top"] + m["height"]), 0)
+                                a_mon = next((i for i, m in enumerate(sct.monitors[1:]) if m["left"] <= acx < m["left"] + m["width"] and m["top"] <= acy < m["top"] + m["height"]), 0)
+                                same_monitor = (g_mon == a_mon)
+                        except Exception:
+                            same_monitor = True
+                        if same_monitor:
+                            focus_window(game_hwnd)
+                            switched_focus = True
+                            _time.sleep(0.35)
+                except Exception:
+                    pass
+
+                try:
+                    nav = UniversalGameNavigator(target_process=target_proc, game_name=game_name)
+                    img_bytes, _, _ = nav.capture_viewport(max_dim=1280)
+                    if img_bytes:
+                        screenshot_bytes = img_bytes
+                finally:
+                    if switched_focus and prev_hwnd:
+                        try:
+                            from tools.os_controls import focus_window
+                            focus_window(prev_hwnd)
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[DEBUG] [MACRO_GEN] Live game screenshot skipped: {e}")
+
+        try:
+            from google.genai import types
+            from core.model_discovery import resolve_model_profile, build_thinking_config
+
+            base_model, level = resolve_model_profile("gemini-4-hydrogen:low", default_model="gemini-4-hydrogen", default_level="low")
+            thinking_cfg = build_thinking_config(base_model, thinking_level=level or "low")
+
+            vision_hint = (
+                "A live screenshot of the game is attached. Inspect the exact visible UI labels, menus, "
+                "weapon wheels, and button text to craft precise `vision_click` target descriptions.\n"
+                if screenshot_bytes
+                else ""
+            )
+            prompt = (
+                f'You are a macro compiler for the PC game "{game_name}".\n'
+                f'{vision_hint}'
+                f'Available synced keybind phrases include: {sample_binds}\n'
+                f'Convert this user instruction into a clean Aether declarative macro JSON object:\n'
+                f'"{raw_inst}"\n\n'
+                f'Supported step actions:\n'
+                f'1. {{"action": "vision_click", "target": "UI button/label description", "button": "left", "hold_ms": 100, "abort_if_not_found": true, "delay_ms": 200}}\n'
+                f'2. {{"action": "press", "key": "x", "modifiers": [], "hold_ms": 80, "repeat": 5, "interval_ms": 20, "delay_ms": 100}}\n'
+                f'3. {{"action": "trigger_bind", "phrase": "<synced keybind phrase>", "repeat": 1, "interval_ms": 50, "delay_ms": 100}}\n'
+                f'4. {{"action": "wait", "delay_ms": 500}}\n'
+                f'5. {{"action": "paste", "text": "...", "delay_ms": 150}} or {{"action": "type", "text": "...", "delay_ms": 150}}\n'
+                f'6. {{"action": "click", "button": "left", "delay_ms": 100}}\n\n'
+                f'Return ONLY valid JSON with keys:\n'
+                f'{{\n'
+                f'  "name": "short lowercase trigger name",\n'
+                f'  "aliases": ["optional natural alternate phrases"],\n'
+                f'  "description": "plain-English intent describing when Aether should trigger this macro",\n'
+                f'  "condition": "optional telemetry condition like state.docked or empty string",\n'
+                f'  "ack": "short in-character spoken confirmation",\n'
+                f'  "steps": [ ... ]\n'
+                f'}}'
+            )
+            contents: Any = (
+                [types.Part.from_bytes(data=screenshot_bytes, mime_type="image/jpeg"), prompt]
+                if screenshot_bytes
+                else prompt
+            )
+            res = client.models.generate_content(
+                model=base_model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                    thinking_config=thinking_cfg,
+                ),
+            )
+            raw_txt = (getattr(res, "text", None) or "").strip()
+            if raw_txt.startswith("```"):
+                raw_txt = re.sub(r"^```(?:json)?\s*", "", raw_txt)
+                raw_txt = re.sub(r"\s*```$", "", raw_txt)
+            parsed = json.loads(raw_txt) if raw_txt else {}
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("steps"), list):
+                return {"success": False, "error": "Model returned an invalid macro structure."}
+            return {"success": True, "macro": parsed, "used_screenshot": bool(screenshot_bytes)}
+        except Exception as e:
+            return {"success": False, "error": f"Macro generation failed: {e}"}
 
 
 
@@ -4926,6 +5202,21 @@ class GuiBridge:
         """Imports a declarative `.aethermodule.json` string or dict and assimilates it."""
         from core.game_modules import import_game_module
         return import_game_module(raw_json, game_manager=self.game_mgr)
+
+    def list_game_extensions(self) -> dict:
+        """Lists installed Tier 2 community `.py` game extensions and their SHA-256 trust status."""
+        from core.game_extensions import list_game_extensions
+        return {"success": True, "extensions": list_game_extensions()}
+
+    def trust_game_extension(self, module_id: str, script_name: str = "extension.py") -> dict:
+        """Approves a Tier 2 `.py` game extension by recording its SHA-256 hash."""
+        from core.game_extensions import trust_game_extension
+        return trust_game_extension(module_id, script_name=script_name)
+
+    def revoke_game_extension(self, module_id: str) -> dict:
+        """Revokes trust for a Tier 2 `.py` game extension."""
+        from core.game_extensions import revoke_game_extension
+        return revoke_game_extension(module_id)
 
     def import_game_module_dialog(self) -> dict:
         """Opens a native file picker to import a `.aethermodule.json` community module."""

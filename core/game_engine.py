@@ -54,6 +54,10 @@ class GameEngine:
         "center_map_on_player",
         "inspect_screen_context",
         "calibrate_hud_bars",
+        "click_game_ui_element",
+        "save_game_macro",
+        "list_game_macros",
+        "delete_game_macro",
         "launch_game_companion_app",
         "launch_application",
         "navigate_browser",
@@ -99,6 +103,8 @@ class GameEngine:
         self.on_notify = on_notify
         self.manager = GameManager(profiles_path=profiles_path)
         self.manager.on_game_mode_changed = self._on_game_mode_changed
+        if self.engine is not None:
+            self.manager.vision_client = getattr(self.engine, "genai_client", None) or getattr(self.engine, "client", None)
 
         if self.dispatcher:
             self.register_tools(self.dispatcher)
@@ -504,8 +510,12 @@ class GameEngine:
             f"   - GAMING RIG & PERFORMANCE EXCEPTION: Rig thermals (CPU and GPU temperatures), system load, VRAM allocation, and framerate (FPS / frames per second) ARE EXPLICITLY ALLOWED AND PART OF GAME MODE. If the player asks about thermals, temperatures, FPS, framerates, or system performance, NEVER deflect. Immediately call `get_hardware_telemetry` and report the metrics directly.\n"
             f"   - For any other unrelated real-world topics or desktop development questions, stay in-character and deflect in-universe:\n"
             f"     'My focus is entirely on our journey in {game_title}. If you wish to discuss real-world matters or inspect code, please tell me to \"disable Game Mode\" (or press {hotkey_display}).'\n"
-            f"3. IN-GAME ACTIONS & TWO-TIER MEMORY:\n"
-            f"   - You can execute game actions via `trigger_game_action` and check telemetry via `get_current_game_telemetry` / `get_current_game_status`.\n"
+            f"3. IN-GAME ACTIONS, LIVE INTEL & COURSE PLOTTING:\n"
+            f"   - Execute bound actions via `trigger_game_action` and check live state via `get_current_game_telemetry` / `get_current_game_status`.\n"
+            f"   - LIVE DATABASE QUERIES: Whenever the player asks where to find commodities, items, vendors, stations, outfitting, services, or routes, IMMEDIATELY call `query_game_intel(query=..., category=...)`. NEVER deflect by telling the player to 'look it up on Inara', 'check Spansh', or 'check a wiki' — YOU look it up, report exact system/station/distance/price/supply, and offer to plot the course.\n"
+            f"   - COURSE PLOTTING: When asked to plot a course or navigate to a system/location, invoke `search_and_route_destination` (search-bar maps) or `pan_and_mark_map_location`.\n"
+            f"   - IN-GAME MENUS, MAPS & UI BUTTONS: NEVER call `close_window` for in-game screens, maps, or menus — close them with `trigger_game_action` (e.g. `'close menu'`, `'escape'`, or the map toggle). To click a visible UI button (e.g. `'Auto Launch'`), use `click_game_ui_element` or a custom macro (`save_game_macro`). Never claim success if a tool returns `failed` or `element_not_found`.\n"
+            f"   - ON-THE-FLY VOICE MACRO CREATION: When the player asks you in-game to create a macro (e.g. 'create a macro that opens my weapons wheel and equips my sword'), call `inspect_screen_context` first if it involves on-screen menus/buttons/wheels so you see exact labels, reuse synced keybinds via `trigger_bind`, call `save_game_macro`, and concisely confirm the saved macro name and steps.\n"
             f"   - Live Working Memory: Your system prompt maintains active immediate objectives, location, and sub-tasks across 10-minute session rotations.\n"
             f"   - Deep Storage & Intel: Use `get_game_scratchpad` to view personal notes/quests, and `search_copilot_log` to query historical landmarks/intel.\n"
             f"   - Record discoveries with `record_copilot_observation` and update player notes with `update_game_scratchpad`.\n"
@@ -522,8 +532,9 @@ class GameEngine:
     # --- Tool Fencing & Registration ---
 
     def get_allowed_tool_names(self) -> Set[str]:
-        """Returns allowed tool names for active game mode, including profile-specific extra tools."""
+        """Returns allowed tool names for active game mode, including profile-specific and trusted extension tools."""
         tools = set(self.CORE_GAME_TOOL_NAMES)
+        tools.update(getattr(self, "_extension_tool_names", set()))
         active_id = self.manager.data.get("active_profile", "")
         if active_id:
             prof = self.manager.get_profile(active_id) or {}
@@ -538,8 +549,21 @@ class GameEngine:
         return [d for d in declarations if d.get("name") in allowed]
 
     def register_tools(self, dispatcher):
-        """Registers all gaming tools on the given ToolDispatcher."""
+        """Registers all gaming tools (and any explicitly trusted Tier 2 game extension tools)."""
         register_game_tools(dispatcher, self.manager, engine=self.engine)
+        self._extension_tool_names = set()
+        try:
+            from core.game_extensions import list_game_extensions, load_trusted_extension
+            for info in list_game_extensions():
+                if not info.get("trusted"):
+                    continue
+                ext = load_trusted_extension(info["module_id"])
+                if ext is not None:
+                    added = ext.register_tools(dispatcher, self.manager, engine=self.engine)
+                    if isinstance(added, (list, set, tuple)):
+                        self._extension_tool_names.update(str(t) for t in added if t)
+        except Exception as e:
+            logger.debug("[GAME_ENGINE] Extension tool registration skipped: %s", e)
 
     # --- Event Notification Hook ---
 

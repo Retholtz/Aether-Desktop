@@ -255,10 +255,14 @@
               <section class="game-card">
                 <div class="game-card-header card-header-flex">
                   <div>
-                    <h3>VOICE MACROS & SCANCODE BINDINGS</h3>
-                    <p class="subtitle field-hint">Voice phrases spoken to Aether that inject DirectInput scancodes directly into the game.</p>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <h3 style="margin: 0;">KEYBINDS &amp; SCANCODE BINDINGS</h3>
+                      <span id="badge-keybinds-count" class="badge-count">0</span>
+                    </div>
+                    <p class="subtitle field-hint">Synced or manual 1-key bindings that inject DirectInput scancodes directly into the game.</p>
                   </div>
                   <div class="header-action-group card-header-actions">
+                    <input type="text" id="input-filter-keybinds" class="modal-input" placeholder="Filter keybinds..." style="width: 170px; padding: 5px 10px; font-size: 0.78rem;" autocomplete="off" />
                     <button type="button" id="btn-scan-keybinds" class="btn-secondary-sm btn-secondary-pill" title="Scan local files for keybinds">
                       <span class="icon">🔍</span> Scan / Sync Keybinds
                     </button>
@@ -266,17 +270,49 @@
                   </div>
                 </div>
                 
-                <table class="game-table" id="table-game-binds">
+                <div style="max-height: 320px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px;">
+                  <table class="game-table" id="table-game-binds" style="margin: 0;">
+                    <thead>
+                      <tr>
+                        <th>Voice Trigger Phrase</th>
+                        <th>Modifier(s)</th>
+                        <th>Key</th>
+                        <th>Action Description</th>
+                        <th style="width: 140px;">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-game-binds">
+                      <!-- Dynamically populated -->
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <!-- Custom Visual & Multi-Step Macros Card -->
+              <section class="game-card" style="margin-top: 20px;">
+                <div class="game-card-header card-header-flex">
+                  <div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <h3 style="margin: 0;">⚡ MACROS &amp; AUTOMATION SEQUENCES</h3>
+                      <span id="badge-macros-count" class="badge-count">0</span>
+                    </div>
+                    <p class="subtitle field-hint">Multi-step keystroke and vision-click workflows. Aether matches your intent naturally (e.g. <em>"Let's get outta this station"</em> → <strong>Take Us Out</strong>).</p>
+                  </div>
+                  <div class="header-action-group card-header-actions">
+                    <button type="button" id="btn-add-macro" class="btn-primary-sm btn-primary-blue">+ Add Macro</button>
+                  </div>
+                </div>
+
+                <table class="game-table" id="table-game-macros">
                   <thead>
                     <tr>
-                      <th>Voice Trigger Phrase</th>
-                      <th>Modifier(s)</th>
-                      <th>Key</th>
-                      <th>Action Description</th>
-                      <th style="width: 140px;">Actions</th>
+                      <th>Macro Name</th>
+                      <th>Trigger Phrases &amp; Intent</th>
+                      <th>Steps</th>
+                      <th style="width: 190px;">Actions</th>
                     </tr>
                   </thead>
-                  <tbody id="tbody-game-binds">
+                  <tbody id="tbody-game-macros">
                     <!-- Dynamically populated -->
                   </tbody>
                 </table>
@@ -3168,6 +3204,82 @@
       <div class="modal-footer">
         <button type="button" id="btn-cancel-add-keybind" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
         <button type="button" id="btn-confirm-add-keybind" class="btn-primary-sm" style="padding: 7px 18px;">Save Keybind</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Custom Visual & Keystroke Macro -->
+  <div id="modal-edit-macro" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 640px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">⚡</span>
+          <h3 id="modal-edit-macro-title" style="margin: 0; font-size: 1rem; color: var(--text-main);">Add Custom Macro</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-edit-macro-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 72vh; overflow-y: auto;">
+        <input type="hidden" id="input-macro-old-name" value="" />
+
+        <!-- Plain-English AI Step Generator -->
+        <div class="modal-field" style="background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px;">
+          <label for="input-macro-ai-prompt" class="modal-label" style="color: #60a5fa;">✨ Generate Macro from Plain English (Optional)</label>
+          <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <input type="text" id="input-macro-ai-prompt" class="modal-input" style="flex: 1;" placeholder="e.g. Check if docked, find Auto Launch on screen and click it — or Press X 5 times with 20ms pause" autocomplete="off" />
+            <button type="button" id="btn-generate-macro-steps" class="btn-secondary-sm" style="white-space: nowrap;">✨ Generate</button>
+          </div>
+          <label style="display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.76rem; color: var(--text-muted); cursor: pointer;">
+            <input type="checkbox" id="chk-macro-ai-screenshot" />
+            <span>Capture live game screen (lets Aether see menus/buttons; briefly switches focus only on single-monitor setups)</span>
+          </label>
+          <span id="macro-ai-status" class="modal-hint" style="display: block; margin-top: 4px;">Aether will draft the macro name, phrases, and JSON steps below for you to review or tweak.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-macro-name" class="modal-label">Macro Name / Primary Phrase <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-macro-name" class="modal-input" placeholder="e.g. take us out, full engines, request docking" autocomplete="off" />
+        </div>
+
+        <div class="modal-field">
+          <label for="input-macro-aliases" class="modal-label">Alternate Trigger Phrases (comma-separated)</label>
+          <input type="text" id="input-macro-aliases" class="modal-input" placeholder="e.g. auto launch, undock, launch ship" autocomplete="off" />
+          <span class="modal-hint">Exact phrases fire instantly (&lt;50ms). Aether also matches natural phrasing using the Intent description below.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-macro-desc" class="modal-label">Intent / When Aether Should Use This Macro</label>
+          <input type="text" id="input-macro-desc" class="modal-input" placeholder="e.g. Undock and leave the station or carrier via Auto Launch" autocomplete="off" />
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="modal-field">
+            <label for="input-macro-condition" class="modal-label">Telemetry Condition (Optional)</label>
+            <input type="text" id="input-macro-condition" class="modal-input" placeholder="e.g. state.docked or !state.landing_gear_down" autocomplete="off" />
+          </div>
+          <div class="modal-field">
+            <label for="input-macro-ack" class="modal-label">Spoken Confirmation (Optional)</label>
+            <input type="text" id="input-macro-ack" class="modal-input" placeholder="e.g. Engaging Auto Launch, Commander." autocomplete="off" />
+          </div>
+        </div>
+
+        <div class="modal-field">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+            <label for="textarea-macro-steps" class="modal-label" style="margin: 0;">Macro Steps (Editable JSON) <span style="color: #ef4444;">*</span></label>
+            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+              <button type="button" class="btn-secondary-sm btn-macro-snippet" data-snippet="vision_click" style="padding: 2px 7px; font-size: 0.72rem;">+ Vision Click</button>
+              <button type="button" class="btn-secondary-sm btn-macro-snippet" data-snippet="press" style="padding: 2px 7px; font-size: 0.72rem;">+ Press Key</button>
+              <button type="button" class="btn-secondary-sm btn-macro-snippet" data-snippet="trigger_bind" style="padding: 2px 7px; font-size: 0.72rem;">+ Keybind</button>
+              <button type="button" class="btn-secondary-sm btn-macro-snippet" data-snippet="wait" style="padding: 2px 7px; font-size: 0.72rem;">+ Wait</button>
+              <button type="button" class="btn-secondary-sm btn-macro-snippet" data-snippet="paste" style="padding: 2px 7px; font-size: 0.72rem;">+ Paste</button>
+            </div>
+          </div>
+          <textarea id="textarea-macro-steps" class="modal-input" rows="8" style="font-family: Consolas, monospace; font-size: 0.8rem; line-height: 1.4; resize: vertical;" placeholder='[{"action": "vision_click", "target": "Auto Launch button", "button": "left", "hold_ms": 100, "abort_if_not_found": true}]'></textarea>
+          <span id="macro-steps-error" class="modal-hint" style="color: #f87171; display: none;"></span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-edit-macro" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-save-macro" class="btn-primary-sm" style="padding: 7px 18px;">Save Macro</button>
       </div>
     </div>
   </div>

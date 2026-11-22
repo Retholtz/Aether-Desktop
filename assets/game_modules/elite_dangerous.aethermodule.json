@@ -12,21 +12,531 @@
   ],
   "universe_name": "Milky Way",
   "input_mode": "autonomous",
+  "navigation_mode": "search_bar",
   "suppress_alerts_when_running": [
     "EDCoPilot.exe"
   ],
+  "map_controls": {
+    "preferred_input": "mouse_keyboard",
+    "search_routing": {
+      "map_open_actions": [
+        "open galaxy map",
+        "galaxy map open",
+        "GalaxyMapOpen"
+      ],
+      "map_key": "m",
+      "open_wait_sec": 1.4,
+      "search_box_visual_hint": "Galaxy Map search text box labeled 'Search' near the top of the screen",
+      "input_method": "clipboard_paste",
+      "submit_key": "enter",
+      "select_result_wait_sec": 0.9,
+      "post_input_keys": [
+        { "key": "down", "delay_ms": 400 },
+        { "key": "enter", "delay_ms": 1100 }
+      ],
+      "plot_visual_hint": "Route Plotter / Plot Route button icon on the right-hand system info sidebar",
+      "plot_key": "space",
+      "plot_hold_sec": 0.85,
+      "verify_telemetry_field": "route_destination",
+      "verify_timeout_sec": 3.0
+    }
+  },
+  "binds_scanner": {
+    "format": "xml_primary_secondary",
+    "dir": "%LOCALAPPDATA%\\Frontier Developments\\Elite Dangerous\\Options\\Bindings",
+    "file_glob": "*.binds",
+    "preset_pointer_file": "StartPreset.4.start",
+    "key_prefix": "Key_",
+    "device_priority": [
+      "Keyboard",
+      "Mouse",
+      "GamePad",
+      "Controller"
+    ],
+    "auto_import_all": true,
+    "actions": {
+      "DeployHeatSink": {
+        "phrase": "deploy heat sink",
+        "description": "Deploy Heat Sink",
+        "aliases": ["heat sink", "pop heat sink", "fire heat sink"]
+      },
+      "ToggleFlightAssist": {
+        "phrase": "toggle flight assist",
+        "description": "Toggle Flight Assist",
+        "aliases": ["flight assist", "fa off", "fa on"]
+      },
+      "ChargeECM": {
+        "phrase": "charge ecm",
+        "description": "Charge ECM",
+        "aliases": ["ecm", "fire ecm"]
+      },
+      "UseShieldCell": {
+        "phrase": "use shield cell",
+        "description": "Fire Shield Cell Bank",
+        "aliases": ["shield cell", "pop shield cell", "scb"]
+      },
+      "FireChaffLauncher": {
+        "phrase": "fire chaff",
+        "description": "Fire Chaff Launcher",
+        "aliases": ["deploy chaff", "chaff"]
+      },
+      "IncreaseEnginesPower": {
+        "phrase": "divert power to engines",
+        "description": "Power to Engines",
+        "aliases": ["power to engines", "pips to engines"]
+      },
+      "IncreaseWeaponsPower": {
+        "phrase": "divert power to weapons",
+        "description": "Power to Weapons",
+        "aliases": ["power to weapons", "pips to weapons"]
+      },
+      "IncreaseSystemsPower": {
+        "phrase": "divert power to systems",
+        "description": "Power to Systems",
+        "aliases": ["power to systems", "pips to systems", "power to shields"]
+      },
+      "ResetPowerDistribution": {
+        "phrase": "balance power",
+        "description": "Balance Power Distribution",
+        "aliases": ["reset power", "equalize power"]
+      },
+      "ToggleCargoScoop": {
+        "phrase": "toggle cargo scoop",
+        "description": "Toggle Cargo Scoop",
+        "aliases": ["cargo scoop"],
+        "variants": [
+          {
+            "phrase": "open cargo scoop",
+            "description": "Open Cargo Scoop",
+            "condition": "!state.cargo_scoop_open",
+            "condition_skip_ack": "Cargo scoop is already open.",
+            "aliases": ["deploy cargo scoop"]
+          },
+          {
+            "phrase": "close cargo scoop",
+            "description": "Close Cargo Scoop",
+            "condition": "state.cargo_scoop_open",
+            "condition_skip_ack": "Cargo scoop is already closed.",
+            "aliases": ["retract cargo scoop"]
+          }
+        ]
+      },
+      "LandingGearToggle": {
+        "phrase": "deploy landing gear",
+        "description": "Toggle Landing Gear",
+        "condition": "!state.landing_gear_down",
+        "condition_skip_ack": "Landing gear is already deployed.",
+        "variants": [
+          {
+            "phrase": "lower landing gear",
+            "description": "Toggle Landing Gear",
+            "condition": "!state.landing_gear_down",
+            "condition_skip_ack": "Landing gear is already down.",
+            "aliases": ["deploy landing gear"]
+          },
+          {
+            "phrase": "retract landing gear",
+            "description": "Retract Landing Gear",
+            "condition": "state.landing_gear_down",
+            "condition_skip_ack": "Landing gear is already retracted.",
+            "aliases": ["raise landing gear", "landing gear up"]
+          }
+        ]
+      },
+      "DeployHardpointToggle": {
+        "phrase": "deploy hardpoints",
+        "description": "Toggle Hardpoints",
+        "condition": "!state.hardpoints_deployed",
+        "condition_skip_ack": "Hardpoints are already deployed.",
+        "variants": [
+          {
+            "phrase": "draw weapons",
+            "description": "Toggle Hardpoints",
+            "condition": "!state.hardpoints_deployed",
+            "aliases": ["deploy hardpoints"]
+          },
+          {
+            "phrase": "retract hardpoints",
+            "description": "Retract Hardpoints",
+            "condition": "state.hardpoints_deployed",
+            "condition_skip_ack": "Hardpoints are already retracted.",
+            "aliases": ["stow weapons", "sheathe weapons"]
+          }
+        ]
+      },
+      "SelectTarget": {
+        "phrase": "target ahead",
+        "description": "Target Ahead",
+        "aliases": ["select target"]
+      },
+      "CycleNextTarget": {
+        "phrase": "next target",
+        "description": "Target Next",
+        "aliases": ["cycle next target"]
+      },
+      "CyclePreviousTarget": {
+        "phrase": "previous target",
+        "description": "Target Previous"
+      },
+      "SelectHighestThreat": {
+        "phrase": "target highest threat",
+        "description": "Target Highest Threat",
+        "aliases": ["highest threat"]
+      },
+      "CycleNextHostileTarget": {
+        "phrase": "next hostile",
+        "description": "Target Next Hostile",
+        "aliases": ["target next hostile"]
+      },
+      "CycleNextSubsystem": {
+        "phrase": "next subsystem",
+        "description": "Cycle Next Subsystem"
+      },
+      "CycleFireGroupNext": {
+        "phrase": "next fire group",
+        "description": "Cycle Next Fire Group"
+      },
+      "CycleFireGroupPrevious": {
+        "phrase": "previous fire group",
+        "description": "Cycle Previous Fire Group"
+      },
+      "HyperSuperCombination": {
+        "phrase": "frame shift drive",
+        "description": "Toggle Frame Shift Drive",
+        "aliases": ["engage fsd", "jump", "engage jump"]
+      },
+      "Supercruise": {
+        "phrase": "enter supercruise",
+        "description": "Toggle Supercruise",
+        "aliases": ["supercruise", "engage supercruise"]
+      },
+      "Hyperspace": {
+        "phrase": "hyperspace jump",
+        "description": "Engage Hyperspace Jump",
+        "aliases": ["high wake"]
+      },
+      "TargetNextRouteSystem": {
+        "phrase": "target next system in route",
+        "description": "Target Next System in Route",
+        "aliases": ["next route system", "next jump"]
+      },
+      "GalaxyMapOpen": {
+        "phrase": "open galaxy map",
+        "description": "Open Galaxy Map",
+        "aliases": ["galaxy map"]
+      },
+      "SystemMapOpen": {
+        "phrase": "open system map",
+        "description": "Open System Map",
+        "aliases": ["system map"]
+      },
+      "UI_Back": {
+        "phrase": "close menu",
+        "description": "Back / Close Map or Menu",
+        "aliases": ["close map", "close galaxy map", "close system map", "back", "exit menu", "escape"]
+      },
+      "ShipSpotLightToggle": {
+        "phrase": "toggle ship lights",
+        "description": "Toggle Ship Lights",
+        "aliases": ["ship lights", "lights", "headlights"]
+      },
+      "NightVisionToggle": {
+        "phrase": "toggle night vision",
+        "description": "Toggle Night Vision",
+        "aliases": ["night vision"]
+      },
+      "ToggleButtonUpInput": {
+        "phrase": "silent running",
+        "description": "Toggle Silent Running",
+        "aliases": ["toggle silent running", "engage silent running"]
+      },
+      "OrbitLinesToggle": {
+        "phrase": "toggle orbit lines",
+        "description": "Toggle Orbit Lines",
+        "aliases": ["orbit lines"]
+      },
+      "PlayerHUDModeToggle": {
+        "phrase": "switch hud mode",
+        "description": "Toggle Combat / Analysis HUD Mode",
+        "aliases": ["analysis mode", "combat mode", "toggle hud mode"]
+      },
+      "ExplorationFSSEnter": {
+        "phrase": "open fss",
+        "description": "Enter Full Spectrum System Scanner",
+        "aliases": ["fss", "open scanner"]
+      },
+      "UseBoostJuice": {
+        "phrase": "boost",
+        "description": "Engine Boost",
+        "aliases": ["afterburner", "engage boost"]
+      },
+      "SetSpeedZero": {
+        "phrase": "all stop",
+        "description": "Set Throttle to 0%",
+        "aliases": ["zero throttle", "stop engines", "cut throttle"]
+      },
+      "SetSpeed25": {
+        "phrase": "quarter impulse",
+        "description": "Set Throttle to 25%",
+        "aliases": ["throttle 25"]
+      },
+      "SetSpeed50": {
+        "phrase": "half impulse",
+        "description": "Set Throttle to 50%",
+        "aliases": ["throttle 50"]
+      },
+      "SetSpeed75": {
+        "phrase": "three quarter throttle",
+        "description": "Set Throttle to 75%",
+        "aliases": ["throttle 75", "75 percent throttle"]
+      },
+      "SetSpeed100": {
+        "phrase": "full throttle",
+        "description": "Set Throttle to 100%",
+        "aliases": ["throttle 100", "full ahead"]
+      },
+      "FocusLeftPanel": {
+        "phrase": "left panel",
+        "description": "Focus Navigation / Left Panel",
+        "aliases": ["navigation panel"]
+      },
+      "FocusCommsPanel": {
+        "phrase": "comms panel",
+        "description": "Focus Comms Panel"
+      },
+      "FocusRadarPanel": {
+        "phrase": "role panel",
+        "description": "Focus Role / Bottom Panel"
+      },
+      "FocusRightPanel": {
+        "phrase": "right panel",
+        "description": "Focus Systems / Right Panel",
+        "aliases": ["systems panel", "internal panel"]
+      }
+    }
+  },
+  "sequences": {
+    "take us out": {
+      "description": "Click Auto Launch on station/carrier menu when docked",
+      "condition": "state.docked",
+      "condition_skip_ack": "We are not currently docked at a station or carrier.",
+      "ack": "Engaging Auto Launch, Commander.",
+      "aliases": ["auto launch", "launch ship", "undock"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "vision_click",
+          "target": "Auto Launch button in the station or carrier services menu",
+          "button": "left",
+          "hold_ms": 100,
+          "abort_if_not_found": true,
+          "delay_ms": 200
+        }
+      ]
+    }
+  },
   "companion_resources": {
     "market": {
-      "name": "Inara",
-      "domain": "inara.cz"
+      "name": "Inara / Spansh",
+      "domain": "spansh.co.uk"
     },
     "navigation": {
       "name": "Spansh",
       "domain": "spansh.co.uk"
     },
     "outfitting": {
-      "name": "Inara Outfitting",
-      "domain": "inara.cz"
+      "name": "Spansh Outfitting",
+      "domain": "spansh.co.uk"
+    },
+    "services": {
+      "name": "Spansh Station Services",
+      "domain": "spansh.co.uk"
+    }
+  },
+  "intel_endpoints": {
+    "market": {
+      "name": "Spansh Live Commodity Market (EDDN)",
+      "method": "POST",
+      "url": "https://spansh.co.uk/api/stations/search",
+      "default_location": "Sol",
+      "timeout_sec": 12.0,
+      "max_results": 5,
+      "fallback_to_web_search": true,
+      "value_resolver": {
+        "url": "https://spansh.co.uk/api/stations/field_values/market",
+        "values_path": "values"
+      },
+      "body_template": {
+        "filters": {
+          "market": [
+            {
+              "name": "{canonical_query}",
+              "supply": {
+                "comparison": "<=>",
+                "value": [1, 999999999]
+              }
+            }
+          ],
+          "has_large_pad": {
+            "$if": "telemetry.needs_large_pad",
+            "$value": {
+              "value": true
+            }
+          }
+        },
+        "reference_system": "{location}",
+        "sort": [
+          {
+            "distance": {
+              "direction": "asc"
+            }
+          }
+        ],
+        "size": 5
+      },
+      "results_path": "results",
+      "result_fields": {
+        "system": "system_name",
+        "station": "name",
+        "station_type": "type",
+        "distance_ly": "distance",
+        "distance_ls": "distance_to_arrival",
+        "large_pads": "large_pads",
+        "medium_pads": "medium_pads",
+        "buy_price_cr": "market[commodity~={canonical_query}].buy_price",
+        "supply": "market[commodity~={canonical_query}].supply",
+        "sell_price_cr": "market[commodity~={canonical_query}].sell_price",
+        "demand": "market[commodity~={canonical_query}].demand"
+      }
+    },
+    "outfitting": {
+      "name": "Spansh Live Outfitting Search (EDDN)",
+      "method": "POST",
+      "url": "https://spansh.co.uk/api/stations/search",
+      "default_location": "Sol",
+      "timeout_sec": 12.0,
+      "max_results": 5,
+      "fallback_to_web_search": true,
+      "value_resolver": {
+        "url": "https://spansh.co.uk/api/stations/field_values/modules",
+        "values_path": "values.name"
+      },
+      "body_template": {
+        "filters": {
+          "modules": [
+            {
+              "name": "{canonical_query}"
+            }
+          ],
+          "has_large_pad": {
+            "$if": "telemetry.needs_large_pad",
+            "$value": {
+              "value": true
+            }
+          }
+        },
+        "reference_system": "{location}",
+        "sort": [
+          {
+            "distance": {
+              "direction": "asc"
+            }
+          }
+        ],
+        "size": 5
+      },
+      "results_path": "results",
+      "result_fields": {
+        "system": "system_name",
+        "station": "name",
+        "station_type": "type",
+        "distance_ly": "distance",
+        "distance_ls": "distance_to_arrival",
+        "large_pads": "large_pads",
+        "medium_pads": "medium_pads"
+      }
+    },
+    "services": {
+      "name": "Spansh Live Station Services Search (EDDN)",
+      "method": "POST",
+      "url": "https://spansh.co.uk/api/stations/search",
+      "default_location": "Sol",
+      "timeout_sec": 12.0,
+      "max_results": 5,
+      "fallback_to_web_search": true,
+      "value_resolver": {
+        "url": "https://spansh.co.uk/api/stations/field_values/services",
+        "values_path": "values.name"
+      },
+      "body_template": {
+        "filters": {
+          "services": {
+            "value": [
+              "{canonical_query}"
+            ]
+          },
+          "has_large_pad": {
+            "$if": "telemetry.needs_large_pad",
+            "$value": {
+              "value": true
+            }
+          }
+        },
+        "reference_system": "{location}",
+        "sort": [
+          {
+            "distance": {
+              "direction": "asc"
+            }
+          }
+        ],
+        "size": 5
+      },
+      "results_path": "results",
+      "result_fields": {
+        "system": "system_name",
+        "station": "name",
+        "station_type": "type",
+        "distance_ly": "distance",
+        "distance_ls": "distance_to_arrival",
+        "large_pads": "large_pads",
+        "medium_pads": "medium_pads"
+      }
+    },
+    "navigation": {
+      "name": "Spansh Star System Search",
+      "method": "POST",
+      "url": "https://spansh.co.uk/api/systems/search",
+      "default_location": "Sol",
+      "timeout_sec": 12.0,
+      "max_results": 5,
+      "fallback_to_web_search": true,
+      "body_template": {
+        "filters": {
+          "name": {
+            "value": "{query}"
+          }
+        },
+        "reference_system": "{location}",
+        "sort": [
+          {
+            "distance": {
+              "direction": "asc"
+            }
+          }
+        ],
+        "size": 5
+      },
+      "results_path": "results",
+      "result_fields": {
+        "system": "name",
+        "distance_ly": "distance",
+        "allegiance": "allegiance",
+        "government": "government",
+        "primary_economy": "primary_economy",
+        "security": "security",
+        "population": "population"
+      }
     }
   },
   "telemetry": {

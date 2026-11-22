@@ -341,18 +341,31 @@ class GameManager:
             game_id = f"{base_id}_{counter}"
             counter += 1
 
+        default_nav_mode = "controller"
+        default_map_controls = {
+            "preferred_input": "gamepad",
+            "pan_method": "left_drag",
+            "marker_method": "right_click",
+            "zoom_method": "mouse_wheel"
+        }
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile={"process_name": process_name.strip()})
+            if isinstance(mod, dict):
+                if mod.get("navigation_mode") in ("controller", "co_pilot_spotter", "search_bar", "mouse_keyboard"):
+                    default_nav_mode = mod["navigation_mode"]
+                if isinstance(mod.get("map_controls"), dict) and mod["map_controls"]:
+                    default_map_controls.update(mod["map_controls"])
+        except Exception:
+            pass
+
         profile = {
             "display_name": name_clean,
             "process_name": process_name.strip(),
             "telemetry_type": telemetry_type or "scratchpad_only",
             "guidance_level": "tactical",
-            "navigation_mode": "controller",
-            "map_controls": {
-                "preferred_input": "gamepad",
-                "pan_method": "left_drag",
-                "marker_method": "right_click",
-                "zoom_method": "mouse_wheel"
-            },
+            "navigation_mode": default_nav_mode,
+            "map_controls": default_map_controls,
             "scratchpad": scratchpad if scratchpad is not None else {
                 "active_quests": [],
                 "crafting_materials": [],
@@ -487,15 +500,26 @@ class GameManager:
         return {"success": True, "game_id": game_id, "guidance_level": norm_level}
 
     def get_navigation_mode(self, game_id: Optional[str] = None) -> str:
-        """Retrieves map navigation mode ('controller', 'co_pilot_spotter', 'search_bar', 'mouse_keyboard'). Defaults to 'controller'."""
+        """Retrieves map navigation mode ('controller', 'co_pilot_spotter', 'search_bar', 'mouse_keyboard'). Checks profile then module."""
         gid = game_id or self.data.get("active_profile")
         if not gid:
             return "controller"
         profile = self.get_profile(gid)
         if not profile:
             return "controller"
-        mode = (profile.get("navigation_mode") or "controller").lower().strip()
-        return mode if mode in ("controller", "co_pilot_spotter", "search_bar", "mouse_keyboard") else "controller"
+        valid_modes = ("controller", "co_pilot_spotter", "search_bar", "mouse_keyboard")
+        raw_prof_mode = str(profile.get("navigation_mode") or "").lower().strip()
+        if raw_prof_mode in valid_modes:
+            return raw_prof_mode
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(gid, profile=profile)
+            mod_mode = str((mod or {}).get("navigation_mode") or "").lower().strip()
+            if mod_mode in valid_modes:
+                return mod_mode
+        except Exception:
+            pass
+        return "controller"
 
     def set_navigation_mode(self, game_id: str, mode: str) -> dict:
         """Sets the map navigation mode for the specified game profile."""
@@ -1422,11 +1446,65 @@ class GameManager:
             if sp_lines:
                 parts.append("PLAYER GOALS & OBJECTIVES:\n" + "\n".join(sp_lines))
 
-        # 2. Keybinds Reference (so the model knows which voice commands it can execute)
+        # 2. Keybinds & Saved Sequences Reference (supports 1 to 1,000+ binds without prompt bloat)
         keybinds = profile.get("keybinds", {})
         if keybinds:
-            macro_lines = [f'- "{phrase}" -> {data.get("description", phrase)}' for phrase, data in keybinds.items()]
-            parts.append("AVAILABLE IN-GAME VOICE MACROS (You can trigger these via the trigger_game_action tool):\n" + "\n".join(macro_lines))
+            def _bind_priority(item):
+                phrase_k, data_v = item
+                src = str(data_v.get("source") or "").lower()
+                is_manual = 0 if src == "manual" else 1
+                has_curated = 0 if (data_v.get("aliases") or data_v.get("condition")) else 1
+                dev_rank = 0 if str(data_v.get("device") or "keyboard").lower() in ("keyboard", "mouse") else 1
+                return (is_manual, has_curated, dev_rank, phrase_k)
+
+            ordered = sorted(keybinds.items(), key=_bind_priority)
+            max_prompt_binds = 80
+            shown = ordered[:max_prompt_binds]
+            macro_lines = [f'- "{phrase}" -> {data.get("description", phrase)}' for phrase, data in shown]
+            overflow = len(ordered) - len(shown)
+            if overflow > 0:
+                macro_lines.append(
+                    f"...plus {overflow} additional synced keybinds active and triggerable via `trigger_game_action`."
+                )
+            parts.append(
+                f"AVAILABLE IN-GAME VOICE MACROS ({len(ordered)} total — trigger via `trigger_game_action`):\n"
+                + "\n".join(macro_lines)
+            )
+
+        # Saved Multi-Step / Visual Macros (profile overrides + module defaults)
+        merged_seqs: Dict[str, Any] = {}
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(active_id, profile=profile)
+            if isinstance(mod, dict) and isinstance(mod.get("sequences"), dict):
+                merged_seqs.update(mod["sequences"])
+        except Exception:
+            pass
+        if isinstance(profile.get("sequences"), dict):
+            merged_seqs.update(profile["sequences"])
+        if merged_seqs:
+            disabled_seqs = {str(x).lower().strip() for x in (profile.get("disabled_module_sequences") or [])}
+            seq_lines = []
+            for sname, sdef in merged_seqs.items():
+                if str(sname).lower().strip() in disabled_seqs:
+                    continue
+                if isinstance(sdef, dict):
+                    sdesc = sdef.get("description") or sdef.get("ack") or f"Custom macro ({len(sdef.get('steps', []))} steps)"
+                    saliases = sdef.get("aliases") or []
+                    alias_note = f" (aliases: {', '.join(saliases)})" if saliases else ""
+                    cond_note = f" [requires: {sdef['condition']}]" if sdef.get("condition") else ""
+                    seq_lines.append(f'- "{sname}"{alias_note}{cond_note} -> {sdesc}')
+                else:
+                    seq_lines.append(f'- "{sname}" -> Custom macro')
+            if seq_lines:
+                parts.append(
+                    "CUSTOM VISUAL & MULTI-STEP MACROS (trigger via `trigger_game_action`):\n"
+                    "- FLEXIBLE INTENT MATCHING: The player does NOT need to say the exact macro name! "
+                    "Whenever the player's natural request matches the intent of a macro below "
+                    "(e.g. 'Let's get outta this station' or 'Undock us' -> 'take us out'), "
+                    "immediately invoke `trigger_game_action(phrase='<exact macro name>')`.\n"
+                    + "\n".join(seq_lines)
+                )
 
         # 3. Live Telemetry
         if self.active_telemetry_adapter and self.active_telemetry_adapter.is_active():
@@ -1515,8 +1593,12 @@ class GameManager:
             f"   - NEVER search for, reference, or import terminology from unrelated games (e.g. World of Warcraft, Black Desert, Dark Souls, Elder Scrolls, etc.).\n"
             f"   - When discussing game lore, builds, quests, or mechanics, provide rich, thorough, and detailed guidance grounded in {game_title}.\n"
             f"2. GOOGLE SEARCH LOCK: If you perform a Google Search to assist the player, your search query MUST be strictly scoped with \"{game_title}\" (e.g. '\"{game_title}\" <topic>'). Never execute un-scoped generic searches.\n"
-            f"3. MAP & WAYPOINT DELEGATION:\n"
-            f"   - When the user asks to mark, view, or find a location on their map, delegate directly to `pan_and_mark_map_location` or `assist_game_navigation`.\n"
+            f"3. LIVE INTEL, MARKET LOOKUP & COURSE PLOTTING (CO-PILOT / SHIP COMPUTER MANDATE):\n"
+            f"   - YOU ARE THE CO-PILOT & TACTICAL DATABASE. NEVER tell the player to 'go look it up on Inara', 'check Spansh', 'check a wiki', or 'search online yourself'.\n"
+            f"   - Whenever the player asks where to buy/sell a commodity, item, gear, ship module, outfitting, or service (e.g. 'find Liquid Oxygen', 'nearest Material Trader', 'where to buy X'): IMMEDIATELY call `query_game_intel(query=..., category=...)`.\n"
+            f"   - Report the concrete results concisely in-character (exact system/zone, station/vendor name, distance, landing pad/constraints, stock/supply, and price) and offer to plot the course.\n"
+            f"   - When the player asks to plot a course, route to a system, or mark a location on their map, delegate directly to `search_and_route_destination` (for search-bar maps) or `pan_and_mark_map_location` / `assist_game_navigation`.\n"
+            f"   - IN-GAME MENUS, MAPS & UI BUTTONS: NEVER use `close_window` or `add_to_whitelist` for in-game screens, maps, or menus — close them via `trigger_game_action` (e.g. `'close menu'`, `'escape'`, or the map toggle). To click a visible in-game UI button (e.g. `'Auto Launch'`, `'Starport Services'`), use `click_game_ui_element` or a saved macro. NEVER claim success if a tool returns `failed` or `element_not_found`.\n"
             f"   - NEVER attempt to blindly click raw screen coordinates with generic `mouse_click` or send random `escape`, `Close`, or `t` keystrokes.\n"
             f"4. SCREEN-FIRST GROUNDING:\n"
             f"   - If web wiki information is incomplete, unreleased, or conflicting, call `inspect_screen_context` to read the active quest tracker, map labels, or HUD directly from the user's game screen.\n"
@@ -1728,7 +1810,22 @@ class GameManager:
     def scan_elite_dangerous_binds(self) -> Dict[str, dict]:
         """Backward-compatibility alias delegating to modular binds_scanners."""
         prof = self.get_profile("elite_dangerous") or {}
-        return scan_profile_bindings({"binds_config": {"type": "elite_xml"}, **prof})
+        return scan_profile_bindings({"binds_config": {"type": "elite_xml"}, **prof}, game_id="elite_dangerous")
+
+    def list_game_extensions(self) -> List[Dict[str, Any]]:
+        """Lists discovered Tier 2 community `.py` game extensions and their SHA-256 trust state."""
+        from core.game_extensions import list_game_extensions
+        return list_game_extensions()
+
+    def trust_game_extension(self, module_id: str, script_name: str = "extension.py") -> Dict[str, Any]:
+        """Explicitly approves a Tier 2 `.py` game extension by recording its SHA-256 hash."""
+        from core.game_extensions import trust_game_extension
+        return trust_game_extension(module_id, script_name=script_name)
+
+    def revoke_game_extension(self, module_id: str) -> Dict[str, Any]:
+        """Revokes trust for a Tier 2 `.py` game extension."""
+        from core.game_extensions import revoke_game_extension
+        return revoke_game_extension(module_id)
 
     def detect_heuristic_config(self, game_id: str) -> Dict[str, dict]:
         """
@@ -1970,8 +2067,8 @@ Format strictly as valid JSON.
         if not profile:
             return {"success": False, "reason": "Profile not found"}
 
-        # 1. Local file scan attempt (modular scanner or heuristic fallback)
-        detected = scan_profile_bindings(profile)
+        # 1. Local file scan attempt (declarative module scanner, trusted extension, or heuristic fallback)
+        detected = scan_profile_bindings(profile, game_id=game_id)
         if not detected:
             detected = self.detect_heuristic_config(game_id)
         if detected:
@@ -2031,10 +2128,10 @@ Format strictly as valid JSON.
         """Attempts local scan or web fallback keybind synchronization."""
         return self.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model_endpoint)
 
-    def trigger_action(self, phrase: str) -> dict:
+    def trigger_action(self, phrase: str, vision_client: Any = None, model_endpoint: str = "gemini-4-hydrogen") -> dict:
         """
         Looks up spoken phrase in the active game profile and executes the action.
-        Supports state-conditioned actions, composite sequences, DirectInput combos,
+        Supports state-conditioned actions, composite visual/keystroke sequences, DirectInput combos,
         and virtual gamepad/mouse inputs.
         """
         active_id = self.data.get("active_profile")
@@ -2046,9 +2143,11 @@ Format strictly as valid JSON.
         macro_res = self.macro_runner.execute_action(
             phrase=phrase,
             profile=profile,
-            telemetry_adapter=self.active_telemetry_adapter
+            telemetry_adapter=self.active_telemetry_adapter,
+            vision_client=vision_client or getattr(self, "vision_client", None),
+            model_endpoint=model_endpoint,
         )
-        if macro_res.get("status") in ("executed", "condition_skipped"):
+        if macro_res.get("status") in ("executed", "condition_skipped", "failed", "element_not_found", "aborted"):
             return macro_res
 
         from tools.os_controls import (

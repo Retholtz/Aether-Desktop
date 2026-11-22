@@ -71,6 +71,53 @@ STATUS_FLAGS2 = {
 }
 
 
+# Ship IDs that require a Large landing pad (lowercase Frontier Journal ship identifiers)
+LARGE_PAD_SHIPS = {
+    "anaconda",
+    "belugaliner",
+    "cutter",
+    "empire_trader",      # Imperial Clipper
+    "federation_corvette",
+    "federation_dropship_mkii",
+    "independant_trader",
+    "orca",
+    "panthermkii",
+    "type7",
+    "type9",
+    "type9_military",     # Type-10 Defender
+}
+
+SMALL_PAD_SHIPS = {
+    "adder",
+    "cobra_mkiii",
+    "cobramkiii",
+    "cobramkiv",
+    "cobramkv",
+    "diamondback",
+    "diamondbackxl",
+    "dolphin",
+    "eagle",
+    "empire_courier",
+    "empire_eagle",
+    "hauler",
+    "sidewinder",
+    "viper",
+    "viper_mkiv",
+    "vulture",
+}
+
+
+def _infer_pad_size(ship_id: str) -> str:
+    sid = str(ship_id or "").strip().lower()
+    if not sid or sid == "unknown":
+        return "M"
+    if sid in LARGE_PAD_SHIPS or any(tok in sid for tok in ("anaconda", "corvette", "cutter", "beluga", "type7", "type9", "type10", "orca", "clipper", "panther")):
+        return "L"
+    if sid in SMALL_PAD_SHIPS:
+        return "S"
+    return "M"
+
+
 class EliteTelemetryAdapter(BaseTelemetryAdapter):
     """Adapter tailing Elite Dangerous Journal.*.log and polling Status.json."""
 
@@ -108,6 +155,9 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
             "supercruise": False,
             "ship_type": "Unknown",
             "ship_name": "Unknown",
+            "ship_pad_size": "M",
+            "needs_large_pad": False,
+            "star_pos": None,
             "hull_health": 1.0,
             "shields_up": True,
             "fuel_main": None,
@@ -150,9 +200,12 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
         logger.info("Started Elite Dangerous Journal & Status Watcher thread.")
 
     def stop(self) -> None:
-        """Stops background journal tailing and releases file handles."""
+        """Stops background journal tailing; file handle is closed cleanly by the tail thread."""
         self.is_running = False
-        if self._file_handle:
+        th = self._thread
+        if th is not None and th.is_alive() and th is not threading.current_thread():
+            th.join(timeout=0.5)
+        if self._file_handle and (th is None or not th.is_alive()):
             try:
                 self._file_handle.close()
             except Exception:
@@ -171,6 +224,16 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
         with self._lock:
             return dict(self.flags)
 
+    def get_location(self) -> Dict[str, Any]:
+        with self._lock:
+            sys_name = self.state.get("star_system")
+            return {
+                "system": sys_name if sys_name and sys_name != "Unknown" else None,
+                "station": self.state.get("station"),
+                "body": self.state.get("body"),
+                "star_pos": self.state.get("star_pos"),
+            }
+
     def _get_latest_journal_path(self) -> Optional[str]:
         if not os.path.exists(self.journal_dir):
             return None
@@ -181,39 +244,55 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
 
     def _tail_loop(self) -> None:
         last_status_poll = 0.0
-        while self.is_running:
-            try:
-                now = time.time()
-                # 1. Poll Status.json every 200ms for instant state flags
-                if now - last_status_poll >= 0.2:
-                    self._poll_status_file()
-                    last_status_poll = now
+        try:
+            while self.is_running:
+                try:
+                    now = time.time()
+                    # 1. Poll Status.json every 200ms for instant state flags
+                    if now - last_status_poll >= 0.2:
+                        self._poll_status_file()
+                        last_status_poll = now
 
-                # 2. Tail Journal.*.log for game events
-                latest = self._get_latest_journal_path()
-                if not latest:
-                    time.sleep(1.0)
-                    continue
+                    if not self.is_running:
+                        break
 
-                if latest != self._current_file:
-                    if self._file_handle:
-                        try:
-                            self._file_handle.close()
-                        except Exception:
-                            pass
-                    self._current_file = latest
-                    self._file_handle = open(self._current_file, "r", encoding="utf-8", errors="replace")
-                    self._rehydrate_initial_state()
+                    # 2. Tail Journal.*.log for game events
+                    latest = self._get_latest_journal_path()
+                    if not latest:
+                        time.sleep(0.25)
+                        continue
 
-                line = self._file_handle.readline()
-                if line:
-                    self._parse_event_line(line.strip())
-                else:
-                    time.sleep(0.2)
+                    if latest != self._current_file:
+                        if self._file_handle:
+                            try:
+                                self._file_handle.close()
+                            except Exception:
+                                pass
+                        self._current_file = latest
+                        self._file_handle = open(self._current_file, "r", encoding="utf-8", errors="replace")
+                        self._rehydrate_initial_state()
 
-            except Exception as e:
-                logger.error(f"Error in telemetry loop: {e}")
-                time.sleep(1.0)
+                    if not self.is_running or self._file_handle is None:
+                        break
+
+                    line = self._file_handle.readline()
+                    if line:
+                        self._parse_event_line(line.strip())
+                    else:
+                        time.sleep(0.2)
+
+                except Exception as e:
+                    if not self.is_running:
+                        break
+                    logger.error(f"Error in telemetry loop: {e}")
+                    time.sleep(0.5)
+        finally:
+            if self._file_handle:
+                try:
+                    self._file_handle.close()
+                except Exception:
+                    pass
+                self._file_handle = None
 
     def _poll_status_file(self) -> None:
         """Reads Status.json to extract real-time bitflags, pips, and GUI focus."""
@@ -323,6 +402,8 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
                     self.state["body"] = ev.get("Body", self.state["body"])
                     self.state["docked"] = ev.get("Docked", False)
                     self.state["station"] = ev.get("StationName", None)
+                    if isinstance(ev.get("StarPos"), list) and len(ev["StarPos"]) == 3:
+                        self.state["star_pos"] = ev["StarPos"]
 
                 elif event_type == "Docked":
                     self.state["docked"] = True
@@ -340,9 +421,13 @@ class EliteTelemetryAdapter(BaseTelemetryAdapter):
                     self.state["body"] = ev.get("Body", self.state["body"])
 
                 elif event_type == "Loadout":
-                    self.state["ship_type"] = ev.get("Ship", self.state["ship_type"])
+                    ship_id = ev.get("Ship", self.state["ship_type"])
+                    self.state["ship_type"] = ship_id
                     self.state["ship_name"] = ev.get("ShipName", self.state["ship_name"])
                     self.state["hull_health"] = ev.get("HullHealth", 1.0)
+                    pad_sz = _infer_pad_size(ship_id)
+                    self.state["ship_pad_size"] = pad_sz
+                    self.state["needs_large_pad"] = (pad_sz == "L")
 
                 elif event_type == "ShieldState":
                     self.state["shields_up"] = ev.get("ShieldsUp", True)

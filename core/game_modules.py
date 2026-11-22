@@ -182,11 +182,12 @@ def get_module_for_game(
         if explicit_mod and explicit_mod in modules:
             return modules[explicit_mod]
 
-        proc = str(profile.get("process_name") or profile.get("executable") or "").strip().lower()
-        if proc:
+        proc_raw = str(profile.get("process_name") or profile.get("executable") or "").strip().lower()
+        proc_base = os.path.basename(proc_raw.replace("\\", "/")) if proc_raw else ""
+        if proc_raw or proc_base:
             for mod in modules.values():
-                exes = [str(x).strip().lower() for x in (mod.get("executables") or [])]
-                if proc in exes:
+                exes = [os.path.basename(str(x).strip().replace("\\", "/")).lower() for x in (mod.get("executables") or [])]
+                if proc_base in exes or proc_raw in exes:
                     return mod
 
     if norm_id:
@@ -403,6 +404,49 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         if isinstance(tel_in.get(dict_key), dict):
             sanitized_tel[dict_key] = tel_in[dict_key]
 
+    # Validate optional declarative intel_endpoints (strictly public HTTPS URLs)
+    sanitized_intel_endpoints: Dict[str, Any] = {}
+    raw_intel = raw_data.get("intel_endpoints")
+    if isinstance(raw_intel, dict):
+        from core.game_intel import is_safe_public_https_url
+        for cat_key, ep_spec in raw_intel.items():
+            if not isinstance(ep_spec, dict):
+                continue
+            ep_url = str(ep_spec.get("url") or "").strip()
+            if not ep_url or not is_safe_public_https_url(ep_url):
+                return (
+                    False,
+                    None,
+                    f"Security restriction: intel_endpoints['{cat_key}'].url must be a public HTTPS URL.",
+                )
+            clean_ep = dict(ep_spec)
+            clean_ep["url"] = ep_url
+            vr = clean_ep.get("value_resolver")
+            if isinstance(vr, dict) and vr.get("url"):
+                vr_url = str(vr["url"]).strip()
+                if not is_safe_public_https_url(vr_url):
+                    return (
+                        False,
+                        None,
+                        f"Security restriction: intel_endpoints['{cat_key}'].value_resolver.url must be a public HTTPS URL.",
+                    )
+            sanitized_intel_endpoints[str(cat_key).strip().lower()] = clean_ep
+
+    # Validate optional declarative binds_scanner block
+    sanitized_binds_scanner = (
+        dict(raw_data["binds_scanner"])
+        if isinstance(raw_data.get("binds_scanner"), dict)
+        else {}
+    )
+
+    # Optional Tier 2 Python extension filename (basename only; never auto-executed without SHA-256 trust)
+    raw_ext = str(raw_data.get("extension") or "").strip()
+    clean_ext = os.path.basename(raw_ext) if raw_ext.endswith(".py") else ""
+
+    nav_mode_val = str(raw_data.get("navigation_mode") or "").strip().lower()
+    if nav_mode_val not in ("controller", "co_pilot_spotter", "search_bar", "mouse_keyboard"):
+        nav_mode_val = ""
+
     sanitized: Dict[str, Any] = {
         "schema_version": 1,
         "module_id": mod_id,
@@ -416,6 +460,8 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         "companion_resources": raw_data.get("companion_resources")
         if isinstance(raw_data.get("companion_resources"), dict)
         else {},
+        "intel_endpoints": sanitized_intel_endpoints,
+        "binds_scanner": sanitized_binds_scanner,
         "map_controls": raw_data.get("map_controls")
         if isinstance(raw_data.get("map_controls"), dict)
         else {},
@@ -423,6 +469,10 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         "sequences": raw_data.get("sequences") if isinstance(raw_data.get("sequences"), dict) else {},
         "telemetry": sanitized_tel,
     }
+    if nav_mode_val:
+        sanitized["navigation_mode"] = nav_mode_val
+    if clean_ext:
+        sanitized["extension"] = clean_ext
     if raw_data.get("steam_appid"):
         sanitized["steam_appid"] = raw_data["steam_appid"]
 
@@ -520,6 +570,14 @@ def import_game_module(
                     existing["companion_apps"] = list(by_id.values())
                 if clean_mod.get("companion_resources"):
                     existing["companion_resources"] = dict(clean_mod["companion_resources"])
+                if clean_mod.get("intel_endpoints"):
+                    existing["intel_endpoints"] = dict(clean_mod["intel_endpoints"])
+                if clean_mod.get("binds_scanner"):
+                    existing["binds_scanner"] = dict(clean_mod["binds_scanner"])
+                if clean_mod.get("navigation_mode"):
+                    existing["navigation_mode"] = clean_mod["navigation_mode"]
+                if clean_mod.get("extension"):
+                    existing["extension"] = clean_mod["extension"]
                 if clean_mod.get("map_controls"):
                     existing.setdefault("map_controls", {}).update(clean_mod["map_controls"])
                 if clean_mod.get("keybinds"):
@@ -592,6 +650,10 @@ def export_game_module(game_id: str, game_manager=None) -> Dict[str, Any]:
             else (base_mod.get("companion_apps") or [])
         ),
         "companion_resources": prof.get("companion_resources") or base_mod.get("companion_resources") or {},
+        "intel_endpoints": prof.get("intel_endpoints") or base_mod.get("intel_endpoints") or {},
+        "binds_scanner": prof.get("binds_scanner") or base_mod.get("binds_scanner") or {},
+        "navigation_mode": prof.get("navigation_mode") or base_mod.get("navigation_mode") or "",
+        "extension": prof.get("extension") or base_mod.get("extension") or "",
         "map_controls": prof.get("map_controls") or base_mod.get("map_controls") or {},
         "keybinds": prof.get("keybinds") or base_mod.get("keybinds") or {},
         "sequences": prof.get("sequences") or base_mod.get("sequences") or {},

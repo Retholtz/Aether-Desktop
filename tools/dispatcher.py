@@ -2073,7 +2073,15 @@ class ToolDispatcher:
                     })
                 else:
                     if result.get("status") == "blocked":
-                        self.last_blocked_app = result.get("executable") or app_name
+                        if getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active():
+                            result["error"] = (
+                                f"'{app_name}' is not a whitelisted desktop window/application. "
+                                f"If '{app_name}' is an in-game screen, map, or menu, DO NOT use close_window or add_to_whitelist — "
+                                f"use trigger_game_action (e.g. 'close menu', 'escape', or the map/menu toggle) instead."
+                            )
+                            result["message"] = result["error"]
+                        else:
+                            self.last_blocked_app = result.get("executable") or app_name
                     self.notify("chat_event", {
                         "type": "tool",
                         "name": "Desktop Hook",

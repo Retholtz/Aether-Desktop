@@ -40,6 +40,8 @@ class UniversalGameNavigator:
         target_process: str = "",
         map_controls: Optional[Dict[str, Any]] = None,
         game_name: str = "",
+        keybinds: Optional[Dict[str, Any]] = None,
+        telemetry_adapter=None,
     ):
         from core.model_discovery import resolve_model_profile
         self.client = client
@@ -47,6 +49,8 @@ class UniversalGameNavigator:
         self.target_process = target_process
         self.map_controls = map_controls or {}
         self.game_name = (game_name or "").strip()
+        self.keybinds = keybinds or {}
+        self.telemetry_adapter = telemetry_adapter
         self._last_capture_origin: Tuple[int, int] = (0, 0)
 
     def _resolve_target_monitor(self, sct) -> Dict[str, int]:
@@ -446,6 +450,55 @@ class UniversalGameNavigator:
                 "spoken_guidance": f"I'm scanning the map, but having trouble identifying {landmark_description}. Check your quest icons."
             }
 
+    def _resolve_keyboard_bind(self, candidate_phrases: list[str], fallback_key: str = "") -> Tuple[str, list[str]]:
+        """
+        Resolves a keyboard key & modifiers from synced profile `keybinds` matching any
+        candidate voice phrase, alias, or raw `action_id` (always preferring Keyboard binds).
+        """
+        kb = getattr(self, "keybinds", None) or {}
+        wanted = [str(p).strip().lower() for p in candidate_phrases if str(p).strip()]
+        for w in wanted:
+            entry = kb.get(w)
+            if isinstance(entry, dict):
+                dev = str(entry.get("device") or "keyboard").lower()
+                if dev == "keyboard" and entry.get("key"):
+                    return str(entry["key"]).lower().strip(), list(entry.get("modifiers") or [])
+        for phrase, entry in kb.items():
+            if not isinstance(entry, dict) or not entry.get("key"):
+                continue
+            dev = str(entry.get("device") or "keyboard").lower()
+            if dev != "keyboard":
+                continue
+            act_id = str(entry.get("action_id") or "").strip().lower()
+            aliases = [str(a).strip().lower() for a in (entry.get("aliases") or [])]
+            if phrase.lower().strip() in wanted or act_id in wanted or any(a in wanted for a in aliases):
+                return str(entry["key"]).lower().strip(), list(entry.get("modifiers") or [])
+        return fallback_key, []
+
+    def locate_ui_element_point(self, element_hint: str) -> Optional[Tuple[int, int]]:
+        """Locates a UI control (e.g. search bar, plot route button) on the current viewport via vision."""
+        if not self.client or not element_hint:
+            return None
+        img_bytes, width, height = self.capture_viewport()
+        if not img_bytes:
+            return None
+        prompt = f"""
+Analyze this in-game map/navigation interface screenshot.
+Locate the exact center of the UI element described as: "{element_hint}".
+Return ONLY a JSON object:
+{{"found": true, "point": [y_center_normalized, x_center_normalized]}}
+Values must be normalized between 0 and 1000.
+If the element is not visible on screen, return {{"found": false}}.
+"""
+        try:
+            data = self._call_vision_json(img_bytes, prompt)
+            if data.get("found") and isinstance(data.get("point"), list) and len(data["point"]) == 2:
+                y_norm, x_norm = data["point"]
+                return self._norm_to_screen_px(x_norm, y_norm, width, height)
+        except Exception as e:
+            print(f"[DEBUG] [GAME_NAV] UI element grounding failed for '{element_hint}': {e}")
+        return None
+
     def search_and_route_destination(
         self,
         destination_name: str,
@@ -455,10 +508,33 @@ class UniversalGameNavigator:
         target_process: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Search-bar navigation for games like Elite Dangerous.
-        Focuses target process, opens map, inputs search destination text via DirectInput scancodes,
-        and plots destination route.
+        Declarative Keyboard & Mouse Search-Bar Navigation for games with text-searchable maps
+        (e.g. Elite Dangerous Galaxy Map, StarMap, etc.).
+
+        Reads optional `map_controls["search_routing"]` recipe from the game's `.aethermodule.json`:
+        - Dynamically resolves map-open keyboard key from synced keybinds (never assumes 'm' if bound otherwise)
+        - Copies destination to clipboard as instant backup and pastes via Ctrl+V (or DirectInput typing)
+        - Focuses search bar via configured hotkey or vision-grounded mouse click
+        - Submits search and triggers route plotting via vision-grounded click/hold or configured key
+        - Optionally verifies plotted route via live telemetry (e.g. NavRoute.json `route_destination`)
         """
+        from tools.os_controls import send_directinput_combo, send_directinput_string
+
+        dest_clean = str(destination_name or "").strip()
+        if not dest_clean:
+            return {"status": "error", "message": "Destination name cannot be empty."}
+
+        ctrl = getattr(self, "map_controls", {}) or {}
+        routing_cfg = ctrl.get("search_routing") if isinstance(ctrl.get("search_routing"), dict) else {}
+
+        # 0. Copy destination to clipboard immediately (fast paste + reliable manual backup)
+        clipboard_copied = False
+        try:
+            from tools.clipboard import set_clipboard_text
+            clipboard_copied = bool(set_clipboard_text(dest_clean))
+        except Exception:
+            clipboard_copied = False
+
         proc = target_process or getattr(self, "target_process", "")
         if proc:
             try:
@@ -468,34 +544,145 @@ class UniversalGameNavigator:
             except Exception:
                 pass
 
-        # Open map if needed
+        # 1. Resolve map-open keyboard bind dynamically from synced binds
+        map_candidates = []
+        if routing_cfg.get("map_open_action"):
+            map_candidates.append(str(routing_cfg["map_open_action"]))
+        if isinstance(routing_cfg.get("map_open_actions"), list):
+            map_candidates.extend(str(x) for x in routing_cfg["map_open_actions"])
+        if not map_candidates:
+            map_candidates = ["open galaxy map", "galaxy map open", "open map"]
+
+        fallback_map_key = str(routing_cfg.get("map_key") or map_key or "m")
+        resolved_map_key, resolved_map_mods = self._resolve_keyboard_bind(map_candidates, fallback_key=fallback_map_key)
+        open_wait = float(routing_cfg.get("open_wait_sec") or 0.9)
+
+        # Open map if not already visible
         initial_frame, _, _ = self.capture_viewport()
         if not self.is_map_screen(initial_frame):
-            send_directinput_key(map_key, duration_sec=0.1)
-            time.sleep(0.8)
+            if resolved_map_key:
+                if resolved_map_mods:
+                    send_directinput_combo(resolved_map_mods, resolved_map_key, hold_duration=0.12)
+                else:
+                    send_directinput_key(resolved_map_key, duration_sec=0.12)
+                time.sleep(open_wait)
 
-        # Focus search bar if hotkey configured
-        if search_focus_key:
-            send_directinput_key(search_focus_key, duration_sec=0.1)
+        # 2. Focus search bar (explicit key, vision-located mouse click, or already focused)
+        eff_focus_key = str(routing_cfg.get("search_focus_key") or search_focus_key or "").strip()
+        search_hint = str(routing_cfg.get("search_box_visual_hint") or "").strip()
+        focused_via_vision = False
+
+        if search_hint and self.client:
+            pt = self.locate_ui_element_point(search_hint)
+            if pt:
+                move_mouse_absolute(pt[0], pt[1])
+                time.sleep(0.1)
+                click_mouse_button("left", hold_duration=0.06)
+                time.sleep(0.2)
+                focused_via_vision = True
+
+        if not focused_via_vision and eff_focus_key:
+            send_directinput_key(eff_focus_key, duration_sec=0.1)
             time.sleep(0.3)
 
-        # Type destination using DirectInput string
-        from tools.os_controls import send_directinput_string
-        send_directinput_string(destination_name, delay_sec=0.04)
-        time.sleep(0.2)
-        send_directinput_key("enter", duration_sec=0.1)
-        time.sleep(0.8)
+        # 3. Enter destination (Clipboard Ctrl+A + Ctrl+V preferred for speed & exact punctuation, else DirectInput typing)
+        input_method = str(routing_cfg.get("input_method") or ("clipboard_paste" if routing_cfg else "directinput")).lower()
+        if input_method == "clipboard_paste" and clipboard_copied:
+            send_directinput_combo(["ctrl"], "a", hold_duration=0.05)
+            time.sleep(0.06)
+            send_directinput_combo(["ctrl"], "v", hold_duration=0.06)
+            time.sleep(0.25)
+        else:
+            send_directinput_string(dest_clean, delay_sec=0.04)
+            time.sleep(0.2)
 
-        # Plot route key
-        if plot_key:
-            send_directinput_key(plot_key, duration_sec=0.15)
-            time.sleep(0.3)
+        submit_key = str(routing_cfg.get("submit_key") or "enter").strip()
+        if submit_key:
+            send_directinput_key(submit_key, duration_sec=0.1)
+        select_wait = float(routing_cfg.get("select_result_wait_sec") or 0.9)
+        time.sleep(select_wait)
 
-        return {
-            "status": "success",
-            "destination": destination_name,
-            "message": f"Entered destination '{destination_name}' into navigation search and plotted route."
+        # Optional declarative post-input navigation keys (e.g. [{"key": "down", "delay_ms": 400}, {"key": "enter", "delay_ms": 1100}])
+        post_keys = routing_cfg.get("post_input_keys")
+        if isinstance(post_keys, list) and post_keys:
+            for pk in post_keys:
+                if isinstance(pk, dict) and pk.get("key"):
+                    send_directinput_key(str(pk["key"]).strip(), duration_sec=0.1)
+                    time.sleep(max(0.05, float(pk.get("delay_ms") or 400) / 1000.0))
+                elif isinstance(pk, str) and pk.strip():
+                    send_directinput_key(pk.strip(), duration_sec=0.1)
+                    time.sleep(0.4)
+        elif routing_cfg.get("confirm_dropdown_enter"):
+            send_directinput_key("enter", duration_sec=0.1)
+            time.sleep(0.6)
+
+        # 4. Trigger Plot Route (vision-guided mouse click/hold OR keyboard hold/tap)
+        plot_hint = str(routing_cfg.get("plot_visual_hint") or "").strip()
+        plot_hold_sec = float(routing_cfg.get("plot_hold_sec") or 0.15)
+        eff_plot_key = str(routing_cfg.get("plot_key") if "plot_key" in routing_cfg else plot_key or "").strip()
+        plotted_via_vision = False
+
+        if plot_hint and self.client:
+            plot_pt = self.locate_ui_element_point(plot_hint)
+            if plot_pt:
+                move_mouse_absolute(plot_pt[0], plot_pt[1])
+                time.sleep(0.1)
+                click_mouse_button("left", hold_duration=max(0.08, plot_hold_sec))
+                time.sleep(0.4)
+                plotted_via_vision = True
+
+        if not plotted_via_vision and eff_plot_key:
+            send_directinput_key(eff_plot_key, duration_sec=max(0.15, plot_hold_sec))
+            time.sleep(0.35)
+
+        # 5. Optional live telemetry verification (e.g. NavRoute.json `route_destination`)
+        verified_route = None
+        route_jumps = None
+        verify_field = str(routing_cfg.get("verify_telemetry_field") or "").strip()
+        adapter = getattr(self, "telemetry_adapter", None)
+        if verify_field and adapter is not None and hasattr(adapter, "get_state"):
+            deadline = time.time() + float(routing_cfg.get("verify_timeout_sec") or 2.5)
+            while time.time() < deadline:
+                try:
+                    st = adapter.get_state() or {}
+                    val = str(st.get(verify_field) or "").strip()
+                    if val and val.lower() == dest_clean.lower():
+                        verified_route = val
+                        route_jumps = st.get("route_jumps")
+                        break
+                except Exception:
+                    break
+                time.sleep(0.25)
+
+        verification_expected = bool(verify_field and adapter is not None and hasattr(adapter, "get_state"))
+        if verified_route:
+            status = "success"
+            jump_note = f" ({route_jumps} jumps)" if route_jumps is not None else ""
+            msg = f"Route plotted and confirmed to '{verified_route}'{jump_note}."
+        elif verification_expected:
+            status = "partial"
+            msg = (
+                f"Entered '{dest_clean}' in the map search bar and attempted to plot, "
+                f"but live telemetry did not confirm the plotted route yet."
+            )
+            if clipboard_copied:
+                msg += f" ('{dest_clean}' is on your clipboard.)"
+        else:
+            status = "success"
+            msg = f"Entered destination '{dest_clean}' into navigation search and plotted route."
+            if clipboard_copied and routing_cfg:
+                msg += f" ('{dest_clean}' is also on your clipboard.)"
+
+        res: Dict[str, Any] = {
+            "status": status,
+            "destination": dest_clean,
+            "clipboard_copied": clipboard_copied,
+            "verified": bool(verified_route),
+            "message": msg,
         }
+        if route_jumps is not None:
+            res["route_jumps"] = route_jumps
+        return res
 
 
 class GameNavigator(UniversalGameNavigator):
@@ -511,6 +698,8 @@ class GameNavigator(UniversalGameNavigator):
         target_process: str = "",
         map_controls: Optional[Dict[str, Any]] = None,
         game_name: str = "",
+        keybinds: Optional[Dict[str, Any]] = None,
+        telemetry_adapter=None,
     ):
         super().__init__(
             client=client,
@@ -518,6 +707,8 @@ class GameNavigator(UniversalGameNavigator):
             target_process=target_process,
             map_controls=map_controls,
             game_name=game_name,
+            keybinds=keybinds,
+            telemetry_adapter=telemetry_adapter,
         )
 
     def capture_screen(self) -> Tuple[bytes, int, int]:

@@ -3696,6 +3696,7 @@ class AetherEngine:
             self._live_tool_exact_errors: Dict[str, int] = {}
             self._live_tool_name_errors: Dict[str, int] = {}
             self._live_tool_last_error: Dict[str, str] = {}
+            self._live_tool_exact_calls: Dict[str, int] = {}
             self._turn_audio_chunks = 0
             self._turn_audio_bytes = 0
             self._turn_audio_peak = 0.0
@@ -3795,6 +3796,7 @@ class AetherEngine:
 
                                     exact_err_cnt = self._live_tool_exact_errors.get(norm_args_sig, 0)
                                     name_err_cnt = self._live_tool_name_errors.get(fn_name, 0)
+                                    exact_call_cnt = self._live_tool_exact_calls.get(norm_args_sig, 0)
 
                                     if exact_err_cnt >= 2 or name_err_cnt >= 4:
                                         prev_err = self._live_tool_last_error.get(fn_name, "repeated tool error")
@@ -3820,9 +3822,27 @@ class AetherEngine:
                                         )
                                         result = {
                                             "status": "already_executed",
-                                            "message": "Action already executed via fast-path voice macro for this turn.",
+                                            "circuit_breaker": True,
+                                            "message": (
+                                                "STOP CALLING 'trigger_game_action': This action was already executed via "
+                                                "fast-path voice macro in this turn. Do NOT call it again. Acknowledge briefly or stay silent."
+                                            ),
+                                        }
+                                    elif exact_call_cnt >= 2:
+                                        logger.warning(
+                                            f"[LIVE TOOL DUPLICATE BREAKER] Blocking repeated identical call '{fn_name}' "
+                                            f"(count={exact_call_cnt}) in same turn."
+                                        )
+                                        result = {
+                                            "status": "already_executed",
+                                            "circuit_breaker": True,
+                                            "message": (
+                                                f"STOP CALLING '{fn_name}': You already executed this exact call {exact_call_cnt} times "
+                                                f"in this turn. Do NOT call '{fn_name}' again; respond to the user now."
+                                            ),
                                         }
                                     else:
+                                        self._live_tool_exact_calls[norm_args_sig] = exact_call_cnt + 1
                                         if fn_name == "trigger_game_action":
                                             self._macro_fired_in_current_turn = True
                                         result = await self.dispatcher.dispatch(fn_name, fn_args)
@@ -4179,6 +4199,7 @@ class AetherEngine:
                         self._macro_suppressed_turn = False
                         self._macro_fired_in_current_turn = False
                         self._turn_intercept_fired = False
+                        self._live_tool_exact_calls.clear()
                         self.kill_audio()
                         self._in_active_turn = False
                         self._last_live_turn_completed_ts = time.time()
@@ -4204,8 +4225,12 @@ class AetherEngine:
                         was_suppressed = bool(getattr(self, "_suppress_live_turn_audio", False) or getattr(self, "_macro_suppressed_turn", False))
                         self._suppress_live_turn_audio = False
                         self._macro_suppressed_turn = False
-                        self._macro_fired_in_current_turn = False
                         self._turn_intercept_fired = False
+                        # Only reset per-turn macro/call dedup guards when the model actually produced
+                        # a real user-facing response or suppressed fast-path macro turn (not on silent tool-only loops)
+                        if was_suppressed or getattr(self, "_turn_audio_chunks", 0) > 0 or bool((self.current_turn_text or "").strip()):
+                            self._macro_fired_in_current_turn = False
+                            self._live_tool_exact_calls.clear()
                         deferred_override_prompt = getattr(self, "_deferred_tier_override_prompt", None)
                         self._deferred_tier_override_prompt = None
                         scaler = getattr(self, "_live_wsola_scaler", None)

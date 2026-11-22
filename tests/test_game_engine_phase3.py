@@ -183,6 +183,8 @@ class TestGameEnginePhase3(unittest.TestCase):
         bridge = GUIBridge(MockEngine())
         bridge.game_mgr = self.mgr
         self.mgr.add_game("Elite Dangerous")
+        # Point telemetry at empty temp_dir so host machine's live Saved Games files don't leak into unit test
+        self.mgr.get_profile("elite_dangerous")["telemetry"] = {"dir": self.temp_dir}
         self.mgr.set_active_profile("elite_dangerous")
 
         # Without active telemetry events

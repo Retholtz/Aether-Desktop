@@ -1537,11 +1537,27 @@ SCANCODE_MAP = {
     "delete": (0x53, True),
     # Common aliases & extended keys
     "leftshift": 0x2A, "rightshift": 0x36, "leftctrl": 0x1D, "rightctrl": (0x1D, True),
+    "right_ctrl": (0x1D, True), "right_alt": (0x38, True),
     "control": 0x1D, "leftcontrol": 0x1D, "rightcontrol": (0x1D, True),
     "leftalt": 0x38, "rightalt": (0x38, True),
     "pageup": (0x49, True), "pagedown": (0x51, True),
     "uparrow": (0x48, True), "downarrow": (0x50, True),
     "leftarrow": (0x4B, True), "rightarrow": (0x4D, True),
+    "equals": 0x0D, "minus": 0x0C, "semicolon": 0x27, "apostrophe": 0x28,
+    "grave": 0x29, "backslash": 0x2B, "comma": 0x33, "period": 0x34, "slash": 0x35,
+    "leftbracket": 0x1A, "rightbracket": 0x1B,
+    # Numpad keys
+    "numlock": (0x45, True), "numpad_divide": (0x35, True), "numpad_multiply": 0x37,
+    "numpad_subtract": 0x4A, "numpad_add": 0x4E, "numpad_enter": (0x1C, True),
+    "numpad_decimal": 0x53,
+    "numpad_7": 0x47, "numpad_8": 0x48, "numpad_9": 0x49,
+    "numpad_4": 0x4B, "numpad_5": 0x4C, "numpad_6": 0x4D,
+    "numpad_1": 0x4F, "numpad_2": 0x50, "numpad_3": 0x51,
+    "numpad_0": 0x52,
+    "numpad7": 0x47, "numpad8": 0x48, "numpad9": 0x49,
+    "numpad4": 0x4B, "numpad5": 0x4C, "numpad6": 0x4D,
+    "numpad1": 0x4F, "numpad2": 0x50, "numpad3": 0x51,
+    "numpad0": 0x52,
 }
 
 # Win32 C Structs

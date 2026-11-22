@@ -99,7 +99,13 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 "status": "blocked_by_spotter_only",
                 "message": "Synthetic key/mouse macros are disabled because this game is in Spotter-Only (Anti-Cheat Safe) mode.",
             }
-        return game_manager.trigger_action(phrase)
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        model_endpoint = _resolve_tier2_game_model(engine)
+        return game_manager.trigger_action(phrase, vision_client=client, model_endpoint=model_endpoint)
 
     @dispatcher.register(
         name="toggle_game_mode",
@@ -123,17 +129,22 @@ def register_game_tools(dispatcher, game_manager, engine=None):
 
     @dispatcher.register(
         name="query_game_intel",
-        description="Query in-game commodities, market prices, outfitting, trade routes, or database intel for the currently active game.",
+        description=(
+            "Queries live in-game databases and APIs for commodities, market buy/sell stations, prices, "
+            "outfitting/gear, station/NPC services, navigation/routes, crafting, or lore near the player's "
+            "current telemetry location. Always call this tool directly instead of telling the player to "
+            "check an external website."
+        ),
         parameters={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Item, commodity, route, station, or intel subject to look up (e.g. 'Tritium', 'Painite', 'Modular Terminals', 'FSD Grade 5')."
+                    "description": "Item, commodity, module, service, route, station, or intel subject to look up (e.g. 'Liquid Oxygen', 'Tritium', 'Material Trader', 'Frame Shift Drive (SCO)')."
                 },
                 "category": {
                     "type": "string",
-                    "enum": ["market", "navigation", "outfitting", "lore", "crafting"],
+                    "enum": ["market", "outfitting", "services", "navigation", "lore", "crafting"],
                     "description": "Category of intel to look up (default: 'market')."
                 },
                 "location": {
@@ -145,28 +156,109 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
     )
     def query_game_intel(query: str, category: str = "market", location: Optional[str] = None) -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
         profile = game_manager.get_active_profile() if game_manager else {}
         game_title = (profile.get("display_name") if profile else None) or "Active Game"
+        cat_norm = str(category or "market").strip().lower()
 
-        # 1. Resolve Reference Location from Telemetry Adapter if omitted
+        # Resolve matching declarative game module (so bundled/user module intel_endpoints & companion_resources always hydrate)
+        mod = None
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(active_id or game_title, profile=profile)
+        except Exception:
+            mod = None
+
+        # 1. Resolve Live Telemetry Snapshot & Reference Location
+        telemetry_state: Dict[str, Any] = {}
         ref_location = location
-        if not ref_location and game_manager:
+        if game_manager:
             adapter = getattr(game_manager, "active_telemetry_adapter", None) or getattr(game_manager, "ed_watcher", None)
             if adapter:
-                loc_dict = adapter.get_location() if hasattr(adapter, "get_location") else {}
-                ref_location = loc_dict.get("system") or loc_dict.get("station")
-                if not ref_location and hasattr(adapter, "state"):
-                    ref_location = adapter.state.get("star_system")
+                if hasattr(adapter, "get_state"):
+                    try:
+                        telemetry_state = dict(adapter.get_state() or {})
+                    except Exception:
+                        telemetry_state = {}
+                elif hasattr(adapter, "state") and isinstance(adapter.state, dict):
+                    telemetry_state = dict(adapter.state)
+                if not ref_location:
+                    loc_dict = adapter.get_location() if hasattr(adapter, "get_location") else {}
+                    ref_location = loc_dict.get("system") or loc_dict.get("station")
+                    if not ref_location:
+                        sys_val = telemetry_state.get("star_system")
+                        if sys_val and str(sys_val).strip().lower() != "unknown":
+                            ref_location = sys_val
+
+        # 2. Tier 2 Trusted Python Game Extension hook (if installed & explicitly trusted by user)
+        ext_mod_id = (mod.get("module_id") if isinstance(mod, dict) else "") or active_id
+        if ext_mod_id:
+            try:
+                from core.game_extensions import load_trusted_extension
+                ext_script = (mod.get("extension") if isinstance(mod, dict) else None) or "extension.py"
+                ext = load_trusted_extension(ext_mod_id, script_name=str(ext_script))
+                if ext is not None:
+                    ext_res = ext.query_intel(
+                        query=query,
+                        category=cat_norm,
+                        location=ref_location,
+                        telemetry=telemetry_state,
+                        profile=profile,
+                    )
+                    if isinstance(ext_res, dict) and ext_res.get("status") == "success":
+                        ext_res.setdefault("game", game_title)
+                        ext_res.setdefault("category", cat_norm)
+                        ext_res.setdefault("query", query)
+                        ext_res.setdefault("reference_location", ref_location or "Unknown")
+                        return ext_res
+            except Exception:
+                pass
+
+        # 3. Tier 1 Declarative REST Intel Engine (from profile override or .aethermodule.json `intel_endpoints`)
+        intel_endpoints: Dict[str, Any] = {}
+        if isinstance(mod, dict) and isinstance(mod.get("intel_endpoints"), dict):
+            intel_endpoints.update(mod["intel_endpoints"])
+        if isinstance(profile, dict) and isinstance(profile.get("intel_endpoints"), dict):
+            intel_endpoints.update(profile["intel_endpoints"])
+
+        ep_spec = intel_endpoints.get(cat_norm)
+        if isinstance(ep_spec, dict) and ep_spec.get("url"):
+            from core.game_intel import query_declarative_intel
+            live_res = query_declarative_intel(
+                endpoint_spec=ep_spec,
+                query=query,
+                location=ref_location or "",
+                telemetry_state=telemetry_state,
+            )
+            if live_res.get("status") == "success" and (
+                live_res.get("count", 0) > 0 or not ep_spec.get("fallback_to_web_search", True)
+            ):
+                return {
+                    "status": "success",
+                    "game": game_title,
+                    "category": cat_norm,
+                    "query": query,
+                    "canonical_query": live_res.get("canonical_query", query),
+                    "reference_location": live_res.get("reference_location") or ref_location or "Unknown",
+                    "source": live_res.get("source"),
+                    "count": live_res.get("count", 0),
+                    "results": live_res.get("results", []),
+                    "intel": live_res.get("intel", ""),
+                }
 
         if not ref_location:
             ref_location = "Current Location"
 
-        # 2. Extract Configured Companion Domain
-        companion_resources = profile.get("companion_resources", {}) if profile else {}
-        cat_resource = companion_resources.get(category, {})
-        domain = cat_resource.get("domain") or cat_resource.get("url")
+        # 4. Extract Configured Companion Domain (profile -> module fallback)
+        companion_resources: Dict[str, Any] = {}
+        if isinstance(mod, dict) and isinstance(mod.get("companion_resources"), dict):
+            companion_resources.update(mod["companion_resources"])
+        if isinstance(profile, dict) and isinstance(profile.get("companion_resources"), dict):
+            companion_resources.update(profile["companion_resources"])
+
+        cat_resource = companion_resources.get(cat_norm, {}) if isinstance(companion_resources, dict) else {}
+        domain = cat_resource.get("domain") or cat_resource.get("url") if isinstance(cat_resource, dict) else None
         if not domain and profile:
-            # Fallback to interactive_map or first companion app (supports list or legacy dict)
             comp_apps = profile.get("companion_apps")
             if isinstance(comp_apps, dict) and comp_apps:
                 first_app = next(iter(comp_apps.values()))
@@ -190,9 +282,10 @@ def register_game_tools(dispatcher, game_manager, engine=None):
 
                 search_scope = f"'{domain}' and {game_title}" if domain else f"'{game_title}'"
                 prompt_content = (
-                    f"Search {search_scope} for {category} intel on '{query}' near reference location '{ref_location}'. "
-                    f"Return relevant buying/selling stations or vendors, approximate prices or requirements, "
-                    f"landing pad or zone constraints, and distance from '{ref_location}' if applicable."
+                    f"Search {search_scope} for {cat_norm} intel on '{query}' near reference location '{ref_location}'. "
+                    f"Return concrete buying/selling stations, vendors, or locations, exact prices or requirements, "
+                    f"landing pad or zone constraints, and distance from '{ref_location}' if applicable. "
+                    f"Do NOT tell the user to check a website manually; give direct actionable results."
                 )
 
                 resp = client.models.generate_content(
@@ -206,7 +299,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 return {
                     "status": "success",
                     "game": game_title,
-                    "category": category,
+                    "category": cat_norm,
                     "query": query,
                     "reference_location": ref_location,
                     "intel": (resp.text or "").strip(),
@@ -215,7 +308,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 return {
                     "status": "partial",
                     "game": game_title,
-                    "category": category,
+                    "category": cat_norm,
                     "query": query,
                     "reference_location": ref_location,
                     "message": f"Live intel search encountered an error ({e}). Use Google Search grounding for '{query}' near {ref_location} in {game_title}."
@@ -224,7 +317,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         return {
             "status": "info",
             "game": game_title,
-            "category": category,
+            "category": cat_norm,
             "query": query,
             "reference_location": ref_location,
             "message": f"Reference location resolved to '{ref_location}'. Querying {game_title} databases for '{query}'."
@@ -426,6 +519,48 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             "returned_count": len(capped)
         }
 
+    def _build_game_navigator(nav_cls):
+        """Constructs a navigator enriched with merged module+profile map_controls, keybinds, and telemetry."""
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        model_endpoint = _resolve_tier2_game_model(engine)
+        active_id = ""
+        target_process = ""
+        game_name = ""
+        merged_map_controls: Dict[str, Any] = {}
+        keybinds: Dict[str, Any] = {}
+        tel_adapter = None
+        if game_manager:
+            active_id = game_manager.data.get("active_profile", "")
+            prof = game_manager.get_profile(active_id) if active_id else None
+            tel_adapter = getattr(game_manager, "active_telemetry_adapter", None) or getattr(game_manager, "ed_watcher", None)
+            try:
+                from core.game_modules import get_module_for_game
+                mod = get_module_for_game(active_id, profile=prof) if active_id else None
+                if isinstance(mod, dict) and isinstance(mod.get("map_controls"), dict):
+                    merged_map_controls.update(mod["map_controls"])
+            except Exception:
+                pass
+            if prof:
+                target_process = prof.get("process_name") or prof.get("display_name") or ""
+                game_name = prof.get("display_name") or active_id
+                if isinstance(prof.get("map_controls"), dict):
+                    merged_map_controls.update(prof["map_controls"])
+                if isinstance(prof.get("keybinds"), dict):
+                    keybinds = prof["keybinds"]
+        return active_id, nav_cls(
+            client=client,
+            model_endpoint=model_endpoint,
+            target_process=target_process,
+            map_controls=merged_map_controls or None,
+            game_name=game_name,
+            keybinds=keybinds,
+            telemetry_adapter=tel_adapter,
+        )
+
     @dispatcher.register(
         name="pan_and_mark_map_location",
         description="Opens the in-game world map, pans the canvas if necessary, locates a landmark/boss visually, and sets a destination waypoint.",
@@ -447,24 +582,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
     )
     def pan_and_mark_map_location(landmark: str, general_direction: Optional[str] = None) -> dict:
         from core.game_nav import GameNavigator
-        client = (
-            getattr(engine, "genai_client", None)
-            or getattr(engine, "client", None)
-            or getattr(dispatcher, "genai_client", None)
-        )
-        model_endpoint = _resolve_tier2_game_model(engine)
-        active_id = ""
-        target_process = ""
-        game_name = ""
-        map_controls = None
-        if game_manager:
-            active_id = game_manager.data.get("active_profile", "")
-            prof = game_manager.get_profile(active_id) if active_id else None
-            if prof:
-                target_process = prof.get("process_name") or prof.get("display_name") or ""
-                game_name = prof.get("display_name") or active_id
-                map_controls = prof.get("map_controls")
-        nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls, game_name=game_name)
+        active_id, nav = _build_game_navigator(GameNavigator)
         if active_id and game_manager:
             if hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
                 return nav.spot_and_guide_map_location(landmark_description=landmark)
@@ -624,7 +742,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
 
     @dispatcher.register(
         name="search_and_route_destination",
-        description="Search Bar Navigation: Focuses in-game navigation search bar (e.g. Elite Dangerous galaxy map), types destination name via DirectInput, and plots route.",
+        description="Search Bar Navigation (Keyboard & Mouse): Opens the in-game navigation map, pastes the destination into the search bar, and plots the course.",
         parameters={
             "type": "object",
             "properties": {
@@ -644,21 +762,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 "message": "Synthetic search-bar typing is disabled in Spotter-Only (Anti-Cheat Safe) mode.",
             }
         from core.game_nav import GameNavigator
-        client = (
-            getattr(engine, "genai_client", None)
-            or getattr(engine, "client", None)
-            or getattr(dispatcher, "genai_client", None)
-        )
-        model_endpoint = _resolve_tier2_game_model(engine)
-        target_process = ""
-        map_controls = None
-        if game_manager:
-            active_id = game_manager.data.get("active_profile", "")
-            prof = game_manager.get_profile(active_id) if active_id else None
-            if prof:
-                target_process = prof.get("process_name") or prof.get("display_name") or ""
-                map_controls = prof.get("map_controls")
-        nav = GameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
+        _, nav = _build_game_navigator(GameNavigator)
         return nav.search_and_route_destination(destination_name=destination_name)
 
     @dispatcher.register(
@@ -681,26 +785,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
     )
     def assist_game_navigation(target_description: str, web_context: str = "") -> dict:
         from core.game_nav import UniversalGameNavigator
-        client = (
-            getattr(engine, "genai_client", None)
-            or getattr(engine, "client", None)
-            or getattr(dispatcher, "genai_client", None)
-        )
-        model_endpoint = _resolve_tier2_game_model(engine)
-        active_id = ""
-        target_process = ""
-        game_name = ""
-        map_controls = None
-        nav_mode = "controller"
-        if game_manager:
-            active_id = game_manager.data.get("active_profile", "")
-            prof = game_manager.get_profile(active_id) if active_id else None
-            if prof:
-                target_process = prof.get("process_name") or prof.get("display_name") or ""
-                game_name = prof.get("display_name") or active_id
-                map_controls = prof.get("map_controls")
-            nav_mode = game_manager.get_navigation_mode(active_id)
-        nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls, game_name=game_name)
+        active_id, nav = _build_game_navigator(UniversalGameNavigator)
+        nav_mode = game_manager.get_navigation_mode(active_id) if (game_manager and active_id) else "controller"
         if game_manager and active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
             return nav.spot_and_guide_map_location(landmark_description=target_description)
         if nav_mode == "co_pilot_spotter":
@@ -763,6 +849,228 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             countdown_sec=0.0,
         )
 
+    @dispatcher.register(
+        name="click_game_ui_element",
+        description=(
+            "Captures the active game screen, visually locates a specific UI button, menu item, or label "
+            "(e.g. 'Auto Launch', 'Starport Services', 'Confirm'), and clicks it with the mouse. "
+            "Returns 'element_not_found' if the button is not visible on screen."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "target_description": {
+                    "type": "string",
+                    "description": "Clear description of the on-screen UI button or text to click (e.g. 'Auto Launch button')."
+                },
+                "button": {
+                    "type": "string",
+                    "enum": ["left", "right"],
+                    "description": "Mouse button to click (default: 'left')."
+                },
+                "hold_ms": {
+                    "type": "integer",
+                    "description": "Hold duration in milliseconds (default: 80)."
+                }
+            },
+            "required": ["target_description"]
+        }
+    )
+    def click_game_ui_element(target_description: str, button: str = "left", hold_ms: int = 80) -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic mouse clicks are disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        if not client:
+            return {"status": "error", "message": "Vision client unavailable."}
+        from core.game_nav import UniversalGameNavigator
+        from tools.os_controls import focus_window, move_mouse_absolute, click_mouse_button
+        _, nav = _build_game_navigator(UniversalGameNavigator)
+        if nav.target_process:
+            try:
+                focus_window(nav.target_process)
+                time.sleep(0.12)
+            except Exception:
+                pass
+        pt = nav.locate_ui_element_point(target_description)
+        if not pt:
+            return {
+                "status": "element_not_found",
+                "target": target_description,
+                "message": f"Could not find '{target_description}' on the active game screen.",
+            }
+        move_mouse_absolute(pt[0], pt[1])
+        time.sleep(0.1)
+        click_mouse_button(str(button or "left").lower(), hold_duration=max(0.04, float(hold_ms or 80) / 1000.0))
+        return {
+            "status": "executed",
+            "target": target_description,
+            "clicked_at": [pt[0], pt[1]],
+            "button": str(button or "left").lower(),
+            "message": f"Located and clicked '{target_description}' at ({pt[0]}, {pt[1]}).",
+        }
+
+    @dispatcher.register(
+        name="save_game_macro",
+        description=(
+            "Creates or updates a user-generated multi-step visual/keystroke macro for the active game. "
+            "Supported step actions: 'press' (key, modifiers, hold_ms, repeat, interval_ms), "
+            "'trigger_bind' (phrase, repeat, interval_ms), 'vision_click' (target, button, hold_ms, abort_if_not_found), "
+            "'click' (button, x, y), 'type' (text), 'paste' (text), 'wait' (delay_ms)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Voice trigger phrase for the macro (e.g. 'take us out', 'full power to engines')."
+                },
+                "steps": {
+                    "type": "array",
+                    "description": "Ordered list of step objects.",
+                    "items": {"type": "object"}
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Short description of what the macro does."
+                },
+                "condition": {
+                    "type": "string",
+                    "description": "Optional telemetry precondition (e.g. 'state.docked', '!state.landing_gear_down')."
+                },
+                "ack": {
+                    "type": "string",
+                    "description": "Optional spoken confirmation text."
+                },
+                "aliases": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional alternative voice phrases."
+                }
+            },
+            "required": ["name", "steps"]
+        }
+    )
+    def save_game_macro(
+        name: str,
+        steps: list,
+        description: str = "",
+        condition: str = "",
+        ack: str = "",
+        aliases: Optional[list] = None,
+    ) -> dict:
+        if not game_manager:
+            return {"status": "error", "message": "Game manager unavailable."}
+        active_id = game_manager.data.get("active_profile", "")
+        profile = game_manager.get_profile(active_id) if active_id else None
+        if not profile:
+            return {"status": "error", "message": "No active game profile selected."}
+        clean_name = str(name or "").lower().strip()
+        if not clean_name:
+            return {"status": "error", "message": "Macro name cannot be empty."}
+        if not isinstance(steps, list) or not steps:
+            return {"status": "error", "message": "Macro must contain at least one step."}
+
+        entry: Dict[str, Any] = {
+            "description": str(description or clean_name.title()).strip(),
+            "steps": steps,
+            "source": "user_macro",
+        }
+        if condition:
+            entry["condition"] = str(condition).strip()
+        if ack:
+            entry["ack"] = str(ack).strip()
+        if isinstance(aliases, list) and aliases:
+            entry["aliases"] = [str(a).lower().strip() for a in aliases if str(a).strip()]
+
+        profile.setdefault("sequences", {})[clean_name] = entry
+        game_manager._save_profiles(game_manager.data, target_game_id=active_id)
+        if engine is not None:
+            if hasattr(engine, "_reset_context_flag"):
+                engine._reset_context_flag = True
+            if hasattr(engine, "notify") and callable(engine.notify):
+                try:
+                    engine.notify("game_macros_updated", {"game_id": active_id, "macro_name": clean_name})
+                except Exception:
+                    pass
+        return {
+            "status": "success",
+            "game": profile.get("display_name", active_id),
+            "macro_name": clean_name,
+            "step_count": len(steps),
+            "message": f"Saved custom macro '{clean_name}' ({len(steps)} steps) for {profile.get('display_name', active_id)}.",
+        }
+
+    @dispatcher.register(
+        name="list_game_macros",
+        description="Lists all user-created and module-provided custom macros (sequences) for the active game.",
+        parameters={"type": "object", "properties": {}}
+    )
+    def list_game_macros() -> dict:
+        if not game_manager:
+            return {"status": "error", "message": "Game manager unavailable."}
+        active_id = game_manager.data.get("active_profile", "")
+        profile = game_manager.get_profile(active_id) if active_id else None
+        if not profile:
+            return {"status": "error", "message": "No active game profile selected."}
+        merged: Dict[str, Any] = {}
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(active_id, profile=profile)
+            if isinstance(mod, dict) and isinstance(mod.get("sequences"), dict):
+                merged.update(mod["sequences"])
+        except Exception:
+            pass
+        if isinstance(profile.get("sequences"), dict):
+            merged.update(profile["sequences"])
+        return {
+            "status": "success",
+            "game": profile.get("display_name", active_id),
+            "count": len(merged),
+            "macros": merged,
+        }
+
+    @dispatcher.register(
+        name="delete_game_macro",
+        description="Deletes a user-created custom macro (sequence) from the active game profile.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the custom macro to delete."}
+            },
+            "required": ["name"]
+        }
+    )
+    def delete_game_macro(name: str) -> dict:
+        if not game_manager:
+            return {"status": "error", "message": "Game manager unavailable."}
+        active_id = game_manager.data.get("active_profile", "")
+        profile = game_manager.get_profile(active_id) if active_id else None
+        if not profile:
+            return {"status": "error", "message": "No active game profile selected."}
+        clean_name = str(name or "").lower().strip()
+        seqs = profile.get("sequences") or {}
+        if clean_name in seqs:
+            del seqs[clean_name]
+            game_manager._save_profiles(game_manager.data, target_game_id=active_id)
+            if engine is not None:
+                if hasattr(engine, "_reset_context_flag"):
+                    engine._reset_context_flag = True
+                if hasattr(engine, "notify") and callable(engine.notify):
+                    try:
+                        engine.notify("game_macros_updated", {"game_id": active_id, "deleted": clean_name})
+                    except Exception:
+                        pass
+            return {"status": "success", "deleted": clean_name, "message": f"Deleted custom macro '{clean_name}'."}
+        return {"status": "not_found", "message": f"No custom macro named '{clean_name}' found in profile."}
+
     return {
         "get_current_game_telemetry": get_current_game_telemetry,
         "get_current_game_status": get_current_game_status,
@@ -783,4 +1091,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "center_map_on_player": center_map_on_player,
         "launch_game_companion_app": launch_game_companion_app,
         "calibrate_hud_bars": calibrate_hud_bars,
+        "click_game_ui_element": click_game_ui_element,
+        "save_game_macro": save_game_macro,
+        "list_game_macros": list_game_macros,
+        "delete_game_macro": delete_game_macro,
     }
