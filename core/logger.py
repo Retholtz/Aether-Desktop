@@ -13,10 +13,10 @@ import sys
 import threading
 from typing import Callable, List, Optional
 
-from core.paths import get_app_dir
+from core.paths import get_user_data_dir
 
-# Root directory of Aether Desktop
-_WORKSPACE_ROOT = get_app_dir()
+# Writable per-user root directory (%LOCALAPPDATA%\Aether when frozen, repo root from source)
+_WORKSPACE_ROOT = get_user_data_dir()
 _LOGS_DIR = os.path.join(_WORKSPACE_ROOT, "logs")
 _LOG_FILE = os.path.join(_LOGS_DIR, "aether_debug.log")
 

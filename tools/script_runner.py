@@ -90,8 +90,8 @@ def prune_script_cache(cache_dir: Optional[str] = None, max_age_days: int = 7) -
     Gracefully handles locked or in-use files. Returns the count of deleted files.
     """
     if cache_dir is None:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cache_dir = os.path.join(base_dir, "scripts", "cache")
+        from core.paths import user_data_path
+        cache_dir = user_data_path("scripts", "cache")
 
     if not os.path.exists(cache_dir):
         return 0
@@ -126,24 +126,25 @@ class ScriptRunner:
         workspace_root: Optional[str] = None,
         telemetry_db: Optional[TelemetryDB] = None
     ):
-        from core.paths import get_app_dir, is_frozen
-        self.workspace_root = workspace_root or get_app_dir()
+        from core.paths import get_user_data_dir, is_frozen
+        self.workspace_root = workspace_root or get_user_data_dir()
         self.cache_dir = os.path.join(self.workspace_root, "scripts", "cache")
         os.makedirs(self.cache_dir, exist_ok=True)
 
         self.telemetry_db = telemetry_db or TelemetryDB()
 
-        # Locate active virtual environment Python interpreter (or frozen --run-script bridge)
-        venv_python = os.path.join(self.workspace_root, ".venv", "Scripts", "python.exe")
-        if os.path.exists(venv_python):
-            self.python_exe = venv_python
-            self._use_frozen_script_flag = False
-        elif is_frozen():
+        # Locate active Python interpreter: frozen builds always use --run-script bridge first
+        if is_frozen():
             self.python_exe = sys.executable
             self._use_frozen_script_flag = True
         else:
-            self.python_exe = sys.executable
-            self._use_frozen_script_flag = False
+            venv_python = os.path.join(self.workspace_root, ".venv", "Scripts", "python.exe")
+            if os.path.exists(venv_python):
+                self.python_exe = venv_python
+                self._use_frozen_script_flag = False
+            else:
+                self.python_exe = sys.executable
+                self._use_frozen_script_flag = False
 
         # Tracks recent failures per intent for traceback-driven self-correction tracking
         # Schema: {intent_key: {"count": int, "tracebacks": List[str], "last_time": float}}

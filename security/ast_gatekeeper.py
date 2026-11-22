@@ -15,12 +15,26 @@ BLOCKED_CALLS: Set[str] = {
     "locals",
     "vars",
     "input",
-    "open",
 }
 
-# Strict allowlist of approved top-level modules for sandboxed automation/skill scripts
-ALLOWED_MODULES: Set[str] = {
-    # Pure Python stdlib helpers
+# Sensitive file basenames / system prefixes blocked even when passed to open()
+BLOCKED_OPEN_FILENAMES: Set[str] = {
+    ".env",
+    "config.json",
+}
+
+BLOCKED_OPEN_PATH_FRAGMENTS: Tuple[str, ...] = (
+    "c:\\windows",
+    "c:/windows",
+    "c:\\program files",
+    "c:/program files",
+    "\\security\\",
+    "/security/",
+)
+
+# Single Source of Truth: Verified stdlib + third-party modules bundled in Aether's frozen runtime.
+# Used by both ASTSecurityGatekeeper and all LLM script-generation prompts so they never drift.
+BUNDLED_STDLIB_MODULES: Set[str] = {
     "argparse",
     "base64",
     "calendar",
@@ -34,8 +48,10 @@ ALLOWED_MODULES: Set[str] = {
     "enum",
     "fractions",
     "functools",
+    "glob",
     "hashlib",
     "html",
+    "io",
     "itertools",
     "json",
     "math",
@@ -44,27 +60,35 @@ ALLOWED_MODULES: Set[str] = {
     "random",
     "re",
     "shlex",
+    "sqlite3",
     "statistics",
     "string",
     "sys",
+    "tempfile",
     "textwrap",
     "time",
     "typing",
     "unicodedata",
     "urllib",
     "uuid",
+    "xml",
+    "zipfile",
     "zoneinfo",
-    # Approved desktop / document / UI automation packages
+}
+
+BUNDLED_THIRD_PARTY_MODULES: Set[str] = {
     "PIL",
+    "aiohttp",
     "bs4",
+    "comtypes",
     "docx",
+    "httpx",
     "mss",
     "numpy",
     "openpyxl",
-    "pandas",
-    "pyautogui",
+    "psutil",
     "pypdf",
-    "pyperclip",
+    "pythoncom",
     "requests",
     "win32api",
     "win32clipboard",
@@ -72,6 +96,19 @@ ALLOWED_MODULES: Set[str] = {
     "win32con",
     "win32gui",
 }
+
+# Explicitly unbundled packages forbidden in prompts and rejected by AST gatekeeper
+UNBUNDLED_FORBIDDEN_MODULES: Tuple[str, ...] = (
+    "pandas",
+    "pyodbc",
+    "pyautogui",
+    "pyperclip",
+)
+
+BUNDLED_RUNTIME_MODULES: Set[str] = BUNDLED_STDLIB_MODULES | BUNDLED_THIRD_PARTY_MODULES
+
+# Strict allowlist of approved top-level modules for sandboxed automation/skill scripts
+ALLOWED_MODULES: Set[str] = set(BUNDLED_RUNTIME_MODULES)
 
 # Approved internal Aether modules (strictly excludes security.*, core.config_manager, core.oauth_manager, etc.)
 ALLOWED_INTERNAL_MODULES: Set[str] = {
@@ -82,6 +119,25 @@ ALLOWED_INTERNAL_MODULES: Set[str] = {
     "tools.os_controls",
     "tools.screen_vision",
 }
+
+
+def format_bundled_runtime_prompt_guardrail() -> str:
+    """
+    Returns a canonical prompt snippet enumerating the exact Python modules bundled
+    inside Aether's frozen runtime and the forbidden unbundled/shell patterns.
+    """
+    third_party = ", ".join(sorted(BUNDLED_THIRD_PARTY_MODULES))
+    internal = ", ".join(sorted(ALLOWED_INTERNAL_MODULES))
+    forbidden = ", ".join(UNBUNDLED_FORBIDDEN_MODULES)
+    return (
+        "FROZEN PYTHON RUNTIME GUARDRAILS (STRICT):\n"
+        "- Aether executes scripts inside its own self-contained frozen Python 3.14 runtime (no system Python required).\n"
+        "- ALLOWED LIBRARIES ONLY: Python 3.14 standard library (including `sqlite3`, `csv`, `json`, `html`, `xml`, `zipfile`, `glob`, `tempfile`, `io`, `re`, `math`, `statistics`, `datetime`, `urllib.parse`, `os`, `sys`, `time`) "
+        f"plus bundled packages: {third_party}; and internal helpers: {internal}.\n"
+        "- For tabular data, databases, and spreadsheets, use `sqlite3`, `csv`, `openpyxl` (.xlsx), `docx` (.docx), `bs4` (HTML), and `numpy` (or `win32com.client` when Microsoft Office is installed).\n"
+        f"- FORBIDDEN: NEVER import unbundled packages ({forbidden}), NEVER run `pip install` or `ensurepip`, and NEVER shell out to `python`, `powershell`, or `cmd` (`subprocess`, `os.system`, `ctypes` are blocked).\n"
+        "- File I/O via `open()` is permitted in user directories (`Desktop`, `Documents`, `Downloads`, `%TEMP%`, `%LOCALAPPDATA%\\Aether`), but reading/writing `.env`, `config.json`, `C:\\Windows`, `C:\\Program Files`, or Aether's install/`_internal` directory is blocked."
+    )
 
 # Kept for backwards-compatibility with any callers inspecting these constants
 BLOCKED_MODULES: Set[str] = {
@@ -416,11 +472,13 @@ class ASTSecurityGatekeeper(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
-        # 1. Direct function calls: eval(...), exec(...), getattr(...)
+        # 1. Direct function calls: eval(...), exec(...), getattr(...), open(...)
         if isinstance(node.func, ast.Name):
             fn_name = node.func.id
             if fn_name in BLOCKED_CALLS:
                 self.violations.append(f"Call to prohibited builtin function '{fn_name}()'.")
+            if fn_name == "open":
+                self._validate_open_call(node)
             resolved = self.module_aliases.get(fn_name, "")
             if "." in resolved:
                 mod_part, attr_part = resolved.split(".", 1)
@@ -444,6 +502,25 @@ class ASTSecurityGatekeeper(ast.NodeVisitor):
                 self._validate_com_call(attr_name, node)
 
         self.generic_visit(node)
+
+    def _validate_open_call(self, node: ast.Call):
+        """Blocks static open() paths targeting sensitive Aether config/secret files or protected OS/install directories."""
+        target_arg = node.args[0] if node.args else None
+        if target_arg is None:
+            for kw in node.keywords:
+                if kw.arg == "file":
+                    target_arg = kw.value
+                    break
+        if isinstance(target_arg, ast.Constant) and isinstance(target_arg.value, str):
+            raw_lower = target_arg.value.strip().lower()
+            base_name = raw_lower.replace("\\", "/").rsplit("/", 1)[-1]
+            if base_name in BLOCKED_OPEN_FILENAMES:
+                self.violations.append(f"Opening sensitive configuration file '{target_arg.value}' is prohibited.")
+                return
+            for frag in BLOCKED_OPEN_PATH_FRAGMENTS:
+                if frag in raw_lower:
+                    self.violations.append(f"Opening protected system/security path '{target_arg.value}' is prohibited.")
+                    return
 
     def _validate_com_call(self, method_name: str, node: ast.Call):
         """Requires a static string literal ProgID and blocks dangerous COM shell/WMI objects."""

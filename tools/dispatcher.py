@@ -50,10 +50,12 @@ from tools.skill_router import BM25CatalogRouter
 from core.user_memory import UserMemory
 from tools.payload_sanitizer import sanitize_tool_result
 from tools.screen_vision import capture_screen_image
+from core.paths import resource_path, user_data_path
+from security.ast_gatekeeper import format_bundled_runtime_prompt_guardrail
 from tools.dossier_exporter import export_research_dossier
 from tools.clipboard import paste_markdown_to_target_app
 
-CATALOG_PATH = os.path.join("scripts", "skills_catalog.json")
+CATALOG_PATH = user_data_path("scripts", "skills_catalog.json")
 
 
 
@@ -792,10 +794,11 @@ EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
         "Universal dynamic code execution engine. Generates and executes an on-the-fly Python script to solve novel or complex desktop tasks. "
-        "Use this for document creation, table generation, data analysis (pandas), Microsoft Office COM (Word/Excel via win32com.client), "
-        "file batching, complex calculations, and window layouts. "
+        "Use this for document creation (`docx`, `pypdf`), spreadsheet/table generation (`openpyxl`, `csv`), database queries (`sqlite3`), HTML parsing (`bs4`), "
+        "numerical analysis (`numpy`), Microsoft Office COM (Word/Excel via `win32com.client`), file batching, and window layouts. "
         "If a script fails with an exception, the full traceback is returned so you can diagnose the issue, adjust your code, and retry. "
-        "When you solve a novel task with a reusable script, save it to the permanent library using `save_script_to_library`."
+        "When you solve a novel task with a reusable script, save it to the permanent library using `save_script_to_library`.\n"
+        + format_bundled_runtime_prompt_guardrail()
     ),
     "parameters": {
         "type": "OBJECT",
@@ -1434,51 +1437,53 @@ class ToolDispatcher:
             _CUSTOM_TOOL_HANDLERS[name] = actual_handler
 
     def _refresh_skill_index(self):
-        """Loads and indexes promoted skills from skills_catalog.json."""
-        skills: List[dict] = []
-        seen_names = set()
+        """Loads and indexes merged bundled (read-only) + user (writable) skills catalogs."""
+        merged_by_name: Dict[str, dict] = {}
 
-        if os.path.exists(CATALOG_PATH):
+        def _load_catalog_source(cat_path: str, lib_dir: str, track_mtime: bool = False):
+            if not os.path.exists(cat_path):
+                return
             try:
-                self._catalog_mtime = os.path.getmtime(CATALOG_PATH)
-                with open(CATALOG_PATH, "r", encoding="utf-8") as f:
+                if track_mtime:
+                    self._catalog_mtime = os.path.getmtime(cat_path)
+                with open(cat_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    if isinstance(data, dict) and "skills" in data:
-                        raw_skills = data.get("skills", [])
-                    elif isinstance(data, list):
-                        raw_skills = data
-                    elif isinstance(data, dict):
-                        raw_skills = [{"name": k, **v} for k, v in data.items() if isinstance(v, dict)]
-                    else:
-                        raw_skills = []
-                    for s in raw_skills:
-                        if isinstance(s, dict) and s.get("name"):
-                            skills.append(s)
-                            seen_names.add(s["name"])
+                if isinstance(data, dict) and "skills" in data:
+                    raw_skills = data.get("skills", [])
+                elif isinstance(data, list):
+                    raw_skills = data
+                elif isinstance(data, dict):
+                    raw_skills = [{"name": k, **v} for k, v in data.items() if isinstance(v, dict)]
+                else:
+                    raw_skills = []
+                for s in raw_skills:
+                    if not isinstance(s, dict) or not s.get("name"):
+                        continue
+                    entry = dict(s)
+                    fname = entry.get("filename") or entry.get("file") or f"{entry['name']}.py"
+                    entry["filename"] = fname
+                    entry["file"] = fname
+                    resolved_path = os.path.join(lib_dir, os.path.basename(fname))
+                    if os.path.exists(resolved_path):
+                        entry["path"] = resolved_path
+                    if not entry.get("intent"):
+                        entry["intent"] = entry.get("description", "")
+                    merged_by_name[entry["name"]] = entry
             except Exception as e:
-                print(f"[WARN] [TOOL_DISPATCHER] Failed to index skills catalog: {e}")
-                logger.warning(f"[WARN] [TOOL_DISPATCHER] Failed to index skills catalog: {e}")
+                logger.warning(f"[WARN] [TOOL_DISPATCHER] Failed to index skills catalog '{cat_path}': {e}")
 
-        # Also merge skills from scripts/library/skills_catalog.json if present
-        lib_catalog_path = os.path.join("scripts", "library", "skills_catalog.json")
-        if os.path.exists(lib_catalog_path):
-            try:
-                with open(lib_catalog_path, "r", encoding="utf-8") as f:
-                    lib_data = json.load(f)
-                    if isinstance(lib_data, dict):
-                        for s_name, s_meta in lib_data.items():
-                            if isinstance(s_meta, dict) and s_name not in seen_names:
-                                skills.append({
-                                    "name": s_name,
-                                    "intent": s_meta.get("intent", s_meta.get("description", "")),
-                                    "description": s_meta.get("description", ""),
-                                    "parameters": s_meta.get("parameters", {}),
-                                    "file": s_meta.get("file", f"{s_name}.py")
-                                })
-                                seen_names.add(s_name)
-            except Exception as e:
-                logger.debug(f"[TOOL_DISPATCHER] Library catalog sync warning: {e}")
+        bundled_lib = resource_path("scripts", "library")
+        user_lib = user_data_path("scripts", "library")
 
+        # 1. Load read-only bundled catalogs first (sys._MEIPASS when frozen)
+        _load_catalog_source(resource_path("scripts", "skills_catalog.json"), bundled_lib)
+        _load_catalog_source(os.path.join(bundled_lib, "skills_catalog.json"), bundled_lib)
+
+        # 2. Overlay writable user catalogs (%LOCALAPPDATA%\Aether when frozen) so user overrides take precedence
+        _load_catalog_source(CATALOG_PATH, user_lib, track_mtime=True)
+        _load_catalog_source(os.path.join(user_lib, "skills_catalog.json"), user_lib)
+
+        skills = list(merged_by_name.values())
         self.skill_router.build_index(skills)
         msg = f"[INFO] [TOOL_DISPATCHER] Indexed {len(skills)} dynamic skills for semantic routing."
         print(msg)
@@ -3276,6 +3281,7 @@ class ToolDispatcher:
                 "- Self-contained, executable Windows automation script.\n"
                 "- Complete error handling (try/finally to cleanly release handles, COM objects, or processes).\n"
                 "- No busy-wait or infinite sleep loops.\n"
+                f"{format_bundled_runtime_prompt_guardrail()}\n"
                 "- Return ONLY valid Python code in a ```python ... ``` block.\n"
             )
 

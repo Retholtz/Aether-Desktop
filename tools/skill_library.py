@@ -13,11 +13,13 @@ import re
 import shutil
 from typing import Dict, List, Optional
 
+from core.paths import get_user_data_dir, resource_path, user_data_path
 from security.ast_gatekeeper import validate_python_script, validate_python_code
 from tools.script_runner import ScriptRunner
 
-CATALOG_PATH = os.path.join("scripts", "skills_catalog.json")
-LIBRARY_DIR = os.path.join("scripts", "library")
+CATALOG_PATH = user_data_path("scripts", "skills_catalog.json")
+LIBRARY_DIR = user_data_path("scripts", "library")
+BUNDLED_LIBRARY_DIR = resource_path("scripts", "library")
 
 
 def promote_cached_script(source_script_path: str, intent_label: str, script_hash: str) -> bool:
@@ -123,45 +125,78 @@ class SkillLibrary:
     """Manages persistent repository of automation skills with dynamic fuzzy retrieval."""
 
     def __init__(self, workspace_root: Optional[str] = None, library_dir: Optional[str] = None):
-        self.workspace_root = workspace_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.workspace_root = workspace_root or get_user_data_dir()
         self.library_dir = library_dir or os.path.join(self.workspace_root, "scripts", "library")
         os.makedirs(self.library_dir, exist_ok=True)
         self.catalog_file = os.path.join(self.library_dir, "skills_catalog.json")
+        # Read-only bundled skills (sys._MEIPASS/scripts/library when frozen)
+        self.bundled_library_dir = resource_path("scripts", "library") if library_dir is None else self.library_dir
+        self.bundled_catalog_file = os.path.join(self.bundled_library_dir, "skills_catalog.json")
         self.script_runner = ScriptRunner(self.workspace_root)
         self._ensure_catalog()
 
+    def _has_distinct_bundled_dir(self) -> bool:
+        return os.path.realpath(self.bundled_library_dir) != os.path.realpath(self.library_dir)
+
+    def _resolve_skill_file(self, filename: str) -> Optional[str]:
+        """Resolves a skill script file, preferring user library over read-only bundled library."""
+        user_path = os.path.join(self.library_dir, filename)
+        if os.path.exists(user_path):
+            return user_path
+        if self._has_distinct_bundled_dir():
+            bundled_path = os.path.join(self.bundled_library_dir, filename)
+            if os.path.exists(bundled_path):
+                return bundled_path
+        return None
 
     def _ensure_catalog(self):
-        """Initializes empty skills_catalog.json if missing."""
+        """Initializes empty user skills_catalog.json if missing."""
         if not os.path.exists(self.catalog_file):
-            self._save_catalog({})
+            self._save_user_catalog({})
 
-    def _load_catalog(self) -> Dict[str, dict]:
-        """Loads the skills catalog from disk."""
+    def _load_user_catalog(self) -> Dict[str, dict]:
+        """Loads only the writable user skills catalog."""
         try:
             if os.path.exists(self.catalog_file):
                 with open(self.catalog_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
         except Exception as e:
             print(f"[SKILL_LIBRARY] Warning: Failed to read {self.catalog_file}: {e}")
         return {}
 
-    def _save_catalog(self, catalog: Dict[str, dict]):
-        """Persists the skills catalog to disk and synchronizes the top-level router catalog."""
+    def _load_catalog(self) -> Dict[str, dict]:
+        """Loads merged skills catalog: read-only bundled skills overlaid by user skills."""
+        merged: Dict[str, dict] = {}
+        if self._has_distinct_bundled_dir() and os.path.exists(self.bundled_catalog_file):
+            try:
+                with open(self.bundled_catalog_file, "r", encoding="utf-8") as f:
+                    bundled = json.load(f)
+                    if isinstance(bundled, dict):
+                        merged.update(bundled)
+            except Exception as e:
+                print(f"[SKILL_LIBRARY] Warning: Failed to read bundled catalog {self.bundled_catalog_file}: {e}")
+        merged.update(self._load_user_catalog())
+        return merged
+
+    def _save_user_catalog(self, user_catalog: Dict[str, dict]):
+        """Persists writable user skills catalog and synchronizes the top-level router catalog."""
         try:
+            os.makedirs(self.library_dir, exist_ok=True)
             with open(self.catalog_file, "w", encoding="utf-8") as f:
-                json.dump(catalog, f, indent=2)
-            # Keep scripts/skills_catalog.json synchronized so ToolDispatcher hot-reloads immediately
+                json.dump(user_catalog, f, indent=2)
+            # Keep user scripts/skills_catalog.json synchronized so ToolDispatcher hot-reloads immediately
             root_catalog_path = os.path.join(self.workspace_root, "scripts", "skills_catalog.json")
             os.makedirs(os.path.dirname(root_catalog_path), exist_ok=True)
             skills_list = []
-            for s_name, s_meta in catalog.items():
+            for s_name, s_meta in user_catalog.items():
                 if isinstance(s_meta, dict):
                     fname = s_meta.get("file", f"{s_name}.py")
                     skills_list.append({
                         "name": s_name,
                         "filename": fname,
-                        "path": os.path.join("scripts", "library", fname),
+                        "path": os.path.join(self.library_dir, fname),
                         "intent": s_meta.get("intent", s_meta.get("description", "")),
                         "description": s_meta.get("description", ""),
                         "parameters": s_meta.get("parameters", {}),
@@ -171,6 +206,10 @@ class SkillLibrary:
         except Exception as e:
             print(f"[SKILL_LIBRARY] Error saving catalog: {e}")
 
+    def _save_catalog(self, catalog: Dict[str, dict]):
+        """Backwards-compatible alias that writes strictly to the writable user catalog."""
+        self._save_user_catalog(catalog)
+
     def get_skills_manifest(self) -> List[dict]:
         """Returns structured list of available skills with metadata."""
         catalog = self._load_catalog()
@@ -179,13 +218,14 @@ class SkillLibrary:
         for name, meta in catalog.items():
             if not isinstance(meta, dict):
                 continue
-            script_path = os.path.join(self.library_dir, meta.get("file", f"{name}.py"))
-            if os.path.exists(script_path):
+            fname = meta.get("file", f"{name}.py")
+            script_path = self._resolve_skill_file(fname)
+            if script_path and os.path.exists(script_path):
                 manifest.append({
                     "name": name,
                     "description": meta.get("description", meta.get("intent", "")),
                     "parameters": meta.get("parameters", {}),
-                    "file": meta.get("file", f"{name}.py"),
+                    "file": fname,
                     "created_at": meta.get("created_at"),
                     "updated_at": meta.get("updated_at")
                 })
@@ -331,8 +371,11 @@ class SkillLibrary:
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(clean_code)
 
-            catalog[clean_name]["updated_at"] = datetime.datetime.now().isoformat()
-            self._save_catalog(catalog)
+            user_catalog = self._load_user_catalog()
+            entry = dict(catalog[clean_name])
+            entry["updated_at"] = datetime.datetime.now().isoformat()
+            user_catalog[clean_name] = entry
+            self._save_user_catalog(user_catalog)
 
             return {
                 "status": "success",
@@ -364,9 +407,9 @@ class SkillLibrary:
 
         meta = catalog[clean_name]
         filename = meta.get("file", f"{clean_name}.py")
-        script_path = os.path.join(self.library_dir, filename)
+        script_path = self._resolve_skill_file(filename)
 
-        if not os.path.exists(script_path):
+        if not script_path or not os.path.exists(script_path):
             return {
                 "status": "error",
                 "error": f"Script file '{filename}' missing from {self.library_dir}",
@@ -385,7 +428,7 @@ class SkillLibrary:
         script_code: str,
         parameters: Optional[dict] = None
     ) -> dict:
-        """Saves a tested script into the permanent Skill Library."""
+        """Saves a tested script into the permanent writable user Skill Library."""
         clean_name = re.sub(r"[^a-zA-Z0-9_]", "_", skill_name.strip().lower())
         if not clean_name:
             return {"status": "error", "error": "Invalid skill_name."}
@@ -410,16 +453,16 @@ class SkillLibrary:
             with open(script_path, "w", encoding="utf-8") as f:
                 f.write(clean_code)
 
-            catalog = self._load_catalog()
+            user_catalog = self._load_user_catalog()
             now_iso = datetime.datetime.now().isoformat()
-            catalog[clean_name] = {
+            user_catalog[clean_name] = {
                 "description": description.strip() or f"Automation skill: {clean_name}",
                 "parameters": parameters or {},
                 "file": filename,
-                "created_at": catalog.get(clean_name, {}).get("created_at", now_iso),
+                "created_at": user_catalog.get(clean_name, {}).get("created_at", now_iso),
                 "updated_at": now_iso
             }
-            self._save_catalog(catalog)
+            self._save_user_catalog(user_catalog)
 
             return {
                 "status": "success",
@@ -431,33 +474,38 @@ class SkillLibrary:
             return {"status": "error", "error": str(e), "message": f"Failed to save skill: {e}"}
 
     def get_skill_code(self, skill_name: str) -> str:
-        """Loads Python code for a designated skill, enforcing path boundaries."""
+        """Loads Python code for a designated skill, enforcing path boundaries across user and bundled dirs."""
         if not skill_name.endswith(".py"):
             file_name = skill_name + ".py"
         else:
             file_name = skill_name
 
-        base_dir = os.path.realpath(self.library_dir)
-        candidate_path = os.path.realpath(os.path.join(self.library_dir, file_name))
+        search_dirs = [os.path.realpath(self.library_dir)]
+        if self._has_distinct_bundled_dir():
+            search_dirs.append(os.path.realpath(self.bundled_library_dir))
 
-        # Enforce containment: candidate must reside within base_dir
-        if not candidate_path.startswith(base_dir + os.sep) and candidate_path != base_dir:
-            raise PermissionError(f"Access denied: Path traversal detected for '{skill_name}'")
-
-        if not os.path.exists(candidate_path):
-            clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", skill_name).strip("_").lower()
-            catalog = self._load_catalog()
-            meta = catalog.get(clean_name) or catalog.get(skill_name)
-            if meta and meta.get("file"):
-                meta_path = os.path.realpath(os.path.join(self.library_dir, meta["file"]))
-                if not meta_path.startswith(base_dir + os.sep) and meta_path != base_dir:
+        def _check_and_read(target_name: str) -> Optional[str]:
+            for base_dir in search_dirs:
+                candidate_path = os.path.realpath(os.path.join(base_dir, target_name))
+                if not candidate_path.startswith(base_dir + os.sep) and candidate_path != base_dir:
                     raise PermissionError(f"Access denied: Path traversal detected for '{skill_name}'")
-                if os.path.exists(meta_path):
-                    with open(meta_path, "r", encoding="utf-8") as f:
+                if os.path.exists(candidate_path):
+                    with open(candidate_path, "r", encoding="utf-8") as f:
                         return f.read()
-            raise FileNotFoundError(f"Skill '{skill_name}' does not exist in library.")
+            return None
 
-        with open(candidate_path, "r", encoding="utf-8") as f:
-            return f.read()
+        code = _check_and_read(file_name)
+        if code is not None:
+            return code
+
+        clean_name = re.sub(r"[^a-zA-Z0-9_-]", "_", skill_name).strip("_").lower()
+        catalog = self._load_catalog()
+        meta = catalog.get(clean_name) or catalog.get(skill_name)
+        if meta and meta.get("file"):
+            code = _check_and_read(meta["file"])
+            if code is not None:
+                return code
+
+        raise FileNotFoundError(f"Skill '{skill_name}' does not exist in library.")
 
 

@@ -12,9 +12,9 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from core.paths import get_app_dir, is_frozen
+from core.paths import get_user_data_dir, is_frozen
 
-WORKSPACE_ROOT = get_app_dir()
+WORKSPACE_ROOT = get_user_data_dir()
 STARTUP_DIR = os.path.join(WORKSPACE_ROOT, "scripts", "startup")
 REGISTRY_PATH = os.path.join(STARTUP_DIR, "registry.json")
 

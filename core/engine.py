@@ -35,6 +35,7 @@ from core.session_lifecycle import SessionLifecycleManager
 from core.context_sanitizer import sanitize_turn_history, sanitize_chat_session
 from core.hotkey_manager import HotkeyManager
 from core.startup_runner import StartupJobRunner
+from security.ast_gatekeeper import format_bundled_runtime_prompt_guardrail
 from security.crypto import unprotect_secret
 from tools.dispatcher import ToolDispatcher, get_all_tool_declarations
 from core.game_engine import GameEngine
@@ -6098,7 +6099,8 @@ class AetherEngine:
             "  3. Immediately invoke `run_saved_script(skill_name='create_table_google_docs', args={'headers': ['Feature / Spec', 'Vehicle A', 'Vehicle B'], 'rows': [['Pros', '...', '...'], ['Cons', '...', '...']], 'title': 'Comparison Title'})` for Google Docs (or `create_table_word` for Word).\n"
             "  4. The saved skill automatically loads the clipboard with formatted HTML and pastes it cleanly into the active document.\n\n"
             "DYNAMIC EXECUTION & SELF-EXTENDING LEARNING (CORTEX):\n"
-            "- Dynamic Python Generation ('Figure It Out' On-The-Fly): For ANY novel, multi-step, file/dossier lookup, document, spreadsheet, data processing (pandas), Microsoft Office COM (Word/Excel via win32com.client), or window layout task without a pre-existing built-in tool or skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
+            "- Dynamic Python Generation ('Figure It Out' On-The-Fly): For ANY novel, multi-step, file/dossier lookup, document (`docx`, `pypdf`), spreadsheet (`openpyxl`, `csv`), database (`sqlite3`), HTML parsing (`bs4`), numerical analysis (`numpy`), Microsoft Office COM (Word/Excel via `win32com.client`), or window layout task without a pre-existing built-in tool or skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
+            f"{format_bundled_runtime_prompt_guardrail()}\n"
             "- Workspace Data & Internal Python Helper APIs Available in `execute_automation_script`:\n"
             "  * `data/dossiers/` — Directory containing all previously generated Markdown guides and dossiers (`YYYYMMDD_HHMMSS_Title.md`).\n"
             "  * `data/scratchpad/latest_dossier.md` — The most recently generated dossier.\n"

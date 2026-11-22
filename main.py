@@ -29,21 +29,48 @@ def strip_mark_of_the_web(target_dir: Path) -> int:
     return cleared
 
 
-# Run immediately on frozen builds before pythonnet / pywebview loads .NET DLLs
-if getattr(sys, "frozen", False):
-    strip_mark_of_the_web(Path(sys.executable).resolve().parent)
-
-# Fast-path staged self-updater helper mode (--apply-update): runs outside the live
-# install directory without initializing WebView2, audio, or the single-instance mutex.
-if "--apply-update" in sys.argv:
-    from core.updater import apply_update_from_helper_cli
-    sys.exit(apply_update_from_helper_cli(sys.argv[1:]))
-
 # Fast-path sandboxed Python script runner mode (--run-script <path> [args_json]):
-# allows frozen PyInstaller builds (where sys.executable is AetherDesktop.exe) to execute
-# AST-validated automation/skill scripts in an isolated subprocess without launching the GUI.
+# Placed BEFORE strip_mark_of_the_web() and GUI imports so child script runs start
+# immediately without walking _internal/ or launching WebView2/audio.
 if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
+    import builtins as _builtins
     import runpy
+
+    _orig_open = _builtins.open
+    _exe_dir = os.path.realpath(os.path.dirname(os.path.abspath(sys.executable)))
+    _meipass_dir = os.path.realpath(getattr(sys, "_MEIPASS", "")) if getattr(sys, "_MEIPASS", None) else ""
+    _protected_write_roots = [
+        os.path.realpath(p)
+        for p in (
+            os.environ.get("SYSTEMROOT", r"C:\Windows"),
+            os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+            os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+            _meipass_dir,
+            _exe_dir if getattr(sys, "frozen", False) else "",
+        )
+        if p
+    ]
+    _sensitive_basenames = {".env", "config.json"}
+
+    def _safe_script_open(file, mode="r", *args, **kwargs):
+        if isinstance(file, (str, bytes, os.PathLike)):
+            raw_path = os.fsdecode(file)
+            resolved = os.path.realpath(os.path.abspath(raw_path))
+            base_lower = os.path.basename(resolved).lower()
+            if base_lower in _sensitive_basenames:
+                raise PermissionError(f"Access to sensitive configuration file '{base_lower}' is blocked in sandboxed scripts.")
+            is_write = any(ch in str(mode) for ch in ("w", "a", "x", "+"))
+            if is_write:
+                for root in _protected_write_roots:
+                    try:
+                        if os.path.commonpath([root, resolved]) == root:
+                            raise PermissionError(f"Write access to protected system/install directory is blocked: {resolved}")
+                    except ValueError:
+                        continue
+        return _orig_open(file, mode, *args, **kwargs)
+
+    _builtins.open = _safe_script_open
+
     _script_path = sys.argv[2]
     _script_args = sys.argv[3:]
     sys.argv = [_script_path] + _script_args
@@ -52,10 +79,20 @@ if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
         sys.exit(0)
     except SystemExit as _se:
         sys.exit(_se.code if isinstance(_se.code, int) else 0)
-    except Exception as _exc:
+    except Exception:
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+# Fast-path staged self-updater helper mode (--apply-update): runs outside the live
+# install directory without initializing WebView2, audio, or the single-instance mutex.
+if "--apply-update" in sys.argv:
+    from core.updater import apply_update_from_helper_cli
+    sys.exit(apply_update_from_helper_cli(sys.argv[1:]))
+
+# Run immediately on frozen builds before pythonnet / pywebview loads .NET DLLs
+if getattr(sys, "frozen", False):
+    strip_mark_of_the_web(Path(sys.executable).resolve().parent)
 
 from core.screen_stream import ensure_thread_desktop, init_dpi_awareness
 init_dpi_awareness()

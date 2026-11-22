@@ -17,6 +17,7 @@ from google import genai
 from google.genai import types
 
 from core.logger import get_logger
+from security.ast_gatekeeper import format_bundled_runtime_prompt_guardrail
 
 logger = get_logger("Reflexion")
 
@@ -36,7 +37,7 @@ Refactor this script into an optimal, production-grade snippet:
 - Ensure all COM objects and window handles are strictly released in finally blocks.
 - Parameterize hardcoded inputs.
 - Preserve all safety constraints (no forbidden imports).
-Return only the clean Python code."""
+""" + format_bundled_runtime_prompt_guardrail() + "\nReturn only the clean Python code."
 
 RECONCILIATION_PROMPT = """
 Analyze the existing facts below. Reconcile duplicates, update outdated details, and produce a consolidated list of permanent user facts.

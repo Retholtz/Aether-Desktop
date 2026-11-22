@@ -41,10 +41,10 @@ class _TelemetryConnection(sqlite3.Connection):
         return res
 
 
-from core.paths import get_app_dir
+from core.paths import get_user_data_dir
 
 def get_default_telemetry_db_path() -> str:
-    base_dir = get_app_dir()
+    base_dir = get_user_data_dir()
     return os.path.join(base_dir, DEFAULT_DB_REL_PATH)
 
 
@@ -147,7 +147,8 @@ def record_script_execution(
                 if prev_path and not os.path.exists(prev_path):
                     row = None
                 elif is_prom:
-                    catalog_path = os.path.join("scripts", "skills_catalog.json")
+                    from core.paths import user_data_path
+                    catalog_path = user_data_path("scripts", "skills_catalog.json")
                     still_in_catalog = False
                     if os.path.exists(catalog_path):
                         try:
