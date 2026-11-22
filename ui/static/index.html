@@ -221,6 +221,21 @@
                   <button type="button" id="btn-export-game-module" class="btn-secondary-sm btn-secondary-pill" title="Export a clean, shareable .aethermodule.json pack">📤 Export Module</button>
                 </div>
               </div>
+
+              <!-- Line 5: Per-Game Co-Pilot Personality / Vibe (Preset + Unrestricted Free-Text Box) -->
+              <div class="game-banner-row game-banner-row-5" style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-top: 8px; margin-top: 6px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
+                <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px; width: 100%;">
+                  <label for="select-game-copilot-vibe" style="font-size: 0.78rem; color: var(--text-muted);" title="Choose your co-pilot's conversational vibe and energy for this game.">Co-Pilot Vibe:</label>
+                  <select id="select-game-copilot-vibe" class="hud-select" style="width: auto; min-width: 190px;">
+                    <option value="witty">🎭 Witty &amp; Engaging</option>
+                    <option value="tactical">🎖️ Tactical / Flight-Deck Pro</option>
+                    <option value="cinematic">🎬 Cinematic / Dramatic</option>
+                    <option value="terse">⚡ Terse / Minimal</option>
+                  </select>
+                  <span id="copilot-vibe-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
+                </div>
+                <textarea id="textarea-game-copilot-personality" class="modal-input" rows="2" style="width: 100%; resize: vertical; font-size: 0.8rem; line-height: 1.4;" placeholder="Optional custom co-pilot personality (free text) — e.g. Dry humor like TARS from Interstellar, loves playful banter, calls out cool sights, never repeats the same canned line..."></textarea>
+              </div>
               <div id="game-uipi-warning-banner" class="hidden" style="margin-top: 8px; padding: 6px 10px; border-radius: 6px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; font-size: 0.78rem;"></div>
             </div>
 

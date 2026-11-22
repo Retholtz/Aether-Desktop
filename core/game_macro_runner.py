@@ -11,15 +11,108 @@ supporting:
 - `wait`: timed delay
 """
 
+import difflib
 import time
 import threading
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 from core.logger import get_logger
 from core.telemetry.base import BaseTelemetryAdapter
 import tools.os_controls as os_controls
 
 logger = get_logger("MacroRunner")
+
+VALID_STEP_ACTIONS = {"press", "trigger_bind", "vision_click", "click", "type", "paste", "wait"}
+
+
+def normalize_macro_step(step: Any) -> Optional[Dict[str, Any]]:
+    """
+    Normalizes both canonical step dicts (`{"action": "wait", "delay_ms": 500}`)
+    and common LLM shorthand dicts (`{"wait": 500}`, `{"trigger_bind": {"phrase": "left panel"}}`,
+    `{"press": "space"}`, `{"vision_click": "Auto Launch"}`).
+    """
+    if not isinstance(step, dict) or not step:
+        return None
+    if step.get("action"):
+        out = dict(step)
+        out["action"] = str(out["action"]).lower().strip()
+        return out
+
+    # Shorthand form: single known action key (e.g. {"wait": 500} or {"trigger_bind": {"phrase": "..."}})
+    for act in VALID_STEP_ACTIONS:
+        if act in step:
+            val = step[act]
+            out = {k: v for k, v in step.items() if k != act}
+            out["action"] = act
+            if isinstance(val, dict):
+                out.update(val)
+            elif act == "wait" and isinstance(val, (int, float)):
+                out["delay_ms"] = val
+            elif act == "press" and isinstance(val, str):
+                out["key"] = val
+            elif act == "trigger_bind" and isinstance(val, str):
+                out["phrase"] = val
+            elif act == "vision_click" and isinstance(val, str):
+                out["target"] = val
+            elif act in ("type", "paste") and isinstance(val, str):
+                out["text"] = val
+            elif act == "click" and isinstance(val, str):
+                out["button"] = val
+            return out
+
+    # Infer action from characteristic keys if "action" was omitted
+    if "target" in step or "element" in step:
+        return {"action": "vision_click", **step}
+    if "phrase" in step or "bind" in step:
+        return {"action": "trigger_bind", **step}
+    if "key" in step:
+        return {"action": "press", **step}
+    if "text" in step:
+        return {"action": "type", **step}
+    if "delay_ms" in step and len(step) == 1:
+        return {"action": "wait", **step}
+    return None
+
+
+def normalize_and_validate_macro_steps(
+    raw_steps: Any,
+    profile: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Normalizes a list of macro steps and validates `trigger_bind` references against `profile["keybinds"]`.
+    Returns `(normalized_steps, errors)`.
+    """
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return [], ["Macro must include at least one step."]
+
+    normalized: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    available_binds = list((profile.get("keybinds") or {}).keys()) if isinstance(profile, dict) else []
+
+    for idx, raw_step in enumerate(raw_steps, 1):
+        step = normalize_macro_step(raw_step)
+        if not step or step.get("action") not in VALID_STEP_ACTIONS:
+            errors.append(
+                f"Step #{idx} has invalid format ({raw_step!r}). Use one of: {', '.join(sorted(VALID_STEP_ACTIONS))}."
+            )
+            continue
+        act = step["action"]
+        if act == "trigger_bind" and isinstance(profile, dict) and available_binds:
+            b_phrase = str(step.get("phrase") or step.get("bind") or "").strip()
+            if not b_phrase or _resolve_bind_entry(b_phrase, profile) is None:
+                suggestions = difflib.get_close_matches(b_phrase.lower(), available_binds, n=4, cutoff=0.35)
+                hint = f" Closest synced binds: {suggestions}" if suggestions else ""
+                errors.append(f"Step #{idx} references unknown keybind '{b_phrase}'.{hint}")
+                continue
+        elif act == "press" and not str(step.get("key") or "").strip():
+            errors.append(f"Step #{idx} ('press') is missing a 'key' value.")
+            continue
+        elif act == "vision_click" and not str(step.get("target") or step.get("element") or "").strip():
+            errors.append(f"Step #{idx} ('vision_click') is missing a 'target' UI description.")
+            continue
+        normalized.append(step)
+
+    return normalized, errors
 
 
 def evaluate_condition(condition_str: str, state_flags: Dict[str, Any]) -> bool:
@@ -220,6 +313,10 @@ class MacroRunner:
         model_endpoint: str = "gemini-4-hydrogen",
     ) -> Optional[Dict[str, Any]]:
         """Executes a single macro step. Returns an error dict if a guarded step fails & aborts."""
+        norm = normalize_macro_step(step)
+        if norm is None:
+            return None
+        step = norm
         action_type = str(step.get("action") or "press").lower().strip()
         delay_ms = float(step.get("delay_ms") if step.get("delay_ms") is not None else 100)
 

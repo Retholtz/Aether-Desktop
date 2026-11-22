@@ -28,15 +28,15 @@
       "open_wait_sec": 1.4,
       "search_box_visual_hint": "Galaxy Map search text box labeled 'Search' near the top of the screen",
       "input_method": "clipboard_paste",
-      "submit_key": "enter",
-      "select_result_wait_sec": 0.9,
+      "submit_key": "",
+      "select_result_wait_sec": 0.7,
       "post_input_keys": [
-        { "key": "down", "delay_ms": 400 },
-        { "key": "enter", "delay_ms": 1100 }
+        { "key": "down", "delay_ms": 350 },
+        { "key": "enter", "delay_ms": 1200 }
       ],
       "plot_visual_hint": "Route Plotter / Plot Route button icon on the right-hand system info sidebar",
       "plot_key": "space",
-      "plot_hold_sec": 0.85,
+      "plot_hold_sec": 1.0,
       "verify_telemetry_field": "route_destination",
       "verify_timeout_sec": 3.0
     }

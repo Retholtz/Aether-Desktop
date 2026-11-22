@@ -374,27 +374,53 @@ class SessionLifecycleManager:
 
         return base_instruction + compacted_block
 
-    def flush_session_to_disk(self) -> Optional[str]:
+    def flush_session_to_disk(self, rotate_file: bool = False) -> Optional[str]:
         """
-        Writes current session turns to raw JSON transcript in data/chats/
-        and dispatches background manifest card extraction and indexing.
-        Returns the flushed session_id, or None if no turns were recorded.
+        Writes current session turns to raw JSON transcript in data/chats/.
+        By default (`rotate_file=False`), silent background WebSocket rotations append
+        to the SAME logical session file so one continuous play/work session stays
+        in a single unified chat log instead of fragmenting into dozens of tiny files.
+        Pass `rotate_file=True` only when starting a brand-new user conversation.
         """
         with self._lock:
             if not self.raw_transcript:
                 return None
 
             flushed_count = len(self.raw_transcript)
-            old_id = self.session_id
-            filepath = os.path.join(self.chats_dir, f"{old_id}.json")
-            start_t = self.raw_transcript[0]["timestamp"] if self.raw_transcript else self.session_start_time
-            end_t = self.raw_transcript[-1]["timestamp"] if self.raw_transcript else time.time()
-            payload = {
-                "session_id": old_id,
-                "start_time": start_t,
-                "end_time": end_t,
-                "turns": list(self.raw_transcript)
-            }
+            current_id = self.session_id
+            filepath = os.path.join(self.chats_dir, f"{current_id}.json")
+            new_turns = list(self.raw_transcript)
+
+        # Merge with any previously flushed turns for this same logical session_id
+        merged_turns = new_turns
+        existing_start_t = None
+        if os.path.isfile(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as ef:
+                    prev_data = json.load(ef)
+                prev_turns = prev_data.get("turns") if isinstance(prev_data, dict) else None
+                if isinstance(prev_turns, list) and prev_turns:
+                    existing_start_t = prev_data.get("start_time")
+                    base_id = len(prev_turns)
+                    reindexed = []
+                    for offset, t in enumerate(new_turns, 1):
+                        t_copy = dict(t)
+                        t_copy["turn_id"] = base_id + offset
+                        reindexed.append(t_copy)
+                    merged_turns = prev_turns + reindexed
+            except Exception:
+                merged_turns = new_turns
+
+        start_t = existing_start_t if existing_start_t is not None else (
+            merged_turns[0]["timestamp"] if merged_turns else self.session_start_time
+        )
+        end_t = merged_turns[-1]["timestamp"] if merged_turns else time.time()
+        payload = {
+            "session_id": current_id,
+            "start_time": start_t,
+            "end_time": end_t,
+            "turns": merged_turns,
+        }
 
         # Perform disk I/O outside self._lock so concurrent turn recording is never blocked
         tmp_path = None
@@ -407,7 +433,7 @@ class SessionLifecycleManager:
                 json.dump(payload, f, indent=2)
             os.replace(tmp_path, filepath)
             tmp_path = None
-            logger.info(f"[SESSION] Persisted raw session transcript to {filepath}")
+            logger.info(f"[SESSION] Persisted raw session transcript to {filepath} ({len(merged_turns)} total turns)")
         except Exception as e:
             logger.error(f"[SESSION ERROR] Failed to save session transcript to {filepath}: {e}")
             return None
@@ -418,24 +444,28 @@ class SessionLifecycleManager:
                 except Exception:
                     pass
 
-        # Session transcript is persisted; the idle-aware ReflexionEngine processes manifest extraction
         logger.debug(f"[MANIFEST] Session {filepath} queued for idle Reflexion extraction.")
 
         with self._lock:
-            if self.session_id == old_id:
-                new_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
-                if new_id == old_id:
-                    import datetime
-                    new_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-                self.session_id = new_id
+            if self.session_id == current_id:
+                if rotate_file:
+                    new_id = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
+                    if new_id == current_id:
+                        import datetime
+                        new_id = f"session_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+                    self.session_id = new_id
                 # Preserve any new turns appended while disk I/O was in flight
                 self.raw_transcript = self.raw_transcript[flushed_count:]
-        return old_id
+        return current_id
+
+    def start_new_session(self) -> Optional[str]:
+        """Flushes the current session and starts a fresh chat log file."""
+        return self.flush_session_to_disk(rotate_file=True)
 
     def reset_metrics(self, clear_rotation_lock: bool = False):
         """Resets turn count, elapsed time, and tool chars after successful silent reconnect."""
-        # Flush unpersisted transcript outside self._lock before resetting metrics
-        self.flush_session_to_disk()
+        # Append unpersisted turns into the same unified session file before resetting WebSocket metrics
+        self.flush_session_to_disk(rotate_file=False)
         with self._lock:
             self.turn_count = 0
             self.session_start_time = time.time()

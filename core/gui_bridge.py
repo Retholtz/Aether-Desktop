@@ -4469,6 +4469,12 @@ class GuiBridge:
         if not isinstance(parsed_steps, list) or len(parsed_steps) == 0:
             return {"success": False, "error": "Macro must include at least one step."}
 
+        from core.game_macro_runner import normalize_and_validate_macro_steps
+        norm_steps, val_errors = normalize_and_validate_macro_steps(parsed_steps, profile=profile)
+        if val_errors:
+            return {"success": False, "error": " | ".join(val_errors)}
+        parsed_steps = norm_steps
+
         clean_aliases = []
         if isinstance(aliases, str):
             clean_aliases = [a.lower().strip() for a in aliases.split(",") if a.strip()]
@@ -4759,6 +4765,25 @@ class GuiBridge:
             if hasattr(eng, "invalidate_live_session"):
                 eng.invalidate_live_session(reason=f"Game Callsign Updated ({game_id})")
         return {"success": True, "game_id": game_id, "callsign": saved}
+
+    def get_game_copilot_vibe(self, game_id: Optional[str] = None) -> dict:
+        """Returns the co-pilot vibe preset and custom free-text personality for a game profile."""
+        gid = game_id or self.game_mgr.data.get("active_profile", "")
+        if not gid:
+            return {"success": False, "error": "No active game profile."}
+        info = self.game_mgr.get_copilot_vibe(gid)
+        return {"success": True, "game_id": gid, **info}
+
+    def set_game_copilot_vibe(self, game_id: str, vibe: str = "witty", custom_personality: Optional[str] = None) -> dict:
+        """Updates the per-game co-pilot vibe preset and unrestricted free-text personality."""
+        res = self.game_mgr.set_copilot_vibe(game_id, vibe=vibe, custom_personality=custom_personality)
+        if res.get("success"):
+            eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+            if eng is not None:
+                eng._reset_context_flag = True
+                if hasattr(eng, "invalidate_live_session"):
+                    eng.invalidate_live_session(reason="Co-Pilot Personality Updated")
+        return res
 
     def set_game_multiple_characters(self, game_id: str, enabled: Any) -> dict:
         """Toggles vision-matched multiple main character callsign mode for a game profile."""

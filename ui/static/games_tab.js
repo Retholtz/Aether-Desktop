@@ -390,6 +390,14 @@ function renderActiveGameDetail() {
     // Keybinds Table (with live filter + count badge)
     renderKeybindsTable(profile);
 
+    // Co-Pilot Vibe & Custom Free-Text Personality
+    const vibeSelect = document.getElementById('select-game-copilot-vibe');
+    const personaArea = document.getElementById('textarea-game-copilot-personality');
+    const vibeStatus = document.getElementById('copilot-vibe-save-status');
+    if (vibeSelect) vibeSelect.value = profile.copilot_vibe || 'witty';
+    if (personaArea) personaArea.value = profile.copilot_personality || '';
+    if (vibeStatus) vibeStatus.textContent = '';
+
     // Custom Visual & Multi-Step Macros Table
     refreshGameMacrosTable(activeGameId, profile);
 
@@ -1181,6 +1189,38 @@ function initGamesTabEvents() {
     document.getElementById('btn-generate-macro-steps')?.addEventListener('click', handleGenerateMacroSteps);
     document.querySelectorAll('.btn-macro-snippet').forEach(btn => {
         btn.addEventListener('click', () => insertMacroStepSnippet(btn.dataset.snippet));
+    });
+
+    // Co-Pilot Vibe Preset & Free-Text Personality autosave
+    let copilotVibeDebounce = null;
+    const persistCopilotVibe = async () => {
+        if (!activeGameId || !window.pywebview?.api?.set_game_copilot_vibe) return;
+        const vibeEl = document.getElementById('select-game-copilot-vibe');
+        const textEl = document.getElementById('textarea-game-copilot-personality');
+        const statusEl = document.getElementById('copilot-vibe-save-status');
+        const vibe = vibeEl ? vibeEl.value : 'witty';
+        const customText = textEl ? textEl.value : '';
+        try {
+            const res = await window.pywebview.api.set_game_copilot_vibe(activeGameId, vibe, customText);
+            if (res && res.success) {
+                const prof = currentGamesData?.profiles?.[activeGameId];
+                if (prof) {
+                    prof.copilot_vibe = res.vibe;
+                    prof.copilot_personality = res.custom_personality;
+                }
+                if (statusEl) {
+                    statusEl.textContent = 'Saved';
+                    setTimeout(() => { if (statusEl && statusEl.textContent === 'Saved') statusEl.textContent = ''; }, 1800);
+                }
+            }
+        } catch (err) {
+            console.error("set_game_copilot_vibe error:", err);
+        }
+    };
+    document.getElementById('select-game-copilot-vibe')?.addEventListener('change', persistCopilotVibe);
+    document.getElementById('textarea-game-copilot-personality')?.addEventListener('input', () => {
+        if (copilotVibeDebounce) clearTimeout(copilotVibeDebounce);
+        copilotVibeDebounce = setTimeout(persistCopilotVibe, 600);
     });
 
     // Close modals on clicking overlay backdrop

@@ -975,12 +975,18 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         clean_name = str(name or "").lower().strip()
         if not clean_name:
             return {"status": "error", "message": "Macro name cannot be empty."}
-        if not isinstance(steps, list) or not steps:
-            return {"status": "error", "message": "Macro must contain at least one step."}
+        from core.game_macro_runner import normalize_and_validate_macro_steps
+        norm_steps, val_errors = normalize_and_validate_macro_steps(steps, profile=profile)
+        if val_errors:
+            return {
+                "status": "error",
+                "message": "Macro validation failed: " + " | ".join(val_errors),
+                "errors": val_errors,
+            }
 
         entry: Dict[str, Any] = {
             "description": str(description or clean_name.title()).strip(),
-            "steps": steps,
+            "steps": norm_steps,
             "source": "user_macro",
         }
         if condition:

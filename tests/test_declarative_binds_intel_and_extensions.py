@@ -494,9 +494,80 @@ class TestUserMacrosAndVisionClick(unittest.TestCase):
             "btn-generate-macro-steps",
             "textarea-macro-steps",
             "btn-confirm-save-macro",
+            "select-game-copilot-vibe",
+            "textarea-game-copilot-personality",
         ):
             self.assertIn(el_id, html)
             self.assertIn(el_id, js)
+
+    def test_shorthand_macro_normalization_and_bind_validation(self):
+        from core.game_macro_runner import normalize_and_validate_macro_steps
+
+        profile = {
+            "keybinds": {
+                "left panel": {"key": "1", "modifiers": []},
+                "ui next page": {"key": "e", "modifiers": []},
+            }
+        }
+        # Shorthand LLM output normalizes cleanly when binds exist
+        steps, errs = normalize_and_validate_macro_steps(
+            [
+                {"trigger_bind": {"phrase": "left panel"}},
+                {"wait": 500},
+                {"press": "space"},
+            ],
+            profile=profile,
+        )
+        self.assertEqual(errs, [])
+        self.assertEqual(steps[0], {"action": "trigger_bind", "phrase": "left panel"})
+        self.assertEqual(steps[1], {"action": "wait", "delay_ms": 500})
+        self.assertEqual(steps[2], {"action": "press", "key": "space"})
+
+        # Unknown bind phrase is rejected with helpful close-match hint
+        _, bad_errs = normalize_and_validate_macro_steps(
+            [{"trigger_bind": {"phrase": "cycle next page"}}],
+            profile=profile,
+        )
+        self.assertEqual(len(bad_errs), 1)
+        self.assertIn("unknown keybind", bad_errs[0].lower())
+        self.assertIn("ui next page", bad_errs[0])
+
+    def test_unified_chat_log_across_silent_rotations_and_copilot_vibe_directive(self):
+        from core.session_lifecycle import SessionLifecycleManager
+        from core.game_manager import GameManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            chats_dir = Path(tmp) / "chats"
+            lc = SessionLifecycleManager(chats_dir=str(chats_dir))
+            initial_id = lc.session_id
+
+            lc.record_turn("user", "Open Galaxy Map")
+            lc.record_turn("assistant", "Galaxy map up!")
+            lc.reset_metrics()  # Silent WebSocket rotation #1
+
+            lc.record_turn("user", "All stop")
+            lc.record_turn("assistant", "Killed the engines!")
+            lc.reset_metrics()  # Silent WebSocket rotation #2
+
+            # Still ONE unified session file with all 4 turns
+            self.assertEqual(lc.session_id, initial_id)
+            files = list(chats_dir.glob("session_*.json"))
+            self.assertEqual(len(files), 1)
+            saved = json.loads(files[0].read_text(encoding="utf-8"))
+            self.assertEqual(len(saved["turns"]), 4)
+            self.assertEqual([t["turn_id"] for t in saved["turns"]], [1, 2, 3, 4])
+
+            # Co-Pilot vibe + unrestricted free-text personality + anti-rote & adaptive pacing
+            mgr = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr.add_game("Space Sim", process_name="SpaceSim.exe")
+            mgr.set_active_profile("space_sim")
+            res = mgr.set_copilot_vibe("space_sim", "witty", "Dry humor like TARS from Interstellar.\nLoves banter.")
+            self.assertTrue(res["success"])
+            ctx = mgr.get_active_game_context()
+            self.assertIn("ANTI-ROTE VARIETY RULE", ctx)
+            self.assertIn("TARS from Interstellar", ctx)
+            self.assertIn("DO NOT cut yourself off at 2", ctx)
+            mgr.close()
 
 
 class TestTier2PythonGameExtensions(unittest.TestCase):

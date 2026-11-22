@@ -1580,6 +1580,9 @@ class GameManager:
         # 5b. Per-Game Player Callsign Directive (supports ';' separated random callsigns or blank = no callout)
         parts.append(self.build_game_callsign_directive(profile, game_id=active_id))
 
+        # 5c. Co-Pilot Vibe, Free-Text Personality, Anti-Rote Variety & Adaptive Conversational Pacing
+        parts.append(self.build_copilot_personality_directive(profile))
+
         # 6. Strict Game Scope & Search Locking Directive
         game_title = profile.get("display_name", active_id)
         universe_name = profile.get("universe_name") or profile.get("world_name") or f"the universe of {game_title}"
@@ -1594,10 +1597,10 @@ class GameManager:
             f"   - NEVER search for, reference, or import terminology from unrelated games (e.g. World of Warcraft, Black Desert, Dark Souls, Elder Scrolls, etc.).\n"
             f"   - When discussing game lore, builds, quests, or mechanics, provide rich, thorough, and detailed guidance grounded in {game_title}.\n"
             f"2. GOOGLE SEARCH LOCK: If you perform a Google Search to assist the player, your search query MUST be strictly scoped with \"{game_title}\" (e.g. '\"{game_title}\" <topic>'). Never execute un-scoped generic searches.\n"
-            f"3. LIVE INTEL, MARKET LOOKUP & COURSE PLOTTING (CO-PILOT / SHIP COMPUTER MANDATE):\n"
-            f"   - YOU ARE THE CO-PILOT & TACTICAL DATABASE. NEVER tell the player to 'go look it up on Inara', 'check Spansh', 'check a wiki', or 'search online yourself'.\n"
-            f"   - Whenever the player asks where to buy/sell a commodity, item, gear, ship module, outfitting, or service (e.g. 'find Liquid Oxygen', 'nearest Material Trader', 'where to buy X'): IMMEDIATELY call `query_game_intel(query=..., category=...)`.\n"
-            f"   - Report the concrete results concisely in-character (exact system/zone, station/vendor name, distance, landing pad/constraints, stock/supply, and price) and offer to plot the course.\n"
+            f"3. LIVE INTEL, MARKET LOOKUP & COURSE PLOTTING (CO-PILOT DATABASE MANDATE):\n"
+            f"   - YOU ARE THE CO-PILOT & TACTICAL DATABASE. NEVER tell the player to 'go look it up on a website', 'check a wiki', or 'search online yourself'.\n"
+            f"   - Whenever the player asks where to buy/sell a commodity, item, gear, module, outfitting, or service: IMMEDIATELY call `query_game_intel(query=..., category=...)`.\n"
+            f"   - Report the concrete results naturally in-character (exact location/zone, vendor/station name, distance, access constraints, stock/supply, and price) and offer to plot the course.\n"
             f"   - When the player asks to plot a course, route to a system, or mark a location on their map, delegate directly to `search_and_route_destination` (for search-bar maps) or `pan_and_mark_map_location` / `assist_game_navigation`.\n"
             f"   - IN-GAME MENUS, MAPS & UI BUTTONS: NEVER use `close_window` or `add_to_whitelist` for in-game screens, maps, or menus — close them via `trigger_game_action` (e.g. `'close menu'`, `'escape'`, or the map toggle). To click a visible in-game UI button (e.g. `'Auto Launch'`, `'Starport Services'`), use `click_game_ui_element` or a saved macro. NEVER claim success if a tool returns `failed` or `element_not_found`.\n"
             f"   - NEVER attempt to blindly click raw screen coordinates with generic `mouse_click` or send random `escape`, `Close`, or `t` keystrokes.\n"
@@ -1900,6 +1903,87 @@ class GameManager:
                     pass
 
         return discovered
+
+    ALLOWED_COPILOT_VIBES = ("witty", "tactical", "cinematic", "terse")
+
+    def get_copilot_vibe(self, game_id: str) -> Dict[str, str]:
+        """Returns the co-pilot vibe preset and free-text custom personality for a game profile."""
+        profile = self.get_profile(game_id) or {}
+        vibe = str(profile.get("copilot_vibe") or "witty").strip().lower()
+        if vibe not in self.ALLOWED_COPILOT_VIBES:
+            vibe = "witty"
+        custom = str(profile.get("copilot_personality") or "")
+        return {"vibe": vibe, "custom_personality": custom}
+
+    def set_copilot_vibe(self, game_id: str, vibe: str = "witty", custom_personality: Optional[str] = None) -> dict:
+        """Sets the per-game co-pilot vibe preset and optional unrestricted free-text personality."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        norm_vibe = str(vibe or "witty").strip().lower()
+        if norm_vibe not in self.ALLOWED_COPILOT_VIBES:
+            return {
+                "success": False,
+                "error": f"Invalid vibe '{vibe}'. Allowed: {', '.join(self.ALLOWED_COPILOT_VIBES)}.",
+            }
+        profile["copilot_vibe"] = norm_vibe
+        if custom_personality is not None:
+            profile["copilot_personality"] = str(custom_personality)
+        self._save_profiles(self.data, target_game_id=game_id)
+        return {
+            "success": True,
+            "game_id": game_id,
+            "vibe": norm_vibe,
+            "custom_personality": str(profile.get("copilot_personality") or ""),
+        }
+
+    def build_copilot_personality_directive(self, profile: Dict[str, Any]) -> str:
+        """Builds an engaging, non-rote personality & adaptive-pacing directive for Game Mode."""
+        vibe = str((profile or {}).get("copilot_vibe") or "witty").strip().lower()
+        custom = str((profile or {}).get("copilot_personality") or "").strip()
+
+        vibe_descriptions = {
+            "witty": (
+                "PRESET: WITTY & ENGAGING\n"
+                "- Be lively, warm, clever, and genuinely fun to fly/adventure with.\n"
+                "- Mix punchy energy, dry humor, and natural camaraderie — like a favorite sci-fi/RPG co-pilot."
+            ),
+            "tactical": (
+                "PRESET: TACTICAL / FLIGHT-DECK PRO\n"
+                "- Sharp, confident, professional co-pilot with crisp situational awareness and calm composure."
+            ),
+            "cinematic": (
+                "PRESET: CINEMATIC / DRAMATIC\n"
+                "- Immersive, atmospheric, and vivid — lean into the drama and wonder of the game world."
+            ),
+            "terse": (
+                "PRESET: TERSE / MINIMAL\n"
+                "- Ultra-brief, razor-sharp callouts and minimal chatter unless the player starts a longer conversation."
+            ),
+        }
+        vibe_block = vibe_descriptions.get(vibe, vibe_descriptions["witty"])
+        custom_block = (
+            f"\nCUSTOM USER PERSONALITY INSTRUCTIONS (HIGHEST PRIORITY):\n{custom}\n"
+            if custom
+            else ""
+        )
+
+        return (
+            "=== CO-PILOT PERSONALITY, VARIETY & ADAPTIVE PACING ===\n"
+            f"{vibe_block}{custom_block}\n"
+            "ANTI-ROTE VARIETY RULE:\n"
+            "- NEVER recite raw keybind labels or repeat the same robotic '[Action], [Callsign].' template!\n"
+            "- Vary your phrasing, energy, and rhythm organically on every command (for example, instead of always saying "
+            "'Setting throttle to zero, Commander', mix it up: 'Engines full stop!', 'Killed the engines.', "
+            "'All stop — parked and waiting on your call.', 'Dead stop, what's the play?').\n"
+            "- Do NOT tack the player's callsign onto every single reply — use it naturally and sparingly.\n"
+            "ADAPTIVE PACING & LIVE CONVERSATION:\n"
+            "- Quick cockpit/combat/action commands: keep acknowledgments punchy, lively, and varied (1 short line).\n"
+            "- News, lore, world events, strategy, or open questions: DO NOT cut yourself off at 2–3 lines! "
+            "Answer directly on the Live WebSocket (using your built-in Google Search when needed — reserve `query_game_intel` "
+            "for structured live database lookups like markets, commodities, gear/outfitting, vendors, services, or routes) "
+            "and enjoy a rich, natural, multi-sentence conversational exchange."
+        )
 
     def get_callsign(self, game_id: str) -> str:
         """Returns the configured player callsign string (supports ';' separated values or blank)."""

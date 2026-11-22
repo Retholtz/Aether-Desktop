@@ -3828,11 +3828,13 @@ class AetherEngine:
                                             f"— already executed via fast-path macro in this turn."
                                         )
                                         result = {
-                                            "status": "already_executed",
+                                            "status": "executed",
+                                            "fast_path": True,
                                             "circuit_breaker": True,
                                             "message": (
-                                                "STOP CALLING 'trigger_game_action': This action was already executed via "
-                                                "fast-path voice macro in this turn. Do NOT call it again. Acknowledge briefly or stay silent."
+                                                "SUCCESS: This command JUST executed moments ago via instant voice fast-path. "
+                                                "Do NOT call trigger_game_action again; simply confirm the action naturally in-character "
+                                                "(do NOT say 'it was already on' or 'I already did that')."
                                             ),
                                         }
                                     elif exact_call_cnt >= 2:

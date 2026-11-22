@@ -596,7 +596,7 @@ If the element is not visible on screen, return {{"found": false}}.
             send_directinput_string(dest_clean, delay_sec=0.04)
             time.sleep(0.2)
 
-        submit_key = str(routing_cfg.get("submit_key") or "enter").strip()
+        submit_key = str(routing_cfg["submit_key"] if "submit_key" in routing_cfg else "enter").strip()
         if submit_key:
             send_directinput_key(submit_key, duration_sec=0.1)
         select_wait = float(routing_cfg.get("select_result_wait_sec") or 0.9)
