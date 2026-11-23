@@ -396,7 +396,9 @@ class MacroRunner:
                         }
                 else:
                     os_controls.move_mouse_absolute(pt[0], pt[1])
-                    time.sleep(0.1)
+                    if hasattr(os_controls, "nudge_mouse_relative"):
+                        os_controls.nudge_mouse_relative(1, 0)
+                    time.sleep(0.18)
                     os_controls.click_mouse_button(btn, hold_duration=hold_sec)
 
         elif action_type == "type":

@@ -1550,6 +1550,12 @@ class ToolDispatcher:
             "spot_and_guide_map_landmark",
             "search_and_route_destination",
             "assist_game_navigation",
+            "click_game_ui_element",
+            "complete_game_ui_task",
+            "save_game_macro",
+            "list_game_macros",
+            "delete_game_macro",
+            "run_game_key_sequence",
         }
         for name_key, d in self._custom_declarations.items():
             if not is_gm and name_key in game_only_tools:

@@ -208,6 +208,80 @@ def revoke_game_extension(module_id: str, base_dir: Optional[str] = None) -> Dic
     return {"success": True, "module_id": norm_id, "trusted": False}
 
 
+def import_game_extension(
+    module_id: str,
+    source_py_path: str,
+    base_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Imports a user-supplied `.py` community extension into `data/game_extensions/<module_id>/extension.py`.
+    Imported extensions start UNTRUSTED by default until the user explicitly approves their SHA-256 hash.
+    """
+    import shutil
+
+    norm_id = _normalize_module_id(module_id)
+    if not norm_id:
+        return {"success": False, "error": "Invalid game/module ID for extension import."}
+    src = str(source_py_path or "").strip()
+    if not src or not os.path.isfile(src):
+        return {"success": False, "error": f"Source Python file not found: {src}"}
+    if not src.lower().endswith(".py"):
+        return {"success": False, "error": "Community extensions must be Python (.py) files."}
+    if os.path.getsize(src) <= 0:
+        return {"success": False, "error": "Selected Python extension file is empty."}
+
+    ext_root = os.path.realpath(get_extensions_dir(base_dir))
+    target_dir = os.path.realpath(os.path.join(ext_root, norm_id))
+    if not target_dir.startswith(ext_root + os.sep):
+        return {"success": False, "error": "Invalid extension directory path."}
+    os.makedirs(target_dir, exist_ok=True)
+    dest_path = os.path.join(target_dir, "extension.py")
+
+    try:
+        shutil.copyfile(src, dest_path)
+    except Exception as exc:
+        return {"success": False, "error": f"Failed copying extension file: {exc}"}
+
+    # Revoke any prior trust so the newly imported file requires explicit SHA-256 approval
+    revoke_game_extension(norm_id, base_dir=base_dir)
+    sha = _compute_sha256(dest_path)
+    return {
+        "success": True,
+        "module_id": norm_id,
+        "script_path": dest_path,
+        "sha256": sha,
+        "trusted": False,
+        "message": f"Imported Python extension for '{norm_id}'. Click 'Trust & Enable' after reviewing to activate it.",
+    }
+
+
+def delete_game_extension(module_id: str, base_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Revokes trust and removes an installed `.py` game extension from disk."""
+    norm_id = _normalize_module_id(module_id)
+    if not norm_id:
+        return {"success": False, "error": "Invalid module ID."}
+    revoke_game_extension(norm_id, base_dir=base_dir)
+    ext_root = os.path.realpath(get_extensions_dir(base_dir))
+    target_dir = os.path.realpath(os.path.join(ext_root, norm_id))
+    if not target_dir.startswith(ext_root + os.sep):
+        return {"success": False, "error": "Invalid extension directory path."}
+    removed = False
+    for fname in ("extension.py", "plugin.py"):
+        fpath = os.path.join(target_dir, fname)
+        if os.path.isfile(fpath):
+            try:
+                os.remove(fpath)
+                removed = True
+            except Exception as exc:
+                return {"success": False, "error": f"Failed deleting {fname}: {exc}"}
+    try:
+        if os.path.isdir(target_dir) and not os.listdir(target_dir):
+            os.rmdir(target_dir)
+    except Exception:
+        pass
+    return {"success": True, "module_id": norm_id, "removed": removed}
+
+
 # Cache: (module_id, script_path) -> (sha256, GameExtension instance)
 _LOADED_EXTENSIONS: Dict[tuple, tuple] = {}
 

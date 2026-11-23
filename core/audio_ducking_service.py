@@ -4,14 +4,18 @@ Ducks background game and media audio while keeping Aether's speech at 100%.
 Includes fail-safe volume cleanup on normal shutdown, unhandled exceptions, and sudden process exit.
 """
 import os
+import json
 import atexit
 import asyncio
 import threading
 from contextlib import asynccontextmanager, contextmanager
 from typing import Dict, Any, Optional, Callable, Set
 from core.logger import get_logger
+from core.paths import user_data_path
 
 logger = get_logger("AudioDucking")
+
+DEFAULT_DUCKING_RECOVERY_FILE = user_data_path("data", "ducking_recovery.json")
 
 # Lazy-import pycaw and comtypes for non-Windows mock support
 try:
@@ -63,23 +67,155 @@ class AudioDuckingService:
         enabled: bool = True,
         duck_percentage: int = 60,
         restore_delay_ms: int = 150,
-        is_output_active_fn: Optional[Callable[[], bool]] = None
+        is_output_active_fn: Optional[Callable[[], bool]] = None,
+        recovery_file: Optional[str] = DEFAULT_DUCKING_RECOVERY_FILE,
     ):
         self.enabled = enabled
         self.duck_percentage = max(0, min(100, int(duck_percentage)))
         self.restore_delay_ms = restore_delay_ms
         self.is_output_active_fn = is_output_active_fn
         self.own_pid = os.getpid()
+        self._recovery_file: Optional[str] = recovery_file
 
         self._is_ducked: bool = False
+        self._want_ducked: bool = False
+        self._duck_in_progress: bool = False
         self._original_volumes: Dict[int, float] = {}  # session_pid -> pre-duck volume level (back-compat)
         self._session_volumes: Dict[Any, float] = {}   # (pid, instance_id) -> pre-duck volume level
+        self._session_proc_names: Dict[Any, str] = {}  # skey -> process name for crash-recovery matching
         self._sync_lock = threading.RLock()
         self._lock = asyncio.Lock()
         self._unduck_gen: int = 0
 
         # Register process-level emergency restore via atexit
         atexit.register(self.restore_all)
+
+        # If a previous Aether process exited abruptly (e.g. crash or os._exit) while ducked,
+        # immediately restore any orphaned attenuated sessions on startup.
+        if self._recovery_file and os.path.exists(self._recovery_file):
+            try:
+                self.recover_orphaned_volumes()
+            except Exception as rec_err:
+                logger.warning(f"[DUCKING] Startup orphan volume recovery warning: {rec_err}")
+
+    def _load_recovery_journal(self) -> list:
+        if not self._recovery_file or not os.path.exists(self._recovery_file):
+            return []
+        try:
+            with open(self._recovery_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            entries = data.get("sessions", []) if isinstance(data, dict) else []
+            return entries if isinstance(entries, list) else []
+        except Exception as e:
+            logger.debug(f"[DUCKING] Could not read recovery journal: {e}")
+            return []
+
+    def _save_recovery_journal(self) -> None:
+        if not self._recovery_file:
+            return
+        try:
+            entries = []
+            for skey, orig_vol in self._session_volumes.items():
+                pid = skey[0] if isinstance(skey, tuple) else skey
+                inst_id = skey[1] if isinstance(skey, tuple) and len(skey) > 1 else ""
+                entries.append({
+                    "pid": int(pid),
+                    "instance_id": str(inst_id or ""),
+                    "proc_name": str(self._session_proc_names.get(skey, "") or ""),
+                    "original_vol": float(orig_vol),
+                })
+            if not entries:
+                self._clear_recovery_journal()
+                return
+            parent = os.path.dirname(self._recovery_file)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp_path = f"{self._recovery_file}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump({"owner_pid": self.own_pid, "sessions": entries}, f, indent=2)
+            os.replace(tmp_path, self._recovery_file)
+        except Exception as e:
+            logger.debug(f"[DUCKING] Could not write recovery journal: {e}")
+
+    def _clear_recovery_journal(self) -> None:
+        if not self._recovery_file:
+            return
+        try:
+            if os.path.exists(self._recovery_file):
+                os.remove(self._recovery_file)
+        except Exception as e:
+            logger.debug(f"[DUCKING] Could not clear recovery journal: {e}")
+
+    def recover_orphaned_volumes(self) -> int:
+        """
+        Restores audio sessions left attenuated by an ungraceful previous shutdown/crash
+        using the persisted ducking recovery journal.
+        Returns the number of sessions restored.
+        """
+        if not self.is_supported():
+            return 0
+        entries = self._load_recovery_journal()
+        if not entries:
+            return 0
+
+        by_pid: Dict[int, float] = {}
+        by_proc: Dict[str, float] = {}
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            try:
+                orig_v = max(0.0, min(1.0, float(item.get("original_vol", 1.0))))
+            except Exception:
+                continue
+            pid_val = item.get("pid")
+            if isinstance(pid_val, int) and pid_val > 0:
+                by_pid[pid_val] = orig_v
+            pname = str(item.get("proc_name") or "").lower().strip()
+            if pname:
+                by_proc[pname] = orig_v
+
+        if not by_pid and not by_proc:
+            self._clear_recovery_journal()
+            return 0
+
+        restored_count = 0
+        with self._sync_lock:
+            with self._com_apartment():
+                try:
+                    sessions = AudioUtilities.GetAllSessions()
+                    for session in sessions:
+                        try:
+                            if not session.Process:
+                                continue
+                            pid = session.Process.pid
+                            proc_name = ""
+                            try:
+                                proc_name = session.Process.name().lower()
+                            except Exception:
+                                pass
+                            target_orig = None
+                            if pid in by_pid:
+                                target_orig = by_pid[pid]
+                            elif proc_name and proc_name in by_proc:
+                                target_orig = by_proc[proc_name]
+                            if target_orig is None:
+                                continue
+                            volume_ctl = session._ctl.QueryInterface(ISimpleAudioVolume)
+                            if volume_ctl:
+                                current_vol = volume_ctl.GetMasterVolume()
+                                if current_vol < target_orig - 0.01:
+                                    volume_ctl.SetMasterVolume(target_orig, None)
+                                    restored_count += 1
+                        except Exception as e_sess:
+                            logger.debug(f"[DUCKING] Orphan recovery skipped session: {e_sess}")
+                    self._clear_recovery_journal()
+                    if restored_count > 0:
+                        logger.info(
+                            f"[DUCKING] Recovered {restored_count} orphaned audio session(s) left ducked by a prior exit."
+                        )
+                except Exception as e:
+                    logger.warning(f"[DUCKING] Orphan volume recovery failed: {e}")
+        return restored_count
 
     @property
     def _saved_volumes(self) -> Dict[int, float]:
@@ -174,6 +310,23 @@ class AudioDuckingService:
             if self._is_ducked:
                 return  # Prevent compounding attenuation; keep original volume baseline
 
+            # Load any orphaned journal entries (e.g. from a prior crash/exit) so we NEVER
+            # treat an already-ducked volume (like 40%) as the new baseline and double-duck it to 16%.
+            orphan_by_pid: Dict[int, float] = {}
+            orphan_by_proc: Dict[str, float] = {}
+            for item in self._load_recovery_journal():
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    ov = max(0.0, min(1.0, float(item.get("original_vol", 1.0))))
+                except Exception:
+                    continue
+                if isinstance(item.get("pid"), int) and item["pid"] > 0:
+                    orphan_by_pid[item["pid"]] = ov
+                pn = str(item.get("proc_name") or "").lower().strip()
+                if pn:
+                    orphan_by_proc[pn] = ov
+
             with self._com_apartment():
                 exclude = set(exclude_pids or ())
                 exclude.add(self.own_pid)
@@ -220,10 +373,19 @@ class AudioDuckingService:
 
                             # Cache original baseline volume (never overwrite while ducked)
                             if skey not in self._session_volumes:
-                                # Safeguard: if an application volume was left severely attenuated (<= 5%) from an
-                                # ungraceful shutdown, baseline it to 100% instead of locking in the degraded state.
-                                base_vol = 1.0 if current_vol <= 0.05 else current_vol
+                                orphan_orig = orphan_by_pid.get(pid)
+                                if orphan_orig is None and proc_name:
+                                    orphan_orig = orphan_by_proc.get(proc_name)
+                                if orphan_orig is not None and current_vol < orphan_orig - 0.01:
+                                    base_vol = orphan_orig
+                                elif current_vol <= 0.05:
+                                    # Safeguard: if an application volume was left severely attenuated (<= 5%) from an
+                                    # ungraceful shutdown, baseline it to 100% instead of locking in the degraded state.
+                                    base_vol = 1.0
+                                else:
+                                    base_vol = current_vol
                                 self._session_volumes[skey] = base_vol
+                                self._session_proc_names[skey] = proc_name
                                 if pid not in self._original_volumes:
                                     self._original_volumes[pid] = base_vol
 
@@ -239,6 +401,8 @@ class AudioDuckingService:
                             logger.debug(f"[DUCKING] Skipped session due to error: {e_session}")
 
                     self._is_ducked = True
+                    if self._session_volumes:
+                        self._save_recovery_journal()
                     if ducked_count > 0:
                         logger.info(f"[DUCKING] Ducked {ducked_count} active audio sessions by {self.duck_percentage}%: {ducked_names}")
                 except Exception as e:
@@ -249,19 +413,26 @@ class AudioDuckingService:
         """
         Restores all ducked audio sessions to their pre-duck volume level.
         Thread-safe, idempotent, and safe for interpreter shutdown (atexit).
+        Preserves saved baselines if enumeration fails mid-restore so a retry can still recover them.
         """
         if not self.is_supported():
             return
 
         with self._sync_lock:
+            self._want_ducked = False
             if not self._original_volumes and not self._session_volumes and not self._is_ducked:
+                # Still check for any orphaned journal on disk in case shutdown happens before first duck
+                if self._recovery_file and os.path.exists(self._recovery_file):
+                    self.recover_orphaned_volumes()
                 return  # Nothing to restore
 
             with self._com_apartment():
                 restored_count = 0
+                enumeration_succeeded = False
 
                 try:
                     sessions = AudioUtilities.GetAllSessions()
+                    enumeration_succeeded = True
                     for session in sessions:
                         try:
                             if not session.Process:
@@ -290,9 +461,13 @@ class AudioDuckingService:
                 except Exception as e:
                     logger.error(f"[DUCKING] Failed during session volume restoration: {e}")
                 finally:
-                    self._session_volumes.clear()
-                    self._original_volumes.clear()
-                    self._is_ducked = False
+                    # Only clear baselines if enumeration succeeded (or if nothing was ever committed as ducked)
+                    if enumeration_succeeded or not self._is_ducked:
+                        self._session_volumes.clear()
+                        self._original_volumes.clear()
+                        self._session_proc_names.clear()
+                        self._is_ducked = False
+                        self._clear_recovery_journal()
 
     # Backwards compatibility alias for restore_all
     restore_volumes_sync = restore_all
@@ -305,14 +480,30 @@ class AudioDuckingService:
         if not self.enabled or not self.is_supported():
             return
 
+        self._want_ducked = True
         self._unduck_gen += 1
+        my_gen = self._unduck_gen
 
         async with self._lock:
-            await asyncio.to_thread(self.duck_all)
+            if not self._want_ducked or my_gen != self._unduck_gen:
+                return
+            self._duck_in_progress = True
+            try:
+                await asyncio.to_thread(self.duck_all)
+            finally:
+                self._duck_in_progress = False
+
+            # Critical race guard: if unduck() arrived while duck_all() was executing
+            # inside COM/pycaw on the worker thread, immediately restore volumes now.
+            if not self._want_ducked and (self._is_ducked or self._original_volumes or self._session_volumes):
+                await asyncio.to_thread(self.restore_all)
 
     async def unduck(self):
         """Restores all modified audio sessions back to their original volume."""
-        if not self.is_supported() or not self._is_ducked:
+        self._want_ducked = False
+        if not self.is_supported():
+            return
+        if not self._is_ducked and not self._duck_in_progress and not self._original_volumes and not self._session_volumes:
             return
 
         current_gen = self._unduck_gen
@@ -323,7 +514,7 @@ class AudioDuckingService:
                 loop = asyncio.get_running_loop()
                 deadline = loop.time() + 5.0
                 while self.is_output_active_fn() and loop.time() < deadline:
-                    if current_gen != self._unduck_gen:
+                    if self._want_ducked or current_gen != self._unduck_gen:
                         return
                     await asyncio.sleep(0.05)
             except Exception:
@@ -333,11 +524,13 @@ class AudioDuckingService:
         if self.restore_delay_ms > 0:
             await asyncio.sleep(self.restore_delay_ms / 1000.0)
 
-        if current_gen != self._unduck_gen:
+        if self._want_ducked or current_gen != self._unduck_gen:
             return
 
         async with self._lock:
-            if not self._is_ducked or current_gen != self._unduck_gen:
+            if self._want_ducked or current_gen != self._unduck_gen:
+                return
+            if not self._is_ducked and not self._original_volumes and not self._session_volumes:
                 return
 
             await asyncio.to_thread(self.restore_all)

@@ -891,7 +891,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         if not client:
             return {"status": "error", "message": "Vision client unavailable."}
         from core.game_nav import UniversalGameNavigator
-        from tools.os_controls import focus_window, move_mouse_absolute, click_mouse_button
+        from tools.os_controls import focus_window, move_mouse_absolute, nudge_mouse_relative, click_mouse_button
         _, nav = _build_game_navigator(UniversalGameNavigator)
         if nav.target_process:
             try:
@@ -907,7 +907,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 "message": f"Could not find '{target_description}' on the active game screen.",
             }
         move_mouse_absolute(pt[0], pt[1])
-        time.sleep(0.1)
+        nudge_mouse_relative(1, 0)
+        time.sleep(0.18)
         click_mouse_button(str(button or "left").lower(), hold_duration=max(0.04, float(hold_ms or 80) / 1000.0))
         return {
             "status": "executed",
@@ -918,24 +919,209 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
 
     @dispatcher.register(
+        name="complete_game_ui_task",
+        description=(
+            "Closed-loop Vision UI/Menu Navigator for stateful in-game menus, station services, wheels, or panels "
+            "(e.g. 'Refuel ship', 'Request docking at current station', 'Repair ship', 'Equip sword'). "
+            "Repeatedly observes the live game screen, detects where the menu highlight cursor currently is, "
+            "executes adaptive keyboard or mouse steps relative to that highlight, and visually verifies completion "
+            "before reporting success. Prefer this over blind keystroke guessing whenever cursor position can vary."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Clear UI goal to complete and visually confirm (e.g. 'Refuel ship', 'Request Docking')."
+                },
+                "max_steps": {
+                    "type": "integer",
+                    "description": "Maximum observe-act-verify steps (default: 6, max: 10)."
+                },
+                "preferred_input": {
+                    "type": "string",
+                    "enum": ["auto", "keyboard", "mouse"],
+                    "description": "Preferred interaction mode ('auto' chooses keyboard relative to highlight or mouse click)."
+                },
+            },
+            "required": ["goal"],
+        },
+    )
+    def complete_game_ui_task(goal: str, max_steps: int = 6, preferred_input: str = "auto") -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic menu/UI automation is disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
+        client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        if not client:
+            return {"status": "error", "message": "Vision client unavailable."}
+        from core.game_nav import UniversalGameNavigator
+        _, nav = _build_game_navigator(UniversalGameNavigator)
+        return nav.complete_ui_task(
+            goal=goal,
+            max_steps=max_steps,
+            preferred_input=preferred_input,
+        )
+
+    MACRO_STEP_ITEMS_SCHEMA: Dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["press", "trigger_bind", "vision_click", "click", "type", "paste", "wait"],
+                "description": "Step action type."
+            },
+            "key": {
+                "type": "string",
+                "description": "Raw keyboard key name for 'press' (e.g. 'w', 's', 'space', 'enter', 'escape', 'tab', 'f1')."
+            },
+            "modifiers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional modifier keys for 'press' (e.g. ['ctrl'], ['shift'])."
+            },
+            "repeat": {
+                "type": "integer",
+                "description": "Number of times to repeat a 'press' or 'trigger_bind' step (default: 1)."
+            },
+            "interval_ms": {
+                "type": "integer",
+                "description": "Delay in milliseconds between repeats (e.g. 150)."
+            },
+            "hold_ms": {
+                "type": "integer",
+                "description": "Hold duration in milliseconds for key/mouse presses (default: 80)."
+            },
+            "phrase": {
+                "type": "string",
+                "description": "Synced keybind phrase for 'trigger_bind' (e.g. 'landing gear', 'ui left')."
+            },
+            "target": {
+                "type": "string",
+                "description": "Visible UI button or label description for 'vision_click'."
+            },
+            "button": {
+                "type": "string",
+                "enum": ["left", "right"],
+                "description": "Mouse button for 'vision_click' or 'click' (default: 'left')."
+            },
+            "x": {
+                "type": "integer",
+                "description": "Optional screen X coordinate for 'click'."
+            },
+            "y": {
+                "type": "integer",
+                "description": "Optional screen Y coordinate for 'click'."
+            },
+            "text": {
+                "type": "string",
+                "description": "Text payload for 'type' or 'paste'."
+            },
+            "delay_ms": {
+                "type": "integer",
+                "description": "Post-step or wait delay in milliseconds."
+            },
+            "abort_if_not_found": {
+                "type": "boolean",
+                "description": "For 'vision_click', abort macro if element is not found (default: true)."
+            },
+        },
+        "required": ["action"],
+    }
+
+    @dispatcher.register(
+        name="run_game_key_sequence",
+        description=(
+            "Immediately executes an ad-hoc multi-step keyboard, mouse, or visual-click sequence in the active game "
+            "without saving it as a named macro (e.g. pressing 'w' 3 times with 150ms interval then pressing 'space'). "
+            "Use this whenever the player asks you to press a sequence of keys or navigate an in-game menu directly."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": "Ordered list of typed macro step objects to execute immediately.",
+                    "items": MACRO_STEP_ITEMS_SCHEMA,
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Brief summary of what this sequence is doing (e.g. 'navigate menu and confirm')."
+                },
+            },
+            "required": ["steps"],
+        },
+    )
+    def run_game_key_sequence(steps: list, description: str = "") -> dict:
+        if not game_manager:
+            return {"status": "error", "message": "Game manager unavailable."}
+        active_id = game_manager.data.get("active_profile", "")
+        profile = game_manager.get_profile(active_id) if active_id else None
+        if not profile:
+            return {"status": "error", "message": "No active game profile selected."}
+        if hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic key/mouse sequences are disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
+        from core.game_macro_runner import normalize_and_validate_macro_steps
+        norm_steps, val_errors = normalize_and_validate_macro_steps(steps, profile=profile)
+        if val_errors:
+            return {
+                "status": "error",
+                "message": "Sequence validation failed: " + " | ".join(val_errors),
+                "errors": val_errors,
+            }
+        proc = profile.get("process_name") or profile.get("display_name") or ""
+        if proc:
+            try:
+                from tools.os_controls import focus_window
+                focus_window(proc)
+                time.sleep(0.08)
+            except Exception:
+                pass
+        vision_client = (
+            getattr(engine, "genai_client", None)
+            or getattr(engine, "client", None)
+            or getattr(dispatcher, "genai_client", None)
+        )
+        model_endpoint = _resolve_tier2_game_model(engine)
+        seq_name = str(description or "ad_hoc_sequence").strip() or "ad_hoc_sequence"
+        return game_manager.macro_runner._run_sequence(
+            name=seq_name,
+            seq_def={"steps": norm_steps, "sync": True, "ack": description or f"Executed {len(norm_steps)}-step sequence."},
+            profile=profile,
+            state_flags={},
+            vision_client=vision_client,
+            model_endpoint=model_endpoint,
+        )
+
+    @dispatcher.register(
         name="save_game_macro",
         description=(
-            "Creates or updates a user-generated multi-step visual/keystroke macro for the active game. "
-            "Supported step actions: 'press' (key, modifiers, hold_ms, repeat, interval_ms), "
-            "'trigger_bind' (phrase, repeat, interval_ms), 'vision_click' (target, button, hold_ms, abort_if_not_found), "
-            "'click' (button, x, y), 'type' (text), 'paste' (text), 'wait' (delay_ms)."
+            "Creates or updates a reusable user-generated multi-step visual/keystroke macro for the active game. "
+            "Works with ANY raw keyboard keys via 'press' (key, modifiers, hold_ms, repeat, interval_ms), "
+            "synced keybinds via 'trigger_bind' (phrase, repeat, interval_ms), on-screen UI buttons via 'vision_click' "
+            "(target, button, hold_ms, abort_if_not_found), 'click', 'type', 'paste', and 'wait' (delay_ms). "
+            "Example: to press W 3 times then spacebar, use steps=[{\"action\":\"press\",\"key\":\"w\",\"repeat\":3,\"interval_ms\":150},{\"action\":\"press\",\"key\":\"space\"}]."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Voice trigger phrase for the macro (e.g. 'take us out', 'full power to engines')."
+                    "description": "Voice trigger phrase for the macro (e.g. 'take us out', 'refuel', 'full power to engines')."
                 },
                 "steps": {
                     "type": "array",
-                    "description": "Ordered list of step objects.",
-                    "items": {"type": "object"}
+                    "description": "Ordered list of typed step objects.",
+                    "items": MACRO_STEP_ITEMS_SCHEMA,
                 },
                 "description": {
                     "type": "string",
@@ -953,6 +1139,10 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Optional alternative voice phrases."
+                },
+                "run_now": {
+                    "type": "boolean",
+                    "description": "If true, also execute the newly saved macro immediately."
                 }
             },
             "required": ["name", "steps"]
@@ -965,6 +1155,7 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         condition: str = "",
         ack: str = "",
         aliases: Optional[list] = None,
+        run_now: bool = False,
     ) -> dict:
         if not game_manager:
             return {"status": "error", "message": "Game manager unavailable."}
@@ -1006,13 +1197,19 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                     engine.notify("game_macros_updated", {"game_id": active_id, "macro_name": clean_name})
                 except Exception:
                     pass
-        return {
+        exec_result = None
+        if run_now:
+            exec_result = run_game_key_sequence(norm_steps, description=entry["description"])
+        resp = {
             "status": "success",
             "game": profile.get("display_name", active_id),
             "macro_name": clean_name,
-            "step_count": len(steps),
-            "message": f"Saved custom macro '{clean_name}' ({len(steps)} steps) for {profile.get('display_name', active_id)}.",
+            "step_count": len(norm_steps),
+            "message": f"Saved custom macro '{clean_name}' ({len(norm_steps)} steps) for {profile.get('display_name', active_id)}.",
         }
+        if exec_result is not None:
+            resp["execution"] = exec_result
+        return resp
 
     @dispatcher.register(
         name="list_game_macros",
@@ -1098,6 +1295,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "launch_game_companion_app": launch_game_companion_app,
         "calibrate_hud_bars": calibrate_hud_bars,
         "click_game_ui_element": click_game_ui_element,
+        "complete_game_ui_task": complete_game_ui_task,
+        "run_game_key_sequence": run_game_key_sequence,
         "save_game_macro": save_game_macro,
         "list_game_macros": list_game_macros,
         "delete_game_macro": delete_game_macro,

@@ -11,6 +11,7 @@
     "EDLaunch.exe"
   ],
   "universe_name": "Milky Way",
+  "default_callsign": "Commander",
   "input_mode": "autonomous",
   "navigation_mode": "search_bar",
   "suppress_alerts_when_running": [
@@ -35,8 +36,11 @@
         { "key": "enter", "delay_ms": 1200 }
       ],
       "plot_visual_hint": "Route Plotter / Plot Route button icon on the right-hand system info sidebar",
+      "prefer_plot_key_first": true,
+      "pre_plot_move_center": true,
+      "pre_plot_mouse_nudge": [15, 10],
       "plot_key": "space",
-      "plot_hold_sec": 1.0,
+      "plot_hold_sec": 1.25,
       "verify_telemetry_field": "route_destination",
       "verify_timeout_sec": 3.0
     }
@@ -531,6 +535,11 @@
       "result_fields": {
         "system": "name",
         "distance_ly": "distance",
+        "controlling_power": "controlling_power",
+        "power_state": "power_state",
+        "powers": "power",
+        "controlling_minor_faction": "controlling_minor_faction",
+        "controlling_minor_faction_state": "controlling_minor_faction_state",
         "allegiance": "allegiance",
         "government": "government",
         "primary_economy": "primary_economy",
@@ -540,16 +549,214 @@
     }
   },
   "telemetry": {
-    "adapter": "elite_journal",
+    "adapter": "declarative_file",
     "provider_type": "native_file",
-    "poll_interval_sec": 0.5,
+    "poll_interval_sec": 0.25,
     "dir": "%USERPROFILE%\\Saved Games\\Frontier Developments\\Elite Dangerous",
+    "status_file": "Status.json",
     "native_file_path": "%USERPROFILE%\\Saved Games\\Frontier Developments\\Elite Dangerous\\Status.json",
+    "journal_glob": "Journal.*.log",
+    "event_field": "event",
+    "rehydrate_lines": 150,
     "companion_files": [
       "NavRoute.json",
       "Cargo.json",
       "Market.json"
     ],
+    "location_fields": {
+      "system": "star_system",
+      "station": "station",
+      "body": "body",
+      "star_pos": "star_pos"
+    },
+    "initial_state": {
+      "star_system": "Unknown",
+      "body": "Unknown",
+      "station": null,
+      "docked": false,
+      "supercruise": false,
+      "ship_type": "Unknown",
+      "ship_name": "Unknown",
+      "ship_pad_size": "M",
+      "needs_large_pad": false,
+      "star_pos": null,
+      "controlling_power": null,
+      "powerplay_state": null,
+      "powers": [],
+      "system_faction": null,
+      "system_allegiance": null,
+      "system_security": null,
+      "hull_health": 1.0,
+      "shields_up": true,
+      "fuel_main": null,
+      "cargo_count": 0,
+      "legal_status": "Clean",
+      "pips": [2.0, 2.0, 2.0],
+      "gui_focus": 0
+    },
+    "initial_flags": {
+      "docked": false,
+      "landed": false,
+      "landing_gear_down": false,
+      "shields_up": true,
+      "supercruise": false,
+      "hardpoints_deployed": false,
+      "cargo_scoop_open": false,
+      "lights_on": false,
+      "night_vision": false,
+      "silent_running": false,
+      "in_fighter": false,
+      "in_srv": false,
+      "in_main_ship": true
+    },
+    "flag_to_state": [
+      "docked",
+      "supercruise",
+      "shields_up",
+      "on_foot"
+    ],
+    "status_fields": {
+      "fuel_main": "Fuel.FuelMain",
+      "pips": { "path": "Pips", "list_scale": 0.5 },
+      "gui_focus": "GuiFocus"
+    },
+    "companion_extractors": [
+      {
+        "file": "NavRoute.json",
+        "fields": {
+          "route_destination": { "path": "Route.-1.StarSystem" },
+          "route_jumps": { "list_len_minus_1": "Route" }
+        }
+      },
+      {
+        "file": "Cargo.json",
+        "fields": {
+          "cargo_count": { "path": "Count", "cast": "int" },
+          "cargo_items": {
+            "list_map": "Inventory",
+            "limit": 15,
+            "fields": {
+              "name": ["Name_Localised", "Name"],
+              "count": "Count"
+            }
+          }
+        }
+      }
+    ],
+    "event_handlers": [
+      {
+        "events": ["Location", "FSDJump", "CarrierJump"],
+        "set_state": {
+          "star_system": "StarSystem",
+          "body": "Body",
+          "docked": { "path": "Docked", "default": false },
+          "station": { "path": "StationName", "default": null, "allow_none": true },
+          "star_pos": { "path": "StarPos", "require_len": 3 },
+          "controlling_power": { "path": "ControllingPower", "default": null, "allow_none": true },
+          "powerplay_state": { "path": "PowerplayState", "default": null, "allow_none": true },
+          "powers": { "path": "Powers", "default": [] },
+          "system_faction": { "path": ["SystemFaction.Name", "SystemFaction"], "default": null, "allow_none": true },
+          "system_allegiance": { "path": "SystemAllegiance", "default": null, "allow_none": true },
+          "system_security": { "path": ["SystemSecurity_Localised", "SystemSecurity"], "default": null, "allow_none": true }
+        }
+      },
+      {
+        "events": ["Docked"],
+        "constants": { "docked": true },
+        "set_state": {
+          "station": "StationName",
+          "star_system": "StarSystem"
+        }
+      },
+      {
+        "events": ["Undocked"],
+        "constants": { "docked": false },
+        "clear_state": ["station"]
+      },
+      {
+        "events": ["SupercruiseEntry"],
+        "constants": { "supercruise": true }
+      },
+      {
+        "events": ["SupercruiseExit"],
+        "constants": { "supercruise": false },
+        "set_state": { "body": "Body" }
+      },
+      {
+        "events": ["Loadout"],
+        "set_state": {
+          "ship_type": "Ship",
+          "ship_name": "ShipName",
+          "hull_health": { "path": "HullHealth", "default": 1.0 }
+        },
+        "derived_rules": [
+          {
+            "source_state": "ship_type",
+            "target_state": "ship_pad_size",
+            "default": "M",
+            "bool_equals_state": { "needs_large_pad": "L" },
+            "cases": [
+              {
+                "in": ["anaconda", "belugaliner", "cutter", "empire_trader", "federation_corvette", "federation_dropship_mkii", "independant_trader", "orca", "panthermkii", "type7", "type9", "type9_military"],
+                "contains_any": ["anaconda", "corvette", "cutter", "beluga", "type7", "type9", "type10", "orca", "clipper", "panther"],
+                "value": "L"
+              },
+              {
+                "in": ["adder", "cobra_mkiii", "cobramkiii", "cobramkiv", "cobramkv", "diamondback", "diamondbackxl", "dolphin", "eagle", "empire_courier", "empire_eagle", "hauler", "sidewinder", "viper", "viper_mkiv", "vulture"],
+                "value": "S"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "events": ["ShieldState"],
+        "set_state": { "shields_up": { "path": "ShieldsUp", "default": true } },
+        "set_flags": { "shields_up": "ShieldsUp" }
+      },
+      {
+        "events": ["Cargo"],
+        "set_state": { "cargo_count": { "path": "Count", "default": 0 } }
+      }
+    ],
+    "milestone_rules": [
+      {
+        "events": ["MissionAccepted"],
+        "category": "mission",
+        "fields": { "m_name": ["Name_Localised", "Name"], "dest_sys": "DestinationSystem", "dest_stn": "DestinationStation" },
+        "template": "Accepted mission: {m_name} | Target: {dest_sys} ({dest_stn})"
+      },
+      {
+        "events": ["MissionCompleted"],
+        "category": "mission",
+        "fields": { "m_name": ["Name_Localised", "Name"] },
+        "template": "Completed mission: {m_name}"
+      },
+      {
+        "events": ["CodexEntry", "FSSSignalDiscovered"],
+        "category": "discovery",
+        "fields": { "disc_name": ["Name_Localised", "SignalName_Localised", "SignalName", "Name"] },
+        "require_field": "disc_name",
+        "template": "Discovery recorded: {disc_name} in system {star_system}"
+      },
+      {
+        "events": ["EngineerCraft"],
+        "category": "intel",
+        "template": "Engineering upgrade: {BlueprintName} (Grade {Level}) on {Slot}"
+      },
+      {
+        "events": ["Interdicted", "EscapeInterdiction"],
+        "category": "warning",
+        "template": "Interdiction event involving {Interdictor}"
+      }
+    ],
+    "summary_config": {
+      "flag_labels": {
+        "landing_gear_down": { "label": "Gear", "on": "DOWN", "off": "UP" },
+        "hardpoints_deployed": { "label": "Hardpoints", "on": "DEPLOYED", "off": "RETRACTED" },
+        "cargo_scoop_open": { "label": "Cargo Scoop", "on": "OPEN", "off": "CLOSED" }
+      }
+    },
     "bitmask_mappings": {
       "Flags": {
         "docked": 1,

@@ -392,15 +392,42 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
     }
     if tel_in.get("dir"):
         sanitized_tel["dir"] = str(tel_in["dir"]).strip()
+    if tel_in.get("status_file"):
+        sanitized_tel["status_file"] = str(tel_in["status_file"]).strip()
     if tel_in.get("native_file_path"):
         sanitized_tel["native_file_path"] = str(tel_in["native_file_path"]).strip()
+    if tel_in.get("journal_glob"):
+        sanitized_tel["journal_glob"] = str(tel_in["journal_glob"]).strip()
+    if tel_in.get("event_field"):
+        sanitized_tel["event_field"] = str(tel_in["event_field"]).strip()
+    if tel_in.get("rehydrate_lines") is not None:
+        sanitized_tel["rehydrate_lines"] = max(1, min(1000, int(tel_in["rehydrate_lines"])))
     if http_endpoint:
         sanitized_tel["http_endpoint"] = http_endpoint
         sanitized_tel["http_timeout_sec"] = max(0.2, min(5.0, float(tel_in.get("http_timeout_sec") or 1.5)))
-    for list_key in ("companion_files", "state_rules", "threshold_state_rules", "hud_bars"):
+    for list_key in (
+        "companion_files",
+        "companion_extractors",
+        "flag_to_state",
+        "event_handlers",
+        "milestone_rules",
+        "state_rules",
+        "threshold_state_rules",
+        "hud_bars",
+    ):
         if isinstance(tel_in.get(list_key), list):
             sanitized_tel[list_key] = tel_in[list_key]
-    for dict_key in ("bitmask_mappings", "vital_mappings", "resource_mappings", "alert_rules"):
+    for dict_key in (
+        "initial_state",
+        "initial_flags",
+        "status_fields",
+        "location_fields",
+        "summary_config",
+        "bitmask_mappings",
+        "vital_mappings",
+        "resource_mappings",
+        "alert_rules",
+    ):
         if isinstance(tel_in.get(dict_key), dict):
             sanitized_tel[dict_key] = tel_in[dict_key]
 
@@ -471,6 +498,8 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
     }
     if nav_mode_val:
         sanitized["navigation_mode"] = nav_mode_val
+    if raw_data.get("default_callsign"):
+        sanitized["default_callsign"] = str(raw_data["default_callsign"]).strip()
     if clean_ext:
         sanitized["extension"] = clean_ext
     if raw_data.get("steam_appid"):

@@ -357,6 +357,13 @@ def main():
         shutdown_watchdog = threading.Timer(4.0, os._exit, args=(0,))
         shutdown_watchdog.daemon = True
         shutdown_watchdog.start()
+        # Immediately restore any ducked audio sessions synchronously before any async cleanup
+        # that could time out and hit os._exit(0) (which bypasses atexit).
+        if hasattr(bridge, "_engine") and bridge._engine and hasattr(bridge._engine, "audio_ducking_service") and bridge._engine.audio_ducking_service:
+            try:
+                bridge._engine.audio_ducking_service.restore_all()
+            except Exception:
+                pass
         try:
             bridge.stop_audio_watcher()
         except Exception:

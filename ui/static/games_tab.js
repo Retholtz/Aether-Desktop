@@ -387,6 +387,9 @@ function renderActiveGameDetail() {
     renderCompanionAppsList(Array.isArray(profile.companion_apps) ? profile.companion_apps : []);
     refreshCompanionAppsStatus(activeGameId);
 
+    // Tier 2 Community Python Extensions (SHA-256 Opt-In)
+    refreshGameExtensions();
+
     // Keybinds Table (with live filter + count badge)
     renderKeybindsTable(profile);
 
@@ -1354,6 +1357,25 @@ function initGamesTabEvents() {
         if (e.target && e.target.id === 'modal-add-companion-app') closeAddCompanionAppModal();
     });
 
+    // Tier 2 Community Python Extension Import Button
+    document.getElementById('btn-import-game-extension')?.addEventListener('click', async () => {
+        if (!window.pywebview?.api?.import_game_extension_dialog) return;
+        try {
+            const res = await window.pywebview.api.import_game_extension_dialog(activeGameId || '');
+            if (res && res.cancelled) return;
+            if (res && res.success) {
+                await refreshGameExtensions();
+                if (window.aetherUI?.showToast) {
+                    window.aetherUI.showToast(res.message || `Imported Python extension for ${res.module_id}`);
+                }
+            } else {
+                alert((res && res.error) || 'Failed to import Python extension.');
+            }
+        } catch (err) {
+            console.error("Import game extension error:", err);
+        }
+    });
+
     // Game Module Import / Export / Auto-Build Buttons
     document.getElementById('btn-import-game-module')?.addEventListener('click', async () => {
         if (!window.pywebview?.api?.import_game_module_dialog) return;
@@ -1897,6 +1919,117 @@ async function confirmAddCompanionApp() {
     } catch (err) {
         console.error("Failed adding companion app:", err);
     }
+}
+
+async function refreshGameExtensions() {
+    const container = document.getElementById('game-extensions-list');
+    const badge = document.getElementById('badge-extensions-count');
+    if (!container) return;
+    if (!window.pywebview?.api?.list_game_extensions) {
+        container.innerHTML = '';
+        return;
+    }
+    try {
+        const res = await window.pywebview.api.list_game_extensions();
+        const exts = (res && res.success && Array.isArray(res.extensions)) ? res.extensions : [];
+        if (badge) badge.textContent = String(exts.length);
+        renderGameExtensionsList(exts);
+    } catch (err) {
+        console.error("Failed loading game extensions:", err);
+    }
+}
+
+function renderGameExtensionsList(exts) {
+    const container = document.getElementById('game-extensions-list');
+    if (!container) return;
+    const list = Array.isArray(exts) ? exts : [];
+
+    if (list.length === 0) {
+        container.innerHTML = `
+            <div style="padding: 14px 12px; border: 1px dashed rgba(148, 163, 184, 0.2); border-radius: 8px; text-align: center; color: var(--text-muted); font-size: 0.82rem;">
+                No homebrew Python extensions installed. Click <strong>+ Import .py Extension</strong> to load a custom <code>GameExtension</code> script for this game.
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = '';
+    list.forEach(ext => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(148, 163, 184, 0.16);';
+
+        const statusBadge = ext.trusted
+            ? `<span class="badge-status badge-online" style="font-size: 0.68rem; padding: 2px 7px;">TRUSTED</span>`
+            : (ext.hash_changed
+                ? `<span class="badge-status" style="font-size: 0.68rem; padding: 2px 7px; background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.45);">MODIFIED — RE-TRUST</span>`
+                : `<span class="badge-status badge-offline" style="font-size: 0.68rem; padding: 2px 7px;">UNTRUSTED (DISABLED)</span>`);
+
+        const shortSha = ext.sha256 ? String(ext.sha256).slice(0, 12) : '—';
+        const leftDiv = document.createElement('div');
+        leftDiv.style.cssText = 'display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 220px;';
+        leftDiv.innerHTML = `
+            ${statusBadge}
+            <strong style="color: var(--text-main); font-size: 0.88rem;">${escapeGameHtml(ext.module_id)}</strong>
+            <code style="font-size: 0.74rem; opacity: 0.85;">SHA-256: ${escapeGameHtml(shortSha)}…</code>
+        `;
+
+        const rightDiv = document.createElement('div');
+        rightDiv.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+
+        if (!ext.trusted) {
+            const btnTrust = document.createElement('button');
+            btnTrust.type = 'button';
+            btnTrust.className = 'btn-primary-sm btn-primary-blue';
+            btnTrust.textContent = ext.hash_changed ? 'Re-Trust & Enable' : 'Trust & Enable';
+            btnTrust.onclick = async () => {
+                const ok = confirm(
+                    `Enable Python extension for '${ext.module_id}'?\n\n` +
+                    `SHA-256: ${ext.sha256}\n\n` +
+                    `Only trust .py extensions from sources you review and trust.`
+                );
+                if (!ok) return;
+                const r = await window.pywebview.api.trust_game_extension(ext.module_id);
+                if (r && r.success) {
+                    await refreshGameExtensions();
+                    if (window.aetherUI?.showToast) window.aetherUI.showToast(`Trusted & enabled extension '${ext.module_id}'.`);
+                } else {
+                    alert((r && r.error) || 'Failed to trust extension.');
+                }
+            };
+            rightDiv.appendChild(btnTrust);
+        } else {
+            const btnRevoke = document.createElement('button');
+            btnRevoke.type = 'button';
+            btnRevoke.className = 'btn-secondary-sm';
+            btnRevoke.textContent = 'Revoke Trust';
+            btnRevoke.onclick = async () => {
+                const r = await window.pywebview.api.revoke_game_extension(ext.module_id);
+                if (r && r.success) {
+                    await refreshGameExtensions();
+                    if (window.aetherUI?.showToast) window.aetherUI.showToast(`Revoked trust for extension '${ext.module_id}'.`);
+                }
+            };
+            rightDiv.appendChild(btnRevoke);
+        }
+
+        const btnDelete = document.createElement('button');
+        btnDelete.type = 'button';
+        btnDelete.className = 'btn-danger-sm';
+        btnDelete.textContent = 'Delete';
+        btnDelete.onclick = async () => {
+            if (!confirm(`Delete Python extension for '${ext.module_id}' from disk?`)) return;
+            const r = await window.pywebview.api.delete_game_extension(ext.module_id);
+            if (r && r.success) {
+                await refreshGameExtensions();
+                if (window.aetherUI?.showToast) window.aetherUI.showToast(`Deleted extension '${ext.module_id}'.`);
+            }
+        };
+        rightDiv.appendChild(btnDelete);
+
+        row.appendChild(leftDiv);
+        row.appendChild(rightDiv);
+        container.appendChild(row);
+    });
 }
 
 async function refreshGameElevationWarning(gameId) {

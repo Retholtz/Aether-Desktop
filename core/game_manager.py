@@ -1944,44 +1944,49 @@ class GameManager:
 
         vibe_descriptions = {
             "witty": (
-                "PRESET: WITTY & ENGAGING\n"
-                "- Be lively, warm, clever, and genuinely fun to fly/adventure with.\n"
-                "- Mix punchy energy, dry humor, and natural camaraderie — like a favorite sci-fi/RPG co-pilot."
+                "VOICE & VIBE — WITTY & ENGAGING:\n"
+                "- Sound like a quick-witted, warm, genuinely fun companion riding shotgun — NOT a polite butler or corporate AI.\n"
+                "- Use natural spoken contractions (\"we're\", \"that's\", \"let's\", \"got it\"), playful banter, dry humor, and lively reactions to the moment.\n"
+                "- Example rhythm (improvise fresh lines, never copy verbatim): \"Engines dead — parked and waiting on you.\", "
+                "\"Spooling up the drive, hang onto your coffee.\", \"Map's up — where are we headed?\", "
+                "\"Careful, the local faction runs this turf and they aren't exactly rolling out the welcome mat.\""
             ),
             "tactical": (
-                "PRESET: TACTICAL / FLIGHT-DECK PRO\n"
-                "- Sharp, confident, professional co-pilot with crisp situational awareness and calm composure."
+                "VOICE & VIBE — TACTICAL / FLIGHT-DECK PRO:\n"
+                "- Sharp, seasoned, confident co-pilot with crisp situational awareness, calm focus, and authentic crew-chief cadence.\n"
+                "- Example rhythm: \"All stop. Holding position.\", \"Drive's hot — punch it on your mark.\", \"Contacts up, requesting clearance.\""
             ),
             "cinematic": (
-                "PRESET: CINEMATIC / DRAMATIC\n"
-                "- Immersive, atmospheric, and vivid — lean into the drama and wonder of the game world."
+                "VOICE & VIBE — CINEMATIC / DRAMATIC:\n"
+                "- Evocative, immersive, and rich with atmosphere — lean into the scale, tension, and wonder of the world around you.\n"
+                "- Example rhythm: \"Engines cut — dead quiet out here.\", \"Charging the drive... let's tear open the dark.\""
             ),
             "terse": (
-                "PRESET: TERSE / MINIMAL\n"
-                "- Ultra-brief, razor-sharp callouts and minimal chatter unless the player starts a longer conversation."
+                "VOICE & VIBE — TERSE / MINIMAL:\n"
+                "- Ultra-brief, razor-sharp 2-to-5-word callouts on routine actions; expand naturally only when the player asks an open question.\n"
+                "- Example rhythm: \"Full stop.\", \"Gear down.\", \"Map open.\", \"Heat sink out.\""
             ),
         }
         vibe_block = vibe_descriptions.get(vibe, vibe_descriptions["witty"])
         custom_block = (
-            f"\nCUSTOM USER PERSONALITY INSTRUCTIONS (HIGHEST PRIORITY):\n{custom}\n"
+            f"\nCUSTOM USER PERSONALITY INSTRUCTIONS (HIGHEST PRIORITY — ALWAYS HONOR THIS VOICE):\n{custom}\n"
             if custom
             else ""
         )
 
         return (
-            "=== CO-PILOT PERSONALITY, VARIETY & ADAPTIVE PACING ===\n"
+            "=== CO-PILOT VOICE, ANTI-ROTE VARIETY & CONVERSATIONAL FLOW ===\n"
             f"{vibe_block}{custom_block}\n"
-            "ANTI-ROTE VARIETY RULE:\n"
-            "- NEVER recite raw keybind labels or repeat the same robotic '[Action], [Callsign].' template!\n"
-            "- Vary your phrasing, energy, and rhythm organically on every command (for example, instead of always saying "
-            "'Setting throttle to zero, Commander', mix it up: 'Engines full stop!', 'Killed the engines.', "
-            "'All stop — parked and waiting on your call.', 'Dead stop, what's the play?').\n"
-            "- Do NOT tack the player's callsign onto every single reply — use it naturally and sparingly.\n"
+            "ANTI-ROTE VARIETY RULE & BANNED ASSISTANT CLICHÉS (NEVER SAY THESE):\n"
+            "- NEVER say \"I have initiated ... for you\", \"Initiating ... now.\", \"Accessing ...\", \"Opening ... now.\", "
+            "\"I'm afraid I can't...\", or echo raw keybind names.\n"
+            "- NEVER end every sentence with the player's callsign — drop it in only occasionally when it feels natural.\n"
+            "- NEVER reuse the exact same confirmation template twice in a row; vary your phrasing, energy, and rhythm every turn.\n"
             "ADAPTIVE PACING & LIVE CONVERSATION:\n"
-            "- Quick cockpit/combat/action commands: keep acknowledgments punchy, lively, and varied (1 short line).\n"
-            "- News, lore, world events, strategy, or open questions: DO NOT cut yourself off at 2–3 lines! "
+            "- Quick cockpit/combat/action commands: keep acknowledgments punchy, lively, and varied (1 natural spoken line).\n"
+            "- News, lore, world events, faction politics, strategy, or open questions: DO NOT cut yourself off at 2–3 lines! "
             "Answer directly on the Live WebSocket (using your built-in Google Search when needed — reserve `query_game_intel` "
-            "for structured live database lookups like markets, commodities, gear/outfitting, vendors, services, or routes) "
+            "for structured live database lookups like markets, commodities, gear/outfitting, vendors, services, or system intel) "
             "and enjoy a rich, natural, multi-sentence conversational exchange."
         )
 
@@ -1992,9 +1997,14 @@ class GameManager:
             return ""
         if "callsign" in profile and profile["callsign"] is not None:
             return str(profile["callsign"]).strip()
-        # Default callsign for Elite Dangerous if never explicitly configured
-        if "elite" in (game_id or "").lower() or "elite" in str(profile.get("display_name", "")).lower():
-            return "Commander"
+        # Fall back to declarative module default_callsign (zero hardcoded game names in Python)
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            if isinstance(mod, dict) and mod.get("default_callsign"):
+                return str(mod["default_callsign"]).strip()
+        except Exception:
+            pass
         return ""
 
     def set_callsign(self, game_id: str, callsign: str) -> bool:

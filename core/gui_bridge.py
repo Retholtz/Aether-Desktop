@@ -5232,20 +5232,80 @@ class GuiBridge:
         from core.game_modules import import_game_module
         return import_game_module(raw_json, game_manager=self.game_mgr)
 
+    def _reload_game_extension_tools(self) -> None:
+        eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
+        if eng is None:
+            return
+        try:
+            ge = getattr(eng, "game_engine", None)
+            disp = getattr(eng, "dispatcher", None)
+            if ge and disp and hasattr(ge, "register_tools"):
+                ge.register_tools(disp)
+            eng._reset_context_flag = True
+        except Exception as exc:
+            logger.debug(f"[GAME EXTENSIONS] Hot-reload warning: {exc}")
+
     def list_game_extensions(self) -> dict:
         """Lists installed Tier 2 community `.py` game extensions and their SHA-256 trust status."""
         from core.game_extensions import list_game_extensions
         return {"success": True, "extensions": list_game_extensions()}
 
+    def import_game_extension_dialog(self, game_id: str = "") -> dict:
+        """Opens a native file picker to import a Tier 2 `.py` community game extension."""
+        try:
+            import webview
+            win = getattr(self, "_window", None)
+            if not win:
+                return {"success": False, "error": "Main window not available for file picker."}
+            selected = win.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=("Python Game Extensions (*.py)", "All files (*.*)"),
+            )
+            if not selected:
+                return {"success": False, "cancelled": True}
+            fpath = selected[0] if isinstance(selected, (list, tuple)) else str(selected)
+            target_id = str(game_id or self.game_mgr.data.get("active_profile", "")).strip()
+            if not target_id:
+                target_id = os.path.splitext(os.path.basename(fpath))[0]
+            else:
+                # Prefer canonical module_id when linked to a declarative game module
+                try:
+                    from core.game_modules import get_module_for_game
+                    prof = self.game_mgr.get_profile(target_id)
+                    mod = get_module_for_game(target_id, profile=prof)
+                    if isinstance(mod, dict) and mod.get("module_id"):
+                        target_id = str(mod["module_id"])
+                except Exception:
+                    pass
+            from core.game_extensions import import_game_extension
+            return import_game_extension(target_id, fpath)
+        except Exception as exc:
+            return {"success": False, "error": f"Extension import failed: {exc}"}
+
     def trust_game_extension(self, module_id: str, script_name: str = "extension.py") -> dict:
-        """Approves a Tier 2 `.py` game extension by recording its SHA-256 hash."""
+        """Approves a Tier 2 `.py` game extension by recording its SHA-256 hash and hot-reloading tools."""
         from core.game_extensions import trust_game_extension
-        return trust_game_extension(module_id, script_name=script_name)
+        res = trust_game_extension(module_id, script_name=script_name)
+        if res.get("success"):
+            self._reload_game_extension_tools()
+        return res
 
     def revoke_game_extension(self, module_id: str) -> dict:
-        """Revokes trust for a Tier 2 `.py` game extension."""
+        """Revokes trust for a Tier 2 `.py` game extension and refreshes active tools."""
         from core.game_extensions import revoke_game_extension
-        return revoke_game_extension(module_id)
+        res = revoke_game_extension(module_id)
+        if res.get("success"):
+            self._reload_game_extension_tools()
+        return res
+
+    def delete_game_extension(self, module_id: str) -> dict:
+        """Deletes an installed Tier 2 `.py` game extension and refreshes active tools."""
+        from core.game_extensions import delete_game_extension
+        res = delete_game_extension(module_id)
+        if res.get("success"):
+            self._reload_game_extension_tools()
+        return res
 
     def import_game_module_dialog(self) -> dict:
         """Opens a native file picker to import a `.aethermodule.json` community module."""
@@ -10440,6 +10500,11 @@ class GuiBridge:
 
                 # Brief pause so UI renders the 'restarting' state before closing windows
                 time.sleep(0.45)
+                if getattr(self, "_engine", None) and getattr(self._engine, "audio_ducking_service", None):
+                    try:
+                        self._engine.audio_ducking_service.restore_all()
+                    except Exception:
+                        pass
                 if getattr(self, "_hud_window", None) and hasattr(self._hud_window, "close_all"):
                     self._hud_window.close_all()
                 elif getattr(self, "_window", None):

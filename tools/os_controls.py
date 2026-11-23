@@ -1726,6 +1726,26 @@ def move_mouse_absolute(x: int, y: int) -> bool:
     return bool(ctypes.windll.user32.SetCursorPos(int(x), int(y)))
 
 
+def nudge_mouse_relative(dx: int = 1, dy: int = 0) -> bool:
+    """Sends a tiny relative DirectInput mouse nudge (+dx/+dy then back) to wake 3D game UI cursor hover."""
+    if sys.platform != "win32":
+        return False
+    ensure_thread_desktop()
+    try:
+        inp_a = INPUT()
+        inp_a.type = INPUT_MOUSE
+        inp_a.mi = MOUSEINPUT(int(dx), int(dy), 0, MOUSEEVENTF_MOVE, 0, 0)
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp_a), ctypes.sizeof(INPUT))
+        time.sleep(0.02)
+        inp_b = INPUT()
+        inp_b.type = INPUT_MOUSE
+        inp_b.mi = MOUSEINPUT(-int(dx), -int(dy), 0, MOUSEEVENTF_MOVE, 0, 0)
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp_b), ctypes.sizeof(INPUT))
+        return True
+    except Exception:
+        return False
+
+
 def click_mouse_button(button: str = "right", hold_duration: float = 0.08) -> bool:
     """Clicks a mouse button (left or right) with hold duration for 3D game engines."""
     if sys.platform != "win32":

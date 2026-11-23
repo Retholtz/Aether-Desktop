@@ -10,14 +10,18 @@ Resolution order:
 
 from typing import Dict, Any, Optional, Callable, Type
 from core.telemetry.base import BaseTelemetryAdapter, NoOpTelemetryAdapter
-from core.telemetry.elite import EliteTelemetryAdapter
+from core.telemetry.declarative import DeclarativeFileTelemetryAdapter
 from core.logger import get_logger
 
 logger = get_logger("TelemetryFactory")
 
 ADAPTER_REGISTRY: Dict[str, Type[BaseTelemetryAdapter]] = {
-    "elite_dangerous": EliteTelemetryAdapter,
-    "elite_journal": EliteTelemetryAdapter,
+    "declarative_file": DeclarativeFileTelemetryAdapter,
+    "json_journal": DeclarativeFileTelemetryAdapter,
+    "native_file": DeclarativeFileTelemetryAdapter,
+    # Back-compat aliases for existing saved user profiles; all use the generic declarative engine
+    "elite_dangerous": DeclarativeFileTelemetryAdapter,
+    "elite_journal": DeclarativeFileTelemetryAdapter,
     "none": NoOpTelemetryAdapter,
     "scratchpad_only": NoOpTelemetryAdapter,
 }
@@ -85,6 +89,10 @@ def create_telemetry_adapter(
         effective_prof["telemetry"] = merged_tel
 
     adapter_cls = ADAPTER_REGISTRY.get(adapter_key.lower() if isinstance(adapter_key, str) else "")
+    if adapter_cls is None:
+        eff_tel = effective_prof.get("telemetry") if isinstance(effective_prof.get("telemetry"), dict) else {}
+        if eff_tel.get("status_file") or eff_tel.get("native_file_path") or eff_tel.get("journal_glob"):
+            adapter_cls = DeclarativeFileTelemetryAdapter
     if adapter_cls:
         logger.info("Instantiating %s for game '%s'.", adapter_cls.__name__, game_id)
         return adapter_cls(game_id=game_id, profile=effective_prof, on_milestone=on_milestone)

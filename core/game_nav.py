@@ -616,45 +616,96 @@ If the element is not visible on screen, return {{"found": false}}.
             send_directinput_key("enter", duration_sec=0.1)
             time.sleep(0.6)
 
-        # 4. Trigger Plot Route (vision-guided mouse click/hold OR keyboard hold/tap)
+        # 4. Trigger Plot Route (declarative pre-plot cursor nudge + key hold and/or vision click-hold)
         plot_hint = str(routing_cfg.get("plot_visual_hint") or "").strip()
         plot_hold_sec = float(routing_cfg.get("plot_hold_sec") or 0.15)
         eff_plot_key = str(routing_cfg.get("plot_key") if "plot_key" in routing_cfg else plot_key or "").strip()
-        plotted_via_vision = False
+        prefer_key_first = bool(routing_cfg.get("prefer_plot_key_first", False))
+        pre_plot_move_center = bool(routing_cfg.get("pre_plot_move_center", False))
+        pre_plot_nudge = routing_cfg.get("pre_plot_mouse_nudge")
 
-        if plot_hint and self.client:
-            plot_pt = self.locate_ui_element_point(plot_hint)
-            if plot_pt:
-                move_mouse_absolute(plot_pt[0], plot_pt[1])
-                time.sleep(0.1)
-                click_mouse_button("left", hold_duration=max(0.08, plot_hold_sec))
-                time.sleep(0.4)
-                plotted_via_vision = True
-
-        if not plotted_via_vision and eff_plot_key:
-            send_directinput_key(eff_plot_key, duration_sec=max(0.15, plot_hold_sec))
-            time.sleep(0.35)
-
-        # 5. Optional live telemetry verification (e.g. NavRoute.json `route_destination`)
-        verified_route = None
-        route_jumps = None
-        verify_field = str(routing_cfg.get("verify_telemetry_field") or "").strip()
-        adapter = getattr(self, "telemetry_adapter", None)
-        if verify_field and adapter is not None and hasattr(adapter, "get_state"):
-            deadline = time.time() + float(routing_cfg.get("verify_timeout_sec") or 2.5)
-            while time.time() < deadline:
+        def _apply_pre_plot_cursor_nudge():
+            from tools.os_controls import nudge_mouse_relative
+            if pre_plot_move_center:
                 try:
-                    st = adapter.get_state() or {}
-                    val = str(st.get(verify_field) or "").strip()
+                    _, vw, vh = self.capture_viewport()
+                    cx, cy = self._norm_to_screen_px(500, 500, vw, vh)
+                    move_mouse_absolute(cx, cy)
+                    time.sleep(0.08)
+                except Exception:
+                    pass
+            if isinstance(pre_plot_nudge, (list, tuple)) and len(pre_plot_nudge) == 2:
+                nudge_mouse_relative(int(pre_plot_nudge[0]), int(pre_plot_nudge[1]))
+                time.sleep(0.14)
+            elif pre_plot_nudge:
+                nudge_mouse_relative(12, 8)
+                time.sleep(0.14)
+
+        def _try_plot_via_vision() -> bool:
+            if not (plot_hint and self.client):
+                return False
+            from tools.os_controls import nudge_mouse_relative
+            plot_pt = self.locate_ui_element_point(plot_hint)
+            if not plot_pt:
+                return False
+            move_mouse_absolute(plot_pt[0], plot_pt[1])
+            nudge_mouse_relative(1, 0)
+            time.sleep(0.16)
+            click_mouse_button("left", hold_duration=max(0.08, plot_hold_sec))
+            time.sleep(0.4)
+            return True
+
+        def _try_plot_via_key() -> bool:
+            if not eff_plot_key:
+                return False
+            _apply_pre_plot_cursor_nudge()
+            send_directinput_key(eff_plot_key, duration_sec=max(0.15, plot_hold_sec))
+            time.sleep(0.4)
+            return True
+
+        def _check_route_verified(timeout_sec: float):
+            verify_field_local = str(routing_cfg.get("verify_telemetry_field") or "").strip()
+            adapter_local = getattr(self, "telemetry_adapter", None)
+            if not (verify_field_local and adapter_local is not None and hasattr(adapter_local, "get_state")):
+                return None, None
+            deadline_local = time.time() + max(0.2, timeout_sec)
+            while time.time() < deadline_local:
+                try:
+                    st = adapter_local.get_state() or {}
+                    val = str(st.get(verify_field_local) or "").strip()
                     if val and val.lower() == dest_clean.lower():
-                        verified_route = val
-                        route_jumps = st.get("route_jumps")
-                        break
+                        return val, st.get("route_jumps")
                 except Exception:
                     break
-                time.sleep(0.25)
+                time.sleep(0.2)
+            return None, None
 
+        verify_field = str(routing_cfg.get("verify_telemetry_field") or "").strip()
+        adapter = getattr(self, "telemetry_adapter", None)
         verification_expected = bool(verify_field and adapter is not None and hasattr(adapter, "get_state"))
+        verify_timeout = float(routing_cfg.get("verify_timeout_sec") or 2.5)
+        verified_route = None
+        route_jumps = None
+
+        if prefer_key_first and eff_plot_key:
+            _try_plot_via_key()
+            if verification_expected:
+                verified_route, route_jumps = _check_route_verified(min(1.6, verify_timeout))
+                if not verified_route and plot_hint and self.client:
+                    if _try_plot_via_vision():
+                        verified_route, route_jumps = _check_route_verified(verify_timeout)
+        else:
+            plotted_via_vision = _try_plot_via_vision()
+            if plotted_via_vision and verification_expected:
+                verified_route, route_jumps = _check_route_verified(min(1.6, verify_timeout))
+                if not verified_route and eff_plot_key:
+                    _try_plot_via_key()
+                    verified_route, route_jumps = _check_route_verified(verify_timeout)
+            elif not plotted_via_vision:
+                _try_plot_via_key()
+                if verification_expected:
+                    verified_route, route_jumps = _check_route_verified(verify_timeout)
+
         if verified_route:
             status = "success"
             jump_note = f" ({route_jumps} jumps)" if route_jumps is not None else ""
@@ -683,6 +734,188 @@ If the element is not visible on screen, return {{"found": false}}.
         if route_jumps is not None:
             res["route_jumps"] = route_jumps
         return res
+
+    def complete_ui_task(
+        self,
+        goal: str,
+        max_steps: int = 6,
+        preferred_input: str = "auto",
+        target_process: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Universal Closed-Loop Vision UI/Menu Navigator (100% game-agnostic).
+
+        Repeatedly captures the active game screen, inspects what menu item/icon/tab
+        is currently highlighted, executes the single best adaptive keyboard or mouse step
+        toward `goal`, and visually verifies completion before returning.
+        """
+        from tools.os_controls import focus_window, nudge_mouse_relative
+
+        clean_goal = str(goal or "").strip()
+        if not clean_goal:
+            return {"status": "error", "message": "UI task goal cannot be empty."}
+        if not self.client:
+            return {"status": "error", "message": "Vision client unavailable for closed-loop UI navigation."}
+
+        proc = target_process or getattr(self, "target_process", "")
+        if proc:
+            try:
+                focus_window(proc)
+                time.sleep(0.12)
+            except Exception:
+                pass
+
+        capped_steps = max(1, min(10, int(max_steps or 6)))
+        pref = str(preferred_input or "auto").lower().strip()
+        input_hint = (
+            "Prefer KEYBOARD menu navigation (KEYS) relative to the currently highlighted item whenever a highlight cursor is visible; use CLICK only if keyboard navigation is unclear."
+            if pref == "keyboard"
+            else (
+                "Prefer direct mouse CLICK on the visible button/icon."
+                if pref == "mouse"
+                else "Choose whichever is cleaner and more reliable on this screen: KEYBOARD navigation ('KEYS') relative to the visibly highlighted item/tab (great for 3D cockpit/console menus where highlight cursors remember position), OR direct mouse 'CLICK' on an unambiguous button."
+            )
+        )
+
+        history: List[str] = []
+
+        for step_num in range(1, capped_steps + 1):
+            frame_bytes, width, height = self.capture_viewport()
+            prior_summary = "\n".join(f"  - Step {i + 1}: {h}" for i, h in enumerate(history)) or "  (none yet)"
+            prompt = f"""
+You are an autonomous visual UI/menu agent operating inside the game "{self.game_name or 'Active Game'}".
+GOAL: "{clean_goal}"
+
+Previous steps already executed in this attempt:
+{prior_summary}
+
+Carefully inspect the live screenshot:
+1. Identify which menu item, icon, row, or tab is CURRENTLY HIGHLIGHTED / SELECTED (if any).
+2. Check if the GOAL is ALREADY VISIBLY COMPLETED (e.g., button disabled/greyed out after activation, confirmation banner/message visible, fuel/ammo full, target option toggled/selected, desired screen opened). If YES, return action "VERIFIED_DONE".
+3. Check if the GOAL is IMPOSSIBLE from this screen and no obvious key opens the needed menu. If so, return action "CANNOT_COMPLETE" with a clear reason.
+4. Otherwise, decide the SINGLE BEST NEXT ACTION to advance toward the goal:
+   - {input_hint}
+   - For "KEYS": list the exact ordered keys to press (e.g. ["space"] if the target icon/button is ALREADY highlighted, ["a", "space"] if one icon to the left, ["w", "w"] to move up 2 rows, ["e", "e"] to switch right 2 tabs, ["escape"] to back out). Keep each step small and verify-friendly (1-4 keys).
+   - For "CLICK": return normalized [y, x] coordinates (0-1000 scale, center of target button/icon) and "button" ("left" or "right").
+
+Return ONLY valid JSON:
+{{
+  "highlighted_now": "What is currently highlighted/focused on screen (or 'none')",
+  "observation": "Brief 1-sentence assessment of current UI state",
+  "action": "KEYS" | "CLICK" | "VERIFIED_DONE" | "CANNOT_COMPLETE",
+  "keys": ["w", "space"],
+  "hold_ms": 80,
+  "interval_ms": 140,
+  "point": [y_normalized, x_normalized],
+  "button": "left",
+  "wait_ms": 450,
+  "reason": "Only needed for VERIFIED_DONE or CANNOT_COMPLETE"
+}}
+"""
+            decision = self._call_vision_json(frame_bytes, prompt)
+            if not isinstance(decision, dict) or not decision:
+                return {
+                    "status": "incomplete",
+                    "goal": clean_goal,
+                    "steps_executed": len(history),
+                    "history": history,
+                    "message": f"Vision evaluation failed on step {step_num} while attempting '{clean_goal}'.",
+                }
+
+            action = str(decision.get("action") or "").upper().strip()
+            obs = str(decision.get("observation") or "").strip()
+            highlighted = str(decision.get("highlighted_now") or "").strip()
+
+            if action == "VERIFIED_DONE":
+                reason = str(decision.get("reason") or obs or f"Visually confirmed '{clean_goal}' completed.").strip()
+                return {
+                    "status": "verified_done",
+                    "verified": True,
+                    "goal": clean_goal,
+                    "steps_executed": len(history),
+                    "history": history,
+                    "observation": obs,
+                    "message": reason,
+                }
+
+            if action == "CANNOT_COMPLETE":
+                reason = str(decision.get("reason") or obs or f"Cannot complete '{clean_goal}' from current screen.").strip()
+                return {
+                    "status": "cannot_complete",
+                    "verified": False,
+                    "goal": clean_goal,
+                    "steps_executed": len(history),
+                    "history": history,
+                    "observation": obs,
+                    "message": reason,
+                }
+
+            wait_sec = max(0.2, min(1.5, float(decision.get("wait_ms") or 450) / 1000.0))
+
+            if action == "KEYS":
+                keys = decision.get("keys")
+                if not isinstance(keys, list) or not keys:
+                    history.append(f"Empty KEYS decision ({obs})")
+                    continue
+                hold_sec = max(0.05, min(1.5, float(decision.get("hold_ms") or 80) / 1000.0))
+                interval_sec = max(0.05, min(0.6, float(decision.get("interval_ms") or 140) / 1000.0))
+                clean_keys = [str(k).strip().lower() for k in keys if str(k).strip()]
+                for idx, key_name in enumerate(clean_keys):
+                    send_directinput_key(key_name, duration_sec=hold_sec)
+                    if idx < len(clean_keys) - 1:
+                        time.sleep(interval_sec)
+                history.append(f"Highlighted='{highlighted}' -> KEYS {clean_keys} ({obs})")
+                time.sleep(wait_sec)
+
+            elif action == "CLICK":
+                pt = decision.get("point")
+                if not isinstance(pt, (list, tuple)) or len(pt) != 2:
+                    history.append(f"Invalid CLICK coordinates ({obs})")
+                    continue
+                y_norm, x_norm = float(pt[0]), float(pt[1])
+                px, py = self._norm_to_screen_px(x_norm, y_norm, width, height)
+                btn = str(decision.get("button") or "left").lower().strip()
+                hold_sec = max(0.05, min(1.5, float(decision.get("hold_ms") or 90) / 1000.0))
+                move_mouse_absolute(px, py)
+                nudge_mouse_relative(1, 0)
+                time.sleep(0.18)
+                click_mouse_button(btn, hold_duration=hold_sec)
+                history.append(f"Highlighted='{highlighted}' -> CLICK({btn}) at ({px}, {py}) ({obs})")
+                time.sleep(wait_sec)
+            else:
+                history.append(f"Unknown action '{action}' ({obs})")
+
+        # Final visual verification pass after the last executed step
+        final_frame, _, _ = self.capture_viewport()
+        verify_prompt = f"""
+Inspect this live game screenshot to verify whether the goal "{clean_goal}" is NOW VISIBLY COMPLETED.
+Return ONLY JSON:
+{{"completed": true or false, "observation": "Brief 1-sentence visual confirmation or what is still missing"}}
+"""
+        final_check = self._call_vision_json(final_frame, verify_prompt) or {}
+        if bool(final_check.get("completed")):
+            return {
+                "status": "verified_done",
+                "verified": True,
+                "goal": clean_goal,
+                "steps_executed": len(history),
+                "history": history,
+                "observation": str(final_check.get("observation") or ""),
+                "message": str(final_check.get("observation") or f"Visually confirmed '{clean_goal}' completed."),
+            }
+
+        return {
+            "status": "incomplete",
+            "verified": False,
+            "goal": clean_goal,
+            "steps_executed": len(history),
+            "history": history,
+            "observation": str(final_check.get("observation") or ""),
+            "message": (
+                f"Executed {len(history)} adaptive UI steps for '{clean_goal}', "
+                f"but could not visually confirm completion: {final_check.get('observation') or 'no visual confirmation'}."
+            ),
+        }
 
 
 class GameNavigator(UniversalGameNavigator):

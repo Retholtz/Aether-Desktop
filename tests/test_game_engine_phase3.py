@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-from core.telemetry import EliteTelemetryAdapter as EliteTelemetryWatcher
+from core.telemetry import DeclarativeFileTelemetryAdapter
 from core.game_manager import GameManager
 from tools.dispatcher import ToolDispatcher
 from tools.game_tools import register_game_tools
@@ -21,7 +21,7 @@ class MockEngine:
 class TestGameEnginePhase3(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
-        self.watcher = EliteTelemetryWatcher(journal_dir=self.temp_dir)
+        self.watcher = DeclarativeFileTelemetryAdapter(game_id="elite_dangerous", journal_dir=self.temp_dir)
         self.test_json = os.path.join(self.temp_dir, "test_profiles.json")
         self.mgr = GameManager(profiles_path=self.test_json)
 

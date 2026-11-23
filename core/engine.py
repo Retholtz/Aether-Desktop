@@ -3837,7 +3837,16 @@ class AetherEngine:
                                                 "(do NOT say 'it was already on' or 'I already did that')."
                                             ),
                                         }
-                                    elif exact_call_cnt >= 2:
+                                    elif exact_call_cnt >= (
+                                        8
+                                        if fn_name in (
+                                            "inspect_screen_context",
+                                            "get_current_game_telemetry",
+                                            "get_current_game_status",
+                                            "capture_screen_snapshot",
+                                        )
+                                        else (6 if fn_name == "trigger_game_action" else 2)
+                                    ):
                                         logger.warning(
                                             f"[LIVE TOOL DUPLICATE BREAKER] Blocking repeated identical call '{fn_name}' "
                                             f"(count={exact_call_cnt}) in same turn."
@@ -3852,8 +3861,22 @@ class AetherEngine:
                                         }
                                     else:
                                         self._live_tool_exact_calls[norm_args_sig] = exact_call_cnt + 1
-                                        if fn_name == "trigger_game_action":
-                                            self._macro_fired_in_current_turn = True
+                                        # Reset read-only observation counts whenever an action tool mutates game/UI state
+                                        # so Vision -> Act -> Vision -> Act -> Verify loops can confirm completion.
+                                        if fn_name not in (
+                                            "inspect_screen_context",
+                                            "get_current_game_telemetry",
+                                            "get_current_game_status",
+                                            "capture_screen_snapshot",
+                                        ):
+                                            for obs_key in list(self._live_tool_exact_calls.keys()):
+                                                if obs_key.startswith((
+                                                    "inspect_screen_context:",
+                                                    "get_current_game_telemetry:",
+                                                    "get_current_game_status:",
+                                                    "capture_screen_snapshot:",
+                                                )):
+                                                    self._live_tool_exact_calls.pop(obs_key, None)
                                         result = await self.dispatcher.dispatch(fn_name, fn_args)
                                         is_err = isinstance(result, dict) and (
                                             result.get("status") == "error" or result.get("success") is False

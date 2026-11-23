@@ -333,6 +333,26 @@
                 </table>
               </section>
 
+              <!-- Community Python Extensions (Tier 2 Opt-In) Card -->
+              <section class="game-card" style="margin-top: 20px;">
+                <div class="game-card-header card-header-flex">
+                  <div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <h3 style="margin: 0;">🧩 COMMUNITY PYTHON EXTENSIONS (TIER 2 — OPT-IN)</h3>
+                      <span id="badge-extensions-count" class="badge-count">0</span>
+                    </div>
+                    <p class="subtitle field-hint">Optional homebrew <code>.py</code> plugins (subclassing <code>GameExtension</code>) for custom game tools, telemetry, or APIs. Disabled by default until explicitly SHA-256 trusted.</p>
+                  </div>
+                  <div class="header-action-group card-header-actions">
+                    <button type="button" id="btn-import-game-extension" class="btn-primary-sm btn-primary-blue">+ Import .py Extension</button>
+                  </div>
+                </div>
+
+                <div id="game-extensions-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                  <!-- Dynamically populated -->
+                </div>
+              </section>
+
               <!-- Hybrid Split Layout: Player Goals vs Co-Pilot Intel & Log -->
               <div class="game-companion-grid" style="margin-top: 20px;">
                 <!-- Left Side: Player Scratchpad & Goals -->

@@ -169,11 +169,14 @@ class TestEliteFixesAndCompanionFiles(unittest.TestCase):
             self.assertEqual(frame.resources["cargo_count"], 12)
 
     def test_elite_adapter_bitmask_and_companion_summary(self):
-        from core.telemetry.elite import EliteTelemetryAdapter, STATUS_FLAGS
+        from core.telemetry.declarative import DeclarativeFileTelemetryAdapter
+        from core.game_modules import get_module_for_game
 
-        self.assertEqual(STATUS_FLAGS["scooping_fuel"], 0x00000800)
-        self.assertEqual(STATUS_FLAGS["low_fuel"], 0x00080000)
-        self.assertNotEqual(STATUS_FLAGS["scooping_fuel"], STATUS_FLAGS["low_fuel"])
+        mod = get_module_for_game("elite_dangerous")
+        flags_map = mod["telemetry"]["bitmask_mappings"]["Flags"]
+        self.assertEqual(flags_map["scooping_fuel"], 0x00000800)
+        self.assertEqual(flags_map["low_fuel"], 0x00080000)
+        self.assertNotEqual(flags_map["scooping_fuel"], flags_map["low_fuel"])
 
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp)
@@ -185,7 +188,7 @@ class TestEliteFixesAndCompanionFiles(unittest.TestCase):
                 json.dumps({"Route": [{"StarSystem": "Sol"}, {"StarSystem": "Colonia"}]}),
                 encoding="utf-8",
             )
-            adapter = EliteTelemetryAdapter(journal_dir=str(p))
+            adapter = DeclarativeFileTelemetryAdapter(game_id="elite_dangerous", journal_dir=str(p))
             adapter.state["star_system"] = "Sol"
             adapter._poll_status_file()
 

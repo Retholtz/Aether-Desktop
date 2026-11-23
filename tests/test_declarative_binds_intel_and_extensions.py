@@ -228,16 +228,45 @@ class TestDeclarativeRestIntelEngine(unittest.TestCase):
 class TestTelemetryHydrationAndKbmSearchRouting(unittest.TestCase):
     def test_telemetry_factory_hydrates_module_adapter_over_scratchpad_placeholder(self):
         from core.telemetry.factory import create_telemetry_adapter
-        from core.telemetry.elite import EliteTelemetryAdapter
+        from core.telemetry.declarative import DeclarativeFileTelemetryAdapter
 
-        # Legacy profile with scratchpad_only + full path process_name
+        # Legacy profile with scratchpad_only + full path process_name hydrates to pure declarative adapter
         prof = {
             "display_name": "Elite Dangerous 64",
             "process_name": r"D:\SteamLibrary\steamapps\common\Elite Dangerous\Products\elite-dangerous-odyssey-64\EliteDangerous64.exe",
             "telemetry_type": "scratchpad_only",
         }
         adapter = create_telemetry_adapter("elite_dangerous_64", profile=prof)
-        self.assertIsInstance(adapter, EliteTelemetryAdapter)
+        self.assertIsInstance(adapter, DeclarativeFileTelemetryAdapter)
+
+        # Verify declarative FSDJump extracts Powerplay & controlling faction purely from JSON rules
+        adapter._parse_event_line(json.dumps({
+            "event": "FSDJump",
+            "StarSystem": "Kipsigines",
+            "Body": "Kipsigines A",
+            "Docked": False,
+            "ControllingPower": "Yuri Grom",
+            "PowerplayState": "Exploited",
+            "SystemFaction": {"Name": "Terra-EX Astro Corp"},
+            "SystemAllegiance": "Federation",
+            "SystemSecurity_Localised": "Medium",
+        }))
+        st = adapter.get_state()
+        self.assertEqual(st["star_system"], "Kipsigines")
+        self.assertEqual(st["controlling_power"], "Yuri Grom")
+        self.assertEqual(st["powerplay_state"], "Exploited")
+        self.assertEqual(st["system_faction"], "Terra-EX Astro Corp")
+        summary = adapter.get_summary_prompt_context()
+        self.assertIn("Yuri Grom", summary)
+        self.assertIn("Terra-EX Astro Corp", summary)
+
+        # Verify Spansh navigation JSON module includes controlling_power & controlling_minor_faction
+        from core.game_modules import get_module_for_game
+        mod = get_module_for_game("elite_dangerous_64", profile=prof)
+        nav_fields = mod["intel_endpoints"]["navigation"]["result_fields"]
+        self.assertEqual(nav_fields.get("controlling_power"), "controlling_power")
+        self.assertEqual(nav_fields.get("power_state"), "power_state")
+        self.assertEqual(nav_fields.get("controlling_minor_faction"), "controlling_minor_faction")
 
     def test_kbm_search_bar_router_uses_synced_bind_clipboard_paste_and_verifies_telemetry(self):
         from core.game_nav import GameNavigator
@@ -616,6 +645,189 @@ class TestTier2PythonGameExtensions(unittest.TestCase):
             # 4. Revoke cleans registry
             revoke_game_extension("star_sim", base_dir=tmp)
             self.assertIsNone(load_trusted_extension("star_sim", base_dir=tmp))
+
+
+class TestTypedMacroSchemaAndAdHocSequenceTool(unittest.TestCase):
+    def test_save_and_run_key_sequence_have_explicit_typed_step_schema_and_execute(self):
+        from core.game_manager import GameManager
+        from core.game_engine import GameEngine
+        from tools.game_tools import register_game_tools
+
+        class _CapturingDispatcher:
+            def __init__(self):
+                self.declarations = {}
+                self.handlers = {}
+
+            def register(self, name, description="", parameters=None):
+                def _dec(fn):
+                    self.declarations[name] = {
+                        "name": name,
+                        "description": description,
+                        "parameters": parameters,
+                    }
+                    self.handlers[name] = fn
+                    return fn
+                return _dec
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr.add_game("Space Sim", process_name="SpaceSim.exe")
+            mgr.set_active_profile("space_sim")
+
+            disp = _CapturingDispatcher()
+            tools = register_game_tools(disp, mgr, engine=MagicMock())
+
+            # 1. Both tools MUST expose explicit typed items.properties so Gemini Live can author steps
+            for tool_name in ("save_game_macro", "run_game_key_sequence"):
+                self.assertIn(tool_name, disp.declarations)
+                self.assertIn(tool_name, GameEngine.CORE_GAME_TOOL_NAMES)
+                step_items = disp.declarations[tool_name]["parameters"]["properties"]["steps"]["items"]
+                self.assertIn("properties", step_items)
+                for field in ("action", "key", "repeat", "interval_ms", "hold_ms", "phrase", "target", "delay_ms"):
+                    self.assertIn(field, step_items["properties"])
+
+            # 2. Execute ad-hoc 3x W + Space sequence directly
+            steps = [
+                {"action": "press", "key": "w", "repeat": 3, "interval_ms": 5},
+                {"action": "press", "key": "space"},
+            ]
+            with patch("tools.os_controls.focus_window"), \
+                 patch("tools.os_controls.send_directinput_key", return_value=True) as mock_key:
+                res = tools["run_game_key_sequence"](steps=steps, description="Navigate menu and confirm")
+            self.assertEqual(res["status"], "executed")
+            pressed = [c.args[0] for c in mock_key.call_args_list]
+            self.assertEqual(pressed, ["w", "w", "w", "space"])
+
+            # 3. Save macro + run_now=True saves AND executes cleanly
+            with patch("tools.os_controls.focus_window"), \
+                 patch("tools.os_controls.send_directinput_key", return_value=True) as mock_key2:
+                save_res = tools["save_game_macro"](
+                    name="refuel",
+                    steps=steps,
+                    description="Press W 3 times then spacebar",
+                    run_now=True,
+                )
+            self.assertEqual(save_res["status"], "success")
+            self.assertEqual(save_res["step_count"], 2)
+            self.assertEqual(save_res["execution"]["status"], "executed")
+            self.assertEqual([c.args[0] for c in mock_key2.call_args_list], ["w", "w", "w", "space"])
+
+            # 4. click_game_ui_element calls relative DirectInput wake nudge before clicking
+            with patch("core.game_nav.UniversalGameNavigator.locate_ui_element_point", return_value=(400, 300)), \
+                 patch("tools.os_controls.focus_window"), \
+                 patch("tools.os_controls.move_mouse_absolute") as mock_move, \
+                 patch("tools.os_controls.nudge_mouse_relative") as mock_nudge, \
+                 patch("tools.os_controls.click_mouse_button") as mock_click:
+                click_res = tools["click_game_ui_element"](target_description="Refuel button")
+            self.assertEqual(click_res["status"], "executed")
+            mock_move.assert_called_with(400, 300)
+            mock_nudge.assert_called_once_with(1, 0)
+            mock_click.assert_called_once()
+            mgr.close()
+
+    def test_pre_plot_cursor_nudge_and_closed_loop_vision_ui_task_and_extension_import(self):
+        from core.game_nav import GameNavigator
+        from core.game_engine import GameEngine
+        from core.game_extensions import import_game_extension, list_game_extensions, delete_game_extension, trust_game_extension
+        from core.game_manager import GameManager
+        from tools.game_tools import register_game_tools
+
+        # 1. search_and_route_destination pre-plot cursor center + nudge + space hold
+        mock_adapter = MagicMock()
+        mock_adapter.get_state.return_value = {"route_destination": "Shinrarta Dezhra", "route_jumps": 3}
+        nav = GameNavigator(
+            client=MagicMock(),
+            target_process="SpaceSim.exe",
+            map_controls={
+                "search_routing": {
+                    "map_key": "m",
+                    "open_wait_sec": 0.01,
+                    "input_method": "clipboard_paste",
+                    "submit_key": "",
+                    "select_result_wait_sec": 0.01,
+                    "post_input_keys": [{"key": "down", "delay_ms": 10}, {"key": "enter", "delay_ms": 10}],
+                    "prefer_plot_key_first": True,
+                    "pre_plot_move_center": True,
+                    "pre_plot_mouse_nudge": [15, 10],
+                    "plot_key": "space",
+                    "plot_hold_sec": 0.05,
+                    "verify_telemetry_field": "route_destination",
+                    "verify_timeout_sec": 0.2,
+                }
+            },
+            telemetry_adapter=mock_adapter,
+        )
+        with patch("tools.clipboard.set_clipboard_text", return_value=True), \
+             patch("tools.os_controls.focus_window"), \
+             patch("tools.os_controls.send_directinput_combo"), \
+             patch("tools.os_controls.nudge_mouse_relative") as mock_nudge, \
+             patch("core.game_nav.move_mouse_absolute") as mock_move, \
+             patch("core.game_nav.send_directinput_key") as mock_key, \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav, "is_map_screen", return_value=True):
+            route_res = nav.search_and_route_destination("Shinrarta Dezhra")
+
+        self.assertEqual(route_res["status"], "success")
+        self.assertTrue(route_res["verified"])
+        mock_move.assert_any_call(960, 540)
+        mock_nudge.assert_any_call(15, 10)
+        self.assertIn("space", [c.args[0] for c in mock_key.call_args_list])
+
+        # 2. Closed-loop Vision UI/Menu Navigator (adapts to current highlight cursor & visually verifies)
+        vision_steps = iter([
+            {"highlighted_now": "Auto Launch", "observation": "Two rows below Refuel", "action": "KEYS", "keys": ["w", "w"], "wait_ms": 50},
+            {"highlighted_now": "Refuel icon", "observation": "Refuel icon highlighted", "action": "KEYS", "keys": ["space"], "wait_ms": 50},
+            {"highlighted_now": "Refuel icon", "observation": "Refuel completed and disabled", "action": "VERIFIED_DONE", "reason": "Ship refueled to 100%."},
+        ])
+        with patch("tools.os_controls.focus_window"), \
+             patch("core.game_nav.send_directinput_key") as mock_ui_key, \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav, "_call_vision_json", side_effect=lambda *a, **kw: next(vision_steps)):
+            ui_res = nav.complete_ui_task("Refuel ship", max_steps=5)
+
+        self.assertEqual(ui_res["status"], "verified_done")
+        self.assertTrue(ui_res["verified"])
+        self.assertEqual(ui_res["steps_executed"], 2)
+        self.assertEqual([c.args[0] for c in mock_ui_key.call_args_list], ["w", "w", "space"])
+        self.assertIn("complete_game_ui_task", GameEngine.CORE_GAME_TOOL_NAMES)
+
+        # Spotter-only blocks complete_game_ui_task
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr.add_game("Competitive FPS", process_name="FPS.exe")
+            mgr.set_active_profile("competitive_fps")
+            mgr.set_input_mode("competitive_fps", "spotter_only")
+            disp = _DummyDispatcher()
+            tools = register_game_tools(disp, mgr, engine=MagicMock())
+            blocked = tools["complete_game_ui_task"](goal="Open inventory")
+            self.assertEqual(blocked["status"], "blocked_by_spotter_only")
+            mgr.close()
+
+        # 3. Tier 2 .py extension import -> untrusted -> trust -> delete + Games UI anchors
+        with tempfile.TemporaryDirectory() as tmp:
+            src_py = Path(tmp) / "my_custom_plugin.py"
+            src_py.write_text(
+                "from core.game_extensions import GameExtension\n"
+                "class MyExt(GameExtension):\n"
+                "    module_id = 'space_sim'\n",
+                encoding="utf-8",
+            )
+            ext_root = str(Path(tmp) / "ext_store")
+            imp = import_game_extension("space_sim", str(src_py), base_dir=ext_root)
+            self.assertTrue(imp["success"])
+            self.assertFalse(imp["trusted"])
+            self.assertEqual(len(list_game_extensions(base_dir=ext_root)), 1)
+            self.assertTrue(trust_game_extension("space_sim", base_dir=ext_root)["success"])
+            self.assertTrue(list_game_extensions(base_dir=ext_root)[0]["trusted"])
+            self.assertTrue(delete_game_extension("space_sim", base_dir=ext_root)["success"])
+            self.assertEqual(len(list_game_extensions(base_dir=ext_root)), 0)
+
+        html_src = Path("ui/static/index.html").read_text(encoding="utf-8")
+        js_src = Path("ui/static/games_tab.js").read_text(encoding="utf-8")
+        self.assertIn("btn-import-game-extension", html_src)
+        self.assertIn("game-extensions-list", html_src)
+        self.assertIn("import_game_extension_dialog", js_src)
+        self.assertIn("trust_game_extension", js_src)
 
 
 if __name__ == "__main__":

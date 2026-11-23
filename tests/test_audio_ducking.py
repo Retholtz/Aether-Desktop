@@ -263,6 +263,135 @@ class TestAudioDuckingService(unittest.TestCase):
         add_res = WhitelistValidator.add_to_whitelist("mmsys.cpl", [])
         self.assertEqual(add_res.get("status"), "blocked")
 
+    @patch("core.audio_ducking_service.PYCAW_AVAILABLE", True)
+    @patch("core.audio_ducking_service.comtypes")
+    @patch("core.audio_ducking_service.AudioUtilities")
+    def test_async_unduck_during_inflight_duck_restores_immediately(self, mock_audio_utils, mock_comtypes):
+        """Regression test: if unduck() arrives while duck_all() is still running in COM thread, volume must NOT stay stuck ducked."""
+        import tempfile
+        import time as _time
+
+        mock_vol = MagicMock()
+        state = {"vol": 1.0}
+        mock_vol.GetMasterVolume.side_effect = lambda: state["vol"]
+
+        def _set_vol(v, _ctx):
+            state["vol"] = v
+
+        mock_vol.SetMasterVolume.side_effect = _set_vol
+        mock_session = MagicMock()
+        mock_session.Process = MagicMock()
+        mock_session.Process.pid = 4242
+        mock_session.Process.name.return_value = "EliteDangerous64.exe"
+        mock_session._ctl.QueryInterface.return_value = mock_vol
+
+        def _slow_get_sessions():
+            _time.sleep(0.08)
+            return [mock_session]
+
+        mock_audio_utils.GetAllSessions.side_effect = _slow_get_sessions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = AudioDuckingService(
+                enabled=True,
+                duck_percentage=60,
+                restore_delay_ms=0,
+                recovery_file=os.path.join(tmp, "ducking_recovery.json"),
+            )
+
+            async def _race():
+                t_duck = asyncio.create_task(svc.duck())
+                await asyncio.sleep(0.02)  # Arrive mid-COM-call before _is_ducked becomes True
+                t_unduck = asyncio.create_task(svc.unduck())
+                await asyncio.gather(t_duck, t_unduck)
+
+            asyncio.run(_race())
+            self.assertFalse(svc._is_ducked)
+            self.assertAlmostEqual(state["vol"], 1.0, places=2)
+
+    @patch("core.audio_ducking_service.PYCAW_AVAILABLE", True)
+    @patch("core.audio_ducking_service.comtypes")
+    @patch("core.audio_ducking_service.AudioUtilities")
+    def test_crash_recovery_journal_prevents_double_ducking(self, mock_audio_utils, mock_comtypes):
+        """Regression test: ungraceful exit while ducked at 40% must recover to 100% on restart instead of double-ducking to 16%."""
+        import tempfile
+
+        mock_vol = MagicMock()
+        state = {"vol": 1.0}
+        mock_vol.GetMasterVolume.side_effect = lambda: state["vol"]
+
+        def _set_vol(v, _ctx):
+            state["vol"] = v
+
+        mock_vol.SetMasterVolume.side_effect = _set_vol
+        mock_session = MagicMock()
+        mock_session.Process = MagicMock()
+        mock_session.Process.pid = 5151
+        mock_session.Process.name.return_value = "EliteDangerous64.exe"
+        mock_session._ctl.QueryInterface.return_value = mock_vol
+        mock_audio_utils.GetAllSessions.return_value = [mock_session]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rec_path = os.path.join(tmp, "ducking_recovery.json")
+
+            # Process 1 ducks from 1.0 -> 0.4 and crashes/exits via os._exit(0) without restore_all()
+            svc1 = AudioDuckingService(enabled=True, duck_percentage=60, restore_delay_ms=0, recovery_file=rec_path)
+            svc1.duck_all()
+            self.assertAlmostEqual(state["vol"], 0.4, places=2)
+            self.assertTrue(os.path.exists(rec_path))
+
+            # Process 2 starts up -> detects orphan journal and restores 0.4 -> 1.0 immediately!
+            svc2 = AudioDuckingService(enabled=True, duck_percentage=60, restore_delay_ms=0, recovery_file=rec_path)
+            self.assertAlmostEqual(state["vol"], 1.0, places=2)
+            self.assertFalse(os.path.exists(rec_path))
+
+            # Subsequent duck goes 1.0 -> 0.4 (NOT 0.16!) and restores cleanly to 1.0
+            svc2.duck_all()
+            self.assertAlmostEqual(state["vol"], 0.4, places=2)
+            svc2.restore_all()
+            self.assertAlmostEqual(state["vol"], 1.0, places=2)
+
+    @patch("core.audio_ducking_service.PYCAW_AVAILABLE", True)
+    @patch("core.audio_ducking_service.comtypes")
+    @patch("core.audio_ducking_service.AudioUtilities")
+    def test_transient_restore_error_preserves_baselines_for_retry(self, mock_audio_utils, mock_comtypes):
+        """Verify restore_all() keeps saved baselines when GetAllSessions raises transiently so retry succeeds."""
+        import tempfile
+
+        mock_vol = MagicMock()
+        state = {"vol": 0.8}
+        mock_vol.GetMasterVolume.side_effect = lambda: state["vol"]
+        mock_vol.SetMasterVolume.side_effect = lambda v, _ctx: state.__setitem__("vol", v)
+        mock_session = MagicMock()
+        mock_session.Process = MagicMock()
+        mock_session.Process.pid = 6161
+        mock_session.Process.name.return_value = "Game.exe"
+        mock_session._ctl.QueryInterface.return_value = mock_vol
+        mock_audio_utils.GetAllSessions.return_value = [mock_session]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = AudioDuckingService(
+                enabled=True,
+                duck_percentage=50,
+                restore_delay_ms=0,
+                recovery_file=os.path.join(tmp, "ducking_recovery.json"),
+            )
+            svc.duck_all()
+            self.assertAlmostEqual(state["vol"], 0.4, places=2)
+
+            # Transient COM failure on first restore attempt must NOT discard baselines
+            mock_audio_utils.GetAllSessions.side_effect = RuntimeError("Temporary COM hiccup")
+            svc.restore_all()
+            self.assertTrue(svc._is_ducked)
+            self.assertIn(6161, svc._original_volumes)
+
+            # Retry succeeds and restores 0.8
+            mock_audio_utils.GetAllSessions.side_effect = None
+            mock_audio_utils.GetAllSessions.return_value = [mock_session]
+            svc.restore_all()
+            self.assertFalse(svc._is_ducked)
+            self.assertAlmostEqual(state["vol"], 0.8, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()
