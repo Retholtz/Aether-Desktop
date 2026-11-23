@@ -860,6 +860,214 @@ class TestTypedMacroSchemaAndAdHocSequenceTool(unittest.TestCase):
         self.assertIn("get_game_module_status", js_src)
         self.assertTrue(Path("docs/GAME_MODULES_GUIDE.md").is_file())
 
+    def test_complete_ui_task_cleanup_keys_and_self_learning_fast_replay(self):
+        from core.game_nav import GameNavigator
+
+        nav = GameNavigator(client=MagicMock(), target_process="SpaceSim.exe", game_name="Space Sim")
+
+        # 1. Cold run: opens panel, requests docking, confirms, and closes panel via cleanup_keys=["1"]
+        cold_steps = iter([
+            {"highlighted_now": "none", "observation": "Cockpit", "action": "KEYS", "keys": ["1", "e", "e"], "wait_ms": 50},
+            {"highlighted_now": "Station", "observation": "Contacts open", "action": "KEYS", "keys": ["space", "s", "space"], "wait_ms": 50},
+            {"highlighted_now": "Request Docking", "observation": "Docking request granted", "action": "VERIFIED_DONE", "cleanup_keys": ["1"], "reason": "Docking request granted."},
+        ])
+        with patch("tools.os_controls.focus_window"), \
+             patch("core.game_nav.send_directinput_key") as mock_cold_key, \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav, "_call_vision_json", side_effect=lambda *a, **kw: next(cold_steps)):
+            cold_res = nav.complete_ui_task("Request Docking", max_steps=5)
+
+        self.assertEqual(cold_res["status"], "verified_done")
+        self.assertTrue(cold_res["just_executed"])
+        self.assertFalse(cold_res["already_done"])
+        self.assertEqual(cold_res["cleanup_keys"], ["1"])
+        self.assertIn("learned_recipe", cold_res)
+        self.assertEqual([c.args[0] for c in mock_cold_key.call_args_list], ["1", "e", "e", "space", "s", "space", "1"])
+
+        # 2. Warm run: replays learned_recipe directly + 1-shot Vision verify + closes panel!
+        vision_calls = []
+
+        def _warm_vision(*args, **kwargs):
+            vision_calls.append(args[1])
+            return {"completed": True, "observation": "Docking request granted.", "cleanup_keys": ["1"]}
+
+        with patch("tools.os_controls.focus_window"), \
+             patch("core.game_nav.send_directinput_key") as mock_warm_key, \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav, "_call_vision_json", side_effect=_warm_vision):
+            warm_res = nav.complete_ui_task("Request Docking", learned_recipe=cold_res["learned_recipe"])
+
+        self.assertEqual(warm_res["status"], "verified_done")
+        self.assertTrue(warm_res["replayed_recipe"])
+        self.assertEqual(len(vision_calls), 1)  # Only ONE 1-shot verify call instead of 3+!
+        self.assertEqual(warm_res["cleanup_keys"], ["1"])
+        self.assertEqual([c.args[0] for c in mock_warm_key.call_args_list], ["1", "e", "e", "space", "s", "space", "1"])
+
+    def test_declarative_poi_tracking_auto_resolution_and_map_bookmark_routing(self):
+        from core.telemetry.declarative import DeclarativeFileTelemetryAdapter
+        from core.game_manager import GameManager
+        from core.game_engine import GameEngine
+        from core.game_nav import GameNavigator
+        from tools.game_tools import register_game_tools
+
+        # 1. Declarative poi_trackers extracts carrier name/callsign/system purely from JSON rules
+        adapter = DeclarativeFileTelemetryAdapter(game_id="elite_dangerous", journal_dir=tempfile.gettempdir())
+        adapter._parse_event_line(json.dumps({
+            "event": "CarrierStats",
+            "Name": "LONE WOLF",
+            "Callsign": "T9J-44F",
+        }))
+        adapter._parse_event_line(json.dumps({
+            "event": "CarrierLocation",
+            "StarSystem": "Col 285 Sector SJ-Q d5-68",
+        }))
+        t_pois = adapter.get_state().get("tracked_pois") or {}
+        self.assertIn("fleet_carrier", t_pois)
+        self.assertEqual(t_pois["fleet_carrier"]["name"], "LONE WOLF")
+        self.assertEqual(t_pois["fleet_carrier"]["callsign"], "T9J-44F")
+        self.assertEqual(t_pois["fleet_carrier"]["system"], "Col 285 Sector SJ-Q d5-68")
+        self.assertIn("Col 285 Sector SJ-Q d5-68", adapter.get_summary_prompt_context())
+
+        # 2. remember_game_poi + automatic POI -> parent system resolution in search_and_route_destination
+        self.assertIn("route_to_map_bookmark", GameEngine.CORE_GAME_TOOL_NAMES)
+        self.assertIn("remember_game_poi", GameEngine.CORE_GAME_TOOL_NAMES)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr.add_game("Space Sim", process_name="SpaceSim.exe")
+            mgr.set_active_profile("space_sim")
+            disp = _DummyDispatcher()
+            tools = register_game_tools(disp, mgr, engine=MagicMock())
+
+            rem = tools["remember_game_poi"](
+                name="Lone Wolf",
+                location="Col 285 Sector SJ-Q d5-68",
+                aliases=["T9J-44F", "my carrier"],
+            )
+            self.assertEqual(rem["status"], "success")
+            self.assertIn("Col 285 Sector SJ-Q d5-68", mgr.get_active_game_context())
+
+            routed_targets = []
+            with patch("core.game_nav.GameNavigator.search_and_route_destination", side_effect=lambda destination_name: (routed_targets.append(destination_name) or {"status": "success", "destination": destination_name, "message": "Plotted."})):
+                r_res = tools["search_and_route_destination"](destination_name="Lone Wolf")
+            self.assertEqual(routed_targets, ["Col 285 Sector SJ-Q d5-68"])
+            self.assertEqual(r_res["resolved_system"], "Col 285 Sector SJ-Q d5-68")
+            mgr.close()
+
+        # 3. route_to_map_bookmark switches to requested category and plots item #3
+        mock_adapter = MagicMock()
+        mock_adapter.get_state.return_value = {"route_destination": "BOEWNST KS-S C20-959", "route_jumps": 12}
+        nav = GameNavigator(
+            client=MagicMock(),
+            target_process="SpaceSim.exe",
+            map_controls={
+                "search_routing": {"verify_telemetry_field": "route_destination"},
+                "bookmarks": {
+                    "default_category": "favorites",
+                    "categories": ["favorites", "systems", "bodies", "stations", "settlements"],
+                    "plot_hold_sec": 0.05,
+                },
+            },
+            telemetry_adapter=mock_adapter,
+        )
+        bm_steps = iter([
+            {"state": "NEED_SWITCH_CATEGORY", "point": [260, 82], "observation": "Favourites open, need Systems"},
+            {"state": "FOUND_BOOKMARK", "point": [420, 200], "bookmark_title": "BOEWNST KS-S C20-959", "system_name": "BOEWNST KS-S C20-959", "observation": "Found item #3"},
+        ])
+        with patch("tools.os_controls.focus_window"), \
+             patch("tools.os_controls.nudge_mouse_relative"), \
+             patch("core.game_nav.move_mouse_absolute") as mock_move, \
+             patch("core.game_nav.click_mouse_button") as mock_click, \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav, "is_map_screen", return_value=True), \
+             patch.object(nav, "_call_vision_json", side_effect=lambda *a, **kw: next(bm_steps)):
+            bm_res = nav.route_to_map_bookmark(bookmark_number=3, category="system")
+
+        self.assertEqual(bm_res["status"], "success")
+        self.assertTrue(bm_res["verified"])
+        self.assertEqual(bm_res["category"], "Systems")
+        self.assertEqual(bm_res["destination"], "BOEWNST KS-S C20-959")
+        self.assertGreaterEqual(mock_click.call_count, 2)
+
+    def test_rename_game_and_voice_poi_override_precedence(self):
+        """Renaming display_name preserves internal ID/bindings, and voice POI updates override stale telemetry in-place."""
+        from core.game_manager import GameManager
+        from tools.game_tools import register_game_tools
+
+        class _DummyDispatcher:
+            def __init__(self):
+                self.tools = {}
+            def register(self, name, description="", parameters=None):
+                def _dec(fn):
+                    self.tools[name] = fn
+                    return fn
+                return _dec
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr.add_game("Elite Dangerous 64", process_name="EliteDangerous64.exe")
+            mgr.set_active_profile("elite_dangerous_64")
+
+            # Rename display_name only
+            ren = mgr.rename_game("elite_dangerous_64", "Elite Dangerous")
+            self.assertTrue(ren["success"])
+            prof = mgr.get_profile("elite_dangerous_64")
+            self.assertEqual(prof["display_name"], "Elite Dangerous")
+            self.assertEqual(prof.get("process_name"), "EliteDangerous64.exe")
+
+            # Attach mock live telemetry with an older Fleet Carrier location
+            mock_tel = MagicMock()
+            mock_tel.get_state.return_value = {
+                "tracked_pois": {
+                    "fleet_carrier": {
+                        "name": "LONE WOLF",
+                        "callsign": "T9J-44F",
+                        "system": "Old System",
+                        "aliases": ["fleet carrier", "carrier", "my carrier"],
+                        "updated_at": 100.0,
+                    }
+                }
+            }
+            mgr.active_telemetry_adapter = mock_tel
+
+            disp = _DummyDispatcher()
+            tools = register_game_tools(disp, mgr, engine=MagicMock())
+
+            # Voice update by alias ("carrier") must update fleet_carrier IN-PLACE and override "Old System"
+            upd = tools["remember_game_poi"](name="carrier", location="Shinrarta Dezhra")
+            self.assertEqual(upd["status"], "success")
+            self.assertEqual(upd["poi"], "LONE WOLF")
+            merged = mgr.get_merged_pois("elite_dangerous_64")
+            self.assertEqual(len(merged), 1)
+            self.assertEqual(merged[0]["system"], "Shinrarta Dezhra")
+            self.assertEqual(merged[0]["source"], "voice")
+
+            # Routing to "Lone Wolf" must resolve to the voice-updated system, not stale telemetry
+            routed = []
+            with patch("core.game_nav.GameNavigator.search_and_route_destination", side_effect=lambda destination_name: (routed.append(destination_name) or {"status": "success", "destination": destination_name, "message": "Plotted."})):
+                r_res = tools["search_and_route_destination"](destination_name="Lone Wolf")
+            self.assertEqual(routed, ["Shinrarta Dezhra"])
+            self.assertEqual(r_res["resolved_system"], "Shinrarta Dezhra")
+
+            # Deleting the saved override falls back cleanly to live telemetry
+            del_res = mgr.delete_poi("elite_dangerous_64", "fleet_carrier")
+            self.assertTrue(del_res["success"])
+            self.assertEqual(del_res["pois"][0]["system"], "Old System")
+
+            # Scan POIs loads declarative default_pois and upgrades raw slug names from telemetry history
+            mock_tel.scan_poi_history.return_value = {
+                "fleet_carrier": {"name": "LONE WOLF", "callsign": "T9J-44F", "system": "Col 285 Sector SJ-Q d5-68", "aliases": ["carrier"]}
+            }
+            prof["known_pois"] = {"fleet_carrier": {"name": "fleet_carrier", "system": "Col 285 Sector SJ-Q d5-68", "aliases": []}}
+            scan_res = mgr.scan_game_pois("elite_dangerous_64")
+            self.assertTrue(scan_res["success"])
+            self.assertGreater(scan_res["added"], 10)
+            self.assertEqual(prof["known_pois"]["fleet_carrier"]["name"], "LONE WOLF")
+            self.assertEqual(prof["known_pois"]["fleet_carrier"]["callsign"], "T9J-44F")
+            self.assertIn("selene_jean", prof["known_pois"])
+            self.assertEqual(prof["known_pois"]["selene_jean"]["system"], "Kuk")
+            mgr.close()
+
 
 if __name__ == "__main__":
     unittest.main()

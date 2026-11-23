@@ -237,6 +237,133 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
         paths = self._get_sorted_journal_paths()
         return paths[-1] if paths else None
 
+    @staticmethod
+    def _apply_poi_tracker_rule(ev: Dict[str, Any], ptracker: Dict[str, Any], tracked: Dict[str, Dict[str, Any]]) -> None:
+        """Applies one declarative poi_tracker rule to `tracked` in-place (100% game-agnostic)."""
+        match_eq = ptracker.get("match_equals")
+        if isinstance(match_eq, dict):
+            if any(str(_extract_path(ev, mk) or "").lower() != str(mv).lower() for mk, mv in match_eq.items()):
+                return
+        poi_id = str(ptracker.get("id") or "").strip()
+        if not poi_id:
+            return
+        existing = dict(tracked.get(poi_id) or {})
+
+        # Optional entity-ID correlation (e.g. match MarketID == tracked CarrierID)
+        match_eid_field = ptracker.get("match_entity_id_field")
+        if match_eid_field:
+            expected_eid = existing.get("entity_id")
+            ev_eid = _extract_path(ev, match_eid_field)
+            if not expected_eid or ev_eid is None or str(ev_eid) != str(expected_eid):
+                return
+
+        # Optional callsign substring correlation (e.g. SignalName contains tracked Callsign)
+        match_cs_field = ptracker.get("match_contains_callsign_field")
+        if match_cs_field:
+            expected_cs = str(existing.get("callsign") or "").strip()
+            haystack = str(_extract_path(ev, match_cs_field) or "").strip()
+            if not expected_cs or expected_cs.lower() not in haystack.lower():
+                return
+
+        eid_val = _extract_path(ev, ptracker.get("entity_id_field"))
+        name_val = _extract_path(ev, ptracker.get("name_field"))
+        callsign_val = _extract_path(ev, ptracker.get("callsign_field"))
+        sys_val = _extract_path(ev, ptracker.get("system_field"))
+        body_val = _extract_path(ev, ptracker.get("body_field"))
+
+        if eid_val is not None and str(eid_val).strip():
+            existing["entity_id"] = str(eid_val).strip()
+        if callsign_val:
+            existing["callsign"] = str(callsign_val).strip()
+        if name_val:
+            clean_name = str(name_val).strip()
+            if ptracker.get("strip_callsign_from_name") and existing.get("callsign"):
+                cs = str(existing["callsign"]).strip()
+                if cs and clean_name.lower().endswith(cs.lower()):
+                    clean_name = clean_name[: -len(cs)].strip(" -–—")
+            if clean_name:
+                existing["name"] = clean_name
+        if sys_val:
+            existing["system"] = str(sys_val).strip()
+        if body_val:
+            existing["body"] = str(body_val).strip()
+        if isinstance(ptracker.get("aliases"), list):
+            new_al = [str(a).strip() for a in ptracker["aliases"] if str(a).strip()]
+            existing["aliases"] = list(dict.fromkeys((existing.get("aliases") or []) + new_al))
+        if existing.get("system") or existing.get("name") or existing.get("callsign") or existing.get("entity_id"):
+            tracked[poi_id] = existing
+
+    def scan_poi_history(self, max_files: int = 40) -> Dict[str, Dict[str, Any]]:
+        """
+        Walks up to `max_files` recent journal logs chronologically and extracts ONLY
+        declarative `poi_trackers` events (fast scan to recover asset names/callsigns
+        logged in earlier sessions as well as the latest system/location).
+        """
+        poi_trackers = self._tel_cfg.get("poi_trackers") or []
+        if not isinstance(poi_trackers, list) or not poi_trackers:
+            return {}
+        target_events = set()
+        for pt in poi_trackers:
+            if isinstance(pt, dict):
+                for ev_name in (pt.get("events") or []):
+                    target_events.add(str(ev_name))
+        if not target_events:
+            return {}
+
+        paths = self._get_sorted_journal_paths()
+        if not paths:
+            return {}
+        recent_paths = paths[-max(1, int(max_files)):]
+        found: Dict[str, Dict[str, Any]] = {}
+
+        # Run 2 fast passes so entity_id/callsign discovered later in a file can still
+        # correlate with earlier events (or vice versa) in chronological order.
+        parsed_events: List[Dict[str, Any]] = []
+        for jpath in recent_paths:
+            try:
+                with open(jpath, "r", encoding="utf-8", errors="replace") as f:
+                    for raw_line in f:
+                        line = raw_line.strip()
+                        if not line or not line.startswith("{"):
+                            continue
+                        if not any(ev_n in line for ev_n in target_events):
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except Exception:
+                            continue
+                        if ev.get("event") in target_events:
+                            parsed_events.append(ev)
+            except Exception:
+                continue
+
+        for _ in range(2):
+            for ev in parsed_events:
+                ev_type = ev.get("event")
+                for pt in poi_trackers:
+                    if isinstance(pt, dict) and ev_type in (pt.get("events") or []):
+                        self._apply_poi_tracker_rule(ev, pt, found)
+
+        if found:
+            with self._lock:
+                tracked = self.state.setdefault("tracked_pois", {})
+                for pid, info in found.items():
+                    merged = dict(tracked.get(pid) or {})
+                    if info.get("entity_id") and not merged.get("entity_id"):
+                        merged["entity_id"] = info["entity_id"]
+                    if info.get("name") and (not merged.get("name") or merged.get("name") == pid):
+                        merged["name"] = info["name"]
+                    if info.get("callsign") and not merged.get("callsign"):
+                        merged["callsign"] = info["callsign"]
+                    if info.get("system") and not merged.get("system"):
+                        merged["system"] = info["system"]
+                    if info.get("body") and not merged.get("body"):
+                        merged["body"] = info["body"]
+                    if info.get("aliases") and not merged.get("aliases"):
+                        merged["aliases"] = info["aliases"]
+                    tracked[pid] = merged
+        return found
+
     def _tail_loop(self) -> None:
         last_status_poll = 0.0
         try:
@@ -528,6 +655,21 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                 if isinstance(handler.get("derived_rules"), list):
                     self._apply_derived_rules(handler["derived_rules"])
 
+            # 6. Evaluate declarative POI / asset trackers (e.g. mobile bases, home stations, carriers)
+            poi_trackers = self._tel_cfg.get("poi_trackers") or []
+            if isinstance(poi_trackers, list) and poi_trackers:
+                tracked = self.state.setdefault("tracked_pois", {})
+                for ptracker in poi_trackers:
+                    if not isinstance(ptracker, dict):
+                        continue
+                    if event_type not in (ptracker.get("events") or []):
+                        continue
+                    poi_id = str(ptracker.get("id") or "").strip()
+                    before = dict(tracked.get(poi_id) or {}) if poi_id else {}
+                    self._apply_poi_tracker_rule(ev, ptracker, tracked)
+                    if not is_initial_sync and poi_id and tracked.get(poi_id) != before:
+                        tracked[poi_id]["updated_at"] = time.time()
+
             state_snapshot = dict(self.state)
 
         # Emit declarative milestones only during live play
@@ -656,6 +798,19 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
 
             if st.get("route_destination"):
                 lines.append(f"- Plotted Route: {st['route_destination']} ({st.get('route_jumps', 0)} jumps)")
+
+            tracked_pois = st.get("tracked_pois")
+            if isinstance(tracked_pois, dict) and tracked_pois:
+                poi_parts = []
+                for pid, pinfo in tracked_pois.items():
+                    if not isinstance(pinfo, dict):
+                        continue
+                    pname = pinfo.get("name") or pid
+                    pcs = f" ({pinfo['callsign']})" if pinfo.get("callsign") else ""
+                    psys = pinfo.get("system") or "Unknown"
+                    poi_parts.append(f"{pname}{pcs} @ {psys}")
+                if poi_parts:
+                    lines.append("- Tracked POIs / Assets: " + " | ".join(poi_parts))
 
             if st.get("last_event"):
                 lines.append(f"- Last In-Game Event: {st['last_event']}")

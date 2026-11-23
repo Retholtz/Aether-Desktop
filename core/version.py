@@ -3,7 +3,7 @@ Aether Desktop - Application Version & Release Metadata
 Single source of truth for the current application version and GitHub repository.
 """
 
-APP_VERSION = "0.86.5.2"
+APP_VERSION = "0.86.5.3"
 APP_CHANNEL = "Alpha"
 GITHUB_OWNER = "Retholtz"
 GITHUB_REPO = "Aether-Desktop"

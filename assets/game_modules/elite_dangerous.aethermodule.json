@@ -12,6 +12,53 @@
   ],
   "universe_name": "Milky Way",
   "default_callsign": "Commander",
+  "default_pois": [
+    { "id": "felicity_farseer", "name": "Felicity Farseer", "system": "Deciat", "aliases": ["Farseer", "Farseer Inc"] },
+    { "id": "elvira_martuuk", "name": "Elvira Martuuk", "system": "Khun", "aliases": ["Martuuk", "Long Sight Base"] },
+    { "id": "selene_jean", "name": "Selene Jean", "system": "Kuk", "aliases": ["Prospector's Rest"] },
+    { "id": "tod_mcquinn", "name": "Tod 'The Blaster' McQuinn", "system": "Wolf 397", "aliases": ["Tod McQuinn", "The Blaster", "Trophy Camp"] },
+    { "id": "marco_qwent", "name": "Marco Qwent", "system": "Sirius", "aliases": ["Qwent", "Qwent Research Base"] },
+    { "id": "professor_palin", "name": "Professor Palin", "system": "Arque", "aliases": ["Palin", "Abel Laboratory"] },
+    { "id": "lei_chung", "name": "Lei Chung", "system": "Laksak", "aliases": ["Trader's Rest"] },
+    { "id": "hera_tani", "name": "Hera Tani", "system": "Kuwemaki", "aliases": ["The Jet's Hole"] },
+    { "id": "didi_vatermann", "name": "Didi Vatermann", "system": "Leesti", "aliases": ["Vatermann", "Vatermann LLC"] },
+    { "id": "bill_turner", "name": "Bill Turner", "system": "Alioth", "aliases": ["Turner Metallics"] },
+    { "id": "ram_tah", "name": "Ram Tah", "system": "Meene", "aliases": ["Phoenix Base"] },
+    { "id": "lori_jameson", "name": "Lori Jameson", "system": "Shinrarta Dezhra", "aliases": ["Jameson Base"] },
+    { "id": "chloe_sedesi", "name": "Chloe Sedesi", "system": "Shenve", "aliases": ["Cinder Dock"] },
+    { "id": "the_dweller", "name": "The Dweller", "system": "Wyrd", "aliases": ["Dweller", "Black Hide"] },
+    { "id": "liz_ryder", "name": "Liz Ryder", "system": "Eurybia", "aliases": ["Demolition Unlimited"] },
+    { "id": "zacariah_nemo", "name": "Zacariah Nemo", "system": "Yoru", "aliases": ["Nemo", "Nemo Cyber Party Base"] },
+    { "id": "juri_ishmaak", "name": "Juri Ishmaak", "system": "Giryak", "aliases": ["Pater's Memorial"] },
+    { "id": "broo_tarquin", "name": "Broo Tarquin", "system": "Muang", "aliases": ["Broo's Legacy"] },
+    { "id": "bris_dekker", "name": "Colonel Bris Dekker", "system": "Sol", "aliases": ["Bris Dekker", "Dekker's Yard"] },
+    { "id": "tiana_fortune", "name": "Tiana Fortune", "system": "Achenar", "aliases": ["Fortune's Loss"] },
+    { "id": "the_sarge", "name": "The Sarge", "system": "Beta-3 Tucani", "aliases": ["The Beach"] },
+    { "id": "mel_brandon", "name": "Mel Brandon", "system": "Luchtaine", "aliases": ["The Brig"] },
+    { "id": "marsha_hicks", "name": "Marsha Hicks", "system": "Tir", "aliases": ["The Watchtower"] },
+    { "id": "etienne_dorn", "name": "Etienne Dorn", "system": "Los", "aliases": ["Kraken's Retreat"] },
+    { "id": "petra_olmanova", "name": "Petra Olmanova", "system": "Asura", "aliases": ["Sanctuary"] },
+    { "id": "domino_green", "name": "Domino Green", "system": "Orishis", "aliases": ["The Jackrabbit"] },
+    { "id": "hero_ferrari", "name": "Hero Ferrari", "system": "Siris", "aliases": ["Nevermore Terrace"] },
+    { "id": "jude_navarro", "name": "Jude Navarro", "system": "Aurai", "aliases": ["Marshall's Drift"] },
+    { "id": "kit_fowler", "name": "Kit Fowler", "system": "Capoya", "aliases": ["The Last Call"] },
+    { "id": "oden_geiger", "name": "Oden Geiger", "system": "Candiaei", "aliases": ["Ankh's Promise"] },
+    { "id": "terra_velasquez", "name": "Terra Velasquez", "system": "Shou Xing", "aliases": ["Rascal's Choice"] },
+    { "id": "uma_laszlo", "name": "Uma Laszlo", "system": "Xuane", "aliases": ["Laszlo's Resolve"] },
+    { "id": "wellington_beck", "name": "Wellington Beck", "system": "Jolapa", "aliases": ["Beck Facility"] },
+    { "id": "yarden_bond", "name": "Yarden Bond", "system": "Bayan", "aliases": ["Salamander Bank"] },
+    { "id": "baltanos", "name": "Baltanos", "system": "Deriso", "aliases": ["The Divine Apparatus"] },
+    { "id": "eleanor_bresa", "name": "Eleanor Bresa", "system": "Desy", "aliases": ["Bresa Modifications"] },
+    { "id": "rosa_dayette", "name": "Rosa Dayette", "system": "Kojeara", "aliases": ["Rosa's Shop"] },
+    { "id": "yi_shen", "name": "Yi Shen", "system": "Einheriar", "aliases": ["Eidolon Hold"] },
+    { "id": "jamesons_crash_site", "name": "Jameson's Crash Site", "system": "HIP 12099", "aliases": ["Jameson Crash Site", "Jameson Cobra"] },
+    { "id": "davs_hope", "name": "Dav's Hope", "system": "Hyades Sector DR-V c2-23", "aliases": ["Davs Hope"] },
+    { "id": "bug_killer", "name": "Bug Killer Crashed Anaconda", "system": "HIP 16613", "aliases": ["Bug Killer", "Bugkiller"] },
+    { "id": "jameson_memorial", "name": "Jameson Memorial", "system": "Shinrarta Dezhra", "aliases": ["Founders World"] },
+    { "id": "hutton_orbital", "name": "Hutton Orbital", "system": "Alpha Centauri", "aliases": ["Hutton"] },
+    { "id": "colonia", "name": "Colonia", "system": "Colonia", "aliases": ["Jaques Station"] },
+    { "id": "sagittarius_a", "name": "Sagittarius A*", "system": "Sagittarius A*", "aliases": ["Sag A", "Sag A*"] }
+  ],
   "input_mode": "autonomous",
   "navigation_mode": "search_bar",
   "suppress_alerts_when_running": [
@@ -43,6 +90,22 @@
       "plot_hold_sec": 1.25,
       "verify_telemetry_field": "route_destination",
       "verify_timeout_sec": 3.0
+    },
+    "bookmarks": {
+      "default_category": "favorites",
+      "categories": [
+        "favorites",
+        "systems",
+        "bodies",
+        "stations",
+        "settlements",
+        "squadron_systems",
+        "squadron_bodies",
+        "squadron_stations",
+        "squadron_settlements"
+      ],
+      "open_bookmarks_visual_hint": "Bookmarks ribbon icon at the top-left of the Galaxy Map sidebar",
+      "plot_hold_sec": 1.25
     }
   },
   "binds_scanner": {
@@ -717,6 +780,33 @@
       {
         "events": ["Cargo"],
         "set_state": { "cargo_count": { "path": "Count", "default": 0 } }
+      }
+    ],
+    "poi_trackers": [
+      {
+        "id": "fleet_carrier",
+        "events": ["CarrierJump", "CarrierLocation", "CarrierStats"],
+        "entity_id_field": "CarrierID",
+        "name_field": "Name",
+        "callsign_field": "Callsign",
+        "system_field": "StarSystem",
+        "body_field": "Body",
+        "aliases": ["my carrier", "our carrier", "fleet carrier", "my fleet carrier", "our fleet carrier"]
+      },
+      {
+        "id": "fleet_carrier",
+        "events": ["Docked", "Location", "Undocked"],
+        "match_equals": { "StationType": "FleetCarrier" },
+        "match_entity_id_field": "MarketID",
+        "callsign_field": "StationName"
+      },
+      {
+        "id": "fleet_carrier",
+        "events": ["FSSSignalDiscovered"],
+        "match_equals": { "SignalType": "FleetCarrier" },
+        "match_contains_callsign_field": "SignalName",
+        "name_field": "SignalName",
+        "strip_callsign_from_name": true
       }
     ],
     "milestone_rules": [

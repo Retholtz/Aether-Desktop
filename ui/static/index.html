@@ -130,112 +130,40 @@
 
           <!-- RIGHT DETAIL: GAME HUB & CONFIGURATION -->
           <main class="games-main-panel">
-            <!-- Active Game Status Banner -->
+            <!-- Pinned Active Game Status Banner -->
             <div class="game-banner" id="game-active-banner">
-              <!-- Line 1: Game Title (left), Multiple Main Characters + Callsign (middle), & Delete Game (right) -->
-              <div class="game-banner-row game-banner-row-1">
-                <h2 id="game-active-title">No Game Selected</h2>
-                <div class="game-callsign-wrap">
-                  <label class="game-multi-char-label" for="chk-game-multiple-characters" title="When ON, Aether uses screen vision to match the active protagonist from your semicolon-separated callsigns instead of picking randomly.">
-                    <input type="checkbox" id="chk-game-multiple-characters" />
-                    <span>Multiple Main Characters</span>
-                  </label>
-                  <label for="input-game-callsign" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign.">Callsign:</label>
-                  <input type="text" id="input-game-callsign" class="hud-select game-callsign-input" placeholder="Blank (none) or e.g. Kliff; Oongka" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign." />
+              <!-- Line 1: Editable Game Title (left) & Delete Game (right) -->
+              <div class="game-banner-row game-banner-row-1" style="justify-content: space-between; align-items: center;">
+                <div class="game-title-edit-wrap" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <h2 id="game-active-title" style="margin: 0;">No Game Selected</h2>
+                  <button type="button" id="btn-rename-game" class="btn-icon-subtle" title="Rename display name (keeps internal ID, telemetry, and bindings intact)">✎</button>
+                  <div id="game-rename-inline" class="hidden" style="display: inline-flex; align-items: center; gap: 6px;">
+                    <input type="text" id="input-rename-game" class="modal-input" style="width: 240px; padding: 4px 10px; font-size: 0.92rem; font-weight: 600;" autocomplete="off" />
+                    <button type="button" id="btn-save-rename-game" class="btn-primary-sm" style="padding: 4px 10px;">Save</button>
+                    <button type="button" id="btn-cancel-rename-game" class="btn-secondary-sm" style="padding: 4px 10px;">Cancel</button>
+                  </div>
                 </div>
                 <button type="button" id="btn-delete-game" class="btn-danger-sm" title="Delete current game profile">
                   <span class="icon">🗑️</span> Delete Game
                 </button>
               </div>
 
-              <!-- Line 2: Process Active/Inactive (left), Guidance (middle), FPS Pill (top-right) -->
-              <div class="game-banner-row game-banner-row-2">
-                <div class="game-banner-col-status">
+              <!-- Line 2: Compact Live Status Badges (left) & Live Toggles (right) -->
+              <div class="game-banner-row" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px;">
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
                   <span id="game-process-indicator" class="badge-status badge-offline">Process Inactive</span>
+                  <span id="game-mode-indicator" class="badge-status badge-online" style="cursor: pointer;" title="Click to toggle Game Mode focus">🎮 Game Mode: ON</span>
                 </div>
-                <div class="game-banner-col-select">
-                  <div class="guidance-level-wrap">
-                    <label for="select-guidance-level">Guidance:</label>
-                    <select id="select-guidance-level" class="hud-select" title="Adjust AI puzzle and quest guidance helpfulness">
-                      <option value="companion">Companion (Hints)</option>
-                      <option value="tactical" selected>Tactical (Mechanics)</option>
-                      <option value="walkthrough">Walkthrough (Direct)</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="game-banner-col-action">
-                  <!-- Inline FPS Monitoring Pill Button (Top-Right Slot) -->
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
                   <button type="button" id="fps-toggle-btn" class="fps-pill-btn active" onclick="handleToggleFpsMonitoring(event)" title="Toggle PresentMon FPS tracking for this game">
                     <span class="pill-icon">⚡</span>
                     <span class="pill-text">FPS: ON</span>
                   </button>
-                </div>
-              </div>
-
-              <!-- Line 3: Open Chat/Game Mode (left), Map Nav (middle), Telemetry Toggle (bottom-right under FPS) -->
-              <div class="game-banner-row game-banner-row-3">
-                <div class="game-banner-col-status">
-                  <span id="game-mode-indicator" class="badge-status badge-online" style="cursor: pointer;" title="Click to toggle Game Mode focus">🎮 Game Mode: ON</span>
-                </div>
-                <div class="game-banner-col-select">
-                  <div class="navigation-mode-wrap">
-                    <label for="select-navigation-mode">Map Nav:</label>
-                    <select id="select-navigation-mode" class="hud-select" title="Map navigation and waypoint method">
-                      <option value="controller">🎮 Controller (ViGEmBus)</option>
-                      <option value="co_pilot_spotter">🧭 Spotter (Voice &amp; Vision)</option>
-                      <option value="search_bar">🔍 Search Bar (Typing)</option>
-                      <option value="mouse_keyboard">🖱️ Mouse &amp; Keyboard</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="game-banner-col-action">
                   <button type="button" id="btn-toggle-telemetry" class="telemetry-pill-btn inactive" onclick="handleToggleTelemetry(event)" aria-pressed="false" title="Toggle real-time game telemetry co-pilot alerts">
                     <span class="pill-icon">📡</span>
                     <span class="pill-text">TELEMETRY: OFF</span>
                   </button>
                 </div>
-              </div>
-
-              <!-- Line 4: Per-Game HUD Preference, Anti-Cheat Input Safety & Agnostic Game Modules -->
-              <div class="game-banner-row game-banner-row-4" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
-                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
-                  <label for="select-game-hud-pref" style="font-size: 0.78rem; color: var(--text-muted);" title="Automatic HUD overlay tier used while this game is running.">HUD:</label>
-                  <select id="select-game-hud-pref" class="hud-select" style="width: auto; min-width: 170px;" title="Choose the HUD overlay view when this game runs, or Default to follow your global HUD setting.">
-                    <option value="default">Default (Global Setting)</option>
-                    <option value="none">None (Hidden)</option>
-                    <option value="dot">Dot</option>
-                    <option value="mini">Mini</option>
-                    <option value="normal">Normal</option>
-                    <option value="max">Max</option>
-                  </select>
-                  <label for="select-game-input-mode" style="font-size: 0.78rem; color: var(--text-muted);" title="Use Spotter-Only in multiplayer anti-cheat games to prevent any synthetic key/mouse injection.">Input Safety:</label>
-                  <select id="select-game-input-mode" class="hud-select" style="width: auto; min-width: 210px;" title="Autonomous allows macros/map clicks; Spotter-Only restricts Aether to read-only voice & vision guidance.">
-                    <option value="autonomous">⚡ Autonomous Inputs</option>
-                    <option value="spotter_only">🛡️ Spotter Only (Anti-Cheat Safe)</option>
-                  </select>
-                </div>
-                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
-                  <button type="button" id="btn-calibrate-hud-bars" class="btn-secondary-sm btn-secondary-pill" title="Focuses your game window, waits 3 seconds so you can unpause if needed, and auto-detects HUD bar positions (or just say 'Aether, calibrate my HUD' in-game)">🎯 Calibrate HUD</button>
-                  <button type="button" id="btn-autobuild-game-module" class="btn-secondary-sm btn-secondary-pill" title="Auto-detect companion bridges, wiki, and anti-cheat rules to draft a JSON Game Module">✨ Auto-Build Module</button>
-                  <button type="button" id="btn-copy-module-ai-prompt" class="btn-secondary-sm btn-secondary-pill" title="Copy a ready-to-paste AI prompt so any LLM (Gemini, ChatGPT, Claude) can generate a valid .aethermodule.json for this game">📋 Copy AI Prompt</button>
-                  <button type="button" id="btn-import-game-module" class="btn-secondary-sm btn-secondary-pill" title="Import a community .aethermodule.json pack">📥 Import Module</button>
-                  <button type="button" id="btn-export-game-module" class="btn-secondary-sm btn-secondary-pill" title="Export a clean, shareable .aethermodule.json pack">📤 Export Module</button>
-                </div>
-              </div>
-
-              <!-- Line 5: Per-Game Co-Pilot Personality / Vibe (Preset + Unrestricted Free-Text Box) -->
-              <div class="game-banner-row game-banner-row-5" style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-top: 8px; margin-top: 6px; border-top: 1px solid rgba(148, 163, 184, 0.14);">
-                <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px; width: 100%;">
-                  <label for="select-game-copilot-vibe" style="font-size: 0.78rem; color: var(--text-muted);" title="Choose your co-pilot's conversational vibe and energy for this game.">Co-Pilot Vibe:</label>
-                  <select id="select-game-copilot-vibe" class="hud-select" style="width: auto; min-width: 190px;">
-                    <option value="witty">🎭 Witty &amp; Engaging</option>
-                    <option value="tactical">🎖️ Tactical / Flight-Deck Pro</option>
-                    <option value="cinematic">🎬 Cinematic / Dramatic</option>
-                    <option value="terse">⚡ Terse / Minimal</option>
-                  </select>
-                  <span id="copilot-vibe-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
-                </div>
-                <textarea id="textarea-game-copilot-personality" class="modal-input" rows="2" style="width: 100%; resize: vertical; font-size: 0.8rem; line-height: 1.4;" placeholder="Optional custom co-pilot personality (free text) — e.g. Dry humor like TARS from Interstellar, loves playful banter, calls out cool sights, never repeats the same canned line..."></textarea>
               </div>
               <div id="game-uipi-warning-banner" class="hidden" style="margin-top: 8px; padding: 6px 10px; border-radius: 6px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; font-size: 0.78rem;"></div>
             </div>
@@ -251,133 +179,270 @@
             </div>
 
             <div id="game-details-content">
-              <!-- 3rd-Party Companion Apps Card -->
-              <section class="game-card" id="card-game-companion-apps">
-                <div class="game-card-header card-header-flex">
-                  <div>
-                    <h3>3RD-PARTY COMPANION APPS</h3>
-                    <p class="subtitle field-hint">Link helper tools (e.g. EDMC, EDDiscovery, SRV Survey, EDCoPilot, Little Navmap). Aether tracks whether they are running, can ask to launch inactive ones when you start the game, and mutes duplicate callouts when toggled.</p>
-                  </div>
-                  <div class="header-action-group card-header-actions">
-                    <button type="button" id="btn-add-companion-app" class="btn-primary-sm btn-primary-blue" title="Link a 3rd-party helper program to this game">+ Add 3rd-Party Program</button>
-                  </div>
-                </div>
-                <div id="game-companion-apps-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
-                  <!-- Dynamically rendered by games_tab.js -->
-                </div>
-              </section>
+              <!-- 3-Tab Sub-Navigation Bar -->
+              <div class="game-subtabs-bar" id="game-subtabs-bar" role="tablist">
+                <button type="button" class="game-subtab-btn active" data-game-subtab="settings" role="tab" aria-selected="true">
+                  ⚙️ Game Settings
+                </button>
+                <button type="button" class="game-subtab-btn" data-game-subtab="intel" role="tab" aria-selected="false">
+                  🧭 POIs &amp; Intel
+                </button>
+                <button type="button" class="game-subtab-btn" data-game-subtab="controls" role="tab" aria-selected="false">
+                  ⚡ Controls &amp; Extensions
+                </button>
+              </div>
 
-              <!-- Keybinds & Voice Triggers Card -->
-              <section class="game-card">
-                <div class="game-card-header card-header-flex">
-                  <div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <h3 style="margin: 0;">KEYBINDS &amp; SCANCODE BINDINGS</h3>
-                      <span id="badge-keybinds-count" class="badge-count">0</span>
+              <!-- ========================================================= -->
+              <!-- SUB-TAB 1: GAME SETTINGS & COMPANION APPS                 -->
+              <!-- ========================================================= -->
+              <div id="game-subtab-settings" class="game-subtab-pane">
+                <section class="game-card">
+                  <div class="game-card-header" style="margin-bottom: 12px;">
+                    <h3>⚙️ GAME SETTINGS &amp; CO-PILOT PROFILE</h3>
+                  </div>
+
+                  <!-- Row A: Callsign & Protagonist Matching -->
+                  <div class="game-settings-row">
+                    <div class="game-callsign-wrap" style="margin-left: 0; flex-wrap: wrap;">
+                      <label class="game-multi-char-label" for="chk-game-multiple-characters" title="When ON, Aether uses screen vision to match the active protagonist from your semicolon-separated callsigns instead of picking randomly.">
+                        <input type="checkbox" id="chk-game-multiple-characters" />
+                        <span>Multiple Main Characters</span>
+                      </label>
+                      <label for="input-game-callsign" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign.">Callsign:</label>
+                      <input type="text" id="input-game-callsign" class="hud-select game-callsign-input" placeholder="Blank (none) or e.g. Kliff; Oongka" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign." />
                     </div>
-                    <p class="subtitle field-hint">Synced or manual 1-key bindings that inject DirectInput scancodes directly into the game.</p>
                   </div>
-                  <div class="header-action-group card-header-actions">
-                    <input type="text" id="input-filter-keybinds" class="modal-input" placeholder="Filter keybinds..." style="width: 170px; padding: 5px 10px; font-size: 0.78rem;" autocomplete="off" />
-                    <button type="button" id="btn-scan-keybinds" class="btn-secondary-sm btn-secondary-pill" title="Scan local files for keybinds">
-                      <span class="icon">🔍</span> Scan / Sync Keybinds
-                    </button>
-                    <button type="button" id="btn-add-keybind" class="btn-primary-sm btn-primary-blue">+ Add Keybind</button>
+
+                  <!-- Row B: Game Module & Calibration Tools -->
+                  <div class="game-settings-row" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                    <button type="button" id="btn-calibrate-hud-bars" class="btn-secondary-sm btn-secondary-pill" title="Focuses your game window, waits 3 seconds so you can unpause if needed, and auto-detects HUD bar positions (or just say 'Aether, calibrate my HUD' in-game)">🎯 Calibrate HUD</button>
+                    <button type="button" id="btn-autobuild-game-module" class="btn-secondary-sm btn-secondary-pill" title="Auto-detect companion bridges, wiki, and anti-cheat rules to draft a JSON Game Module">✨ Auto-Build Module</button>
+                    <button type="button" id="btn-copy-module-ai-prompt" class="btn-secondary-sm btn-secondary-pill" title="Copy a ready-to-paste AI prompt so any LLM (Gemini, ChatGPT, Claude) can generate a valid .aethermodule.json for this game">📋 Copy AI Prompt</button>
+                    <button type="button" id="btn-import-game-module" class="btn-secondary-sm btn-secondary-pill" title="Import a community .aethermodule.json pack">📥 Import Module</button>
+                    <button type="button" id="btn-export-game-module" class="btn-secondary-sm btn-secondary-pill" title="Export a clean, shareable .aethermodule.json pack">📤 Export Module</button>
                   </div>
-                </div>
-                
-                <div style="max-height: 320px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px;">
-                  <table class="game-table" id="table-game-binds" style="margin: 0;">
+
+                  <!-- Row C: Guidance, Map Nav, HUD, Input Safety -->
+                  <div class="game-settings-row" style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px;">
+                    <div class="game-setting-field">
+                      <label for="select-guidance-level" class="game-setting-label">Guidance:</label>
+                      <select id="select-guidance-level" class="hud-select" style="width: auto; min-width: 175px;" title="Adjust AI puzzle and quest guidance helpfulness">
+                        <option value="companion">Companion (Hints)</option>
+                        <option value="tactical" selected>Tactical (Mechanics)</option>
+                        <option value="walkthrough">Walkthrough (Direct)</option>
+                      </select>
+                    </div>
+                    <div class="game-setting-field">
+                      <label for="select-navigation-mode" class="game-setting-label">Map Nav:</label>
+                      <select id="select-navigation-mode" class="hud-select" style="width: auto; min-width: 190px;" title="Map navigation and waypoint method">
+                        <option value="controller">🎮 Controller (ViGEmBus)</option>
+                        <option value="co_pilot_spotter">🧭 Spotter (Voice &amp; Vision)</option>
+                        <option value="search_bar">🔍 Search Bar (Typing)</option>
+                        <option value="mouse_keyboard">🖱️ Mouse &amp; Keyboard</option>
+                      </select>
+                    </div>
+                    <div class="game-setting-field">
+                      <label for="select-game-hud-pref" class="game-setting-label" title="Automatic HUD overlay tier used while this game is running.">HUD:</label>
+                      <select id="select-game-hud-pref" class="hud-select" style="width: auto; min-width: 150px;" title="Choose the HUD overlay view when this game runs, or Default to follow your global HUD setting.">
+                        <option value="default">Default (Global Setting)</option>
+                        <option value="none">None (Hidden)</option>
+                        <option value="dot">Dot</option>
+                        <option value="mini">Mini</option>
+                        <option value="normal">Normal</option>
+                        <option value="max">Max</option>
+                      </select>
+                    </div>
+                    <div class="game-setting-field">
+                      <label for="select-game-input-mode" class="game-setting-label" title="Use Spotter-Only in multiplayer anti-cheat games to prevent any synthetic key/mouse injection.">Input Safety:</label>
+                      <select id="select-game-input-mode" class="hud-select" style="width: auto; min-width: 205px;" title="Autonomous allows macros/map clicks; Spotter-Only restricts Aether to read-only voice & vision guidance.">
+                        <option value="autonomous">⚡ Autonomous Inputs</option>
+                        <option value="spotter_only">🛡️ Spotter Only (Anti-Cheat Safe)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <!-- Row D: Co-Pilot Vibe & Custom Personality -->
+                  <div class="game-settings-row" style="display: flex; flex-direction: column; align-items: flex-start; gap: 6px; border-bottom: none; padding-bottom: 0;">
+                    <div class="game-setting-field" style="width: 100%; flex-wrap: wrap;">
+                      <label for="select-game-copilot-vibe" class="game-setting-label" title="Choose your co-pilot's conversational vibe and energy for this game.">Co-Pilot Vibe:</label>
+                      <select id="select-game-copilot-vibe" class="hud-select" style="width: auto; min-width: 190px;">
+                        <option value="witty">🎭 Witty &amp; Engaging</option>
+                        <option value="tactical">🎖️ Tactical / Flight-Deck Pro</option>
+                        <option value="cinematic">🎬 Cinematic / Dramatic</option>
+                        <option value="terse">⚡ Terse / Minimal</option>
+                      </select>
+                      <span id="copilot-vibe-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
+                    </div>
+                    <textarea id="textarea-game-copilot-personality" class="modal-input" rows="2" style="width: 100%; resize: vertical; font-size: 0.8rem; line-height: 1.4;" placeholder="Optional custom co-pilot personality (free text) — e.g. Dry humor like TARS from Interstellar, loves playful banter, calls out cool sights, never repeats the same canned line..."></textarea>
+                  </div>
+                </section>
+
+                <!-- 3rd-Party Companion Apps Card -->
+                <section class="game-card" id="card-game-companion-apps" style="margin-top: 16px;">
+                  <div class="game-card-header card-header-flex">
+                    <div>
+                      <h3>3RD-PARTY COMPANION APPS</h3>
+                      <p class="subtitle field-hint">Link helper tools (e.g. EDMC, EDDiscovery, SRV Survey, EDCoPilot, Little Navmap). Aether tracks whether they are running, can ask to launch inactive ones when you start the game, and mutes duplicate callouts when toggled.</p>
+                    </div>
+                    <div class="header-action-group card-header-actions">
+                      <button type="button" id="btn-add-companion-app" class="btn-primary-sm btn-primary-blue" title="Link a 3rd-party helper program to this game">+ Add 3rd-Party Program</button>
+                    </div>
+                  </div>
+                  <div id="game-companion-apps-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+                    <!-- Dynamically rendered by games_tab.js -->
+                  </div>
+                </section>
+              </div>
+
+              <!-- ========================================================= -->
+              <!-- SUB-TAB 2: POIs, PLAYER GOALS & CO-PILOT INTEL            -->
+              <!-- ========================================================= -->
+              <div id="game-subtab-intel" class="game-subtab-pane hidden">
+                <!-- Points of Interest & Saved Locations Card -->
+                <section class="game-card" id="card-game-pois">
+                  <div class="game-card-header card-header-flex">
+                    <div>
+                      <h3 style="margin: 0;">📍 POINTS OF INTEREST &amp; SAVED LOCATIONS</h3>
+                      <p class="subtitle field-hint">Auto-tracked mobile assets and saved landmarks. Edit anytime or say <em>"Aether, update [POI] location to [System]"</em> — Aether automatically routes to the parent system.</p>
+                    </div>
+                    <div class="header-action-group card-header-actions">
+                      <button type="button" id="btn-scan-pois" class="btn-secondary-sm btn-secondary-pill" title="Scan recent telemetry history for asset names/locations and load notable game POIs from the active module">🔍 Scan POIs</button>
+                      <button type="button" id="btn-add-poi" class="btn-primary-sm btn-primary-blue">+ Add POI</button>
+                    </div>
+                  </div>
+
+                  <table class="game-table" id="table-game-pois">
                     <thead>
                       <tr>
-                        <th>Voice Trigger Phrase</th>
-                        <th>Modifier(s)</th>
-                        <th>Key</th>
-                        <th>Action Description</th>
+                        <th>POI / Asset Name</th>
+                        <th>Routable System / Region</th>
+                        <th>Voice Aliases</th>
                         <th style="width: 140px;">Actions</th>
                       </tr>
                     </thead>
-                    <tbody id="tbody-game-binds">
+                    <tbody id="tbody-game-pois">
                       <!-- Dynamically populated -->
                     </tbody>
                   </table>
-                </div>
-              </section>
-
-              <!-- Custom Visual & Multi-Step Macros Card -->
-              <section class="game-card" style="margin-top: 20px;">
-                <div class="game-card-header card-header-flex">
-                  <div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <h3 style="margin: 0;">⚡ MACROS &amp; AUTOMATION SEQUENCES</h3>
-                      <span id="badge-macros-count" class="badge-count">0</span>
-                    </div>
-                    <p class="subtitle field-hint">Multi-step keystroke and vision-click workflows. Aether matches your intent naturally (e.g. <em>"Let's get outta this station"</em> → <strong>Take Us Out</strong>).</p>
-                  </div>
-                  <div class="header-action-group card-header-actions">
-                    <button type="button" id="btn-add-macro" class="btn-primary-sm btn-primary-blue">+ Add Macro</button>
-                  </div>
-                </div>
-
-                <table class="game-table" id="table-game-macros">
-                  <thead>
-                    <tr>
-                      <th>Macro Name</th>
-                      <th>Trigger Phrases &amp; Intent</th>
-                      <th>Steps</th>
-                      <th style="width: 190px;">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody id="tbody-game-macros">
-                    <!-- Dynamically populated -->
-                  </tbody>
-                </table>
-              </section>
-
-              <!-- Community Python Extensions (Tier 2 Opt-In) Card -->
-              <section class="game-card" style="margin-top: 20px;">
-                <div class="game-card-header card-header-flex">
-                  <div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <h3 style="margin: 0;">🧩 COMMUNITY PYTHON EXTENSIONS (TIER 2 — OPT-IN)</h3>
-                      <span id="badge-extensions-count" class="badge-count">0</span>
-                    </div>
-                    <p class="subtitle field-hint">Optional homebrew <code>.py</code> plugins (subclassing <code>GameExtension</code>) for custom game tools, telemetry, or APIs. Disabled by default until explicitly SHA-256 trusted.</p>
-                  </div>
-                  <div class="header-action-group card-header-actions">
-                    <button type="button" id="btn-import-game-extension" class="btn-primary-sm btn-primary-blue">+ Import .py Extension</button>
-                  </div>
-                </div>
-
-                <div id="game-extensions-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
-                  <!-- Dynamically populated -->
-                </div>
-              </section>
-
-              <!-- Hybrid Split Layout: Player Goals vs Co-Pilot Intel & Log -->
-              <div class="game-companion-grid" style="margin-top: 20px;">
-                <!-- Left Side: Player Scratchpad & Goals -->
-                <section class="game-card">
-                  <div class="game-card-header">
-                    <h3>📝 PLAYER GOALS & CHECKLISTS</h3>
-                    <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
-                  </div>
-                  <p class="field-hint">Your personal notes and shopping lists. Say <em>"Aether, note down..."</em> or edit directly.</p>
-                  <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints..."></textarea>
                 </section>
 
-                <!-- Right Side: Co-Pilot Intel & Milestone Log -->
-                <section class="game-card copilot-card">
-                  <div class="game-card-header" style="display: flex; justify-content: space-between; align-items: center;">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <h3>🧭 CO-PILOT INTEL & LOG</h3>
-                      <span id="badge-copilot-count" class="badge-count">0</span>
+                <!-- Hybrid Split Layout: Player Goals vs Co-Pilot Intel & Log -->
+                <div class="game-companion-grid" style="margin-top: 16px;">
+                  <!-- Left Side: Player Scratchpad & Goals -->
+                  <section class="game-card">
+                    <div class="game-card-header">
+                      <h3>📝 PLAYER GOALS &amp; CHECKLISTS</h3>
+                      <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
                     </div>
-                    <button type="button" id="btn-clear-copilot-log" class="btn-text-action" title="Clear recorded observations">Clear Log</button>
+                    <p class="field-hint">Your personal notes and shopping lists. Say <em>"Aether, note down..."</em> or edit directly.</p>
+                    <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints..."></textarea>
+                  </section>
+
+                  <!-- Right Side: Co-Pilot Intel & Milestone Log -->
+                  <section class="game-card copilot-card">
+                    <div class="game-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <h3>🧭 CO-PILOT INTEL &amp; LOG</h3>
+                        <span id="badge-copilot-count" class="badge-count">0</span>
+                      </div>
+                      <button type="button" id="btn-clear-copilot-log" class="btn-text-action" title="Clear recorded observations">Clear Log</button>
+                    </div>
+                    <p class="field-hint">Landmarks, clues, and milestones captured by Aether for proactive in-game guidance.</p>
+                    <div id="copilot-log-list" class="copilot-log-list">
+                      <!-- Populated dynamically -->
+                    </div>
+                  </section>
+                </div>
+              </div>
+
+              <!-- ========================================================= -->
+              <!-- SUB-TAB 3: MACROS, KEYBINDS & PYTHON EXTENSIONS           -->
+              <!-- ========================================================= -->
+              <div id="game-subtab-controls" class="game-subtab-pane hidden">
+                <!-- Custom Visual & Multi-Step Macros Card -->
+                <section class="game-card">
+                  <div class="game-card-header card-header-flex">
+                    <div>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <h3 style="margin: 0;">⚡ MACROS &amp; AUTOMATION SEQUENCES</h3>
+                        <span id="badge-macros-count" class="badge-count">0</span>
+                      </div>
+                      <p class="subtitle field-hint">Multi-step keystroke and vision-click workflows. Aether matches your intent naturally (e.g. <em>"Let's get outta this station"</em> → <strong>Take Us Out</strong>).</p>
+                    </div>
+                    <div class="header-action-group card-header-actions">
+                      <button type="button" id="btn-add-macro" class="btn-primary-sm btn-primary-blue">+ Add Macro</button>
+                    </div>
                   </div>
-                  <p class="field-hint">Landmarks, clues, and milestones captured by Aether for proactive in-game guidance.</p>
-                  <div id="copilot-log-list" class="copilot-log-list">
-                    <!-- Populated dynamically -->
+
+                  <table class="game-table" id="table-game-macros">
+                    <thead>
+                      <tr>
+                        <th>Macro Name</th>
+                        <th>Trigger Phrases &amp; Intent</th>
+                        <th>Steps</th>
+                        <th style="width: 190px;">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-game-macros">
+                      <!-- Dynamically populated -->
+                    </tbody>
+                  </table>
+                </section>
+
+                <!-- Keybinds & Voice Triggers Card -->
+                <section class="game-card" style="margin-top: 16px;">
+                  <div class="game-card-header card-header-flex">
+                    <div>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <h3 style="margin: 0;">KEYBINDS &amp; SCANCODE BINDINGS</h3>
+                        <span id="badge-keybinds-count" class="badge-count">0</span>
+                      </div>
+                      <p class="subtitle field-hint">Synced or manual 1-key bindings that inject DirectInput scancodes directly into the game.</p>
+                    </div>
+                    <div class="header-action-group card-header-actions">
+                      <input type="text" id="input-filter-keybinds" class="modal-input" placeholder="Filter keybinds..." style="width: 170px; padding: 5px 10px; font-size: 0.78rem;" autocomplete="off" />
+                      <button type="button" id="btn-scan-keybinds" class="btn-secondary-sm btn-secondary-pill" title="Scan local files for keybinds">
+                        <span class="icon">🔍</span> Scan / Sync Keybinds
+                      </button>
+                      <button type="button" id="btn-add-keybind" class="btn-primary-sm btn-primary-blue">+ Add Keybind</button>
+                    </div>
+                  </div>
+                  
+                  <div style="max-height: 320px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px;">
+                    <table class="game-table" id="table-game-binds" style="margin: 0;">
+                      <thead>
+                        <tr>
+                          <th>Voice Trigger Phrase</th>
+                          <th>Modifier(s)</th>
+                          <th>Key</th>
+                          <th>Action Description</th>
+                          <th style="width: 140px;">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-game-binds">
+                        <!-- Dynamically populated -->
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <!-- Community Python Extensions (Tier 2 Opt-In) Card -->
+                <section class="game-card" style="margin-top: 16px;">
+                  <div class="game-card-header card-header-flex">
+                    <div>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <h3 style="margin: 0;">🧩 COMMUNITY PYTHON EXTENSIONS (TIER 2 — OPT-IN)</h3>
+                        <span id="badge-extensions-count" class="badge-count">0</span>
+                      </div>
+                      <p class="subtitle field-hint">Optional homebrew <code>.py</code> plugins (subclassing <code>GameExtension</code>) for custom game tools, telemetry, or APIs. Disabled by default until explicitly SHA-256 trusted.</p>
+                    </div>
+                    <div class="header-action-group card-header-actions">
+                      <button type="button" id="btn-import-game-extension" class="btn-primary-sm btn-primary-blue">+ Import .py Extension</button>
+                    </div>
+                  </div>
+
+                  <div id="game-extensions-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                    <!-- Dynamically populated -->
                   </div>
                 </section>
               </div>
@@ -3316,6 +3381,44 @@
       <div class="modal-footer">
         <button type="button" id="btn-cancel-edit-macro" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
         <button type="button" id="btn-confirm-save-macro" class="btn-primary-sm" style="padding: 7px 18px;">Save Macro</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Point of Interest (POI) -->
+  <div id="modal-edit-poi" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.15rem;">📍</span>
+          <h3 id="modal-edit-poi-title" style="margin: 0; font-size: 1rem; color: var(--text-main);">Add Point of Interest</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-edit-poi-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="input-poi-id" value="" />
+        <div class="modal-field">
+          <label for="input-poi-name" class="modal-label">POI / Asset Name <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-poi-name" class="modal-input" placeholder="e.g. Lone Wolf, Home Base, Main Camp" autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label for="input-poi-callsign" class="modal-label">Callsign / Registry ID (Optional)</label>
+          <input type="text" id="input-poi-callsign" class="modal-input" placeholder="e.g. T9J-44F" autocomplete="off" />
+        </div>
+        <div class="modal-field">
+          <label for="input-poi-location" class="modal-label">Routable Map System / Region <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-poi-location" class="modal-input" placeholder="e.g. Col 285 Sector SJ-Q d5-68" autocomplete="off" />
+          <span class="modal-hint">This is the top-level map system or region Aether will plot when you ask to navigate to this POI.</span>
+        </div>
+        <div class="modal-field">
+          <label for="input-poi-aliases" class="modal-label">Voice Aliases (comma-separated)</label>
+          <input type="text" id="input-poi-aliases" class="modal-input" placeholder="e.g. carrier, my carrier, home" autocomplete="off" />
+        </div>
+        <span id="poi-modal-error" class="modal-hint" style="color: #f87171; display: none;"></span>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-edit-poi" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-save-poi" class="btn-primary-sm" style="padding: 7px 18px;">Save POI</button>
       </div>
     </div>
   </div>

@@ -6,9 +6,83 @@
 
 let currentGamesData = null;
 let activeGameId = null;
+let activeGameSubtab = 'settings';
+let currentGamePoisList = [];
 let scratchpadDebounceTimer = null;
 let callsignDebounceTimer = null;
 let suppressAlertsDebounceTimer = null;
+
+function switchGameSubtab(tabKey) {
+    const valid = ['settings', 'intel', 'controls'];
+    const target = valid.includes(tabKey) ? tabKey : 'settings';
+    activeGameSubtab = target;
+    document.querySelectorAll('.game-subtab-btn').forEach(btn => {
+        const isAct = btn.dataset.gameSubtab === target;
+        btn.classList.toggle('active', isAct);
+        btn.setAttribute('aria-selected', isAct ? 'true' : 'false');
+    });
+    valid.forEach(k => {
+        const pane = document.getElementById(`game-subtab-${k}`);
+        if (pane) pane.classList.toggle('hidden', k !== target);
+    });
+}
+window.switchGameSubtab = switchGameSubtab;
+
+function openRenameGameInline() {
+    if (!activeGameId || !currentGamesData?.profiles?.[activeGameId]) return;
+    const titleEl = document.getElementById('game-active-title');
+    const editBtn = document.getElementById('btn-rename-game');
+    const inlineWrap = document.getElementById('game-rename-inline');
+    const inputEl = document.getElementById('input-rename-game');
+    if (!inlineWrap || !inputEl) return;
+    const currentName = currentGamesData.profiles[activeGameId].display_name || activeGameId;
+    inputEl.value = currentName;
+    if (titleEl) titleEl.classList.add('hidden');
+    if (editBtn) editBtn.classList.add('hidden');
+    inlineWrap.classList.remove('hidden');
+    inputEl.focus();
+    inputEl.select();
+}
+
+function closeRenameGameInline() {
+    const titleEl = document.getElementById('game-active-title');
+    const editBtn = document.getElementById('btn-rename-game');
+    const inlineWrap = document.getElementById('game-rename-inline');
+    if (inlineWrap) inlineWrap.classList.add('hidden');
+    if (titleEl) titleEl.classList.remove('hidden');
+    if (editBtn) editBtn.classList.remove('hidden');
+}
+
+async function confirmRenameGame() {
+    if (!activeGameId) return;
+    const inputEl = document.getElementById('input-rename-game');
+    const newName = (inputEl?.value || '').trim();
+    if (!newName) {
+        if (inputEl) { inputEl.style.borderColor = '#ef4444'; inputEl.focus(); }
+        return;
+    }
+    try {
+        if (window.pywebview?.api?.rename_game_profile) {
+            const res = await window.pywebview.api.rename_game_profile(activeGameId, newName);
+            if (res && res.success) {
+                if (currentGamesData?.profiles?.[activeGameId]) {
+                    currentGamesData.profiles[activeGameId].display_name = res.display_name || newName;
+                }
+                const titleEl = document.getElementById('game-active-title');
+                if (titleEl) titleEl.textContent = res.display_name || newName;
+                closeRenameGameInline();
+                renderGamesSidebar();
+                if (window.aetherUI?.showToast) {
+                    window.aetherUI.showToast(`Renamed game to "${res.display_name || newName}".`);
+                }
+            } else {
+                alert((res && res.error) || 'Failed to rename game.');
+            }
+        }
+    } catch (err) {
+        console.error("rename_game_profile error:", err);
+    }
+}
 
 function updateFpsPillUI(isEnabled) {
     const btn = document.getElementById('fps-toggle-btn');
@@ -239,8 +313,10 @@ function renderActiveGameDetail() {
     const isOnline = (currentGamesData.running_status || {})[activeGameId];
 
     // Banner
+    closeRenameGameInline();
     const titleEl = document.getElementById('game-active-title');
     if (titleEl) titleEl.textContent = profile.display_name || activeGameId;
+    switchGameSubtab(activeGameSubtab);
 
     // Per-Game HUD Preference Selector
     const hudPrefSelect = document.getElementById('select-game-hud-pref');
@@ -403,6 +479,9 @@ function renderActiveGameDetail() {
 
     // Custom Visual & Multi-Step Macros Table
     refreshGameMacrosTable(activeGameId, profile);
+
+    // Points of Interest & Saved Locations Table
+    refreshGamePoisTable(activeGameId);
 
     // Scratchpad
     const pad = document.getElementById('game-scratchpad-input');
@@ -768,6 +847,186 @@ async function deleteGameMacro(name) {
         }
     } catch (e) {
         console.error("delete_game_macro error:", e);
+    }
+}
+
+async function refreshGamePoisTable(gameId) {
+    if (!gameId || !window.pywebview?.api?.get_game_pois) return;
+    try {
+        const res = await window.pywebview.api.get_game_pois(gameId);
+        if (res && res.success && Array.isArray(res.pois)) {
+            currentGamePoisList = res.pois;
+            renderGamePoisTable(res.pois);
+        }
+    } catch (e) {
+        console.error("get_game_pois error:", e);
+    }
+}
+
+function renderGamePoisTable(pois) {
+    const tbody = document.getElementById('tbody-game-pois');
+    if (!tbody) return;
+
+    const list = Array.isArray(pois) ? pois : [];
+    currentGamePoisList = list;
+
+    tbody.innerHTML = '';
+    if (list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">No POIs or mobile assets tracked yet. Click <strong>+ Add POI</strong> or say <em>"Aether, remember that [Name] is in [System]"</em>.</td></tr>`;
+        return;
+    }
+
+    list.forEach(poi => {
+        const tr = document.createElement('tr');
+        const callsignTag = poi.callsign
+            ? ` <span style="font-size: 0.72rem; color: var(--text-dim);">(${escapeGameHtml(poi.callsign)})</span>`
+            : '';
+        const srcBadge = poi.is_live && poi.source === 'telemetry'
+            ? `<span class="badge-status badge-online" style="font-size: 0.62rem; margin-left: 6px;">LIVE</span>`
+            : (poi.source === 'voice'
+                ? `<span class="badge-status badge-info" style="font-size: 0.62rem; margin-left: 6px;">VOICE</span>`
+                : `<span class="badge-status badge-offline" style="font-size: 0.62rem; margin-left: 6px;">SAVED</span>`);
+        const aliasesText = Array.isArray(poi.aliases) && poi.aliases.length > 0
+            ? poi.aliases.map(a => `<code>${escapeGameHtml(a)}</code>`).join(' ')
+            : '<span style="color: var(--text-dim); font-size: 0.76rem;">—</span>';
+
+        tr.innerHTML = `
+            <td><strong>${escapeGameHtml(poi.name || poi.id || '')}</strong>${callsignTag}${srcBadge}</td>
+            <td><code>${escapeGameHtml(poi.system || '')}</code></td>
+            <td>${aliasesText}</td>
+            <td class="poi-actions-cell"></td>
+        `;
+        const actionsCell = tr.querySelector('.poi-actions-cell');
+        if (actionsCell) {
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'btn-secondary-sm';
+            editBtn.textContent = 'Edit';
+            editBtn.onclick = () => openPoiModal(poi);
+            actionsCell.appendChild(editBtn);
+
+            if (poi.saved_id || !poi.is_live) {
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'btn-danger-sm';
+                delBtn.style.marginLeft = '4px';
+                delBtn.textContent = 'Delete';
+                delBtn.onclick = () => deleteGamePoi(poi.saved_id || poi.id, poi.name || poi.id);
+                actionsCell.appendChild(delBtn);
+            }
+        }
+        tbody.appendChild(tr);
+    });
+}
+
+function openPoiModal(existingPoi = null) {
+    if (!activeGameId) {
+        alert("Please select a game profile first.");
+        return;
+    }
+    const modal = document.getElementById('modal-edit-poi');
+    if (!modal) return;
+    const titleEl = document.getElementById('modal-edit-poi-title');
+    const idEl = document.getElementById('input-poi-id');
+    const nameEl = document.getElementById('input-poi-name');
+    const callsignEl = document.getElementById('input-poi-callsign');
+    const locEl = document.getElementById('input-poi-location');
+    const aliasesEl = document.getElementById('input-poi-aliases');
+    const errEl = document.getElementById('poi-modal-error');
+
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    const isEdit = Boolean(existingPoi);
+    if (titleEl) titleEl.textContent = isEdit ? `Edit POI: ${existingPoi.name || existingPoi.id}` : 'Add Point of Interest';
+    if (idEl) idEl.value = isEdit ? (existingPoi.saved_id || existingPoi.id || '') : '';
+    if (nameEl) { nameEl.value = isEdit ? (existingPoi.name || '') : ''; nameEl.style.borderColor = ''; }
+    if (callsignEl) callsignEl.value = isEdit ? (existingPoi.callsign || '') : '';
+    if (locEl) { locEl.value = isEdit ? (existingPoi.system || '') : ''; locEl.style.borderColor = ''; }
+    if (aliasesEl) aliasesEl.value = isEdit && Array.isArray(existingPoi.aliases) ? existingPoi.aliases.join(', ') : '';
+
+    modal.classList.remove('hidden');
+    if (nameEl) nameEl.focus();
+}
+
+function closePoiModal() {
+    const modal = document.getElementById('modal-edit-poi');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function handleConfirmSavePoi() {
+    if (!activeGameId) return;
+    const idEl = document.getElementById('input-poi-id');
+    const nameEl = document.getElementById('input-poi-name');
+    const callsignEl = document.getElementById('input-poi-callsign');
+    const locEl = document.getElementById('input-poi-location');
+    const aliasesEl = document.getElementById('input-poi-aliases');
+    const errEl = document.getElementById('poi-modal-error');
+
+    const poiId = (idEl?.value || '').trim();
+    const name = (nameEl?.value || '').trim();
+    const callsign = (callsignEl?.value || '').trim();
+    const location = (locEl?.value || '').trim();
+    const aliases = (aliasesEl?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+
+    if (!name) {
+        if (nameEl) { nameEl.style.borderColor = '#ef4444'; nameEl.focus(); }
+        return;
+    }
+    if (!location) {
+        if (locEl) { locEl.style.borderColor = '#ef4444'; locEl.focus(); }
+        return;
+    }
+
+    try {
+        const res = await window.pywebview.api.save_game_poi(activeGameId, name, location, aliases, poiId, callsign);
+        if (res && res.success) {
+            closePoiModal();
+            renderGamePoisTable(res.pois || []);
+        } else if (errEl) {
+            errEl.textContent = (res && res.error) || 'Failed to save POI.';
+            errEl.style.display = 'block';
+        }
+    } catch (e) {
+        console.error("save_game_poi error:", e);
+    }
+}
+
+async function deleteGamePoi(poiId, poiName) {
+    if (!activeGameId || !poiId) return;
+    if (!confirm(`Delete saved POI "${poiName || poiId}"?`)) return;
+    try {
+        const res = await window.pywebview.api.delete_game_poi(activeGameId, poiId);
+        if (res && res.success) {
+            renderGamePoisTable(res.pois || []);
+        }
+    } catch (e) {
+        console.error("delete_game_poi error:", e);
+    }
+}
+
+async function handleScanGamePois(e) {
+    if (!activeGameId || !window.pywebview?.api?.scan_game_pois) return;
+    const btn = e ? e.currentTarget : document.getElementById('btn-scan-pois');
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '🔍 Scanning...'; }
+    try {
+        const res = await window.pywebview.api.scan_game_pois(activeGameId);
+        if (res && res.success) {
+            renderGamePoisTable(res.pois || []);
+            const added = Number(res.added || 0);
+            const updated = Number(res.updated || 0);
+            const msg = (added > 0 || updated > 0)
+                ? `POI scan complete: ${added} added, ${updated} updated.`
+                : 'POI scan complete: all known POIs are already up to date.';
+            if (window.aetherUI?.showToast) {
+                window.aetherUI.showToast(msg);
+            }
+        } else {
+            alert((res && res.error) || 'Failed to scan POIs.');
+        }
+    } catch (err) {
+        console.error("scan_game_pois error:", err);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
 }
 
@@ -1160,6 +1419,30 @@ async function deleteMacro(phrase) {
 }
 
 function initGamesTabEvents() {
+    // Games 3-Tab Sub-Navigation
+    document.querySelectorAll('.game-subtab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchGameSubtab(btn.dataset.gameSubtab));
+    });
+
+    // Inline Game Display-Name Rename
+    document.getElementById('btn-rename-game')?.addEventListener('click', openRenameGameInline);
+    document.getElementById('btn-save-rename-game')?.addEventListener('click', confirmRenameGame);
+    document.getElementById('btn-cancel-rename-game')?.addEventListener('click', closeRenameGameInline);
+    document.getElementById('input-rename-game')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); confirmRenameGame(); }
+        else if (e.key === 'Escape') { e.preventDefault(); closeRenameGameInline(); }
+    });
+
+    // Modal Add / Edit POI actions & Scan POIs
+    document.getElementById('btn-scan-pois')?.addEventListener('click', handleScanGamePois);
+    document.getElementById('btn-add-poi')?.addEventListener('click', () => openPoiModal(null));
+    document.getElementById('btn-close-edit-poi-modal')?.addEventListener('click', closePoiModal);
+    document.getElementById('btn-cancel-edit-poi')?.addEventListener('click', closePoiModal);
+    document.getElementById('btn-confirm-save-poi')?.addEventListener('click', handleConfirmSavePoi);
+    document.getElementById('modal-edit-poi')?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal-edit-poi') closePoiModal();
+    });
+
     // Add Game buttons
     document.getElementById('btn-add-game')?.addEventListener('click', openAddGameModal);
     document.getElementById('btn-add-game-empty')?.addEventListener('click', openAddGameModal);
@@ -1243,6 +1526,8 @@ function initGamesTabEvents() {
             closeAddGameModal();
             closeAddKeybindModal();
             closeMacroModal();
+            closePoiModal();
+            closeRenameGameInline();
         }
     });
 
@@ -1573,6 +1858,9 @@ function startTelemetryPolling() {
                         const profile = currentGamesData?.profiles?.[activeGameId];
                         if (profile) profile.copilot_log = telemetry.copilot_entries;
                         renderCopilotLog(telemetry.copilot_entries);
+                    }
+                    if (Array.isArray(telemetry.pois)) {
+                        renderGamePoisTable(telemetry.pois);
                     }
                     if (telemetry.scratchpad !== undefined && document.activeElement !== document.getElementById('game-scratchpad-input')) {
                         const pad = document.getElementById('game-scratchpad-input');

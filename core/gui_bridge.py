@@ -4180,6 +4180,52 @@ class GuiBridge:
 
 
 
+    def rename_game_profile(self, game_id: str, new_name: str) -> dict:
+        """Renames a game profile's display_name without altering its internal ID, process match, or bindings."""
+        res = self.game_mgr.rename_game(game_id, new_name)
+        if res.get("success"):
+            if hasattr(self, "program_mgr") and self.program_mgr:
+                try:
+                    prof = self.game_mgr.get_profile(game_id) or {}
+                    self.program_mgr.sync_from_games(game_profiles={game_id: prof})
+                except Exception as e:
+                    logger.debug(f"[GUI_BRIDGE] Program sync after rename_game_profile skipped: {e}")
+        return res
+
+    def get_game_pois(self, game_id: str) -> dict:
+        """Returns merged saved + live telemetry POIs for a game profile."""
+        if not game_id:
+            return {"success": False, "pois": []}
+        return {"success": True, "pois": self.game_mgr.get_merged_pois(game_id)}
+
+    def save_game_poi(
+        self,
+        game_id: str,
+        name: str,
+        location: str,
+        aliases: Optional[list] = None,
+        poi_id: str = "",
+        callsign: str = "",
+    ) -> dict:
+        """Creates or updates a saved POI for a game profile from the UI."""
+        return self.game_mgr.save_poi(
+            game_id=game_id,
+            name=name,
+            location=location,
+            aliases=aliases or [],
+            poi_id=poi_id or "",
+            source="manual",
+            callsign=callsign or "",
+        )
+
+    def delete_game_poi(self, game_id: str, poi_id: str) -> dict:
+        """Deletes a saved POI from a game profile."""
+        return self.game_mgr.delete_poi(game_id, poi_id)
+
+    def scan_game_pois(self, game_id: str) -> dict:
+        """Scans telemetry history and declarative module default_pois to populate/update POIs."""
+        return self.game_mgr.scan_game_pois(game_id)
+
     def delete_game_profile(self, game_id: str) -> dict:
 
         """Deletes a game profile from memory and disk, and removes from program whitelist."""
@@ -5547,6 +5593,7 @@ class GuiBridge:
         active_id = self.game_mgr.data.get("active_profile", "")
 
         copilot_entries = self.game_mgr.get_copilot_log(active_id) if active_id else []
+        merged_pois = self.game_mgr.get_merged_pois(active_id) if active_id else []
 
         adapter = getattr(self.game_mgr, "active_telemetry_adapter", None) or getattr(self.game_mgr, "ed_watcher", None)
 
@@ -5555,6 +5602,7 @@ class GuiBridge:
             res = dict(adapter.state)
 
             res["copilot_entries"] = copilot_entries
+            res["pois"] = merged_pois
 
             return res
 
@@ -5576,7 +5624,8 @@ class GuiBridge:
 
             "scratchpad": profile.get("scratchpad_raw", "") if profile else "",
 
-            "copilot_entries": copilot_entries
+            "copilot_entries": copilot_entries,
+            "pois": merged_pois,
 
         }
 

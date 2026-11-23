@@ -398,6 +398,7 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         "companion_extractors",
         "flag_to_state",
         "event_handlers",
+        "poi_trackers",
         "milestone_rules",
         "state_rules",
         "threshold_state_rules",
@@ -488,6 +489,25 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         sanitized["navigation_mode"] = nav_mode_val
     if raw_data.get("default_callsign"):
         sanitized["default_callsign"] = str(raw_data["default_callsign"]).strip()
+    if isinstance(raw_data.get("default_pois"), list):
+        clean_pois = []
+        for item in raw_data["default_pois"]:
+            if not isinstance(item, dict):
+                continue
+            p_name = str(item.get("name") or "").strip()
+            p_sys = str(item.get("system") or item.get("location") or "").strip()
+            if not p_name or not p_sys:
+                continue
+            p_id = _normalize_id(str(item.get("id") or p_name)) or "poi"
+            clean_pois.append({
+                "id": p_id,
+                "name": p_name,
+                "system": p_sys,
+                "callsign": str(item.get("callsign") or "").strip(),
+                "aliases": [str(a).strip() for a in (item.get("aliases") or []) if str(a).strip()],
+            })
+        if clean_pois:
+            sanitized["default_pois"] = clean_pois
     if clean_ext:
         sanitized["extension"] = clean_ext
     if raw_data.get("steam_appid"):

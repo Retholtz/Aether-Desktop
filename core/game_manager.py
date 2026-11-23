@@ -1577,6 +1577,20 @@ class GameManager:
                 "- Provide read-only voice guidance, visual HUD/map spotting, and companion-app assistance only."
             )
 
+        # 3. Saved POIs / Remembered Assets (persisted across restarts)
+        known_pois = profile.get("known_pois")
+        if isinstance(known_pois, dict) and known_pois:
+            poi_lines = []
+            for pk, pv in known_pois.items():
+                if isinstance(pv, dict) and (pv.get("system") or pv.get("location")):
+                    pname = pv.get("name") or pk
+                    psys = pv.get("system") or pv.get("location")
+                    aliases = pv.get("aliases") or []
+                    alias_str = f" (aliases: {', '.join(aliases)})" if aliases else ""
+                    poi_lines.append(f"- {pname}{alias_str} -> {psys}")
+            if poi_lines:
+                parts.append("REMEMBERED POIs & ASSETS (route to parent system/region):\n" + "\n".join(poi_lines))
+
         # 5. Co-Pilot Role Directive
         parts.append(
             "CO-PILOT ROLE DIRECTIVE:\n"
@@ -1999,6 +2013,308 @@ class GameManager:
             "and enjoy a rich, natural, multi-sentence conversational exchange."
         )
 
+    def rename_game(self, game_id: str, new_display_name: str) -> Dict[str, Any]:
+        """Updates only the human-readable display_name of a game profile without changing its internal ID or bindings."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        clean_name = str(new_display_name or "").strip()
+        if not clean_name:
+            return {"success": False, "error": "Game name cannot be empty."}
+        profile["display_name"] = clean_name
+        self._save_profiles(self.data, target_game_id=game_id)
+        return {"success": True, "game_id": game_id, "display_name": clean_name}
+
+    def _get_live_tracked_pois(self, game_id: str) -> Dict[str, Dict[str, Any]]:
+        """Returns live tracked_pois from the active telemetry adapter if it belongs to game_id."""
+        active_id = self.data.get("active_profile", "")
+        if not game_id or game_id != active_id:
+            return {}
+        adapter = getattr(self, "active_telemetry_adapter", None)
+        if adapter is None or not hasattr(adapter, "get_state"):
+            return {}
+        try:
+            state = adapter.get_state() or {}
+            t_pois = state.get("tracked_pois")
+            if isinstance(t_pois, dict):
+                return {str(k): dict(v) for k, v in t_pois.items() if isinstance(v, dict)}
+        except Exception:
+            pass
+        return {}
+
+    @staticmethod
+    def _poi_tokens(pid: str, info: Dict[str, Any]) -> List[str]:
+        tokens = [
+            str(info.get("name") or "").strip().lower(),
+            str(info.get("callsign") or "").strip().lower(),
+            str(pid or "").strip().lower().replace("_", " "),
+        ] + [str(a).strip().lower() for a in (info.get("aliases") or []) if str(a).strip()]
+        return [t for t in tokens if t]
+
+    def get_merged_pois(self, game_id: str) -> List[Dict[str, Any]]:
+        """Returns unified POIs for a game profile, merging saved known_pois with live telemetry tracked_pois."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return []
+        saved_map = profile.get("known_pois") if isinstance(profile.get("known_pois"), dict) else {}
+        live_map = self._get_live_tracked_pois(game_id)
+
+        merged: Dict[str, Dict[str, Any]] = {}
+        # 1. Seed from live telemetry tracked_pois
+        for pid, linfo in live_map.items():
+            sys_loc = str(linfo.get("system") or linfo.get("location") or "").strip()
+            if not sys_loc:
+                continue
+            merged[pid] = {
+                "id": pid,
+                "name": str(linfo.get("name") or pid).strip(),
+                "callsign": str(linfo.get("callsign") or "").strip(),
+                "system": sys_loc,
+                "aliases": [str(a).strip() for a in (linfo.get("aliases") or []) if str(a).strip()],
+                "source": "telemetry",
+                "is_live": True,
+                "updated_at": float(linfo.get("updated_at") or 0.0),
+            }
+
+        # 2. Merge saved known_pois (manual/voice overrides beat stale telemetry)
+        for sid, sinfo in saved_map.items():
+            if not isinstance(sinfo, dict):
+                continue
+            s_loc = str(sinfo.get("system") or sinfo.get("location") or "").strip()
+            if not s_loc:
+                continue
+            s_ts = float(sinfo.get("updated_at") or 0.0)
+            s_aliases = [str(a).strip() for a in (sinfo.get("aliases") or []) if str(a).strip()]
+            s_name = str(sinfo.get("name") or sid).strip()
+            s_callsign = str(sinfo.get("callsign") or "").strip()
+
+            # Check if this saved entry corresponds to a live entry
+            match_key = sid if sid in merged else None
+            if match_key is None:
+                s_tokens = self._poi_tokens(sid, sinfo)
+                for lkey, lentry in merged.items():
+                    l_tokens = self._poi_tokens(lkey, lentry)
+                    if any(st == lt or (len(st) >= 4 and len(lt) >= 4 and (st in lt or lt in st)) for st in s_tokens for lt in l_tokens):
+                        match_key = lkey
+                        break
+
+            if match_key is not None:
+                existing = merged[match_key]
+                combined_aliases = list(dict.fromkeys(existing.get("aliases", []) + s_aliases))
+                if s_ts >= float(existing.get("updated_at") or 0.0):
+                    existing["system"] = s_loc
+                    existing["source"] = str(sinfo.get("source") or "manual")
+                    existing["updated_at"] = s_ts
+                if s_name and s_name.lower() != sid.lower():
+                    existing["name"] = s_name
+                elif not existing.get("name") or existing.get("name", "").lower() == match_key.lower():
+                    existing["name"] = s_name
+                if s_callsign:
+                    existing["callsign"] = s_callsign
+                existing["aliases"] = combined_aliases
+                existing["saved_id"] = sid
+            else:
+                merged[sid] = {
+                    "id": sid,
+                    "saved_id": sid,
+                    "name": s_name,
+                    "callsign": s_callsign,
+                    "system": s_loc,
+                    "aliases": s_aliases,
+                    "source": str(sinfo.get("source") or "manual"),
+                    "is_live": False,
+                    "updated_at": s_ts,
+                }
+
+        return sorted(merged.values(), key=lambda x: (not x.get("is_live", False), x.get("name", "").lower()))
+
+    def save_poi(
+        self,
+        game_id: str,
+        name: str,
+        location: str,
+        aliases: Optional[List[str]] = None,
+        poi_id: str = "",
+        source: str = "manual",
+        callsign: str = "",
+    ) -> Dict[str, Any]:
+        """Creates or updates a remembered POI in known_pois (matching existing POIs in-place by name/alias)."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        clean_name = str(name or "").strip()
+        clean_loc = str(location or "").strip()
+        if not clean_name or not clean_loc:
+            return {"success": False, "error": "Both 'name' and 'location' are required."}
+
+        clean_aliases = [str(a).strip() for a in (aliases or []) if str(a).strip()]
+        clean_callsign = str(callsign or "").strip()
+        known = profile.setdefault("known_pois", {})
+        target_key = str(poi_id or "").strip()
+
+        # If no explicit poi_id (e.g. voice update "update the carrier location to X"),
+        # match against existing saved or live POIs so we update in-place instead of duplicating.
+        if not target_key:
+            q = clean_name.lower()
+            for existing_id, einfo in known.items():
+                if isinstance(einfo, dict):
+                    toks = self._poi_tokens(existing_id, einfo)
+                    if any(q == t or (len(q) >= 4 and (q in t or t in q)) for t in toks):
+                        target_key = existing_id
+                        # Preserve full canonical name if caller used a short alias like "carrier"
+                        if einfo.get("name") and len(str(einfo["name"])) > len(clean_name):
+                            if q not in [a.lower() for a in clean_aliases]:
+                                clean_aliases.append(clean_name)
+                            clean_name = str(einfo["name"])
+                        if not clean_callsign and einfo.get("callsign"):
+                            clean_callsign = str(einfo["callsign"])
+                        clean_aliases = list(dict.fromkeys((einfo.get("aliases") or []) + clean_aliases))
+                        break
+            if not target_key:
+                live_map = self._get_live_tracked_pois(game_id)
+                for live_id, linfo in live_map.items():
+                    toks = self._poi_tokens(live_id, linfo)
+                    if any(q == t or (len(q) >= 4 and (q in t or t in q)) for t in toks):
+                        target_key = live_id
+                        if linfo.get("name") and len(str(linfo["name"])) > len(clean_name):
+                            if q not in [a.lower() for a in clean_aliases]:
+                                clean_aliases.append(clean_name)
+                            clean_name = str(linfo["name"])
+                        if not clean_callsign and linfo.get("callsign"):
+                            clean_callsign = str(linfo["callsign"])
+                        clean_aliases = list(dict.fromkeys((linfo.get("aliases") or []) + clean_aliases))
+                        break
+
+        if not target_key:
+            target_key = "".join(c if c.isalnum() or c == "_" else "_" for c in clean_name.lower()).strip("_") or "poi"
+
+        entry = {
+            "name": clean_name,
+            "callsign": clean_callsign,
+            "system": clean_loc,
+            "aliases": list(dict.fromkeys(clean_aliases)),
+            "source": str(source or "manual"),
+            "updated_at": time.time(),
+        }
+        known[target_key] = entry
+        self._save_profiles(self.data, target_game_id=game_id)
+        return {
+            "success": True,
+            "poi_id": target_key,
+            "poi": {"id": target_key, **entry},
+            "pois": self.get_merged_pois(game_id),
+        }
+
+    def delete_poi(self, game_id: str, poi_id: str) -> Dict[str, Any]:
+        """Removes a saved POI from known_pois."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        known = profile.get("known_pois")
+        if isinstance(known, dict) and poi_id in known:
+            del known[poi_id]
+            self._save_profiles(self.data, target_game_id=game_id)
+        return {"success": True, "pois": self.get_merged_pois(game_id)}
+
+    def scan_game_pois(self, game_id: str) -> Dict[str, Any]:
+        """
+        100% game-agnostic POI scanner:
+        1) Scans recent telemetry/journal history via the active adapter's `scan_poi_history()`
+           to recover mobile-asset names, callsigns, and latest locations.
+        2) Loads curated `default_pois` from the game's `.aethermodule.json` without overwriting
+           any existing user-customized POIs.
+        """
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+
+        known = profile.setdefault("known_pois", {})
+        added = 0
+        updated = 0
+
+        # 1. Scan telemetry history (if adapter supports it)
+        adapter = getattr(self, "active_telemetry_adapter", None)
+        if adapter is not None and game_id == self.data.get("active_profile", "") and hasattr(adapter, "scan_poi_history"):
+            try:
+                hist_pois = adapter.scan_poi_history(max_files=40) or {}
+                for pid, info in hist_pois.items():
+                    if not isinstance(info, dict):
+                        continue
+                    h_name = str(info.get("name") or "").strip()
+                    h_callsign = str(info.get("callsign") or "").strip()
+                    h_sys = str(info.get("system") or "").strip()
+                    h_aliases = [str(a).strip() for a in (info.get("aliases") or []) if str(a).strip()]
+                    if not (h_sys or h_name):
+                        continue
+                    if pid in known and isinstance(known[pid], dict):
+                        ex = known[pid]
+                        changed = False
+                        # Upgrade raw slug name (e.g. 'fleet_carrier') to discovered real name (e.g. 'LONE WOLF')
+                        if h_name and (not ex.get("name") or str(ex.get("name")).strip().lower() == pid.lower()):
+                            ex["name"] = h_name
+                            changed = True
+                        if h_callsign and not ex.get("callsign"):
+                            ex["callsign"] = h_callsign
+                            changed = True
+                        if h_sys and not ex.get("system"):
+                            ex["system"] = h_sys
+                            changed = True
+                        if h_aliases:
+                            merged_al = list(dict.fromkeys((ex.get("aliases") or []) + h_aliases))
+                            if merged_al != (ex.get("aliases") or []):
+                                ex["aliases"] = merged_al
+                                changed = True
+                        if changed:
+                            updated += 1
+                    elif h_sys:
+                        known[pid] = {
+                            "name": h_name or pid,
+                            "callsign": h_callsign,
+                            "system": h_sys,
+                            "aliases": h_aliases,
+                            "source": "telemetry",
+                            "updated_at": time.time(),
+                        }
+                        added += 1
+            except Exception:
+                pass
+
+        # 2. Load declarative default_pois from the game's .aethermodule.json
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            default_pois = (mod.get("default_pois") if isinstance(mod, dict) else None) or []
+            for dp in default_pois:
+                if not isinstance(dp, dict):
+                    continue
+                dp_id = str(dp.get("id") or "").strip()
+                dp_name = str(dp.get("name") or "").strip()
+                dp_sys = str(dp.get("system") or "").strip()
+                if not dp_id or not dp_name or not dp_sys:
+                    continue
+                if dp_id not in known:
+                    known[dp_id] = {
+                        "name": dp_name,
+                        "callsign": str(dp.get("callsign") or "").strip(),
+                        "system": dp_sys,
+                        "aliases": [str(a).strip() for a in (dp.get("aliases") or []) if str(a).strip()],
+                        "source": "module",
+                        "updated_at": 0.0,
+                    }
+                    added += 1
+        except Exception:
+            pass
+
+        if added > 0 or updated > 0:
+            self._save_profiles(self.data, target_game_id=game_id)
+
+        return {
+            "success": True,
+            "added": added,
+            "updated": updated,
+            "pois": self.get_merged_pois(game_id),
+        }
+
     def get_callsign(self, game_id: str) -> str:
         """Returns the configured player callsign string (supports ';' separated values or blank)."""
         profile = self.get_profile(game_id)
@@ -2046,12 +2362,7 @@ class GameManager:
 
     def build_game_callsign_directive(self, profile: Dict[str, Any], game_id: str = "") -> str:
         """Builds an explicit directive governing how Aether addresses the player in this game."""
-        if "callsign" in profile and profile["callsign"] is not None:
-            raw = str(profile["callsign"]).strip()
-        elif "elite" in (game_id or "").lower() or "elite" in str(profile.get("display_name", "")).lower():
-            raw = "Commander"
-        else:
-            raw = ""
+        raw = self.get_callsign(game_id) if game_id else str(profile.get("callsign") or "").strip()
 
         callsigns = [c.strip() for c in raw.split(";") if c.strip()]
         if not callsigns:

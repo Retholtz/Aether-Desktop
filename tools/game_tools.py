@@ -720,15 +720,89 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         nav = UniversalGameNavigator(client=client, model_endpoint=model_endpoint, target_process=target_process, map_controls=map_controls)
         return nav.spot_and_guide_map_location(landmark_description=landmark)
 
+    def _resolve_known_poi_destination(raw_name: str, profile: Optional[dict], tel_adapter: Any) -> Tuple[str, Optional[str]]:
+        """
+        Resolves a named asset/POI alias (e.g. mobile base, carrier, station, saved camp)
+        to its parent routable map system/region using live tracked_pois, saved known_pois,
+        and recent copilot_log discoveries (100% game-agnostic).
+        Returns `(resolved_destination, matched_poi_label_or_None)`.
+        """
+        q = str(raw_name or "").strip().lower()
+        if not q:
+            return raw_name, None
+
+        candidates: List[Dict[str, Any]] = []
+        # Gather saved known_pois first (manual/voice overrides beat stale telemetry on tie or newer timestamp)
+        if isinstance(profile, dict) and isinstance(profile.get("known_pois"), dict):
+            for pid, pinfo in profile["known_pois"].items():
+                if isinstance(pinfo, dict) and (pinfo.get("system") or pinfo.get("location")):
+                    candidates.append({
+                        "id": pid,
+                        "name": pinfo.get("name") or pid,
+                        "callsign": pinfo.get("callsign", ""),
+                        "system": pinfo.get("system") or pinfo.get("location"),
+                        "aliases": pinfo.get("aliases") or [],
+                        "updated_at": float(pinfo.get("updated_at") or 0.0),
+                        "_priority": 1,
+                    })
+        if tel_adapter is not None and hasattr(tel_adapter, "get_state"):
+            try:
+                t_pois = (tel_adapter.get_state() or {}).get("tracked_pois")
+                if isinstance(t_pois, dict):
+                    for pid, pinfo in t_pois.items():
+                        if isinstance(pinfo, dict) and pinfo.get("system"):
+                            candidates.append({
+                                "id": pid,
+                                **pinfo,
+                                "updated_at": float(pinfo.get("updated_at") or 0.0),
+                                "_priority": 0,
+                            })
+            except Exception:
+                pass
+        # Sort by newest timestamp first; on tie, explicit saved/voice POI wins over telemetry
+        candidates.sort(key=lambda c: (float(c.get("updated_at") or 0.0), int(c.get("_priority") or 0)), reverse=True)
+
+        for c in candidates:
+            sys_target = str(c.get("system") or "").strip()
+            if not sys_target or sys_target.lower() == "unknown":
+                continue
+            tokens = [
+                str(c.get("name") or "").strip().lower(),
+                str(c.get("callsign") or "").strip().lower(),
+                str(c.get("id") or "").strip().lower().replace("_", " "),
+            ] + [str(a).strip().lower() for a in (c.get("aliases") or []) if str(a).strip()]
+            tokens = [t for t in tokens if t]
+            if any(q == t or (len(q) >= 4 and (q in t or t in q)) for t in tokens):
+                label = str(c.get("name") or c.get("id") or raw_name)
+                return sys_target, label
+
+        # Fallback: scan recent copilot_log entries for matching POI name + recorded parent system
+        if isinstance(profile, dict) and isinstance(profile.get("copilot_log"), list):
+            for entry in reversed(profile["copilot_log"][-120:]):
+                if not isinstance(entry, dict):
+                    continue
+                summary = str(entry.get("summary") or "").lower()
+                loc = str(entry.get("location") or "").strip()
+                if q in summary and loc and loc.lower() != "unknown":
+                    parent_sys = loc.split(",")[0].strip()
+                    if parent_sys and parent_sys.lower() != q:
+                        return parent_sys, raw_name
+
+        return raw_name, None
+
     @dispatcher.register(
         name="search_and_route_destination",
-        description="Search Bar Navigation (Keyboard & Mouse): Opens the in-game navigation map, pastes the destination into the search bar, and plots the course.",
+        description=(
+            "Search Bar Navigation (Keyboard & Mouse): Opens the in-game navigation map, pastes the destination "
+            "into the search bar, and plots the course. Automatically resolves remembered POIs/assets "
+            "(saved in known_pois or live telemetry tracked_pois) to their parent routable map system/region."
+        ),
         parameters={
             "type": "object",
             "properties": {
                 "destination_name": {
                     "type": "string",
-                    "description": "Star system, sector, or destination name to search and plot."
+                    "description": "Star system, sector, region, or tracked POI name to search and plot."
                 }
             },
             "required": ["destination_name"]
@@ -742,8 +816,102 @@ def register_game_tools(dispatcher, game_manager, engine=None):
                 "message": "Synthetic search-bar typing is disabled in Spotter-Only (Anti-Cheat Safe) mode.",
             }
         from core.game_nav import GameNavigator
+        nav_gid, nav = _build_game_navigator(GameNavigator)
+        profile = game_manager.get_profile(nav_gid) if (game_manager and nav_gid) else None
+        resolved_dest, matched_poi = _resolve_known_poi_destination(
+            destination_name, profile, getattr(nav, "telemetry_adapter", None)
+        )
+        res = nav.search_and_route_destination(destination_name=resolved_dest)
+        if matched_poi and isinstance(res, dict):
+            res["resolved_from_poi"] = matched_poi
+            res["resolved_system"] = resolved_dest
+            res["message"] = f"Resolved '{matched_poi}' -> '{resolved_dest}'. " + str(res.get("message") or "")
+        return res
+
+    @dispatcher.register(
+        name="route_to_map_bookmark",
+        description=(
+            "Plots a route to a numbered map bookmark inside the active game's Bookmarks panel "
+            "(e.g. 'Bookmark 2' defaults to the module's default category such as Favorites; "
+            "'System Bookmark 3' selects the Systems bookmark category and plots item #3)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "bookmark_number": {
+                    "type": "integer",
+                    "description": "1-indexed bookmark number from top of the category list (e.g. 1, 2, 3)."
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Optional bookmark category name (e.g. 'favorites', 'systems', 'bodies', 'stations', 'settlements', 'squadron_systems'). Leave empty to use the default category."
+                }
+            },
+            "required": ["bookmark_number"]
+        }
+    )
+    def route_to_map_bookmark(bookmark_number: int, category: str = "") -> dict:
+        active_id = game_manager.data.get("active_profile", "") if game_manager else ""
+        if active_id and hasattr(game_manager, "get_input_mode") and game_manager.get_input_mode(active_id) == "spotter_only":
+            return {
+                "status": "blocked_by_spotter_only",
+                "message": "Synthetic map bookmark clicks are disabled in Spotter-Only (Anti-Cheat Safe) mode.",
+            }
+        from core.game_nav import GameNavigator
         _, nav = _build_game_navigator(GameNavigator)
-        return nav.search_and_route_destination(destination_name=destination_name)
+        return nav.route_to_map_bookmark(bookmark_number=bookmark_number, category=category)
+
+    @dispatcher.register(
+        name="remember_game_poi",
+        description=(
+            "Saves or updates a remembered Point of Interest, home base, mobile asset, or landmark "
+            "and its parent routable map system/region in the active game profile (e.g. 'update the carrier location to X', "
+            "'remember my home base is in Y'). Updates matching existing POIs in-place and overrides stale telemetry."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name or alias of the POI, base, or asset (e.g. 'Lone Wolf', 'carrier', 'Home Base')."
+                },
+                "location": {
+                    "type": "string",
+                    "description": "Parent routable map system, sector, or region name."
+                },
+                "aliases": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional alternate nicknames or callsigns for this POI."
+                }
+            },
+            "required": ["name", "location"]
+        }
+    )
+    def remember_game_poi(name: str, location: str, aliases: Optional[list] = None) -> dict:
+        if not game_manager:
+            return {"status": "error", "message": "Game manager unavailable."}
+        active_id = game_manager.data.get("active_profile", "")
+        if not active_id or not game_manager.get_profile(active_id):
+            return {"status": "error", "message": "No active game profile selected."}
+        res = game_manager.save_poi(
+            game_id=active_id,
+            name=name,
+            location=location,
+            aliases=aliases,
+            source="voice",
+        )
+        if not res.get("success"):
+            return {"status": "error", "message": res.get("error") or "Failed to save POI."}
+        saved = res.get("poi") or {}
+        saved_name = saved.get("name") or name
+        saved_loc = saved.get("system") or location
+        return {
+            "status": "success",
+            "poi": saved_name,
+            "location": saved_loc,
+            "message": f"Updated '{saved_name}' location to '{saved_loc}'.",
+        }
 
     @dispatcher.register(
         name="assist_game_navigation",
@@ -942,12 +1110,35 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         if not client:
             return {"status": "error", "message": "Vision client unavailable."}
         from core.game_nav import UniversalGameNavigator
-        _, nav = _build_game_navigator(UniversalGameNavigator)
-        return nav.complete_ui_task(
+        nav_gid, nav = _build_game_navigator(UniversalGameNavigator)
+        profile = game_manager.get_profile(nav_gid) if (game_manager and nav_gid) else None
+        goal_key = str(goal or "").lower().strip()
+        learned_recipes = (profile.get("learned_ui_recipes") if isinstance(profile, dict) else None) or {}
+        cached_recipe = learned_recipes.get(goal_key) if isinstance(learned_recipes, dict) else None
+
+        res = nav.complete_ui_task(
             goal=goal,
             max_steps=max_steps,
             preferred_input=preferred_input,
+            learned_recipe=cached_recipe,
         )
+        # Self-learning cache: persist newly discovered winning key/click recipe for 5x faster future runs
+        save_gid = nav_gid or active_id
+        if (
+            isinstance(res, dict)
+            and res.get("status") == "verified_done"
+            and isinstance(res.get("learned_recipe"), dict)
+            and res["learned_recipe"].get("actions")
+            and isinstance(profile, dict)
+            and save_gid
+            and game_manager is not None
+        ):
+            try:
+                profile.setdefault("learned_ui_recipes", {})[goal_key] = res["learned_recipe"]
+                game_manager._save_profiles(game_manager.data, target_game_id=save_gid)
+            except Exception:
+                pass
+        return res
 
     MACRO_STEP_ITEMS_SCHEMA: Dict[str, Any] = {
         "type": "object",
@@ -1268,6 +1459,8 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "assist_game_navigation": assist_game_navigation,
         "spot_and_guide_map_landmark": spot_and_guide_map_landmark,
         "search_and_route_destination": search_and_route_destination,
+        "route_to_map_bookmark": route_to_map_bookmark,
+        "remember_game_poi": remember_game_poi,
         "pan_game_map": pan_game_map,
         "place_map_marker": place_map_marker,
         "center_map_on_player": center_map_on_player,

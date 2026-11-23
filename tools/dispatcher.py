@@ -1549,6 +1549,8 @@ class ToolDispatcher:
             "center_game_map",
             "spot_and_guide_map_landmark",
             "search_and_route_destination",
+            "route_to_map_bookmark",
+            "remember_game_poi",
             "assist_game_navigation",
             "click_game_ui_element",
             "complete_game_ui_task",

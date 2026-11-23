@@ -92,8 +92,8 @@ class UniversalGameNavigator:
         py = oy + int((float(y_norm) / 1000.0) * height)
         return px, py
 
-    def _build_low_latency_json_config(self):
-        """Returns a low-latency JSON GenerateContentConfig (temperature=0.0, thinking_level='low')."""
+    def _build_low_latency_json_config(self, fast_mode: bool = False):
+        """Returns a low-latency JSON GenerateContentConfig (temperature=0.0, minimal/zero thinking)."""
         try:
             from google.genai import types
 
@@ -103,14 +103,20 @@ class UniversalGameNavigator:
             }
             if hasattr(types, "ThinkingConfig"):
                 try:
-                    cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+                    if fast_mode:
+                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                    else:
+                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
                 except Exception:
-                    pass
+                    try:
+                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+                    except Exception:
+                        pass
             return types.GenerateContentConfig(**cfg_kwargs)
         except Exception:
             return {"response_mime_type": "application/json", "temperature": 0.0}
 
-    def _call_vision_json(self, img_bytes: bytes, prompt: str) -> Dict[str, Any]:
+    def _call_vision_json(self, img_bytes: bytes, prompt: str, fast_mode: bool = False) -> Dict[str, Any]:
         """Executes a low-latency structured-JSON multimodal call and parses the response."""
         try:
             from google.genai import types
@@ -129,7 +135,7 @@ class UniversalGameNavigator:
         res = self.client.models.generate_content(
             model=self.model_endpoint,
             contents=contents,
-            config=self._build_low_latency_json_config(),
+            config=self._build_low_latency_json_config(fast_mode=fast_mode),
         )
         raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
         if raw_text.startswith("```"):
@@ -741,13 +747,20 @@ If the element is not visible on screen, return {{"found": false}}.
         max_steps: int = 6,
         preferred_input: str = "auto",
         target_process: Optional[str] = None,
+        learned_recipe: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Universal Closed-Loop Vision UI/Menu Navigator (100% game-agnostic).
 
-        Repeatedly captures the active game screen, inspects what menu item/icon/tab
-        is currently highlighted, executes the single best adaptive keyboard or mouse step
-        toward `goal`, and visually verifies completion before returning.
+        Features:
+        - Fast Self-Learning Replay: If a previously verified `learned_recipe` exists for `goal`,
+          replays its action steps directly (~0.8s) and performs a 1-shot Vision verification.
+          If verification fails (e.g. cursor started in a different position), seamlessly falls back
+          to the adaptive step-by-step Vision loop.
+        - Strict Action-Button Verification: Never claims a task is "already done" while the target
+          button/icon is still visibly enabled, lit, or displays a non-zero cost (even 10 CR).
+        - Automatic Panel Cleanup: Closes any temporary side panel/overlay opened during the task
+          via `cleanup_keys` so the player's view returns cleanly to gameplay.
         """
         from tools.os_controls import focus_window, nudge_mouse_relative
 
@@ -761,9 +774,91 @@ If the element is not visible on screen, return {{"found": false}}.
         if proc:
             try:
                 focus_window(proc)
-                time.sleep(0.12)
+                time.sleep(0.1)
             except Exception:
                 pass
+
+        def _run_cleanup_keys(ckeys: Any) -> List[str]:
+            executed_cleanup: List[str] = []
+            if isinstance(ckeys, list) and ckeys:
+                clean_ckeys = [str(k).strip().lower() for k in ckeys if str(k).strip()]
+                for idx, ck in enumerate(clean_ckeys[:3]):
+                    send_directinput_key(ck, duration_sec=0.08)
+                    executed_cleanup.append(ck)
+                    if idx < len(clean_ckeys[:3]) - 1:
+                        time.sleep(0.12)
+                if executed_cleanup:
+                    time.sleep(0.15)
+            return executed_cleanup
+
+        def _execute_recorded_action(act_spec: Dict[str, Any], vw: int, vh: int) -> None:
+            atype = str(act_spec.get("action") or "").upper()
+            if atype == "KEYS":
+                keys_list = act_spec.get("keys") or []
+                hold_s = max(0.05, min(1.5, float(act_spec.get("hold_ms") or 80) / 1000.0))
+                int_s = max(0.05, min(0.6, float(act_spec.get("interval_ms") or 130) / 1000.0))
+                for idx, kname in enumerate(keys_list):
+                    send_directinput_key(str(kname).strip().lower(), duration_sec=hold_s)
+                    if idx < len(keys_list) - 1:
+                        time.sleep(int_s)
+            elif atype == "CLICK":
+                pt = act_spec.get("point")
+                if isinstance(pt, (list, tuple)) and len(pt) == 2:
+                    px, py = self._norm_to_screen_px(float(pt[1]), float(pt[0]), vw, vh)
+                    btn = str(act_spec.get("button") or "left").lower().strip()
+                    hold_s = max(0.05, min(1.5, float(act_spec.get("hold_ms") or 90) / 1000.0))
+                    move_mouse_absolute(px, py)
+                    nudge_mouse_relative(1, 0)
+                    time.sleep(0.16)
+                    click_mouse_button(btn, hold_duration=hold_s)
+            wait_s = max(0.15, min(1.0, float(act_spec.get("wait_ms") or 300) / 1000.0))
+            time.sleep(wait_s)
+
+        history: List[str] = []
+        recorded_actions: List[Dict[str, Any]] = []
+
+        # 0. Fast-Path Self-Learning Replay + 1-Shot Visual Verification
+        if isinstance(learned_recipe, dict) and isinstance(learned_recipe.get("actions"), list) and learned_recipe["actions"]:
+            _, vw, vh = self.capture_viewport()
+            for r_act in learned_recipe["actions"]:
+                if isinstance(r_act, dict):
+                    _execute_recorded_action(r_act, vw, vh)
+            verify_frame, _, _ = self.capture_viewport()
+            replay_verify_prompt = f"""
+Inspect this live game screenshot right after replaying a saved UI sequence for the goal: "{clean_goal}".
+CRITICAL RULES:
+- Do NOT say completed=true if the target action button/icon is still visibly ENABLED, LIT, or shows ANY non-zero cost (even a tiny cost like 10 CR, or even if a resource bar looks almost full).
+- Only return completed=true if the target button is now visibly DISABLED / GREYED OUT / 0 cost, OR a clear confirmation banner/state change shows the action just succeeded.
+- If a temporary side panel/menu is still open on screen that should be closed to return to gameplay, list the key(s) to close it in "cleanup_keys" (otherwise []).
+
+Return ONLY JSON:
+{{"completed": true or false, "observation": "Brief 1-sentence confirmation of what just succeeded or what is still needed", "cleanup_keys": []}}
+"""
+            try:
+                replay_check = self._call_vision_json(verify_frame, replay_verify_prompt, fast_mode=True) or {}
+            except TypeError:
+                replay_check = self._call_vision_json(verify_frame, replay_verify_prompt) or {}
+            if bool(replay_check.get("completed")):
+                ckeys = replay_check.get("cleanup_keys") or learned_recipe.get("cleanup_keys") or []
+                ran_cleanup = _run_cleanup_keys(ckeys)
+                obs = str(replay_check.get("observation") or f"Completed '{clean_goal}'.").strip()
+                return {
+                    "status": "verified_done",
+                    "verified": True,
+                    "just_executed": True,
+                    "replayed_recipe": True,
+                    "goal": clean_goal,
+                    "steps_executed": len(learned_recipe["actions"]),
+                    "cleanup_keys": ran_cleanup,
+                    "observation": obs,
+                    "message": (
+                        f"Completed '{clean_goal}' just now via learned fast replay: {obs} "
+                        f"(Confirm naturally that it just succeeded — do NOT say it was 'already' done.)"
+                    ),
+                }
+            history.append(
+                f"Fast replay did not confirm completion ({replay_check.get('observation') or 'adapting from current screen'})"
+            )
 
         capped_steps = max(1, min(10, int(max_steps or 6)))
         pref = str(preferred_input or "auto").lower().strip()
@@ -777,11 +872,15 @@ If the element is not visible on screen, return {{"found": false}}.
             )
         )
 
-        history: List[str] = []
-
         for step_num in range(1, capped_steps + 1):
             frame_bytes, width, height = self.capture_viewport()
             prior_summary = "\n".join(f"  - Step {i + 1}: {h}" for i, h in enumerate(history)) or "  (none yet)"
+            has_acted = len(recorded_actions) > 0
+            verify_rule = (
+                'Check if the action we JUST executed visibly succeeded (e.g., confirmation banner/message visible, target button turned disabled/greyed out/0 cost, or target screen opened).'
+                if has_acted
+                else 'Check if the GOAL is genuinely already complete with NOTHING left to click/activate.'
+            )
             prompt = f"""
 You are an autonomous visual UI/menu agent operating inside the game "{self.game_name or 'Active Game'}".
 GOAL: "{clean_goal}"
@@ -791,11 +890,15 @@ Previous steps already executed in this attempt:
 
 Carefully inspect the live screenshot:
 1. Identify which menu item, icon, row, or tab is CURRENTLY HIGHLIGHTED / SELECTED (if any).
-2. Check if the GOAL is ALREADY VISIBLY COMPLETED (e.g., button disabled/greyed out after activation, confirmation banner/message visible, fuel/ammo full, target option toggled/selected, desired screen opened). If YES, return action "VERIFIED_DONE".
+2. {verify_rule}
+   STRICT VERIFICATION GUARD:
+   - NEVER return "VERIFIED_DONE" if the target action button/icon (e.g. Refuel, Repair, Restock, Buy, Request, Confirm) is STILL VISIBLY ENABLED, LIT, or shows ANY non-zero cost (even a tiny cost like 10 CR, or even if a fuel/ammo/health bar looks almost full!). You MUST activate/press that button first!
+   - Only return "VERIFIED_DONE" when the target button itself is visibly DISABLED / GREYED OUT / 0 cost, OR a clear confirmation banner/state change shows the action succeeded.
+   - When returning "VERIFIED_DONE": if earlier steps opened a temporary side panel/overlay to perform this task (and the player should return to the main cockpit/gameplay view), set "cleanup_keys" to the key(s) that close that panel (e.g. ["1"] or ["escape"]); otherwise set "cleanup_keys": [].
 3. Check if the GOAL is IMPOSSIBLE from this screen and no obvious key opens the needed menu. If so, return action "CANNOT_COMPLETE" with a clear reason.
-4. Otherwise, decide the SINGLE BEST NEXT ACTION to advance toward the goal:
+4. Otherwise, decide the BEST NEXT ACTION to advance toward the goal:
    - {input_hint}
-   - For "KEYS": list the exact ordered keys to press (e.g. ["space"] if the target icon/button is ALREADY highlighted, ["a", "space"] if one icon to the left, ["w", "w"] to move up 2 rows, ["e", "e"] to switch right 2 tabs, ["escape"] to back out). Keep each step small and verify-friendly (1-4 keys).
+   - For "KEYS": list the exact ordered keys to press (e.g. ["space"] if the target icon/button is ALREADY highlighted, ["a", "space"] if one icon to the left, ["w", "w"] to move up 2 rows, ["1", "e", "e"] to open a side panel and tab right twice). You may batch 1-4 clear sequential keys in one step to reduce latency.
    - For "CLICK": return normalized [y, x] coordinates (0-1000 scale, center of target button/icon) and "button" ("left" or "right").
 
 Return ONLY valid JSON:
@@ -805,19 +908,23 @@ Return ONLY valid JSON:
   "action": "KEYS" | "CLICK" | "VERIFIED_DONE" | "CANNOT_COMPLETE",
   "keys": ["w", "space"],
   "hold_ms": 80,
-  "interval_ms": 140,
+  "interval_ms": 130,
   "point": [y_normalized, x_normalized],
   "button": "left",
-  "wait_ms": 450,
+  "wait_ms": 380,
+  "cleanup_keys": [],
   "reason": "Only needed for VERIFIED_DONE or CANNOT_COMPLETE"
 }}
 """
-            decision = self._call_vision_json(frame_bytes, prompt)
+            try:
+                decision = self._call_vision_json(frame_bytes, prompt, fast_mode=True)
+            except TypeError:
+                decision = self._call_vision_json(frame_bytes, prompt)
             if not isinstance(decision, dict) or not decision:
                 return {
                     "status": "incomplete",
                     "goal": clean_goal,
-                    "steps_executed": len(history),
+                    "steps_executed": len(recorded_actions),
                     "history": history,
                     "message": f"Vision evaluation failed on step {step_num} while attempting '{clean_goal}'.",
                 }
@@ -827,15 +934,41 @@ Return ONLY valid JSON:
             highlighted = str(decision.get("highlighted_now") or "").strip()
 
             if action == "VERIFIED_DONE":
-                reason = str(decision.get("reason") or obs or f"Visually confirmed '{clean_goal}' completed.").strip()
+                ran_cleanup = _run_cleanup_keys(decision.get("cleanup_keys"))
+                raw_reason = str(decision.get("reason") or obs or f"Completed '{clean_goal}'.").strip()
+                if recorded_actions:
+                    msg = (
+                        f"Completed '{clean_goal}' just now ({len(recorded_actions)} step(s)): {raw_reason} "
+                        f"(Confirm naturally that it just succeeded — do NOT say it was 'already' done.)"
+                    )
+                    learned = {
+                        "actions": recorded_actions,
+                        "cleanup_keys": ran_cleanup,
+                    }
+                    return {
+                        "status": "verified_done",
+                        "verified": True,
+                        "just_executed": True,
+                        "already_done": False,
+                        "goal": clean_goal,
+                        "steps_executed": len(recorded_actions),
+                        "cleanup_keys": ran_cleanup,
+                        "learned_recipe": learned,
+                        "history": history,
+                        "observation": obs,
+                        "message": msg,
+                    }
                 return {
                     "status": "verified_done",
                     "verified": True,
+                    "just_executed": False,
+                    "already_done": True,
                     "goal": clean_goal,
-                    "steps_executed": len(history),
+                    "steps_executed": 0,
+                    "cleanup_keys": ran_cleanup,
                     "history": history,
                     "observation": obs,
-                    "message": reason,
+                    "message": raw_reason,
                 }
 
             if action == "CANNOT_COMPLETE":
@@ -844,26 +977,34 @@ Return ONLY valid JSON:
                     "status": "cannot_complete",
                     "verified": False,
                     "goal": clean_goal,
-                    "steps_executed": len(history),
+                    "steps_executed": len(recorded_actions),
                     "history": history,
                     "observation": obs,
                     "message": reason,
                 }
 
-            wait_sec = max(0.2, min(1.5, float(decision.get("wait_ms") or 450) / 1000.0))
+            wait_ms = max(180, min(1400, int(decision.get("wait_ms") or 380)))
+            wait_sec = wait_ms / 1000.0
 
             if action == "KEYS":
                 keys = decision.get("keys")
                 if not isinstance(keys, list) or not keys:
                     history.append(f"Empty KEYS decision ({obs})")
                     continue
-                hold_sec = max(0.05, min(1.5, float(decision.get("hold_ms") or 80) / 1000.0))
-                interval_sec = max(0.05, min(0.6, float(decision.get("interval_ms") or 140) / 1000.0))
+                hold_ms = max(50, min(1500, int(decision.get("hold_ms") or 80)))
+                interval_ms = max(50, min(600, int(decision.get("interval_ms") or 130)))
                 clean_keys = [str(k).strip().lower() for k in keys if str(k).strip()]
                 for idx, key_name in enumerate(clean_keys):
-                    send_directinput_key(key_name, duration_sec=hold_sec)
+                    send_directinput_key(key_name, duration_sec=hold_ms / 1000.0)
                     if idx < len(clean_keys) - 1:
-                        time.sleep(interval_sec)
+                        time.sleep(interval_ms / 1000.0)
+                recorded_actions.append({
+                    "action": "KEYS",
+                    "keys": clean_keys,
+                    "hold_ms": hold_ms,
+                    "interval_ms": interval_ms,
+                    "wait_ms": wait_ms,
+                })
                 history.append(f"Highlighted='{highlighted}' -> KEYS {clean_keys} ({obs})")
                 time.sleep(wait_sec)
 
@@ -875,11 +1016,18 @@ Return ONLY valid JSON:
                 y_norm, x_norm = float(pt[0]), float(pt[1])
                 px, py = self._norm_to_screen_px(x_norm, y_norm, width, height)
                 btn = str(decision.get("button") or "left").lower().strip()
-                hold_sec = max(0.05, min(1.5, float(decision.get("hold_ms") or 90) / 1000.0))
+                hold_ms = max(50, min(1500, int(decision.get("hold_ms") or 90)))
                 move_mouse_absolute(px, py)
                 nudge_mouse_relative(1, 0)
-                time.sleep(0.18)
-                click_mouse_button(btn, hold_duration=hold_sec)
+                time.sleep(0.16)
+                click_mouse_button(btn, hold_duration=hold_ms / 1000.0)
+                recorded_actions.append({
+                    "action": "CLICK",
+                    "point": [y_norm, x_norm],
+                    "button": btn,
+                    "hold_ms": hold_ms,
+                    "wait_ms": wait_ms,
+                })
                 history.append(f"Highlighted='{highlighted}' -> CLICK({btn}) at ({px}, {py}) ({obs})")
                 time.sleep(wait_sec)
             else:
@@ -888,33 +1036,265 @@ Return ONLY valid JSON:
         # Final visual verification pass after the last executed step
         final_frame, _, _ = self.capture_viewport()
         verify_prompt = f"""
-Inspect this live game screenshot to verify whether the goal "{clean_goal}" is NOW VISIBLY COMPLETED.
+Inspect this live game screenshot to verify whether the action we JUST executed for "{clean_goal}" succeeded.
+CRITICAL: Do NOT return completed=true if the target action button is still visibly enabled/lit or shows a non-zero cost (even 10 CR).
+If a temporary side panel/menu should now be closed to return to gameplay, include the close key(s) in "cleanup_keys" (otherwise []).
 Return ONLY JSON:
-{{"completed": true or false, "observation": "Brief 1-sentence visual confirmation or what is still missing"}}
+{{"completed": true or false, "observation": "Brief 1-sentence confirmation or what is still missing", "cleanup_keys": []}}
 """
-        final_check = self._call_vision_json(final_frame, verify_prompt) or {}
+        try:
+            final_check = self._call_vision_json(final_frame, verify_prompt, fast_mode=True) or {}
+        except TypeError:
+            final_check = self._call_vision_json(final_frame, verify_prompt) or {}
         if bool(final_check.get("completed")):
-            return {
+            ran_cleanup = _run_cleanup_keys(final_check.get("cleanup_keys"))
+            obs = str(final_check.get("observation") or f"Completed '{clean_goal}'.").strip()
+            learned = {"actions": recorded_actions, "cleanup_keys": ran_cleanup} if recorded_actions else None
+            out = {
                 "status": "verified_done",
                 "verified": True,
+                "just_executed": bool(recorded_actions),
+                "already_done": not bool(recorded_actions),
                 "goal": clean_goal,
-                "steps_executed": len(history),
+                "steps_executed": len(recorded_actions),
+                "cleanup_keys": ran_cleanup,
                 "history": history,
-                "observation": str(final_check.get("observation") or ""),
-                "message": str(final_check.get("observation") or f"Visually confirmed '{clean_goal}' completed."),
+                "observation": obs,
+                "message": (
+                    f"Completed '{clean_goal}' just now: {obs} "
+                    f"(Confirm naturally that it just succeeded — do NOT say it was 'already' done.)"
+                    if recorded_actions
+                    else obs
+                ),
             }
+            if learned:
+                out["learned_recipe"] = learned
+            return out
 
         return {
             "status": "incomplete",
             "verified": False,
             "goal": clean_goal,
-            "steps_executed": len(history),
+            "steps_executed": len(recorded_actions),
             "history": history,
             "observation": str(final_check.get("observation") or ""),
             "message": (
-                f"Executed {len(history)} adaptive UI steps for '{clean_goal}', "
+                f"Executed {len(recorded_actions)} adaptive UI steps for '{clean_goal}', "
                 f"but could not visually confirm completion: {final_check.get('observation') or 'no visual confirmation'}."
             ),
+        }
+
+    def route_to_map_bookmark(
+        self,
+        bookmark_number: int,
+        category: str = "",
+        target_process: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Universal Declarative Map Bookmark Navigator (100% game-agnostic).
+
+        Reads `map_controls["bookmarks"]` from the active game module:
+        - Defaults `category` to `default_category` (e.g. 'favorites') when omitted.
+        - Opens the map if not already visible, navigates to the Bookmarks panel and target category,
+          locates item #`bookmark_number` via Vision, plots the route via click-and-hold, and
+          automatically falls back to `search_and_route_destination(extracted_system)` if a parent
+          routable system/region name is printed beneath the bookmark entry.
+        """
+        from tools.os_controls import focus_window, send_directinput_combo, nudge_mouse_relative
+
+        try:
+            idx_num = max(1, int(bookmark_number))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": f"Invalid bookmark number: {bookmark_number!r}."}
+
+        if not self.client:
+            return {"status": "error", "message": "Vision client unavailable for bookmark navigation."}
+
+        ctrl = getattr(self, "map_controls", {}) or {}
+        bm_cfg = ctrl.get("bookmarks") if isinstance(ctrl.get("bookmarks"), dict) else {}
+        routing_cfg = ctrl.get("search_routing") if isinstance(ctrl.get("search_routing"), dict) else {}
+
+        default_cat = str(bm_cfg.get("default_category") or "favorites").strip()
+        allowed_cats = [str(c).strip() for c in (bm_cfg.get("categories") or []) if str(c).strip()]
+        raw_cat = str(category or "").strip().lower().replace(" ", "_").replace("-", "_")
+        if not raw_cat:
+            resolved_cat = default_cat
+        else:
+            # Fuzzy match singular/plural category names (e.g. 'system' -> 'systems', 'favourite' -> 'favorites')
+            resolved_cat = raw_cat
+            for c in allowed_cats:
+                cl = c.lower()
+                if cl == raw_cat or cl.rstrip("s") == raw_cat.rstrip("s") or raw_cat in cl:
+                    resolved_cat = c
+                    break
+            if raw_cat in ("favourite", "favourites", "fav", "favs", "favorite"):
+                resolved_cat = default_cat
+
+        pretty_cat = resolved_cat.replace("_", " ").title()
+        plot_hold_sec = float(bm_cfg.get("plot_hold_sec") or routing_cfg.get("plot_hold_sec") or 1.2)
+
+        proc = target_process or getattr(self, "target_process", "")
+        if proc:
+            try:
+                focus_window(proc)
+                time.sleep(0.12)
+            except Exception:
+                pass
+
+        # 1. Ensure the map screen is open
+        map_candidates = []
+        if routing_cfg.get("map_open_action"):
+            map_candidates.append(str(routing_cfg["map_open_action"]))
+        if isinstance(routing_cfg.get("map_open_actions"), list):
+            map_candidates.extend(str(x) for x in routing_cfg["map_open_actions"])
+        if not map_candidates:
+            map_candidates = ["open galaxy map", "galaxy map open", "open map"]
+        fallback_map_key = str(routing_cfg.get("map_key") or "m")
+        resolved_map_key, resolved_map_mods = self._resolve_keyboard_bind(map_candidates, fallback_key=fallback_map_key)
+        open_wait = float(routing_cfg.get("open_wait_sec") or 1.2)
+
+        init_frame, _, _ = self.capture_viewport()
+        if not self.is_map_screen(init_frame):
+            if resolved_map_key:
+                if resolved_map_mods:
+                    send_directinput_combo(resolved_map_mods, resolved_map_key, hold_duration=0.12)
+                else:
+                    send_directinput_key(resolved_map_key, duration_sec=0.12)
+                time.sleep(open_wait)
+
+        # 2. Ensure Bookmarks panel & target category tab are open (up to 3 quick vision steps)
+        open_hint = str(bm_cfg.get("open_bookmarks_visual_hint") or "Bookmarks icon on the map sidebar").strip()
+        target_entry: Optional[Dict[str, Any]] = None
+
+        for _ in range(3):
+            frame, vw, vh = self.capture_viewport()
+            inspect_prompt = f"""
+You are navigating the Bookmarks panel inside "{self.game_name or 'Active Game'}"'s map.
+TARGET: Category "{pretty_cat}", Bookmark #{idx_num} (1-indexed from top of the list).
+Available categories in order (if shown as vertical sidebar icons): {allowed_cats or [pretty_cat]}.
+
+Inspect the live screenshot:
+1. If the Bookmarks panel is NOT open yet, return state "NEED_OPEN_BOOKMARKS" and normalized [y, x] (0-1000) of the "{open_hint}".
+2. If the Bookmarks panel IS open, check its category header (e.g. "FAVOURITES", "SYSTEMS", "BODIES", "STATIONS", etc.).
+   - If the open category does NOT match "{pretty_cat}", return state "NEED_SWITCH_CATEGORY" and normalized [y, x] (0-1000) of the "{pretty_cat}" category icon/tab.
+3. If the "{pretty_cat}" bookmark list IS visible:
+   - Count down from the top (1, 2, 3...) to find item #{idx_num}.
+   - Return state "FOUND_BOOKMARK" with:
+     - "bookmark_title": the title text of item #{idx_num}
+     - "system_name": the parent star system / routable region name printed beneath/inside item #{idx_num} (if visible, else "")
+     - "point": [y_normalized, x_normalized] center of item #{idx_num}
+   - If there are fewer than {idx_num} items visible in "{pretty_cat}", return state "NOT_FOUND".
+
+Return ONLY JSON:
+{{
+  "state": "NEED_OPEN_BOOKMARKS" | "NEED_SWITCH_CATEGORY" | "FOUND_BOOKMARK" | "NOT_FOUND",
+  "point": [y_normalized, x_normalized],
+  "bookmark_title": "",
+  "system_name": "",
+  "observation": "1-sentence observation"
+}}
+"""
+            try:
+                info = self._call_vision_json(frame, inspect_prompt, fast_mode=True) or {}
+            except TypeError:
+                info = self._call_vision_json(frame, inspect_prompt) or {}
+
+            st_code = str(info.get("state") or "").upper().strip()
+            pt = info.get("point")
+
+            if st_code in ("NEED_OPEN_BOOKMARKS", "NEED_SWITCH_CATEGORY") and isinstance(pt, (list, tuple)) and len(pt) == 2:
+                px, py = self._norm_to_screen_px(float(pt[1]), float(pt[0]), vw, vh)
+                move_mouse_absolute(px, py)
+                nudge_mouse_relative(1, 0)
+                time.sleep(0.16)
+                click_mouse_button("left", hold_duration=0.08)
+                time.sleep(0.45)
+                continue
+
+            if st_code == "FOUND_BOOKMARK":
+                target_entry = info
+                break
+
+            return {
+                "status": "not_found",
+                "category": pretty_cat,
+                "bookmark_number": idx_num,
+                "message": f"Could not find bookmark #{idx_num} under '{pretty_cat}': {info.get('observation') or 'not visible'}.",
+            }
+
+        if not target_entry:
+            return {
+                "status": "not_found",
+                "category": pretty_cat,
+                "bookmark_number": idx_num,
+                "message": f"Could not open '{pretty_cat}' bookmarks or locate item #{idx_num}.",
+            }
+
+        bm_title = str(target_entry.get("bookmark_title") or f"{pretty_cat} #{idx_num}").strip()
+        bm_system = str(target_entry.get("system_name") or "").strip()
+        pt = target_entry.get("point")
+
+        # 3. Click-and-hold bookmark item to plot route directly
+        if isinstance(pt, (list, tuple)) and len(pt) == 2:
+            _, vw, vh = self.capture_viewport()
+            px, py = self._norm_to_screen_px(float(pt[1]), float(pt[0]), vw, vh)
+            move_mouse_absolute(px, py)
+            nudge_mouse_relative(1, 0)
+            time.sleep(0.16)
+            click_mouse_button("left", hold_duration=max(0.15, plot_hold_sec))
+            time.sleep(0.5)
+
+        # 4. Verify via live telemetry if configured; if not locked in and we read the parent system name,
+        #    automatically fall back to search_and_route_destination(bm_system)!
+        verify_field = str(routing_cfg.get("verify_telemetry_field") or "").strip()
+        adapter = getattr(self, "telemetry_adapter", None)
+        verified_route = None
+        route_jumps = None
+        if verify_field and adapter is not None and hasattr(adapter, "get_state"):
+            deadline = time.time() + 1.8
+            while time.time() < deadline:
+                try:
+                    st = adapter.get_state() or {}
+                    val = str(st.get(verify_field) or "").strip()
+                    if val and (
+                        (bm_system and val.lower() == bm_system.lower())
+                        or val.lower() in bm_title.lower()
+                        or bm_title.lower() in val.lower()
+                    ):
+                        verified_route = val
+                        route_jumps = st.get("route_jumps")
+                        break
+                except Exception:
+                    break
+                time.sleep(0.2)
+
+        if verified_route:
+            jump_note = f" ({route_jumps} jumps)" if route_jumps is not None else ""
+            return {
+                "status": "success",
+                "verified": True,
+                "category": pretty_cat,
+                "bookmark_number": idx_num,
+                "bookmark_title": bm_title,
+                "destination": verified_route,
+                "route_jumps": route_jumps,
+                "message": f"Plotted route via {pretty_cat} bookmark #{idx_num} ('{bm_title}') to '{verified_route}'{jump_note}.",
+            }
+
+        if bm_system:
+            fallback_res = self.search_and_route_destination(destination_name=bm_system, target_process=proc)
+            fallback_res["bookmark_title"] = bm_title
+            fallback_res["category"] = pretty_cat
+            fallback_res["bookmark_number"] = idx_num
+            return fallback_res
+
+        return {
+            "status": "partial",
+            "verified": False,
+            "category": pretty_cat,
+            "bookmark_number": idx_num,
+            "bookmark_title": bm_title,
+            "message": f"Selected {pretty_cat} bookmark #{idx_num} ('{bm_title}') and attempted to plot, but live telemetry has not confirmed the route yet.",
         }
 
 
