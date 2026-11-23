@@ -38,20 +38,8 @@ def is_safe_localhost_url(url: str) -> bool:
 ALLOWED_PROVIDER_TYPES = {"vision_hud", "native_file", "localhost_http", "none"}
 ALLOWED_INPUT_MODES = {"autonomous", "spotter_only"}
 
-# Known 3rd-party companion processes & localhost bridges for zero-config auto-detection
+# Generic 3rd-party localhost telemetry bridges (game-specific companion processes live in `.aethermodule.json`)
 KNOWN_COMPANION_BRIDGES: List[Dict[str, Any]] = [
-    {
-        "process": "EDCoPilot.exe",
-        "kind": "voice_copilot",
-        "games": ["elite_dangerous", "elite_dangerous_64"],
-        "suppress_alerts": True,
-    },
-    {
-        "process": "LittleNavmap.exe",
-        "kind": "localhost_http",
-        "games": ["msfs", "msfs_2020", "msfs_2024", "microsoft_flight_simulator"],
-        "http_endpoint": "http://127.0.0.1:8965/api/sim/info",
-    },
     {
         "process": "SimHubWPF.exe",
         "kind": "localhost_http",
@@ -719,6 +707,13 @@ def _detect_running_companions(game_id: str) -> Tuple[List[str], Optional[str]]:
         if bridge.get("http_endpoint") and not detected_http:
             detected_http = bridge["http_endpoint"]
 
+    # Also check running companion processes declared in the matching `.aethermodule.json`
+    mod = get_module_for_game(game_id)
+    if isinstance(mod, dict):
+        for proc_name in (mod.get("suppress_alerts_when_running") or []):
+            if str(proc_name).lower() in running_names and proc_name not in suppress:
+                suppress.append(proc_name)
+
     return suppress, detected_http
 
 
@@ -827,3 +822,76 @@ def auto_build_game_module(
     if res.get("success"):
         res["notes"] = notes
     return res
+
+
+def build_module_authoring_prompt(game_name: str = "") -> str:
+    """
+    Generates a ready-to-paste LLM prompt that instructs any frontier AI (Gemini, ChatGPT, Claude)
+    to output a strictly valid, schema-compliant `.aethermodule.json` file for Aether Desktop.
+    """
+    target = str(game_name or "").strip() or "<INSERT GAME NAME HERE>"
+    norm_example = _normalize_id(target) if target != "<INSERT GAME NAME HERE>" else "my_game"
+    return f"""You are creating a declarative Tier 1 Game Module (`.aethermodule.json`) for **Aether Desktop**, a 100% game-agnostic AI voice co-pilot.
+
+TARGET GAME: **{target}**
+
+Return ONLY a single valid JSON object (no markdown fences, no commentary before or after) that conforms strictly to Aether Desktop's `schema_version: 1` specification below:
+
+### REQUIRED & OPTIONAL TOP-LEVEL FIELDS
+- `"schema_version"`: `1` (required)
+- `"module_id"`: lowercase snake_case ID, e.g. `"{norm_example}"` (required)
+- `"display_name"`: exact human-readable game title, e.g. `"{target}"` (required)
+- `"game_ids"`: array of lowercase ID aliases, e.g. `["{norm_example}"]`
+- `"executables"`: array of PC `.exe` filenames (e.g. `["Game.exe"]`)
+- `"universe_name"`: in-game setting/world name (e.g. `"Milky Way"`, `"Night City"`, `"Tamriel"`)
+- `"default_callsign"`: optional default player title (e.g. `"Commander"`, `"Captain"`, or `""` for none)
+- `"input_mode"`: `"autonomous"` for single-player / PvE / sim games, OR `"spotter_only"` for competitive multiplayer games with kernel anti-cheat (EAC, BattlEye, Vanguard, Ricochet)
+- `"navigation_mode"`: `"search_bar"` | `"mouse_keyboard"` | `"controller"` | `"co_pilot_spotter"`
+- `"suppress_alerts_when_running"`: optional list of 3rd-party co-pilot `.exe` names to avoid duplicate alerts
+- `"companion_resources"`: optional dict of `{{category: {{"name": "...", "domain": "..."}}}}` (wiki/database domains)
+
+### OPTIONAL `map_controls`
+- `"preferred_input"`: `"mouse_keyboard"` or `"gamepad"`
+- `"pan_method"`: `"left_drag"` | `"right_drag"` | `"wasd"`
+- `"marker_method"`: `"right_click"` | `"left_click"`
+- `"zoom_method"`: `"mouse_wheel"`
+- `"search_routing"` (only if the game has a text-searchable map):
+  - `"map_open_actions"`: list of keybind phrases that open the map
+  - `"map_key"`: fallback single key (e.g. `"m"`)
+  - `"open_wait_sec"`: float (e.g. `1.2`)
+  - `"search_box_visual_hint"`: visual description of the search input box
+  - `"input_method"`: `"clipboard_paste"` or `"directinput"`
+  - `"submit_key"`: `"enter"` or `""`
+  - `"post_input_keys"`: optional list of `{{"key": "down", "delay_ms": 300}}`
+  - `"prefer_plot_key_first"`: boolean
+  - `"pre_plot_move_center"`: boolean
+  - `"pre_plot_mouse_nudge"`: `[dx, dy]` (e.g. `[15, 10]`)
+  - `"plot_visual_hint"`: visual description of the Plot/Route button
+  - `"plot_key"`: key to plot/confirm (e.g. `"space"`)
+  - `"plot_hold_sec"`: float (e.g. `1.0`)
+  - `"verify_telemetry_field"`: optional live telemetry state key to confirm route lock
+
+### OPTIONAL `binds_scanner` (Declarative Local Keybinds Auto-Import)
+- Supports `"format"`: `"xml_primary_secondary"` | `"ini_kv"` | `"json_kv"`
+- `"dir"`: Windows config folder (supports `%LOCALAPPDATA%`, `%APPDATA%`, `%USERPROFILE%`)
+- `"file_glob"`: e.g. `"*.binds"`, `"*.ini"`, `"*.json"`
+- `"auto_import_all"`: `true`
+- `"actions"`: optional curated voice phrases & aliases mapping raw action IDs to natural phrases
+
+### OPTIONAL `keybinds` & `sequences` (Starter Default Binds & Multi-Step Macros)
+- `"keybinds"`: `{{"voice phrase": {{"key": "m", "modifiers": [], "description": "Open Map", "aliases": ["map"]}}}}`
+- `"sequences"`: `{{"macro voice phrase": {{"description": "...", "aliases": ["..."], "condition": "", "steps": [{{"action": "press", "key": "w", "repeat": 3, "interval_ms": 150}}, {{"action": "press", "key": "space"}}]}}}}`
+  - Valid step actions: `"press"`, `"trigger_bind"`, `"vision_click"`, `"click"`, `"type"`, `"paste"`, `"wait"`
+
+### OPTIONAL `intel_endpoints` (Public HTTPS REST APIs Only!)
+- Security rule: EVERY `"url"` MUST be a public `https://` URL (no `http://`, no localhost, no private IPs).
+- Each category (`"market"`, `"outfitting"`, `"services"`, `"navigation"`, etc.) defines `"method"` (`"GET"` or `"POST"`), `"url"`, `"body_template"` / `"query_params"`, `"results_path"`, and `"result_fields"`.
+
+### OPTIONAL `telemetry` (100% Declarative — Zero Python Required!)
+- `"adapter"`: `"declarative_file"` (for JSON status files + rolling JSONL logs) or `"none"`
+- `"provider_type"`: `"native_file"` | `"localhost_http"` | `"vision_hud"` | `"none"`
+  - Security rule: `"http_endpoint"` MUST be strictly `http://127.0.0.1` or `http://localhost`.
+- For `"declarative_file"`, you may specify `"dir"`, `"status_file"`, `"journal_glob"`, `"bitmask_mappings"`, `"flag_to_state"`, `"status_fields"`, `"companion_extractors"`, `"event_handlers"`, `"milestone_rules"`, `"initial_state"`, `"initial_flags"`, `"location_fields"`, and `"alert_rules"`.
+
+Now research **{target}** carefully and output ONLY the complete, valid `.aethermodule.json` object."""
+

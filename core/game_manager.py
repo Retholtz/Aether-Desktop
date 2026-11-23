@@ -26,18 +26,34 @@ GAMES_DIR = user_data_path("data", "games")
 GAMES_STATE_FILE = "active_state.json"
 GAMES_PROFILES_PATH = user_data_path("data", "games_profiles.json")
 
-LAUNCHER_GAME_PAIRS = {
-    "edlaunch.exe": "elitedangerous64.exe",
-    "elitedangerous64.exe": "edlaunch.exe",
-    "edlaunch": "elitedangerous64",
-    "elitedangerous64": "edlaunch",
-    "rsi launcher.exe": "starcitizen.exe",
-    "starcitizen.exe": "rsi launcher.exe",
-    "launcher.exe": "aces.exe",
-    "aces.exe": "launcher.exe",
-    "redprelauncher.exe": "cyberpunk2077.exe",
-    "cyberpunk2077.exe": "redprelauncher.exe"
-}
+
+def _get_paired_executables(proc_name: str) -> List[str]:
+    """
+    Dynamically resolves sibling launcher/client executables from all installed `.aethermodule.json`
+    `executables` lists (zero hardcoded game/launcher pairs in Python).
+    """
+    clean = os.path.basename(str(proc_name or "").strip()).lower()
+    if not clean:
+        return []
+    stem = os.path.splitext(clean)[0]
+    peers: List[str] = []
+    try:
+        from core.game_modules import load_all_game_modules
+        seen_mods = set()
+        for mod in load_all_game_modules().values():
+            mid = mod.get("module_id")
+            if not mid or mid in seen_mods:
+                continue
+            seen_mods.add(mid)
+            exes = [os.path.basename(str(e)).lower() for e in (mod.get("executables") or []) if str(e).strip()]
+            stems = [os.path.splitext(e)[0] for e in exes]
+            if clean in exes or (stem and stem in stems):
+                for e in exes:
+                    if e != clean and e not in peers:
+                        peers.append(e)
+    except Exception:
+        pass
+    return peers
 
 DEFAULT_PROFILES = {
     "active_profile": "",
@@ -1154,11 +1170,10 @@ class GameManager:
                     if not p_info_name:
                         continue
                     p_info_lower = p_info_name.lower().strip()
-                    paired = LAUNCHER_GAME_PAIRS.get(pname, "")
-                    paired_stem = os.path.splitext(paired)[0] if paired else ""
+                    paired_exes = _get_paired_executables(pname)
                     if (p_info_lower == pname or
                         (pstem and pstem in p_info_lower) or
-                        (paired and (p_info_lower == paired or (paired_stem and paired_stem in p_info_lower)))):
+                        any(p_info_lower == pe or (os.path.splitext(pe)[0] and os.path.splitext(pe)[0] in p_info_lower) for pe in paired_exes)):
                         return True
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
@@ -1272,13 +1287,12 @@ class GameManager:
                 # A. Match process executable name (exact, stem, substring, or paired launcher/runtime)
                 if pname and proc_name:
                     pname_stem = os.path.splitext(pname)[0]
-                    paired = LAUNCHER_GAME_PAIRS.get(pname, "")
-                    paired_stem = os.path.splitext(paired)[0] if paired else ""
+                    paired_exes = _get_paired_executables(pname)
                     if (proc_name == pname or
                         pname_stem in proc_name or
                         proc_name in pname or
                         pname in proc_name or
-                        (paired and (proc_name == paired or paired_stem in proc_name or proc_name in paired))):
+                        any(proc_name == pe or os.path.splitext(pe)[0] in proc_name or proc_name in pe for pe in paired_exes)):
                         return gid
 
                 # B. Match window title containing game display name or title words
@@ -1322,11 +1336,10 @@ class GameManager:
                         continue
                     p_name_lower = p_name.lower().strip()
                     for gid, (pname, pstem) in targets.items():
-                        paired = LAUNCHER_GAME_PAIRS.get(pname, "")
-                        paired_stem = os.path.splitext(paired)[0] if paired else ""
+                        paired_exes = _get_paired_executables(pname)
                         if (p_name_lower == pname or
                             (pstem and pstem in p_name_lower) or
-                            (paired and (p_name_lower == paired or (paired_stem and paired_stem in p_name_lower)))):
+                            any(p_name_lower == pe or (os.path.splitext(pe)[0] and os.path.splitext(pe)[0] in p_name_lower) for pe in paired_exes)):
                             return gid
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
@@ -1413,7 +1426,7 @@ class GameManager:
                 pass
             self._stop_foreground_watcher.wait(interval)
 
-    def get_active_game_context(self) -> str:
+    def get_active_game_context(self, include_personality: bool = True) -> str:
         """
         Gathers live context from the active game profile, including scratchpad
         notes and real-time telemetry if available.
@@ -1581,7 +1594,8 @@ class GameManager:
         parts.append(self.build_game_callsign_directive(profile, game_id=active_id))
 
         # 5c. Co-Pilot Vibe, Free-Text Personality, Anti-Rote Variety & Adaptive Conversational Pacing
-        parts.append(self.build_copilot_personality_directive(profile))
+        if include_personality:
+            parts.append(self.build_copilot_personality_directive(profile))
 
         # 6. Strict Game Scope & Search Locking Directive
         game_title = profile.get("display_name", active_id)
@@ -1810,11 +1824,6 @@ class GameManager:
             self._save_profiles(self.data)
             return True
         return False
-
-    def scan_elite_dangerous_binds(self) -> Dict[str, dict]:
-        """Backward-compatibility alias delegating to modular binds_scanners."""
-        prof = self.get_profile("elite_dangerous") or {}
-        return scan_profile_bindings({"binds_config": {"type": "elite_xml"}, **prof}, game_id="elite_dangerous")
 
     def list_game_extensions(self) -> List[Dict[str, Any]]:
         """Lists discovered Tier 2 community `.py` game extensions and their SHA-256 trust state."""

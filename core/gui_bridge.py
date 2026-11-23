@@ -5227,6 +5227,51 @@ class GuiBridge:
         from core.game_modules import list_unique_game_modules
         return {"success": True, "modules": list_unique_game_modules()}
 
+    def get_game_module_status(self, game_id: str = "") -> dict:
+        """Reports whether a game already has a bundled or user-override `.aethermodule.json`."""
+        from core.game_modules import get_module_for_game, get_user_modules_dir
+        gid = str(game_id or self.game_mgr.data.get("active_profile", "")).strip()
+        prof = self.game_mgr.get_profile(gid) if gid else None
+        mod = get_module_for_game(gid, profile=prof) if gid else None
+        if not isinstance(mod, dict):
+            return {
+                "success": True,
+                "has_module": False,
+                "is_user_module": False,
+                "is_bundled": False,
+                "module_id": "",
+                "source_path": "",
+            }
+        src = str(mod.get("_source_path") or "")
+        user_dir = os.path.normcase(os.path.realpath(get_user_modules_dir()))
+        src_norm = os.path.normcase(os.path.realpath(src)) if src else ""
+        is_user = bool(src_norm and src_norm.startswith(user_dir))
+        return {
+            "success": True,
+            "has_module": True,
+            "is_user_module": is_user,
+            "is_bundled": not is_user,
+            "module_id": str(mod.get("module_id") or ""),
+            "display_name": str(mod.get("display_name") or gid),
+            "source_path": src,
+        }
+
+    def get_game_module_ai_prompt(self, game_id: str = "") -> dict:
+        """Returns a ready-to-paste LLM prompt for generating a valid `.aethermodule.json` for a game."""
+        from core.game_modules import build_module_authoring_prompt
+        target_name = ""
+        gid = str(game_id or self.game_mgr.data.get("active_profile", "")).strip()
+        if gid:
+            prof = self.game_mgr.get_profile(gid)
+            if isinstance(prof, dict):
+                target_name = str(prof.get("display_name") or "").strip()
+        prompt_text = build_module_authoring_prompt(target_name)
+        return {
+            "success": True,
+            "game_name": target_name or "your game",
+            "prompt": prompt_text,
+        }
+
     def import_game_module_json(self, raw_json: Any) -> dict:
         """Imports a declarative `.aethermodule.json` string or dict and assimilates it."""
         from core.game_modules import import_game_module

@@ -225,13 +225,17 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                 "star_pos": self.state.get(pos_key),
             }
 
-    def _get_latest_journal_path(self) -> Optional[str]:
+    def _get_sorted_journal_paths(self) -> List[str]:
         if not self.telemetry_dir or not self._journal_glob or not os.path.exists(self.telemetry_dir):
-            return None
+            return []
         files = glob.glob(os.path.join(self.telemetry_dir, self._journal_glob))
         if not files:
-            return None
-        return max(files, key=os.path.getmtime)
+            return []
+        return sorted(files, key=os.path.getmtime)
+
+    def _get_latest_journal_path(self) -> Optional[str]:
+        paths = self._get_sorted_journal_paths()
+        return paths[-1] if paths else None
 
     def _tail_loop(self) -> None:
         last_status_poll = 0.0
@@ -412,9 +416,29 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
         try:
             self._file_handle.seek(0)
             lines = self._file_handle.readlines()
-            for ln in lines[-self._rehydrate_lines:]:
+            for ln in lines:
                 self._parse_event_line(ln.strip(), is_initial_sync=True)
             self._file_handle.seek(0, os.SEEK_END)
+
+            # If the latest log file is a fresh menu/launcher stub without a location yet,
+            # walk back up to 5 recent log files until a real session with location is found,
+            # then replay the latest file on top so state is never stranded as "Unknown".
+            loc_info = self.get_location()
+            if not loc_info.get("system"):
+                all_paths = self._get_sorted_journal_paths()
+                prior_paths = [p for p in all_paths[:-1][-5:]]
+                for prev_path in reversed(prior_paths):
+                    try:
+                        with open(prev_path, "r", encoding="utf-8", errors="replace") as pf:
+                            for pln in pf:
+                                self._parse_event_line(pln.strip(), is_initial_sync=True)
+                        if self.get_location().get("system"):
+                            break
+                    except Exception:
+                        continue
+                if self.get_location().get("system"):
+                    for ln in lines:
+                        self._parse_event_line(ln.strip(), is_initial_sync=True)
         except Exception as exc:
             logger.warning("Declarative telemetry rehydration failed for '%s': %s", self.game_id, exc)
 
@@ -546,19 +570,36 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
             fl = self.flags
             lines = [f"[LIVE GAME TELEMETRY: {self._display_name}]"]
 
-            # Location & status
+            # Location & status (driven declaratively via summary_config.status_phases when provided)
             loc_sys = st.get("star_system") or st.get("zone") or st.get("region")
             loc_body = st.get("body")
-            if st.get("docked") and st.get("station"):
-                status_desc = f"Docked at {st['station']}"
-            elif fl.get("landed") and loc_body:
-                status_desc = f"Landed on {loc_body}"
-            elif st.get("supercruise"):
-                status_desc = "in Supercruise"
-            elif st.get("status_text"):
-                status_desc = str(st["status_text"])
-            else:
-                status_desc = "Active"
+            status_desc = ""
+            phase_rules = (self._tel_cfg.get("summary_config") or {}).get("status_phases") or []
+            if isinstance(phase_rules, list):
+                fmt_ctx = _SafeFormatDict({**st, **fl})
+                for pr in phase_rules:
+                    if not isinstance(pr, dict):
+                        continue
+                    w_state = pr.get("when_state")
+                    w_flag = pr.get("when_flag")
+                    req_state = pr.get("require_state")
+                    matched = True
+                    if w_state is not None and not st.get(w_state):
+                        matched = False
+                    if w_flag is not None and not fl.get(w_flag):
+                        matched = False
+                    if req_state is not None and not st.get(req_state):
+                        matched = False
+                    if matched and pr.get("template"):
+                        status_desc = str(pr["template"]).format_map(fmt_ctx).strip()
+                        break
+            if not status_desc:
+                if st.get("docked") and st.get("station"):
+                    status_desc = f"Docked at {st['station']}"
+                elif st.get("status_text"):
+                    status_desc = str(st["status_text"])
+                else:
+                    status_desc = "Active"
 
             if loc_sys:
                 near_str = f" (Near: {loc_body})" if loc_body and loc_body != "Unknown" else ""

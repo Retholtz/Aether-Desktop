@@ -529,7 +529,7 @@ class GameEngine:
             f"   - Game Shield: You are strictly prevented from closing the active game itself, but you may manage auxiliary windows and companion consoles.\n"
             f"================================================================================\n"
         )
-        game_context = self.manager.get_active_game_context()
+        game_context = self.manager.get_active_game_context(include_personality=False)
         return f"{immersion_banner}\n\n{game_context}"
 
     # --- Tool Fencing & Registration ---

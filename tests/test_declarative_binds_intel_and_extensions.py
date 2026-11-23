@@ -829,6 +829,37 @@ class TestTypedMacroSchemaAndAdHocSequenceTool(unittest.TestCase):
         self.assertIn("import_game_extension_dialog", js_src)
         self.assertIn("trust_game_extension", js_src)
 
+        # 4. Copy AI Module Authoring Prompt endpoint, UI button, and Guide doc
+        from core.game_modules import build_module_authoring_prompt
+        from core.gui_bridge import GUIBridge
+        prompt_txt = build_module_authoring_prompt("No Man's Sky")
+        self.assertIn("No Man's Sky", prompt_txt)
+        self.assertIn("schema_version", prompt_txt)
+        self.assertIn("declarative_file", prompt_txt)
+        self.assertIn("intel_endpoints", prompt_txt)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr2 = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr2.add_game("Star Citizen", process_name="StarCitizen.exe")
+            mgr2.set_active_profile("star_citizen")
+            bridge = GUIBridge(MagicMock())
+            bridge.game_mgr = mgr2
+            p_res = bridge.get_game_module_ai_prompt("star_citizen")
+            self.assertTrue(p_res["success"])
+            self.assertEqual(p_res["game_name"], "Star Citizen")
+            self.assertIn("Star Citizen", p_res["prompt"])
+            st_none = bridge.get_game_module_status("star_citizen")
+            self.assertFalse(st_none["has_module"])
+            st_ed = bridge.get_game_module_status("elite_dangerous")
+            self.assertTrue(st_ed["has_module"])
+            self.assertTrue(st_ed["is_bundled"])
+            mgr2.close()
+
+        self.assertIn("btn-copy-module-ai-prompt", html_src)
+        self.assertIn("get_game_module_ai_prompt", js_src)
+        self.assertIn("get_game_module_status", js_src)
+        self.assertTrue(Path("docs/GAME_MODULES_GUIDE.md").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

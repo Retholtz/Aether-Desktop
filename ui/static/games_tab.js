@@ -1376,6 +1376,50 @@ function initGamesTabEvents() {
         }
     });
 
+    // Copy AI Module Authoring Prompt Button (paste into any LLM -> save .aethermodule.json -> Import Module)
+    document.getElementById('btn-copy-module-ai-prompt')?.addEventListener('click', async (e) => {
+        if (!window.pywebview?.api?.get_game_module_ai_prompt) return;
+        const btn = e.currentTarget;
+        const origText = btn ? btn.textContent : '';
+        try {
+            const res = await window.pywebview.api.get_game_module_ai_prompt(activeGameId || '');
+            if (!res || !res.success || !res.prompt) {
+                alert((res && res.error) || 'Could not generate AI module prompt.');
+                return;
+            }
+            let copied = false;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                try {
+                    await navigator.clipboard.writeText(res.prompt);
+                    copied = true;
+                } catch (_) {
+                    copied = false;
+                }
+            }
+            if (!copied) {
+                const ta = document.createElement('textarea');
+                ta.value = res.prompt;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                copied = document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            if (btn) {
+                btn.textContent = '✅ Prompt Copied!';
+                setTimeout(() => { btn.textContent = origText; }, 2200);
+            }
+            if (window.aetherUI?.showToast) {
+                window.aetherUI.showToast(
+                    `Copied AI Module Builder prompt for ${res.game_name}. Paste into Gemini/ChatGPT/Claude, save as .aethermodule.json, then click Import Module.`
+                );
+            }
+        } catch (err) {
+            console.error("Copy AI module prompt error:", err);
+        }
+    });
+
     // Game Module Import / Export / Auto-Build Buttons
     document.getElementById('btn-import-game-module')?.addEventListener('click', async () => {
         if (!window.pywebview?.api?.import_game_module_dialog) return;
@@ -1447,6 +1491,21 @@ function initGamesTabEvents() {
         if (!activeGameId || !window.pywebview?.api?.auto_build_game_module) return;
         const btn = e.currentTarget;
         const origText = btn ? btn.textContent : '';
+        // Warn before overwriting an existing local module or shadowing a built-in bundled module
+        if (window.pywebview?.api?.get_game_module_status) {
+            try {
+                const st = await window.pywebview.api.get_game_module_status(activeGameId);
+                if (st && st.has_module) {
+                    const label = st.display_name || activeGameId;
+                    const msg = st.is_user_module
+                        ? `A local Game Module already exists for "${label}" (${st.source_path}).\n\nRunning Auto-Build will merge and overwrite that file. Continue?`
+                        : `"${label}" already has a built-in Aether Game Module.\n\nRunning Auto-Build will save a local override in data/game_modules/ that shadows future built-in updates until deleted. Continue?`;
+                    if (!confirm(msg)) return;
+                }
+            } catch (_) {
+                // Non-fatal: proceed if status check unavailable
+            }
+        }
         if (btn) {
             btn.disabled = true;
             btn.textContent = '✨ Building (Auto-Starting Aether)...';

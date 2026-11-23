@@ -164,7 +164,8 @@ class TestGameEnginePhase1(unittest.TestCase):
                 f.write(xml_sample)
 
             self.mgr.add_game("Elite Dangerous", bindings_dir=temp_dir)
-            discovered = self.mgr.scan_elite_dangerous_binds()
+            from core.binds_scanners import scan_profile_bindings
+            discovered = scan_profile_bindings(self.mgr.get_profile("elite_dangerous"), game_id="elite_dangerous")
 
             self.assertIn("deploy heat sink", discovered)
             self.assertEqual(discovered["deploy heat sink"]["key"], "v")

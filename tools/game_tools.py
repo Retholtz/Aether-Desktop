@@ -324,26 +324,6 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         }
 
     @dispatcher.register(
-        name="lookup_inara_market",
-        description="Backward-compatibility alias delegating to query_game_intel.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "commodity": {"type": "string", "description": "Commodity name to search."},
-                "star_system": {"type": "string", "description": "Reference star system."}
-            },
-            "required": ["commodity"]
-        }
-    )
-    def lookup_inara_market(commodity: str, star_system: Optional[str] = None) -> dict:
-        res = query_game_intel(query=commodity, category="market", location=star_system)
-        res["commodity"] = commodity
-        res["reference_system"] = star_system or res.get("reference_location")
-        if res.get("status") == "info":
-            res["status"] = "success"
-        return res
-
-    @dispatcher.register(
         name="record_copilot_observation",
         description="Records an in-game point of interest, landmark, quest clue, rumor, or tactical note into the Co-Pilot log for future reference and proactive prompting.",
         parameters={
@@ -1280,7 +1260,6 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "trigger_game_action": trigger_game_action,
         "toggle_game_mode": toggle_game_mode,
         "query_game_intel": query_game_intel,
-        "lookup_inara_market": lookup_inara_market,
         "record_copilot_observation": record_copilot_observation,
         "update_game_scratchpad": update_game_scratchpad,
         "get_game_scratchpad": get_game_scratchpad,

@@ -751,6 +751,12 @@
       }
     ],
     "summary_config": {
+      "status_phases": [
+        { "when_state": "docked", "require_state": "station", "template": "Docked at {station}" },
+        { "when_flag": "landed", "require_state": "body", "template": "Landed on {body}" },
+        { "when_state": "supercruise", "template": "in Supercruise" },
+        { "template": "in Normal Space" }
+      ],
       "flag_labels": {
         "landing_gear_down": { "label": "Gear", "on": "DOWN", "off": "UP" },
         "hardpoints_deployed": { "label": "Hardpoints", "on": "DEPLOYED", "off": "RETRACTED" },

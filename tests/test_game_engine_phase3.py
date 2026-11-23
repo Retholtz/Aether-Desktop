@@ -162,7 +162,7 @@ class TestGameEnginePhase3(unittest.TestCase):
         tools = register_game_tools(dispatcher, self.mgr)
         self.assertIn("get_current_game_telemetry", dispatcher._custom_handlers)
         self.assertIn("trigger_game_action", dispatcher._custom_handlers)
-        self.assertIn("lookup_inara_market", dispatcher._custom_handlers)
+        self.assertIn("query_game_intel", dispatcher._custom_handlers)
 
         # 1. Test telemetry tool
         telemetry = tools["get_current_game_telemetry"]()
@@ -173,11 +173,10 @@ class TestGameEnginePhase3(unittest.TestCase):
             res = tools["trigger_game_action"]("deploy heat sink")
             self.assertEqual(res["status"], "executed")
 
-        # 3. Test market lookup tool
-        m_res = tools["lookup_inara_market"]("Tritium", "Sol")
+        # 3. Test generic intel lookup tool
+        with patch("core.game_intel.query_declarative_intel", return_value={"status": "success", "count": 1, "results": [{"station": "Galileo"}], "intel": "Tritium available"}):
+            m_res = tools["query_game_intel"]("Tritium", category="market", location="Sol")
         self.assertEqual(m_res["status"], "success")
-        self.assertEqual(m_res["commodity"], "Tritium")
-        self.assertEqual(m_res["reference_system"], "Sol")
 
     def test_gui_bridge_telemetry_method(self):
         bridge = GUIBridge(MockEngine())

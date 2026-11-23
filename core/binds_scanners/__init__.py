@@ -9,12 +9,8 @@ Resolution order:
 
 from typing import Dict, Any, Callable, Optional
 from core.binds_scanners.declarative import scan_declarative_bindings
-from core.binds_scanners.elite_xml import scan_elite_bindings
 
-SCANNER_REGISTRY: Dict[str, Callable[[Dict[str, Any]], Dict[str, dict]]] = {
-    "elite_xml": scan_elite_bindings,
-    "elite_dangerous": scan_elite_bindings,
-}
+SCANNER_REGISTRY: Dict[str, Callable[[Dict[str, Any]], Dict[str, dict]]] = {}
 
 
 def scan_profile_bindings(profile: Dict[str, Any], game_id: str = "") -> Dict[str, dict]:
@@ -22,7 +18,7 @@ def scan_profile_bindings(profile: Dict[str, Any], game_id: str = "") -> Dict[st
     Executes the appropriate keybind scanner for `profile`:
     - Checks trusted Tier 2 `.py` extension first (if any).
     - Uses the declarative JSON `binds_scanner` block from the profile or its `.aethermodule.json`.
-    - Falls back to legacy named scanners if configured.
+    - Falls back to any dynamically registered scanner if configured.
     """
     if not isinstance(profile, dict):
         return {}
@@ -61,16 +57,11 @@ def scan_profile_bindings(profile: Dict[str, Any], game_id: str = "") -> Dict[st
         if res:
             return res
 
-    # 3. Legacy string-named scanner fallback
+    # 3. Dynamically registered scanner fallback (e.g. from custom plugins)
     binds_cfg = profile.get("binds_config") or {}
     scanner_type = binds_cfg.get("type") or (
         profile.get("binds_scanner") if isinstance(profile.get("binds_scanner"), str) else None
     )
-    if not scanner_type:
-        dname = (profile.get("display_name") or "").lower()
-        if "elite" in dname:
-            scanner_type = "elite_xml"
-
     if not scanner_type:
         return {}
 
