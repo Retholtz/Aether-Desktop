@@ -21,6 +21,7 @@ class BaseTelemetryAdapter(ABC):
         self.game_id = game_id
         self.profile = profile or {}
         self.on_milestone = on_milestone
+        self.on_event: Optional[Callable[[str, Dict[str, Any], Dict[str, Any]], None]] = None
         self.is_running = False
         self.state: Dict[str, Any] = {"game_id": game_id, "active": False}
 

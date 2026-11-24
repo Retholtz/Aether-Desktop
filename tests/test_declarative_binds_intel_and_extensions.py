@@ -1068,6 +1068,88 @@ class TestTypedMacroSchemaAndAdHocSequenceTool(unittest.TestCase):
             self.assertEqual(prof["known_pois"]["selene_jean"]["system"], "Kuk")
             mgr.close()
 
+    def test_event_triggers_and_companion_chitchat(self):
+        """GameTriggerEngine evaluates When/If->Then rules, enforces Spotter-Only, and Chit-Chat persists settings."""
+        from core.game_manager import GameManager
+        from core.game_triggers import GameTriggerEngine, CompanionChitChatManager, evaluate_trigger_condition
+
+        self.assertTrue(evaluate_trigger_condition("!state.hardpoints_deployed", {"hardpoints_deployed": False}))
+        self.assertFalse(evaluate_trigger_condition("!state.hardpoints_deployed", {"hardpoints_deployed": True}))
+        self.assertTrue(evaluate_trigger_condition("state.fuel_pct < 25 and state.supercruise", {"fuel_pct": 18, "supercruise": True}))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr.add_game("Elite Dangerous", process_name="EliteDangerous64.exe")
+            gid = mgr.data["active_profile"]
+
+            # Starter presets from elite_dangerous.aethermodule.json load disabled by default
+            trigs = mgr.get_triggers(gid)
+            self.assertGreaterEqual(len(trigs), 5)
+            self.assertTrue(all(not t.get("enabled", False) for t in trigs))
+
+            # Enable auto_deploy_weapons and verify condition guard + execution
+            tog = mgr.toggle_trigger(gid, "auto_deploy_weapons", True)
+            self.assertTrue(tog["success"])
+
+            te = GameTriggerEngine(mgr, engine=None)
+            # Condition fails when hardpoints already deployed -> 0 enqueued
+            self.assertEqual(te.handle_event(gid, "UnderAttack", {}, {"hardpoints_deployed": True}), 0)
+
+            # Spotter-Only blocks synthetic keybind triggers
+            mgr.set_input_mode(gid, "spotter_only")
+            blocked = te.execute_trigger_rule(gid, next(t for t in mgr.get_triggers(gid) if t["id"] == "auto_deploy_weapons"), is_test=True)
+            self.assertEqual(blocked["status"], "blocked_by_spotter_only")
+            te.stop()
+
+            # Chit-Chat settings persist and build profanity + emotive-voice prompts when enabled
+            cc_res = mgr.set_chitchat_settings(gid, frequency="occasional", screen_peek=True, allow_profanity=True, emotive_voice=True)
+            self.assertTrue(cc_res["success"])
+            saved_cc = mgr.get_chitchat_settings(gid)
+            self.assertEqual(saved_cc, {"frequency": "occasional", "screen_peek": True, "allow_profanity": True, "emotive_voice": True})
+            self.assertIn("EMOTIVE VOCAL DELIVERY", mgr.build_copilot_personality_directive(mgr.get_profile(gid)))
+
+            cc_mgr = CompanionChitChatManager(mgr, engine=None)
+            ctx_first = cc_mgr._enrich_event_context("Docked", {"StationName": "Jameson Memorial", "StarSystem": "Shinrarta Dezhra"}, {})
+            self.assertIn("First time arriving at 'Jameson Memorial'", ctx_first)
+            ctx_second = cc_mgr._enrich_event_context("Docked", {"StationName": "Jameson Memorial", "StarSystem": "Shinrarta Dezhra"}, {})
+            self.assertNotIn("First time arriving", ctx_second)
+            ctx_anarchy = cc_mgr._enrich_event_context("FSDJump", {"StarSystem": "Riedquat", "SystemSecurity_Localised": "Anarchy"}, {})
+            self.assertIn("Anarchy", ctx_anarchy)
+            stealth_prompt = cc_mgr._build_chitchat_prompt(gid, "Live visual observation while playing Days Gone", saved_cc, screen_note="Huge horde of Freakers down the road", urgent=True, peek_mood="stealth")
+            self.assertIn("whisper", stealth_prompt.lower())
+            self.assertIn("profanity", stealth_prompt.lower())
+            combat_prompt = cc_mgr._build_chitchat_prompt(gid, "Event=UnderAttack", saved_cc, event_type="UnderAttack")
+            self.assertIn("combat pace", combat_prompt.lower())
+            cc_mgr.stop()
+            mgr.close()
+
+        # Verify Settings-driven Game Mode model resolver honors Tier 1/2 and locks out Neon/Tier 3
+        from core.model_discovery import get_configured_game_model
+        fast_m, _ = get_configured_game_model({"tier1_fast_model": "gemini-3.8-flash", "tier2_moderate_model": "gemini-4-hydrogen:medium", "tier3_heavy_model": "gemini-4-neon:high"}, prefer_fast=True)
+        self.assertEqual(fast_m, "gemini-3.8-flash")
+        auth_m, _ = get_configured_game_model({"tier1_fast_model": "gemini-3.8-live", "tier2_moderate_model": "gemini-4-hydrogen:medium", "tier3_heavy_model": "gemini-4-neon:high"}, prefer_fast=False)
+        self.assertEqual(auth_m, "gemini-4-hydrogen")
+        capped_m, _ = get_configured_game_model({"tier1_fast_model": "gemini-4-neon:high", "tier2_moderate_model": "gemini-4-neon:high", "tier3_heavy_model": "gemini-4-neon:high"}, prefer_fast=True)
+        self.assertEqual(capped_m, "gemini-4-hydrogen")
+
+        # Verify Game Mode excludes delegate_heavy_task and ReflexionEngine uses Tier 2 (Hydrogen) & pauses in Game Mode
+        from core.game_engine import GameEngine
+        from core.optimizer import ReflexionEngine
+        self.assertNotIn("delegate_heavy_task", GameEngine.CORE_GAME_TOOL_NAMES)
+        fake_eng = MagicMock()
+        fake_eng.config = {"tier2_moderate_model": "gemini-4-hydrogen:medium", "tier3_heavy_model": "gemini-4-neon:high"}
+        fake_eng.last_user_turn_timestamp = 0.0
+        fake_eng.is_audio_streaming = False
+        fake_eng.is_speaking = False
+        fake_eng.is_tool_running = False
+        fake_eng.game_engine.manager.is_game_mode_active.return_value = True
+        rx = ReflexionEngine(engine=fake_eng)
+        self.assertEqual(rx.heavy_model, "gemini-4-hydrogen")
+        self.assertEqual(rx.thinking_level, "low")
+        self.assertFalse(rx._is_engine_idle())
+        fake_eng.game_engine.manager.is_game_mode_active.return_value = False
+        self.assertTrue(rx._is_engine_idle())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -703,6 +703,14 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                     cat = str(mrule.get("category") or "intel")
                     self.on_milestone(cat, summary, curr_loc, line)
 
+        # Notify live event subscribers (Event Triggers & Companion Chit-Chat)
+        on_event_cb = getattr(self, "on_event", None)
+        if not is_initial_sync and callable(on_event_cb):
+            try:
+                on_event_cb(str(event_type), ev, state_snapshot)
+            except Exception as e:
+                logger.debug("[DeclarativeTelemetry] on_event callback error: %s", e)
+
     def get_summary_prompt_context(self) -> str:
         with self._lock:
             if not self.state.get("active"):

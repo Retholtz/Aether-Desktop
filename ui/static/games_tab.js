@@ -8,6 +8,8 @@ let currentGamesData = null;
 let activeGameId = null;
 let activeGameSubtab = 'settings';
 let currentGamePoisList = [];
+let currentGameTriggersList = [];
+let currentGameTriggerEvents = [];
 let scratchpadDebounceTimer = null;
 let callsignDebounceTimer = null;
 let suppressAlertsDebounceTimer = null;
@@ -476,6 +478,21 @@ function renderActiveGameDetail() {
     if (vibeSelect) vibeSelect.value = profile.copilot_vibe || 'witty';
     if (personaArea) personaArea.value = profile.copilot_personality || '';
     if (vibeStatus) vibeStatus.textContent = '';
+
+    // Companion Chit-Chat Controls
+    const ccFreq = document.getElementById('select-game-chitchat-freq');
+    const ccScreen = document.getElementById('chk-game-chitchat-screen');
+    const ccProfanity = document.getElementById('chk-game-chitchat-profanity');
+    const ccEmotive = document.getElementById('chk-game-chitchat-emotive');
+    const ccStatus = document.getElementById('chitchat-save-status');
+    if (ccFreq) ccFreq.value = profile.chitchat_frequency || 'off';
+    if (ccScreen) ccScreen.checked = Boolean(profile.chitchat_screen_peek);
+    if (ccProfanity) ccProfanity.checked = Boolean(profile.chitchat_allow_profanity);
+    if (ccEmotive) ccEmotive.checked = Boolean(profile.chitchat_emotive_voice);
+    if (ccStatus) ccStatus.textContent = '';
+
+    // Event Triggers (When / If -> Then) Table
+    refreshGameTriggersTable(activeGameId);
 
     // Custom Visual & Multi-Step Macros Table
     refreshGameMacrosTable(activeGameId, profile);
@@ -1003,6 +1020,413 @@ async function deleteGamePoi(poiId, poiName) {
     }
 }
 
+async function refreshGameTriggersTable(gameId) {
+    if (!gameId || !window.pywebview?.api?.get_game_triggers) return;
+    try {
+        const res = await window.pywebview.api.get_game_triggers(gameId);
+        if (res && res.success) {
+            currentGameTriggersList = Array.isArray(res.triggers) ? res.triggers : [];
+            currentGameTriggerEvents = Array.isArray(res.trigger_events) ? res.trigger_events : [];
+            renderGameTriggersTable(currentGameTriggersList);
+        }
+    } catch (e) {
+        console.error("get_game_triggers error:", e);
+    }
+}
+
+function summarizeTriggerAction(tr) {
+    if (tr.action_label) return tr.action_label;
+    const t = String(tr.action_type || 'keybind').toLowerCase();
+    if (t === 'keybind') return `Keybind: "${tr.phrase || ''}"${tr.hold_ms ? ` (hold ${tr.hold_ms}ms)` : ''}`;
+    if (t === 'macro') return `Macro: "${tr.macro_name || ''}"`;
+    if (t === 'ui_task') return `UI Task: ${tr.goal || ''}`;
+    if (t === 'speak') return `Speak: "${tr.speak_text || ''}"`;
+    if (t === 'key_sequence') return summarizeMacroSteps(tr.steps || []);
+    return t;
+}
+
+function renderGameTriggersTable(triggers) {
+    const tbody = document.getElementById('tbody-game-triggers');
+    if (!tbody) return;
+    const list = Array.isArray(triggers) ? triggers : [];
+    tbody.innerHTML = '';
+
+    if (list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No event triggers configured yet. Click <strong>+ Add Trigger</strong> to automate actions on live game events.</td></tr>`;
+        return;
+    }
+
+    list.forEach(tr => {
+        const row = document.createElement('tr');
+        const whenText = tr.event_label || tr.event || '';
+        const condBadge = tr.condition
+            ? `<div style="font-size: 0.72rem; color: #93c5fd; margin-top: 2px;">IF <code>${escapeGameHtml(tr.condition)}</code></div>`
+            : '';
+        const delayNote = tr.delay_ms
+            ? `<span style="font-size: 0.7rem; color: var(--text-dim); margin-left: 6px;">(${(tr.delay_ms / 1000).toFixed(1)}s delay)</span>`
+            : '';
+
+        row.innerHTML = `
+            <td class="trigger-toggle-cell" style="text-align: center;"></td>
+            <td>
+                <strong>${escapeGameHtml(tr.name || tr.id || '')}</strong>
+                ${tr.description ? `<div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 2px;">${escapeGameHtml(tr.description)}</div>` : ''}
+            </td>
+            <td>
+                <span>WHEN <strong>${escapeGameHtml(whenText)}</strong></span>
+                ${condBadge}
+            </td>
+            <td>${escapeGameHtml(summarizeTriggerAction(tr))}${delayNote}</td>
+            <td class="trigger-actions-cell"></td>
+        `;
+
+        const toggleCell = row.querySelector('.trigger-toggle-cell');
+        if (toggleCell) {
+            const chk = document.createElement('input');
+            chk.type = 'checkbox';
+            chk.checked = Boolean(tr.enabled);
+            chk.title = tr.enabled ? 'Trigger is ON (click to disable)' : 'Trigger is OFF (click to enable)';
+            chk.onchange = () => toggleGameTrigger(tr.id, chk.checked);
+            toggleCell.appendChild(chk);
+        }
+
+        const actionsCell = row.querySelector('.trigger-actions-cell');
+        if (actionsCell) {
+            const testBtn = document.createElement('button');
+            testBtn.type = 'button';
+            testBtn.className = 'btn-secondary-sm';
+            testBtn.textContent = 'Test';
+            testBtn.onclick = () => testGameTrigger(tr.id, tr.name || tr.id);
+
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'btn-secondary-sm';
+            editBtn.style.marginLeft = '4px';
+            editBtn.textContent = 'Edit';
+            editBtn.onclick = () => openTriggerModal(tr);
+
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn-danger-sm';
+            delBtn.style.marginLeft = '4px';
+            delBtn.textContent = 'Delete';
+            delBtn.onclick = () => deleteGameTrigger(tr.id, tr.name || tr.id);
+
+            actionsCell.appendChild(testBtn);
+            actionsCell.appendChild(editBtn);
+            actionsCell.appendChild(delBtn);
+        }
+        tbody.appendChild(row);
+    });
+}
+
+async function toggleGameTrigger(triggerId, enabled) {
+    if (!activeGameId || !triggerId || !window.pywebview?.api?.toggle_game_trigger) return;
+    try {
+        const res = await window.pywebview.api.toggle_game_trigger(activeGameId, triggerId, enabled);
+        if (res && res.success && Array.isArray(res.triggers)) {
+            currentGameTriggersList = res.triggers;
+            renderGameTriggersTable(res.triggers);
+        }
+    } catch (e) {
+        console.error("toggle_game_trigger error:", e);
+    }
+}
+
+async function testGameTrigger(triggerId, name) {
+    if (!activeGameId || !triggerId || !window.pywebview?.api?.test_game_trigger) return;
+    try {
+        const res = await window.pywebview.api.test_game_trigger(activeGameId, triggerId);
+        const msg = (res && res.message) || `Tested trigger "${name}".`;
+        if (window.aetherUI?.showToast) {
+            window.aetherUI.showToast(msg);
+        } else {
+            alert(msg);
+        }
+    } catch (e) {
+        console.error("test_game_trigger error:", e);
+    }
+}
+
+async function deleteGameTrigger(triggerId, name) {
+    if (!activeGameId || !triggerId) return;
+    if (!confirm(`Delete event trigger "${name}"?`)) return;
+    try {
+        const res = await window.pywebview.api.delete_game_trigger(activeGameId, triggerId);
+        if (res && res.success) {
+            currentGameTriggersList = res.triggers || [];
+            renderGameTriggersTable(currentGameTriggersList);
+        }
+    } catch (e) {
+        console.error("delete_game_trigger error:", e);
+    }
+}
+
+function syncTriggerActionFields() {
+    const typeEl = document.getElementById('select-trigger-action-type');
+    const act = typeEl ? typeEl.value : 'keybind';
+    const map = {
+        keybind: 'field-trigger-keybind',
+        macro: 'field-trigger-macro',
+        key_sequence: 'field-trigger-sequence',
+        ui_task: 'field-trigger-ui-task',
+        speak: 'field-trigger-speak',
+    };
+    Object.entries(map).forEach(([k, id]) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', k !== act);
+    });
+}
+
+function openTriggerModal(existingRule = null) {
+    if (!activeGameId) {
+        alert("Please select a game profile first.");
+        return;
+    }
+    const modal = document.getElementById('modal-edit-trigger');
+    if (!modal) return;
+
+    const titleEl = document.getElementById('modal-edit-trigger-title');
+    const idEl = document.getElementById('input-trigger-id');
+    const nameEl = document.getElementById('input-trigger-name');
+    const evSel = document.getElementById('select-trigger-event');
+    const customEv = document.getElementById('input-trigger-custom-event');
+    const condEl = document.getElementById('input-trigger-condition');
+    const typeEl = document.getElementById('select-trigger-action-type');
+    const delayEl = document.getElementById('input-trigger-delay-ms');
+    const cdEl = document.getElementById('input-trigger-cooldown-sec');
+    const phraseEl = document.getElementById('input-trigger-phrase');
+    const holdEl = document.getElementById('input-trigger-hold-ms');
+    const macroEl = document.getElementById('input-trigger-macro-name');
+    const stepsEl = document.getElementById('textarea-trigger-steps');
+    const goalEl = document.getElementById('input-trigger-goal');
+    const speakEl = document.getElementById('input-trigger-speak-text');
+    const labelEl = document.getElementById('input-trigger-action-label');
+    const enChk = document.getElementById('chk-trigger-enabled');
+    const aiEl = document.getElementById('input-trigger-ai-prompt');
+    const aiStatus = document.getElementById('trigger-ai-status');
+    const errEl = document.getElementById('trigger-modal-error');
+
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (aiEl) aiEl.value = '';
+    if (aiStatus) aiStatus.textContent = 'Aether will draft the When/If condition and Then action below for you to review or tweak.';
+
+    // Populate event dropdown from active module's declarative trigger_events (grouped by category if present)
+    if (evSel) {
+        evSel.innerHTML = '';
+        const grouped = new Map();
+        (currentGameTriggerEvents || []).forEach(ev => {
+            const cat = ev.category || '';
+            if (!grouped.has(cat)) grouped.set(cat, []);
+            grouped.get(cat).push(ev);
+        });
+        grouped.forEach((items, cat) => {
+            if (cat) {
+                const og = document.createElement('optgroup');
+                og.label = cat;
+                items.forEach(ev => {
+                    const opt = document.createElement('option');
+                    opt.value = ev.event;
+                    opt.textContent = ev.label || ev.event;
+                    og.appendChild(opt);
+                });
+                evSel.appendChild(og);
+            } else {
+                items.forEach(ev => {
+                    const opt = document.createElement('option');
+                    opt.value = ev.event;
+                    opt.textContent = ev.label || ev.event;
+                    evSel.appendChild(opt);
+                });
+            }
+        });
+        const customOpt = document.createElement('option');
+        customOpt.value = '__custom__';
+        customOpt.textContent = 'Custom Telemetry Event...';
+        evSel.appendChild(customOpt);
+    }
+
+    const isEdit = Boolean(existingRule);
+    if (titleEl) titleEl.textContent = isEdit ? `Edit Trigger: ${existingRule.name || existingRule.id}` : 'Add Event Trigger';
+    if (idEl) idEl.value = isEdit ? (existingRule.id || '') : '';
+    if (nameEl) { nameEl.value = isEdit ? (existingRule.name || '') : ''; nameEl.style.borderColor = ''; }
+
+    const targetEv = isEdit ? (existingRule.event || '') : (currentGameTriggerEvents[0]?.event || '__custom__');
+    const hasKnownEv = (currentGameTriggerEvents || []).some(e => e.event === targetEv);
+    if (evSel) evSel.value = hasKnownEv ? targetEv : '__custom__';
+    if (customEv) {
+        customEv.value = hasKnownEv ? '' : targetEv;
+        customEv.classList.toggle('hidden', hasKnownEv);
+    }
+
+    if (condEl) condEl.value = isEdit ? (existingRule.condition || '') : '';
+    if (typeEl) typeEl.value = isEdit ? (existingRule.action_type || 'keybind') : 'keybind';
+    if (delayEl) delayEl.value = isEdit ? String(existingRule.delay_ms || 0) : '0';
+    if (cdEl) cdEl.value = isEdit ? String(existingRule.cooldown_sec != null ? existingRule.cooldown_sec : 5) : '5';
+    if (phraseEl) phraseEl.value = isEdit ? (existingRule.phrase || '') : '';
+    if (holdEl) holdEl.value = isEdit ? String(existingRule.hold_ms || 0) : '0';
+    if (macroEl) macroEl.value = isEdit ? (existingRule.macro_name || '') : '';
+    if (stepsEl) stepsEl.value = isEdit && Array.isArray(existingRule.steps) ? JSON.stringify(existingRule.steps, null, 2) : '[{"action": "click", "button": "right", "hold_ms": 5800}]';
+    if (goalEl) goalEl.value = isEdit ? (existingRule.goal || '') : '';
+    if (speakEl) speakEl.value = isEdit ? (existingRule.speak_text || '') : '';
+    if (labelEl) labelEl.value = isEdit ? (existingRule.action_label || '') : '';
+    if (enChk) enChk.checked = isEdit ? Boolean(existingRule.enabled) : true;
+
+    syncTriggerActionFields();
+    modal.classList.remove('hidden');
+    if (nameEl) nameEl.focus();
+}
+
+function closeTriggerModal() {
+    const modal = document.getElementById('modal-edit-trigger');
+    if (modal) modal.classList.add('hidden');
+}
+
+async function handleGenerateTrigger() {
+    const aiInput = document.getElementById('input-trigger-ai-prompt');
+    const btn = document.getElementById('btn-generate-trigger');
+    const statusEl = document.getElementById('trigger-ai-status');
+    const instruction = (aiInput?.value || '').trim();
+    if (!instruction) {
+        if (aiInput) aiInput.focus();
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+    if (statusEl) statusEl.textContent = 'Aether is drafting your When/If -> Then trigger...';
+    try {
+        const res = await window.pywebview.api.generate_game_trigger_from_text(activeGameId, instruction);
+        if (res && res.success && res.trigger) {
+            const t = res.trigger;
+            const nameEl = document.getElementById('input-trigger-name');
+            const evSel = document.getElementById('select-trigger-event');
+            const customEv = document.getElementById('input-trigger-custom-event');
+            const condEl = document.getElementById('input-trigger-condition');
+            const typeEl = document.getElementById('select-trigger-action-type');
+            const delayEl = document.getElementById('input-trigger-delay-ms');
+            const cdEl = document.getElementById('input-trigger-cooldown-sec');
+            const phraseEl = document.getElementById('input-trigger-phrase');
+            const holdEl = document.getElementById('input-trigger-hold-ms');
+            const macroEl = document.getElementById('input-trigger-macro-name');
+            const stepsEl = document.getElementById('textarea-trigger-steps');
+            const goalEl = document.getElementById('input-trigger-goal');
+            const speakEl = document.getElementById('input-trigger-speak-text');
+            const labelEl = document.getElementById('input-trigger-action-label');
+
+            if (nameEl && t.name) nameEl.value = t.name;
+            if (t.event && evSel) {
+                const known = (currentGameTriggerEvents || []).some(e => e.event === t.event);
+                evSel.value = known ? t.event : '__custom__';
+                if (customEv) {
+                    customEv.value = known ? '' : t.event;
+                    customEv.classList.toggle('hidden', known);
+                }
+            }
+            if (condEl && t.condition !== undefined) condEl.value = t.condition || '';
+            if (typeEl && t.action_type) typeEl.value = t.action_type;
+            if (delayEl && t.delay_ms != null) delayEl.value = String(t.delay_ms);
+            if (cdEl && t.cooldown_sec != null) cdEl.value = String(t.cooldown_sec);
+            if (phraseEl && t.phrase) phraseEl.value = t.phrase;
+            if (holdEl && t.hold_ms != null) holdEl.value = String(t.hold_ms);
+            if (macroEl && t.macro_name) macroEl.value = t.macro_name;
+            if (stepsEl && Array.isArray(t.steps)) stepsEl.value = JSON.stringify(t.steps, null, 2);
+            if (goalEl && t.goal) goalEl.value = t.goal;
+            if (speakEl && t.speak_text) speakEl.value = t.speak_text;
+            if (labelEl && t.action_label) labelEl.value = t.action_label;
+            syncTriggerActionFields();
+            if (statusEl) statusEl.textContent = 'Draft ready! Review or tweak the fields below, then click Save Trigger.';
+        } else if (statusEl) {
+            statusEl.textContent = (res && res.error) || 'Could not draft trigger.';
+        }
+    } catch (e) {
+        console.error("generate_game_trigger_from_text error:", e);
+        if (statusEl) statusEl.textContent = 'Error generating trigger.';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '✨ Generate'; }
+    }
+}
+
+async function handleConfirmSaveTrigger() {
+    if (!activeGameId) return;
+    const idEl = document.getElementById('input-trigger-id');
+    const nameEl = document.getElementById('input-trigger-name');
+    const evSel = document.getElementById('select-trigger-event');
+    const customEv = document.getElementById('input-trigger-custom-event');
+    const condEl = document.getElementById('input-trigger-condition');
+    const typeEl = document.getElementById('select-trigger-action-type');
+    const delayEl = document.getElementById('input-trigger-delay-ms');
+    const cdEl = document.getElementById('input-trigger-cooldown-sec');
+    const phraseEl = document.getElementById('input-trigger-phrase');
+    const holdEl = document.getElementById('input-trigger-hold-ms');
+    const macroEl = document.getElementById('input-trigger-macro-name');
+    const stepsEl = document.getElementById('textarea-trigger-steps');
+    const goalEl = document.getElementById('input-trigger-goal');
+    const speakEl = document.getElementById('input-trigger-speak-text');
+    const labelEl = document.getElementById('input-trigger-action-label');
+    const enChk = document.getElementById('chk-trigger-enabled');
+    const errEl = document.getElementById('trigger-modal-error');
+
+    const name = (nameEl?.value || '').trim();
+    const selVal = evSel ? evSel.value : '__custom__';
+    const eventName = selVal === '__custom__' ? (customEv?.value || '').trim() : selVal;
+    const evObj = (currentGameTriggerEvents || []).find(e => e.event === eventName);
+    const actionType = typeEl ? typeEl.value : 'keybind';
+
+    if (!name) {
+        if (nameEl) { nameEl.style.borderColor = '#ef4444'; nameEl.focus(); }
+        return;
+    }
+    if (!eventName) {
+        if (errEl) { errEl.textContent = 'Please select or enter a telemetry event name.'; errEl.style.display = 'block'; }
+        return;
+    }
+
+    let parsedSteps = null;
+    if (actionType === 'key_sequence') {
+        try {
+            parsedSteps = JSON.parse(stepsEl?.value || '[]');
+            if (!Array.isArray(parsedSteps) || parsedSteps.length === 0) {
+                throw new Error('Steps must be a non-empty JSON array.');
+            }
+        } catch (parseErr) {
+            if (errEl) { errEl.textContent = `Invalid steps JSON: ${parseErr.message}`; errEl.style.display = 'block'; }
+            return;
+        }
+    }
+
+    const rule = {
+        id: (idEl?.value || '').trim(),
+        name,
+        event: eventName,
+        event_label: evObj ? evObj.label : eventName,
+        condition: (condEl?.value || '').trim(),
+        action_type: actionType,
+        action_label: (labelEl?.value || '').trim(),
+        phrase: (phraseEl?.value || '').trim(),
+        hold_ms: parseInt(holdEl?.value || '0', 10) || 0,
+        macro_name: (macroEl?.value || '').trim(),
+        steps: parsedSteps,
+        goal: (goalEl?.value || '').trim(),
+        speak_text: (speakEl?.value || '').trim(),
+        delay_ms: parseInt(delayEl?.value || '0', 10) || 0,
+        cooldown_sec: parseFloat(cdEl?.value || '5') || 0,
+        enabled: Boolean(enChk ? enChk.checked : true),
+    };
+
+    try {
+        const res = await window.pywebview.api.save_game_trigger(activeGameId, rule);
+        if (res && res.success) {
+            currentGameTriggersList = res.triggers || [];
+            closeTriggerModal();
+            renderGameTriggersTable(currentGameTriggersList);
+        } else if (errEl) {
+            errEl.textContent = (res && res.error) || 'Failed to save trigger.';
+            errEl.style.display = 'block';
+        }
+    } catch (e) {
+        console.error("save_game_trigger error:", e);
+    }
+}
+
 async function handleScanGamePois(e) {
     if (!activeGameId || !window.pywebview?.api?.scan_game_pois) return;
     const btn = e ? e.currentTarget : document.getElementById('btn-scan-pois');
@@ -1433,6 +1857,59 @@ function initGamesTabEvents() {
         else if (e.key === 'Escape') { e.preventDefault(); closeRenameGameInline(); }
     });
 
+    // Modal Add / Edit Event Trigger actions
+    document.getElementById('btn-add-trigger')?.addEventListener('click', () => openTriggerModal(null));
+    document.getElementById('btn-close-edit-trigger-modal')?.addEventListener('click', closeTriggerModal);
+    document.getElementById('btn-cancel-edit-trigger')?.addEventListener('click', closeTriggerModal);
+    document.getElementById('btn-confirm-save-trigger')?.addEventListener('click', handleConfirmSaveTrigger);
+    document.getElementById('btn-generate-trigger')?.addEventListener('click', handleGenerateTrigger);
+    document.getElementById('select-trigger-action-type')?.addEventListener('change', syncTriggerActionFields);
+    document.getElementById('select-trigger-event')?.addEventListener('change', (e) => {
+        const customEv = document.getElementById('input-trigger-custom-event');
+        if (customEv) customEv.classList.toggle('hidden', e.target.value !== '__custom__');
+    });
+    document.getElementById('modal-edit-trigger')?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal-edit-trigger') closeTriggerModal();
+    });
+
+    // Companion Chit-Chat settings autosave
+    const persistChitChat = async () => {
+        if (!activeGameId || !window.pywebview?.api?.set_game_chitchat_settings) return;
+        const freqEl = document.getElementById('select-game-chitchat-freq');
+        const scrEl = document.getElementById('chk-game-chitchat-screen');
+        const profEl = document.getElementById('chk-game-chitchat-profanity');
+        const emoEl = document.getElementById('chk-game-chitchat-emotive');
+        const stEl = document.getElementById('chitchat-save-status');
+        try {
+            const res = await window.pywebview.api.set_game_chitchat_settings(
+                activeGameId,
+                freqEl ? freqEl.value : 'off',
+                Boolean(scrEl && scrEl.checked),
+                Boolean(profEl && profEl.checked),
+                Boolean(emoEl && emoEl.checked),
+            );
+            if (res && res.success) {
+                const prof = currentGamesData?.profiles?.[activeGameId];
+                if (prof) {
+                    prof.chitchat_frequency = res.frequency;
+                    prof.chitchat_screen_peek = res.screen_peek;
+                    prof.chitchat_allow_profanity = res.allow_profanity;
+                    prof.chitchat_emotive_voice = res.emotive_voice;
+                }
+                if (stEl) {
+                    stEl.textContent = 'Saved';
+                    setTimeout(() => { if (stEl && stEl.textContent === 'Saved') stEl.textContent = ''; }, 1800);
+                }
+            }
+        } catch (err) {
+            console.error("set_game_chitchat_settings error:", err);
+        }
+    };
+    document.getElementById('select-game-chitchat-freq')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chitchat-screen')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chitchat-profanity')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chitchat-emotive')?.addEventListener('change', persistChitChat);
+
     // Modal Add / Edit POI actions & Scan POIs
     document.getElementById('btn-scan-pois')?.addEventListener('click', handleScanGamePois);
     document.getElementById('btn-add-poi')?.addEventListener('click', () => openPoiModal(null));
@@ -1527,6 +2004,7 @@ function initGamesTabEvents() {
             closeAddKeybindModal();
             closeMacroModal();
             closePoiModal();
+            closeTriggerModal();
             closeRenameGameInline();
         }
     });

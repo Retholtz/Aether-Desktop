@@ -508,6 +508,29 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
             })
         if clean_pois:
             sanitized["default_pois"] = clean_pois
+    if isinstance(raw_data.get("chitchat_events"), list):
+        sanitized["chitchat_events"] = [str(e).strip() for e in raw_data["chitchat_events"] if str(e).strip()]
+    if isinstance(raw_data.get("trigger_events"), list):
+        clean_tevs = []
+        for tev in raw_data["trigger_events"]:
+            if isinstance(tev, dict) and tev.get("event"):
+                entry = {
+                    "event": str(tev["event"]).strip(),
+                    "label": str(tev.get("label") or tev["event"]).strip(),
+                    "description": str(tev.get("description") or "").strip(),
+                }
+                if tev.get("category"):
+                    entry["category"] = str(tev["category"]).strip()
+                clean_tevs.append(entry)
+        if clean_tevs:
+            sanitized["trigger_events"] = clean_tevs
+    if isinstance(raw_data.get("default_triggers"), list):
+        clean_trigs = []
+        for tr in raw_data["default_triggers"]:
+            if isinstance(tr, dict) and tr.get("event") and (tr.get("id") or tr.get("name")):
+                clean_trigs.append(dict(tr))
+        if clean_trigs:
+            sanitized["default_triggers"] = clean_trigs
     if clean_ext:
         sanitized["extension"] = clean_ext
     if raw_data.get("steam_appid"):

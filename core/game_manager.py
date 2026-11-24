@@ -224,6 +224,13 @@ class GameManager:
             profile=prof,
             on_milestone=on_milestone
         )
+        if hasattr(self, "on_telemetry_event") and callable(self.on_telemetry_event):
+            def _on_ev(ev_type: str, raw_ev: Dict[str, Any], st_snap: Dict[str, Any], _gid=game_id):
+                try:
+                    self.on_telemetry_event(_gid, ev_type, raw_ev, st_snap)
+                except Exception:
+                    pass
+            self.active_telemetry_adapter.on_event = _on_ev
         self.active_telemetry_adapter.start()
 
     def _migrate_monolithic_to_dir(self) -> Dict[str, Any]:
@@ -2011,6 +2018,13 @@ class GameManager:
             "Answer directly on the Live WebSocket (using your built-in Google Search when needed — reserve `query_game_intel` "
             "for structured live database lookups like markets, commodities, gear/outfitting, vendors, services, or system intel) "
             "and enjoy a rich, natural, multi-sentence conversational exchange."
+            + (
+                "\n- EMOTIVE VOCAL DELIVERY (ENABLED): Dynamically modulate your spoken voice, pace, pitch, and volume to match the live in-game moment — "
+                "speak briskly with sharp urgency during combat or emergencies, drop into a hushed tense whisper during stealth or nearby threats/hordes, "
+                "sound genuinely awestruck at rare discoveries or vistas, and keep a relaxed easygoing rhythm during quiet travel."
+                if profile.get("chitchat_emotive_voice")
+                else ""
+            )
         )
 
     def rename_game(self, game_id: str, new_display_name: str) -> Dict[str, Any]:
@@ -2314,6 +2328,178 @@ class GameManager:
             "updated": updated,
             "pois": self.get_merged_pois(game_id),
         }
+
+    # --- Companion Chit-Chat Settings (100% Game-Agnostic) ---
+
+    def get_chitchat_settings(self, game_id: str) -> Dict[str, Any]:
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"frequency": "off", "screen_peek": False, "allow_profanity": False, "emotive_voice": False}
+        freq = str(profile.get("chitchat_frequency") or "off").strip().lower()
+        if freq not in ("off", "rare", "occasional", "chatty"):
+            freq = "off"
+        return {
+            "frequency": freq,
+            "screen_peek": bool(profile.get("chitchat_screen_peek", False)),
+            "allow_profanity": bool(profile.get("chitchat_allow_profanity", False)),
+            "emotive_voice": bool(profile.get("chitchat_emotive_voice", False)),
+        }
+
+    def set_chitchat_settings(
+        self,
+        game_id: str,
+        frequency: str = "off",
+        screen_peek: bool = False,
+        allow_profanity: bool = False,
+        emotive_voice: bool = False,
+    ) -> Dict[str, Any]:
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        freq = str(frequency or "off").strip().lower()
+        if freq not in ("off", "rare", "occasional", "chatty"):
+            freq = "off"
+        profile["chitchat_frequency"] = freq
+        profile["chitchat_screen_peek"] = bool(screen_peek)
+        profile["chitchat_allow_profanity"] = bool(allow_profanity)
+        profile["chitchat_emotive_voice"] = bool(emotive_voice)
+        self._save_profiles(self.data, target_game_id=game_id)
+        return {
+            "success": True,
+            "frequency": freq,
+            "screen_peek": bool(screen_peek),
+            "allow_profanity": bool(allow_profanity),
+            "emotive_voice": bool(emotive_voice),
+        }
+
+    # --- Event Triggers (When / If -> Then) CRUD (100% Game-Agnostic) ---
+
+    def get_trigger_events(self, game_id: str) -> List[Dict[str, str]]:
+        """Returns declarative trigger event choices from the game's `.aethermodule.json`."""
+        profile = self.get_profile(game_id)
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            if isinstance(mod, dict) and isinstance(mod.get("trigger_events"), list):
+                return [dict(t) for t in mod["trigger_events"] if isinstance(t, dict) and t.get("event")]
+        except Exception:
+            pass
+        return []
+
+    def get_triggers(self, game_id: str) -> List[Dict[str, Any]]:
+        """Returns unified list of Event Triggers, merging module `default_triggers` with user `profile['triggers']`."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return []
+        merged: Dict[str, Dict[str, Any]] = {}
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            if isinstance(mod, dict) and isinstance(mod.get("default_triggers"), list):
+                for tr in mod["default_triggers"]:
+                    if isinstance(tr, dict) and (tr.get("id") or tr.get("name")):
+                        tid = str(tr.get("id") or tr.get("name")).strip()
+                        merged[tid] = {**tr, "id": tid, "source": "module_default"}
+        except Exception:
+            pass
+
+        saved = profile.get("triggers")
+        if isinstance(saved, dict):
+            for tid, tr in saved.items():
+                if isinstance(tr, dict):
+                    if tr.get("_deleted"):
+                        merged.pop(tid, None)
+                        continue
+                    base = merged.get(tid, {})
+                    merged[tid] = {**base, **tr, "id": tid, "source": tr.get("source") or ("custom" if tid not in merged else "module_override")}
+        return list(merged.values())
+
+    def save_trigger(self, game_id: str, rule: Dict[str, Any]) -> Dict[str, Any]:
+        """Creates or updates a When/If -> Then trigger rule in `profile['triggers']`."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        if not isinstance(rule, dict):
+            return {"success": False, "error": "Invalid trigger rule payload."}
+
+        name = str(rule.get("name") or "").strip()
+        event = str(rule.get("event") or "").strip()
+        action_type = str(rule.get("action_type") or "keybind").strip().lower()
+        if not name or not event:
+            return {"success": False, "error": "Trigger 'name' and 'event' are required."}
+
+        tid = str(rule.get("id") or "").strip()
+        if not tid:
+            tid = "".join(c if c.isalnum() or c == "_" else "_" for c in name.lower()).strip("_") or f"trigger_{int(time.time())}"
+
+        clean_rule: Dict[str, Any] = {
+            "id": tid,
+            "name": name,
+            "event": event,
+            "event_label": str(rule.get("event_label") or event).strip(),
+            "condition": str(rule.get("condition") or "").strip(),
+            "action_type": action_type,
+            "action_label": str(rule.get("action_label") or "").strip(),
+            "phrase": str(rule.get("phrase") or "").strip(),
+            "macro_name": str(rule.get("macro_name") or "").strip(),
+            "goal": str(rule.get("goal") or "").strip(),
+            "speak_text": str(rule.get("speak_text") or "").strip(),
+            "hold_ms": max(0, int(rule.get("hold_ms") or 0)),
+            "delay_ms": max(0, int(rule.get("delay_ms") or 0)),
+            "cooldown_sec": max(0.0, float(rule.get("cooldown_sec") if rule.get("cooldown_sec") is not None else 5.0)),
+            "enabled": bool(rule.get("enabled", True)),
+        }
+        if isinstance(rule.get("steps"), list):
+            clean_rule["steps"] = rule["steps"]
+        if rule.get("description"):
+            clean_rule["description"] = str(rule["description"]).strip()
+
+        profile.setdefault("triggers", {})[tid] = clean_rule
+        self._save_profiles(self.data, target_game_id=game_id)
+        return {
+            "success": True,
+            "trigger_id": tid,
+            "trigger": clean_rule,
+            "triggers": self.get_triggers(game_id),
+        }
+
+    def toggle_trigger(self, game_id: str, trigger_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enables or disables an existing trigger (including module defaults)."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        tid = str(trigger_id or "").strip()
+        existing = next((t for t in self.get_triggers(game_id) if t.get("id") == tid), None)
+        if not existing:
+            return {"success": False, "error": f"Trigger '{tid}' not found."}
+        updated = dict(existing)
+        updated["enabled"] = bool(enabled)
+        profile.setdefault("triggers", {})[tid] = updated
+        self._save_profiles(self.data, target_game_id=game_id)
+        return {"success": True, "trigger_id": tid, "enabled": bool(enabled), "triggers": self.get_triggers(game_id)}
+
+    def delete_trigger(self, game_id: str, trigger_id: str) -> Dict[str, Any]:
+        """Deletes a user trigger (or marks a module default trigger deleted)."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        tid = str(trigger_id or "").strip()
+        triggers_map = profile.setdefault("triggers", {})
+        # Check if it's a module default
+        is_mod_default = False
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            if isinstance(mod, dict) and isinstance(mod.get("default_triggers"), list):
+                is_mod_default = any(str(t.get("id") or t.get("name") or "") == tid for t in mod["default_triggers"] if isinstance(t, dict))
+        except Exception:
+            pass
+        if is_mod_default:
+            triggers_map[tid] = {"id": tid, "_deleted": True}
+        else:
+            triggers_map.pop(tid, None)
+        self._save_profiles(self.data, target_game_id=game_id)
+        return {"success": True, "triggers": self.get_triggers(game_id)}
 
     def get_callsign(self, game_id: str) -> str:
         """Returns the configured player callsign string (supports ';' separated values or blank)."""

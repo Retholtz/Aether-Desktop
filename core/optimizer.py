@@ -110,22 +110,15 @@ class ReflexionEngine:
         if not isinstance(self.config, dict):
             self.config = {}
 
-        from core.model_discovery import resolve_model_profile
-        configured_heavy = (
-            self.config.get("tier3_heavy_model")
-            or self.config.get("tier2_heavy_model")
-            or "gemini-4-neon:high"
-        )
-        if configured_heavy in ("gemini-3.8-pro",):
-            configured_heavy = "gemini-4-neon:high"
-        base_heavy, profile_lvl = resolve_model_profile(
-            configured_heavy,
-            default_model="gemini-4-neon",
-            default_level=self.config.get("tier3_thinking_level") or self.config.get("tier2_thinking_level", "high")
-        )
-        self.heavy_model = base_heavy
-        self.thinking_level = profile_lvl or self.config.get("tier3_thinking_level") or self.config.get("tier2_thinking_level", "high")
-        self.thinking_budget = self.config.get("tier2_thinking_budget", 2048)
+        from core.model_discovery import get_configured_tier2_model
+        # Background Reflexion strictly uses Settings Tier 2 Moderate (Hydrogen) with low thinking
+        # — never Tier 3 flagship/Neon — so idle maintenance cannot cause runaway API costs.
+        base_t2, _ = get_configured_tier2_model(self.config if self.config else None)
+        if "neon" in str(base_t2).lower():
+            base_t2 = "gemini-4-hydrogen"
+        self.heavy_model = base_t2
+        self.thinking_level = "low"
+        self.thinking_budget = min(int(self.config.get("tier2_thinking_budget", 1024) or 1024), 1024)
 
         # Gemini Client Resolution: env var -> engine client -> decrypted config
         self.client: Optional[genai.Client] = None
@@ -146,10 +139,37 @@ class ReflexionEngine:
 
         self._running = False
         self._worker_thread: Optional[threading.Thread] = None
-        self._last_memory_reconciliation = 0.0
+        self._state_path = self._resolve_state_path()
+        self._last_memory_reconciliation = self._load_last_reconciliation_ts()
 
         # Optional callbacks for legacy/extensibility
         self.on_optimized = kwargs.get("on_optimized")
+
+    @staticmethod
+    def _resolve_state_path() -> str:
+        try:
+            from core.paths import user_data_path
+            return user_data_path("reflexion_state.json")
+        except Exception:
+            return os.path.join("data", "reflexion_state.json")
+
+    def _load_last_reconciliation_ts(self) -> float:
+        try:
+            if os.path.exists(self._state_path):
+                with open(self._state_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return float(data.get("last_memory_reconciliation", 0.0) or 0.0)
+        except Exception:
+            pass
+        return 0.0
+
+    def _save_last_reconciliation_ts(self, ts: float) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._state_path) or ".", exist_ok=True)
+            with open(self._state_path, "w", encoding="utf-8") as f:
+                json.dump({"last_memory_reconciliation": float(ts)}, f)
+        except Exception:
+            pass
 
     def _build_generate_config(
         self,
@@ -228,7 +248,17 @@ class ReflexionEngine:
         if not hasattr(self.engine, "last_user_turn_timestamp"):
             return True
 
-        idle_delay = self.config.get("reflexion_idle_delay_seconds", 15)
+        # Pause background Reflexion completely while Game Mode is active
+        ge = getattr(self.engine, "game_engine", None)
+        gm = getattr(ge, "manager", None) if ge else getattr(self.engine, "game_manager", None)
+        if gm is not None and hasattr(gm, "is_game_mode_active"):
+            try:
+                if gm.is_game_mode_active():
+                    return False
+            except Exception:
+                pass
+
+        idle_delay = self.config.get("reflexion_idle_delay_seconds", 45)
         time_since_turn = time.time() - getattr(self.engine, "last_user_turn_timestamp", 0.0)
         is_audio_active = getattr(self.engine, "is_audio_streaming", False) or getattr(self.engine, "is_speaking", False)
         is_tool_active = getattr(self.engine, "is_tool_running", False)
@@ -238,6 +268,7 @@ class ReflexionEngine:
     def _reflexion_loop(self):
         """Continuous background polling loop evaluating tasks during idle periods."""
         poll_interval = self.config.get("reflexion_poll_interval_seconds", 30)
+        reconcile_interval = float(self.config.get("reflexion_reconcile_interval_seconds", 86400))
         while self._running:
             try:
                 if self._is_engine_idle():
@@ -247,10 +278,11 @@ class ReflexionEngine:
                     # Task B: Process queued chat transcripts for facts & manifests
                     self._process_unindexed_sessions()
 
-                    # Task C: Periodic memory reconciliation (runs at most once every 6 hours)
-                    if time.time() - self._last_memory_reconciliation > 21600:
-                        self._reconcile_and_prune_memory()
-                        self._last_memory_reconciliation = time.time()
+                    # Task C: Periodic memory reconciliation (persisted across restarts; at most once per 24h)
+                    if time.time() - self._last_memory_reconciliation > reconcile_interval:
+                        if self._reconcile_and_prune_memory():
+                            self._last_memory_reconciliation = time.time()
+                            self._save_last_reconciliation_ts(self._last_memory_reconciliation)
 
             except Exception as e:
                 print(f"[ERROR] [REFLEXION] Loop exception: {e}")
@@ -300,10 +332,7 @@ class ReflexionEngine:
                     contents=prompt,
                     config=config
                 )
-                if not self._is_engine_idle():
-                    logger.info(f"[REFLEXION] Engine became active during script optimization for '{run_id}'; yielding without committing.")
-                    return
-
+                # Always commit already-paid API results so we never discard tokens and re-bill on retry
                 raw_resp = getattr(response, "text", "") or ""
                 clean_code = extract_python_code(raw_resp)
 
@@ -446,10 +475,7 @@ Conversation:
                     contents=prompt,
                     config=config
                 )
-                if not self._is_engine_idle():
-                    logger.info(f"[REFLEXION] Engine became active during processing of {session_data.get('session_id')}; yielding immediately.")
-                    break
-
+                # Always persist already-paid session indexing/facts before yielding to active speech
                 result = json.loads(response.text)
 
                 # Store Manifest Card
@@ -479,7 +505,7 @@ Conversation:
         memory_db = getattr(self, "memory_db", None) or getattr(getattr(self.engine, "user_memory", None), "db_path", None)
         existing_facts = get_all_facts(db_path=memory_db)
         if len(existing_facts) < 5:
-            return
+            return False
 
         print("[INFO] [REFLEXION] Running long-term memory reconciliation...")
         logger.info("[REFLEXION] Running long-term memory reconciliation...")
@@ -494,17 +520,14 @@ Conversation:
         try:
             active_client = self._get_genai_client()
             if not active_client:
-                return
+                return False
             config = self._build_generate_config(response_mime_type="application/json")
             response = active_client.models.generate_content(
                 model=self.heavy_model,
                 contents=prompt,
                 config=config
             )
-            if not self._is_engine_idle():
-                logger.info("[REFLEXION] Engine became active during memory reconciliation; deferring write.")
-                return
-
+            # Always commit already-paid reconciliation results (atomic local SQLite write <5ms)
             result = json.loads(response.text)
             cleaned_facts = result.get("reconciled_facts", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])
 
@@ -512,9 +535,11 @@ Conversation:
                 replace_facts(cleaned_facts, snapshot_ts=snapshot_ts, db_path=memory_db)
                 print(f"[INFO] [REFLEXION] Memory reconciled: {len(existing_facts)} facts pruned down to {len(cleaned_facts)}.")
                 logger.info(f"[REFLEXION] Memory reconciled: {len(existing_facts)} facts pruned down to {len(cleaned_facts)}.")
+            return True
         except Exception as e:
             print(f"[ERROR] [REFLEXION] Reconciliation failed: {e}")
             logger.error(f"[REFLEXION] Reconciliation failed: {e}")
+            return False
 
 
 # Backward compatibility alias

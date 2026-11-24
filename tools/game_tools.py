@@ -9,9 +9,9 @@ from typing import Optional, Dict, Any
 from tools.dispatcher import register_tool
 
 
-def _resolve_tier2_game_model(engine=None) -> str:
-    """Resolves the configured Tier 2 Moderate REST model ID from Settings."""
-    from core.model_discovery import get_configured_tier2_model
+def _resolve_tier2_game_model(engine=None, prefer_fast: bool = True) -> str:
+    """Resolves the Settings-backed Game Mode REST model ID (Tier 1/2 only; hard-locked out of Tier 3/Neon)."""
+    from core.model_discovery import get_configured_game_model
     cfg = None
     if engine:
         if hasattr(engine, "config") and isinstance(engine.config, dict):
@@ -21,7 +21,7 @@ def _resolve_tier2_game_model(engine=None) -> str:
                 cfg = engine.config_getter()
             except Exception:
                 cfg = None
-    return get_configured_tier2_model(cfg)[0]
+    return get_configured_game_model(cfg, prefer_fast=prefer_fast)[0]
 
 
 def register_game_tools(dispatcher, game_manager, engine=None):
@@ -1445,6 +1445,108 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             return {"status": "success", "deleted": clean_name, "message": f"Deleted custom macro '{clean_name}'."}
         return {"status": "not_found", "message": f"No custom macro named '{clean_name}' found in profile."}
 
+    @dispatcher.register(
+        name="save_game_trigger",
+        description=(
+            "Creates, updates, or toggles an automatic When/If -> Then event trigger rule for the active game "
+            "(e.g. 'When entering a new system -> Discovery Scan', 'Turn on auto refuel on dock', 'When enemy attacks -> deploy hardpoints')."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Rule name (e.g. 'Auto Discovery Scan', 'Auto Refuel on Dock')."},
+                "event": {"type": "string", "description": "Telemetry event name (e.g. 'FSDJump', 'Docked', 'UnderAttack'). Optional if only toggling an existing rule."},
+                "action_type": {
+                    "type": "string",
+                    "enum": ["keybind", "macro", "key_sequence", "ui_task", "speak"],
+                    "description": "Type of THEN action."
+                },
+                "condition": {"type": "string", "description": "Optional IF telemetry guard (e.g. '!state.hardpoints_deployed')."},
+                "phrase": {"type": "string", "description": "Keybind phrase when action_type='keybind'."},
+                "hold_ms": {"type": "integer", "description": "Optional keybind hold duration in ms."},
+                "macro_name": {"type": "string", "description": "Saved macro name when action_type='macro'."},
+                "steps": {"type": "array", "items": MACRO_STEP_ITEMS_SCHEMA, "description": "Step list when action_type='key_sequence'."},
+                "goal": {"type": "string", "description": "UI task goal when action_type='ui_task' (e.g. 'Refuel ship')."},
+                "speak_text": {"type": "string", "description": "Spoken callout when action_type='speak'."},
+                "delay_ms": {"type": "integer", "description": "Delay in ms before executing after event fires."},
+                "cooldown_sec": {"type": "number", "description": "Minimum cooldown seconds between firings."},
+                "enabled": {"type": "boolean", "description": "Whether the trigger rule is enabled (default: true)."},
+            },
+            "required": ["name"],
+        },
+    )
+    def save_game_trigger(
+        name: str,
+        event: str = "",
+        action_type: str = "",
+        condition: str = "",
+        phrase: str = "",
+        hold_ms: int = 0,
+        macro_name: str = "",
+        steps: Optional[list] = None,
+        goal: str = "",
+        speak_text: str = "",
+        delay_ms: int = 0,
+        cooldown_sec: float = 5.0,
+        enabled: bool = True,
+    ) -> dict:
+        if not game_manager:
+            return {"status": "error", "message": "Game manager unavailable."}
+        active_id = game_manager.data.get("active_profile", "")
+        if not active_id or not game_manager.get_profile(active_id):
+            return {"status": "error", "message": "No active game profile selected."}
+
+        # If user is toggling an existing trigger by name without specifying event/action_type
+        q = str(name or "").strip().lower()
+        existing = next(
+            (t for t in game_manager.get_triggers(active_id)
+             if str(t.get("name", "")).lower() == q or str(t.get("id", "")).lower() == q or (len(q) >= 4 and q in str(t.get("name", "")).lower())),
+            None,
+        )
+        if existing and not event and not action_type:
+            res = game_manager.toggle_trigger(active_id, existing["id"], bool(enabled))
+            state_str = "enabled" if enabled else "disabled"
+            return {"status": "success", "trigger": existing["name"], "enabled": bool(enabled), "message": f"Trigger '{existing['name']}' {state_str}."}
+
+        rule = {
+            "id": existing["id"] if existing else "",
+            "name": name,
+            "event": event or (existing.get("event") if existing else ""),
+            "condition": condition,
+            "action_type": action_type or (existing.get("action_type") if existing else "keybind"),
+            "phrase": phrase,
+            "hold_ms": hold_ms,
+            "macro_name": macro_name,
+            "steps": steps if isinstance(steps, list) else (existing.get("steps") if existing else None),
+            "goal": goal,
+            "speak_text": speak_text,
+            "delay_ms": delay_ms,
+            "cooldown_sec": cooldown_sec,
+            "enabled": bool(enabled),
+        }
+        res = game_manager.save_trigger(active_id, rule)
+        if not res.get("success"):
+            return {"status": "error", "message": res.get("error") or "Failed to save trigger."}
+        return {
+            "status": "success",
+            "trigger_id": res["trigger_id"],
+            "enabled": bool(enabled),
+            "message": f"Saved event trigger '{name}' (When {rule['event']} -> {rule['action_type']}, {'ON' if enabled else 'OFF'}).",
+        }
+
+    @dispatcher.register(
+        name="list_game_triggers",
+        description="Lists all configured When/If -> Then event triggers for the active game and whether each is ON or OFF.",
+        parameters={"type": "object", "properties": {}, "required": []},
+    )
+    def list_game_triggers() -> dict:
+        if not game_manager:
+            return {"status": "error", "triggers": []}
+        active_id = game_manager.data.get("active_profile", "")
+        if not active_id:
+            return {"status": "error", "triggers": []}
+        return {"status": "success", "triggers": game_manager.get_triggers(active_id)}
+
     return {
         "get_current_game_telemetry": get_current_game_telemetry,
         "get_current_game_status": get_current_game_status,
@@ -1472,4 +1574,6 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         "save_game_macro": save_game_macro,
         "list_game_macros": list_game_macros,
         "delete_game_macro": delete_game_macro,
+        "save_game_trigger": save_game_trigger,
+        "list_game_triggers": list_game_triggers,
     }

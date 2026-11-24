@@ -573,12 +573,45 @@ If the element is not visible on screen, return {{"found": false}}.
                     send_directinput_key(resolved_map_key, duration_sec=0.12)
                 time.sleep(open_wait)
 
-        # 2. Focus search bar (explicit key, vision-located mouse click, or already focused)
+        def _exec_routing_step(step_spec: Any) -> bool:
+            """Executes a declarative routing step: gamepad button (with keyboard fallback) or keyboard key."""
+            if isinstance(step_spec, str) and step_spec.strip():
+                send_directinput_key(step_spec.strip(), duration_sec=0.1)
+                time.sleep(0.35)
+                return True
+            if not isinstance(step_spec, dict):
+                return False
+            hold_s = max(0.05, float(step_spec.get("hold_ms") or 100) / 1000.0)
+            wait_s = max(0.05, float(step_spec.get("delay_ms") or 350) / 1000.0)
+            sent = False
+            if step_spec.get("gamepad"):
+                try:
+                    from tools.os_controls import send_gamepad_button
+                    sent = bool(send_gamepad_button(str(step_spec["gamepad"]).strip(), duration_sec=hold_s))
+                except Exception:
+                    sent = False
+            if not sent and (step_spec.get("fallback_key") or step_spec.get("key")):
+                k = str(step_spec.get("fallback_key") or step_spec.get("key")).strip()
+                if k:
+                    send_directinput_key(k, duration_sec=hold_s)
+                    sent = True
+            if sent:
+                time.sleep(wait_s)
+            return sent
+
+        # 2. Focus search bar (deterministic pre_input_steps first, else vision-located mouse click, else focus key)
         eff_focus_key = str(routing_cfg.get("search_focus_key") or search_focus_key or "").strip()
         search_hint = str(routing_cfg.get("search_box_visual_hint") or "").strip()
+        pre_steps = routing_cfg.get("pre_input_steps")
+        focused_via_steps = False
         focused_via_vision = False
 
-        if search_hint and self.client:
+        if isinstance(pre_steps, list) and pre_steps:
+            for ps in pre_steps:
+                if _exec_routing_step(ps):
+                    focused_via_steps = True
+
+        if not focused_via_steps and search_hint and self.client:
             pt = self.locate_ui_element_point(search_hint)
             if pt:
                 move_mouse_absolute(pt[0], pt[1])
@@ -587,7 +620,7 @@ If the element is not visible on screen, return {{"found": false}}.
                 time.sleep(0.2)
                 focused_via_vision = True
 
-        if not focused_via_vision and eff_focus_key:
+        if not focused_via_steps and not focused_via_vision and eff_focus_key:
             send_directinput_key(eff_focus_key, duration_sec=0.1)
             time.sleep(0.3)
 
@@ -608,16 +641,11 @@ If the element is not visible on screen, return {{"found": false}}.
         select_wait = float(routing_cfg.get("select_result_wait_sec") or 0.9)
         time.sleep(select_wait)
 
-        # Optional declarative post-input navigation keys (e.g. [{"key": "down", "delay_ms": 400}, {"key": "enter", "delay_ms": 1100}])
+        # Optional declarative post-input navigation steps (supports gamepad D-pad & keyboard keys)
         post_keys = routing_cfg.get("post_input_keys")
         if isinstance(post_keys, list) and post_keys:
             for pk in post_keys:
-                if isinstance(pk, dict) and pk.get("key"):
-                    send_directinput_key(str(pk["key"]).strip(), duration_sec=0.1)
-                    time.sleep(max(0.05, float(pk.get("delay_ms") or 400) / 1000.0))
-                elif isinstance(pk, str) and pk.strip():
-                    send_directinput_key(pk.strip(), duration_sec=0.1)
-                    time.sleep(0.4)
+                _exec_routing_step(pk)
         elif routing_cfg.get("confirm_dropdown_enter"):
             send_directinput_key("enter", duration_sec=0.1)
             time.sleep(0.6)

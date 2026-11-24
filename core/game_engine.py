@@ -62,6 +62,8 @@ class GameEngine:
         "save_game_macro",
         "list_game_macros",
         "delete_game_macro",
+        "save_game_trigger",
+        "list_game_triggers",
         "launch_game_companion_app",
         "launch_application",
         "navigate_browser",
@@ -72,7 +74,6 @@ class GameEngine:
         "close_window",
         "close_application",
         "delegate_moderate_task",
-        "delegate_heavy_task",
         "paste_to_document",
         "export_research_dossier",
         "get_steam_friends_activity",
@@ -109,6 +110,28 @@ class GameEngine:
         self.manager.on_game_mode_changed = self._on_game_mode_changed
         if self.engine is not None:
             self.manager.vision_client = getattr(self.engine, "genai_client", None) or getattr(self.engine, "client", None)
+
+        # Initialize 100% game-agnostic Event Triggers (When/If -> Then) & Companion Chit-Chat engines
+        from core.game_triggers import GameTriggerEngine, CompanionChitChatManager
+        self.trigger_engine = GameTriggerEngine(self.manager, engine=self.engine)
+        self.chitchat_manager = CompanionChitChatManager(self.manager, engine=self.engine)
+
+        def _on_telemetry_event(game_id: str, event_type: str, raw_event: Dict[str, Any], state_snapshot: Dict[str, Any]):
+            try:
+                self.trigger_engine.handle_event(game_id, event_type, raw_event, state_snapshot)
+            except Exception as e:
+                logger.debug("[GAME_ENGINE] trigger_engine.handle_event error: %s", e)
+            try:
+                self.chitchat_manager.on_telemetry_event(game_id, event_type, raw_event, state_snapshot)
+            except Exception as e:
+                logger.debug("[GAME_ENGINE] chitchat_manager.on_telemetry_event error: %s", e)
+
+        self.manager.on_telemetry_event = _on_telemetry_event
+        if self.manager.active_telemetry_adapter is not None:
+            active_gid = self.manager.data.get("active_profile", "")
+            self.manager.active_telemetry_adapter.on_event = (
+                lambda ev_t, raw_e, st_s, _g=active_gid: _on_telemetry_event(_g, ev_t, raw_e, st_s)
+            )
 
         if self.dispatcher:
             self.register_tools(self.dispatcher)

@@ -274,6 +274,32 @@
                       <span id="copilot-vibe-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
                     </div>
                     <textarea id="textarea-game-copilot-personality" class="modal-input" rows="2" style="width: 100%; resize: vertical; font-size: 0.8rem; line-height: 1.4;" placeholder="Optional custom co-pilot personality (free text) — e.g. Dry humor like TARS from Interstellar, loves playful banter, calls out cool sights, never repeats the same canned line..."></textarea>
+
+                    <!-- Companion Chit-Chat Controls -->
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 8px; padding-top: 10px; border-top: 1px solid rgba(148, 163, 184, 0.12); width: 100%;">
+                      <div class="game-setting-field">
+                        <label for="select-game-chitchat-freq" class="game-setting-label" title="How often Aether makes unprompted in-character remarks about game events or quiet cruising.">Chit-Chat:</label>
+                        <select id="select-game-chitchat-freq" class="hud-select" style="width: auto; min-width: 155px;">
+                          <option value="off">🔇 Off</option>
+                          <option value="rare">💬 Rare (Quiet)</option>
+                          <option value="occasional">💬 Occasional</option>
+                          <option value="chatty">🗣️ Chatty</option>
+                        </select>
+                      </div>
+                      <label class="game-multi-char-label" for="chk-game-chitchat-screen" title="Telemetry and Log events are used by default. When checked, Aether also glances at your live game screen to react to sights like binary/neutron stars or stations.">
+                        <input type="checkbox" id="chk-game-chitchat-screen" />
+                        <span>👁️ Allow Screen Peek</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chitchat-profanity" title="Allows occasional natural, dramatic casual swearing during startling or intense moments.">
+                        <input type="checkbox" id="chk-game-chitchat-profanity" />
+                        <span>🌶️ Casual Profanity</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chitchat-emotive" title="Dynamically adjusts Aether's speaking pace, whisper volume, and vocal urgency to match combat, stealth/hordes, or quiet cruising.">
+                        <input type="checkbox" id="chk-game-chitchat-emotive" />
+                        <span>🎭 Emotive Voice</span>
+                      </label>
+                      <span id="chitchat-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
+                    </div>
                   </div>
                 </section>
 
@@ -356,11 +382,39 @@
               </div>
 
               <!-- ========================================================= -->
-              <!-- SUB-TAB 3: MACROS, KEYBINDS & PYTHON EXTENSIONS           -->
+              <!-- SUB-TAB 3: TRIGGERS, MACROS, KEYBINDS & PYTHON EXTENSIONS -->
               <!-- ========================================================= -->
               <div id="game-subtab-controls" class="game-subtab-pane hidden">
+                <!-- Event Triggers (When / If -> Then) Card -->
+                <section class="game-card" id="card-game-triggers">
+                  <div class="game-card-header card-header-flex">
+                    <div>
+                      <h3 style="margin: 0;">🔁 EVENT TRIGGERS (WHEN → THEN)</h3>
+                      <p class="subtitle field-hint">Automatic rules fired by live game events (e.g. <em>When entering a new system → Discovery Scan</em>, <em>When docked → Refuel</em>). Toggle each rule On/Off anytime.</p>
+                    </div>
+                    <div class="header-action-group card-header-actions">
+                      <button type="button" id="btn-add-trigger" class="btn-primary-sm btn-primary-blue">+ Add Trigger</button>
+                    </div>
+                  </div>
+
+                  <table class="game-table" id="table-game-triggers">
+                    <thead>
+                      <tr>
+                        <th style="width: 48px;">On</th>
+                        <th>Rule Name</th>
+                        <th>When / If</th>
+                        <th>Then Action</th>
+                        <th style="width: 190px;">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="tbody-game-triggers">
+                      <!-- Dynamically populated -->
+                    </tbody>
+                  </table>
+                </section>
+
                 <!-- Custom Visual & Multi-Step Macros Card -->
-                <section class="game-card">
+                <section class="game-card" style="margin-top: 16px;">
                   <div class="game-card-header card-header-flex">
                     <div>
                       <div style="display: flex; align-items: center; gap: 8px;">
@@ -3419,6 +3473,120 @@
       <div class="modal-footer">
         <button type="button" id="btn-cancel-edit-poi" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
         <button type="button" id="btn-confirm-save-poi" class="btn-primary-sm" style="padding: 7px 18px;">Save POI</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Event Trigger (When / If -> Then) -->
+  <div id="modal-edit-trigger" class="modal-overlay hidden">
+    <div class="modal-card" style="max-width: 620px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.15rem;">🔁</span>
+          <h3 id="modal-edit-trigger-title" style="margin: 0; font-size: 1rem; color: var(--text-main);">Add Event Trigger</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-edit-trigger-modal" title="Close">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 74vh; overflow-y: auto;">
+        <input type="hidden" id="input-trigger-id" value="" />
+
+        <!-- Plain-English AI Trigger Generator -->
+        <div class="modal-field" style="background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px;">
+          <label for="input-trigger-ai-prompt" class="modal-label" style="color: #60a5fa;">✨ Generate Trigger from Plain English (Optional)</label>
+          <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <input type="text" id="input-trigger-ai-prompt" class="modal-input" style="flex: 1;" placeholder="e.g. When entering a new system, wait 2.5 seconds and hold right mouse for 5.8 seconds" autocomplete="off" />
+            <button type="button" id="btn-generate-trigger" class="btn-secondary-sm" style="white-space: nowrap;">✨ Generate</button>
+          </div>
+          <span id="trigger-ai-status" class="modal-hint" style="display: block; margin-top: 4px;">Aether will draft the When/If condition and Then action below for you to review or tweak.</span>
+        </div>
+
+        <div class="modal-field">
+          <label for="input-trigger-name" class="modal-label">Rule Name <span style="color: #ef4444;">*</span></label>
+          <input type="text" id="input-trigger-name" class="modal-input" placeholder="e.g. Auto Discovery Scan, Auto Refuel on Dock" autocomplete="off" />
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="modal-field">
+            <label for="select-trigger-event" class="modal-label">WHEN (Game Event) <span style="color: #ef4444;">*</span></label>
+            <select id="select-trigger-event" class="modal-input"></select>
+            <input type="text" id="input-trigger-custom-event" class="modal-input hidden" style="margin-top: 6px;" placeholder="Exact telemetry event name (e.g. FSDJump)" autocomplete="off" />
+          </div>
+          <div class="modal-field">
+            <label for="input-trigger-condition" class="modal-label">IF Condition (Optional)</label>
+            <input type="text" id="input-trigger-condition" class="modal-input" placeholder="e.g. !state.hardpoints_deployed" autocomplete="off" />
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div class="modal-field">
+            <label for="select-trigger-action-type" class="modal-label">THEN Action Type</label>
+            <select id="select-trigger-action-type" class="modal-input">
+              <option value="keybind">Fire Keybind</option>
+              <option value="macro">Run Saved Macro</option>
+              <option value="key_sequence">Key / Click Sequence</option>
+              <option value="ui_task">Vision UI Task (Menu)</option>
+              <option value="speak">Voice Callout</option>
+            </select>
+          </div>
+          <div class="modal-field">
+            <label for="input-trigger-delay-ms" class="modal-label">Delay (ms)</label>
+            <input type="number" id="input-trigger-delay-ms" class="modal-input" value="0" min="0" max="15000" step="100" />
+          </div>
+          <div class="modal-field">
+            <label for="input-trigger-cooldown-sec" class="modal-label">Cooldown (sec)</label>
+            <input type="number" id="input-trigger-cooldown-sec" class="modal-input" value="5" min="0" max="600" step="1" />
+          </div>
+        </div>
+
+        <!-- Action-specific inputs -->
+        <div id="field-trigger-keybind" class="modal-field">
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
+            <div>
+              <label for="input-trigger-phrase" class="modal-label">Keybind Phrase</label>
+              <input type="text" id="input-trigger-phrase" class="modal-input" placeholder="e.g. deploy hardpoints" autocomplete="off" />
+            </div>
+            <div>
+              <label for="input-trigger-hold-ms" class="modal-label">Hold (ms, 0=tap)</label>
+              <input type="number" id="input-trigger-hold-ms" class="modal-input" value="0" min="0" max="15000" step="100" />
+            </div>
+          </div>
+        </div>
+
+        <div id="field-trigger-macro" class="modal-field hidden">
+          <label for="input-trigger-macro-name" class="modal-label">Saved Macro Name</label>
+          <input type="text" id="input-trigger-macro-name" class="modal-input" placeholder="e.g. take us out" autocomplete="off" />
+        </div>
+
+        <div id="field-trigger-sequence" class="modal-field hidden">
+          <label for="textarea-trigger-steps" class="modal-label">Sequence Steps (JSON Array)</label>
+          <textarea id="textarea-trigger-steps" class="modal-input" rows="4" style="font-family: Consolas, monospace; font-size: 0.8rem;" placeholder='[{"action": "click", "button": "right", "hold_ms": 5800}]'></textarea>
+        </div>
+
+        <div id="field-trigger-ui-task" class="modal-field hidden">
+          <label for="input-trigger-goal" class="modal-label">UI Task Goal</label>
+          <input type="text" id="input-trigger-goal" class="modal-input" placeholder="e.g. Refuel ship, Repair ship, Restock ship" autocomplete="off" />
+        </div>
+
+        <div id="field-trigger-speak" class="modal-field hidden">
+          <label for="input-trigger-speak-text" class="modal-label">Voice Callout / Remark</label>
+          <input type="text" id="input-trigger-speak-text" class="modal-input" placeholder="e.g. Shields are down, watch your hull!" autocomplete="off" />
+        </div>
+
+        <div class="modal-field">
+          <label for="input-trigger-action-label" class="modal-label">Short Action Summary (Optional)</label>
+          <input type="text" id="input-trigger-action-label" class="modal-input" placeholder="e.g. Discovery Scan (Hold Secondary Fire 5.8s)" autocomplete="off" />
+        </div>
+
+        <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text-main); cursor: pointer;">
+          <input type="checkbox" id="chk-trigger-enabled" checked />
+          <span>Rule Enabled</span>
+        </label>
+
+        <span id="trigger-modal-error" class="modal-hint" style="color: #f87171; display: none; margin-top: 6px;"></span>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-edit-trigger" class="btn-secondary-sm" style="padding: 7px 16px;">Cancel</button>
+        <button type="button" id="btn-confirm-save-trigger" class="btn-primary-sm" style="padding: 7px 18px;">Save Trigger</button>
       </div>
     </div>
   </div>

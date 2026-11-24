@@ -3075,6 +3075,40 @@ class ToolDispatcher:
 
         from core.model_discovery import resolve_model_profile, build_thinking_config
         cfg = self.config_getter() if self.config_getter else {}
+
+        # Cost Guardrail 1: Hard-lock Game Mode out of Tier 3 (Neon)
+        if getattr(self, "game_engine", None) and hasattr(self.game_engine, "manager"):
+            try:
+                if self.game_engine.manager.is_game_mode_active():
+                    return {
+                        "status": "blocked_in_game_mode",
+                        "message": "Tier 3 (Neon) is disabled during Game Mode to prevent runaway costs. Use Tier 2 (Hydrogen) or exit Game Mode.",
+                    }
+            except Exception:
+                pass
+
+        # Cost Guardrail 2: Deduplicate rapid retries & cap hourly Tier 3 calls
+        now_ts = time.time()
+        if not hasattr(self, "_tier3_call_timestamps"):
+            self._tier3_call_timestamps = []
+        if not hasattr(self, "_tier3_last_signature"):
+            self._tier3_last_signature = ("", 0.0)
+        sig = f"{task_type}:{str(title or '').strip().lower()}:{str(instructions or '')[:120].strip().lower()}"
+        if sig == self._tier3_last_signature[0] and (now_ts - self._tier3_last_signature[1]) < 30.0:
+            return {
+                "status": "deduplicated",
+                "message": "Skipped duplicate Tier 3 call within 30 seconds to prevent retry burn.",
+            }
+        self._tier3_call_timestamps = [t for t in self._tier3_call_timestamps if (now_ts - t) < 3600.0]
+        max_per_hour = max(1, int((cfg or {}).get("max_tier3_calls_per_hour", 12) or 12))
+        if len(self._tier3_call_timestamps) >= max_per_hour:
+            return {
+                "status": "rate_limited",
+                "message": f"Tier 3 hourly safety cap ({max_per_hour} calls/hr) reached to prevent runaway costs.",
+            }
+        self._tier3_call_timestamps.append(now_ts)
+        self._tier3_last_signature = (sig, now_ts)
+
         api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
         raw_heavy = cfg.get("tier3_heavy_model") or cfg.get("tier2_heavy_model") or api_cfg.get("pro_model_id") or "gemini-4-neon:high"
         default_heavy_lvl = cfg.get("tier3_thinking_level") or cfg.get("tier2_thinking_level") or "high"

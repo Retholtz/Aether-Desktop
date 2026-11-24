@@ -4226,6 +4226,107 @@ class GuiBridge:
         """Scans telemetry history and declarative module default_pois to populate/update POIs."""
         return self.game_mgr.scan_game_pois(game_id)
 
+    def set_game_chitchat_settings(
+        self,
+        game_id: str,
+        frequency: str = "off",
+        screen_peek: Any = False,
+        allow_profanity: Any = False,
+        emotive_voice: Any = False,
+    ) -> dict:
+        """Persists per-game Companion Chit-Chat frequency, screen-peek, profanity, and emotive-voice toggles."""
+        return self.game_mgr.set_chitchat_settings(
+            game_id=game_id,
+            frequency=frequency,
+            screen_peek=bool(screen_peek),
+            allow_profanity=bool(allow_profanity),
+            emotive_voice=bool(emotive_voice),
+        )
+
+    def get_game_triggers(self, game_id: str) -> dict:
+        """Returns merged When/If -> Then event triggers and declarative trigger event choices."""
+        if not game_id:
+            return {"success": False, "triggers": [], "trigger_events": []}
+        return {
+            "success": True,
+            "triggers": self.game_mgr.get_triggers(game_id),
+            "trigger_events": self.game_mgr.get_trigger_events(game_id),
+        }
+
+    def save_game_trigger(self, game_id: str, rule: dict) -> dict:
+        """Creates or updates a When/If -> Then event trigger rule."""
+        return self.game_mgr.save_trigger(game_id, rule)
+
+    def toggle_game_trigger(self, game_id: str, trigger_id: str, enabled: Any) -> dict:
+        """Toggles an event trigger rule On or Off."""
+        return self.game_mgr.toggle_trigger(game_id, trigger_id, bool(enabled))
+
+    def delete_game_trigger(self, game_id: str, trigger_id: str) -> dict:
+        """Deletes an event trigger rule."""
+        return self.game_mgr.delete_trigger(game_id, trigger_id)
+
+    def test_game_trigger(self, game_id: str, trigger_id: str) -> dict:
+        """Immediately tests a trigger rule's THEN action."""
+        triggers = self.game_mgr.get_triggers(game_id)
+        rule = next((t for t in triggers if t.get("id") == trigger_id), None)
+        if not rule:
+            return {"status": "error", "message": f"Trigger '{trigger_id}' not found."}
+        ge = getattr(self, "game_engine", None) or (getattr(self.engine, "game_engine", None) if getattr(self, "engine", None) else None)
+        te = getattr(ge, "trigger_engine", None) if ge else None
+        if te is None:
+            from core.game_triggers import GameTriggerEngine
+            te = GameTriggerEngine(self.game_mgr, engine=getattr(self, "engine", None))
+        return te.execute_trigger_rule(game_id=game_id, rule=rule, is_test=True)
+
+    def generate_game_trigger_from_text(self, game_id: str, instruction: str) -> dict:
+        """Uses Gemini to draft a structured When/If -> Then trigger rule from plain English."""
+        clean_inst = str(instruction or "").strip()
+        if not clean_inst:
+            return {"success": False, "error": "Please enter a plain-English trigger description."}
+        client = None
+        if getattr(self, "engine", None):
+            client = getattr(self.engine, "genai_client", None) or getattr(self.engine, "client", None)
+        if not client:
+            return {"success": False, "error": "Gemini client unavailable. Start Aether or check your API key."}
+        events = self.game_mgr.get_trigger_events(game_id)
+        ev_list = ", ".join(f"{e['event']} ({e.get('label', e['event'])})" for e in events) if events else "any telemetry event name"
+        prof = self.game_mgr.get_profile(game_id) or {}
+        binds = list((prof.get("keybinds") or {}).keys())[:40]
+        macros = list((prof.get("sequences") or {}).keys())[:25]
+        prompt = (
+            f"Convert this player's plain-English automation request into a JSON event trigger rule for '{prof.get('display_name', game_id)}'.\n"
+            f"Request: {clean_inst}\n"
+            f"Available telemetry events: {ev_list}\n"
+            f"Available keybinds: {', '.join(binds) if binds else '(none)'}\n"
+            f"Available macros: {', '.join(macros) if macros else '(none)'}\n\n"
+            f"Return ONLY valid JSON with keys:\n"
+            f"  name (short title),\n"
+            f"  event (exact telemetry event name),\n"
+            f"  condition (optional boolean guard like '!state.hardpoints_deployed' or ''),\n"
+            f"  delay_ms (integer ms before firing, e.g. 2000),\n"
+            f"  cooldown_sec (number, e.g. 10),\n"
+            f"  action_type ('keybind' | 'macro' | 'key_sequence' | 'ui_task' | 'speak'),\n"
+            f"  phrase (if keybind), hold_ms (optional int if keybind needs hold),\n"
+            f"  macro_name (if macro),\n"
+            f"  steps (JSON array of steps if key_sequence, e.g. [{{\"action\":\"click\",\"button\":\"right\",\"hold_ms\":5800}}]),\n"
+            f"  goal (if ui_task, e.g. 'Refuel ship'),\n"
+            f"  speak_text (if speak),\n"
+            f"  action_label (short human summary of the THEN action)."
+        )
+        try:
+            from core.model_discovery import get_configured_game_model
+            model, _ = get_configured_game_model(getattr(self, "_config", None), prefer_fast=False)
+            resp = client.models.generate_content(model=model, contents=prompt)
+            raw = (getattr(resp, "text", None) or "").strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw, flags=re.DOTALL).strip()
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                return {"success": False, "error": "Model did not return a JSON object."}
+            return {"success": True, "trigger": parsed}
+        except Exception as e:
+            return {"success": False, "error": f"Could not draft trigger: {e}"}
+
     def delete_game_profile(self, game_id: str) -> dict:
 
         """Deletes a game profile from memory and disk, and removes from program whitelist."""
@@ -4431,10 +4532,12 @@ class GuiBridge:
 
     def sync_game_bindings(self, game_id: str) -> dict:
 
-        """Scans local directories or retrieves web defaults via Hydrogen - Low if files are absent."""
+        """Scans local directories or retrieves web defaults via Settings Tier 2 model if files are absent."""
 
+        from core.model_discovery import get_configured_game_model
         client = getattr(self.engine, "client", None) or getattr(self._engine, "client", None)
-        model = "gemini-4-hydrogen:low"
+        base_m, lvl = get_configured_game_model(getattr(self, "_config", None), prefer_fast=False)
+        model = f"{base_m}:{lvl}" if lvl else base_m
         res = self.game_mgr.sync_game_binds_with_fallback(game_id, client=client, model_endpoint=model)
         if res.get("success"):
             eng = getattr(self, "_engine", None) or getattr(self, "engine", None)
@@ -4675,9 +4778,9 @@ class GuiBridge:
 
         try:
             from google.genai import types
-            from core.model_discovery import resolve_model_profile, build_thinking_config
+            from core.model_discovery import get_configured_game_model, build_thinking_config
 
-            base_model, level = resolve_model_profile("gemini-4-hydrogen:low", default_model="gemini-4-hydrogen", default_level="low")
+            base_model, level = get_configured_game_model(getattr(self, "_config", None), prefer_fast=False)
             thinking_cfg = build_thinking_config(base_model, thinking_level=level or "low")
 
             vision_hint = (

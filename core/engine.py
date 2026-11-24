@@ -133,8 +133,9 @@ MANDATORY TIER 2 & TIER 3 DELEGATION RULES:
    - Whenever the user asks you to perform a multi-step task across apps or web services (e.g. "Create a document explaining X in Google Docs", "Open Word and write...", "Open Notepad and paste...", "Open Gmail and write Stan Orlop a letter..."):
      * ALWAYS call `delegate_moderate_task(task_type="workflow_orchestration", title=..., instructions=...)` so Tier 2 Hydrogen creates a step checklist, launches/focuses the exact requested app, sub-contracts Tier 3 Neon (`delegate_heavy_task`) for deep writing when appropriate, pastes/types cleanly, and visually inspects screenshots before declaring success.
      * NEVER attempt to improvise 4+ sequential UI/browser/paste tool calls directly from Tier 1 when Hydrogen orchestration can drive the full verified checklist.
-2. TIER 3 (`delegate_heavy_task` -> GEMINI 4 NEON) FOR EXHAUSTIVE OR DEEP AUTHORING:
-   - Invoke `delegate_heavy_task` (or let Hydrogen sub-contract it during `workflow_orchestration`) whenever the user asks to `"use Neon"`, `"switch to Neon"`, `"use Carbon"`, `"use Argon"`, `"use Tier 3"`, `"think deeply"`, or asks directly for a standalone research dossier, exhaustive manual/guide, complex Python automation script, or high-stakes formal correspondence.
+2. TIER 3 (`delegate_heavy_task` -> GEMINI 4 NEON) — STRICTLY RESERVED (COST GUARDRAIL):
+   - ONLY invoke `delegate_heavy_task` when the user explicitly requests `"use Neon"`, `"switch to Neon"`, `"use Tier 3"`, an executive summary, an exhaustive multi-page research dossier/manual, or deep Projects workspace synthesis.
+   - NEVER escalate casual chat, short emails/letters, everyday lookups, or in-game questions to Tier 3 — handle those in Tier 1 or Tier 2 (`delegate_moderate_task`).
 3. TIER 2 REASONING (`delegate_moderate_task` -> GEMINI 4 HYDROGEN):
    - Handle casual conversation, everyday Q&A, quick web lookups, and straightforward game advice directly in Tier 1 real time.
    - If a task involves tricky multi-constraint logic, a tough video game puzzle, code debugging, or the user says `"use Hydrogen"` / `"use Tier 2"` / `"think harder"`, call `delegate_moderate_task(...)` and concisely speak the solution.

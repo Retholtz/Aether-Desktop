@@ -88,6 +88,62 @@ def get_configured_tier2_model(cfg: Optional[Dict[str, Any]] = None) -> Tuple[st
     return base_model, (level or "medium")
 
 
+def get_configured_game_model(
+    cfg: Optional[Dict[str, Any]] = None,
+    prefer_fast: bool = True,
+) -> Tuple[str, str]:
+    """
+    Single Settings-backed model resolver for ALL Game Mode REST calls (Vision UI,
+    Screen Peek, Chit-Chat, Macro/Trigger drafting, Auto-Build, Keybind Sync).
+    - Reads Settings (config.json) as the source of truth:
+      * prefer_fast=True  -> Settings Tier 1 (if non-Live REST), else Settings Tier 2 Moderate.
+      * prefer_fast=False -> Settings Tier 2 Moderate.
+    - Hard ceiling: Game Mode is strictly locked out of Tier 3 flagship/Neon models
+      (reserved for Chat executive summaries and Projects); any Neon model caps to Hydrogen.
+    """
+    if not isinstance(cfg, dict):
+        try:
+            from core.config_manager import load_config
+            cfg = load_config()
+        except Exception:
+            cfg = {}
+
+    api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+    tier3_raw = str(
+        cfg.get("tier3_heavy_model")
+        or (api_cfg.get("pro_model_id") if isinstance(api_cfg, dict) else "")
+        or ""
+    ).strip()
+    tier3_base = resolve_model_profile(tier3_raw, default_model="gemini-4-neon")[0].lower() if tier3_raw else "gemini-4-neon"
+
+    def _is_disallowed_for_game(model_id: str) -> bool:
+        ml = str(model_id or "").strip().lower()
+        if not ml or "live" in ml:
+            return True
+        if "neon" in ml:
+            return True
+        if tier3_base and "hydrogen" not in tier3_base and "flash" not in tier3_base and ml == tier3_base:
+            return True
+        return False
+
+    if prefer_fast:
+        raw_t1 = (
+            cfg.get("tier1_fast_model")
+            or cfg.get("primary_model_endpoint")
+            or (api_cfg.get("model_id") if isinstance(api_cfg, dict) else None)
+            or ""
+        )
+        if raw_t1:
+            t1_base, t1_lvl = resolve_model_profile(str(raw_t1), default_model="gemini-4-hydrogen", default_level="low")
+            if not _is_disallowed_for_game(t1_base):
+                return t1_base, (t1_lvl or "low")
+
+    t2_base, t2_lvl = get_configured_tier2_model(cfg)
+    if _is_disallowed_for_game(t2_base):
+        t2_base = "gemini-4-hydrogen"
+    return t2_base, (t2_lvl or ("low" if prefer_fast else "medium"))
+
+
 def resolve_model_profile(
     endpoint: Optional[str],
     default_model: str = "gemini-4-hydrogen",
