@@ -489,6 +489,10 @@ def validate_game_module(raw_data: Any) -> Tuple[bool, Optional[Dict[str, Any]],
         sanitized["navigation_mode"] = nav_mode_val
     if raw_data.get("default_callsign"):
         sanitized["default_callsign"] = str(raw_data["default_callsign"]).strip()
+    if raw_data.get("special_instructions") is not None:
+        si_str = str(raw_data["special_instructions"]).strip()
+        if si_str:
+            sanitized["special_instructions"] = si_str
     if isinstance(raw_data.get("default_pois"), list):
         clean_pois = []
         for item in raw_data["default_pois"]:
@@ -833,11 +837,13 @@ def auto_build_game_module(
                     cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
                 except Exception:
                     pass
-            resp = genai_client.models.generate_content(
-                model=resolved_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(**cfg_kwargs),
-            )
+            from core.api_telemetry import api_feature_context
+            with api_feature_context("dossier_creation", "game_module_enrichment"):
+                resp = genai_client.models.generate_content(
+                    model=resolved_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**cfg_kwargs),
+                )
             raw_txt = (resp.text or "").strip() if resp and hasattr(resp, "text") else ""
             if raw_txt.startswith("```"):
                 raw_txt = re.sub(r"^```(?:json)?\s*", "", raw_txt)

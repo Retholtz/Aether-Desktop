@@ -178,7 +178,7 @@ class OAuthTokenVault:
     Isolated in data/oauth_tokens.json and blocked from child script sandboxes by ASTSecurityGatekeeper.
     """
 
-    SUPPORTED_PROVIDERS = ("google", "microsoft", "imap", "twitch")
+    SUPPORTED_PROVIDERS = ("google", "youtube", "microsoft", "imap", "twitch")
 
     def __init__(self, vault_path: str = DEFAULT_VAULT_PATH):
         self.vault_path = vault_path
@@ -269,22 +269,25 @@ class OAuthTokenVault:
     def get_client_config(self, provider: str) -> Dict[str, Any]:
         """Retrieves decrypted client configuration for the given provider, falling back to built-in app defaults."""
         provider_key = provider.lower().strip()
+        effective_key = "google" if provider_key == "youtube" else provider_key
         with self._lock:
             vault = self._read_raw_vault()
             raw = dict(vault.get("client_configs", {}).get(provider_key, {}))
+            if not raw and effective_key != provider_key:
+                raw = dict(vault.get("client_configs", {}).get(effective_key, {}))
             secret_enc = raw.pop("client_secret_enc", "")
             raw["client_secret"] = _dpapi_decrypt(secret_enc) if secret_enc else ""
             if not raw.get("client_id"):
                 raw["client_id"] = (
-                    os.getenv(f"AETHER_{provider_key.upper()}_CLIENT_ID", "").strip()
-                    or DEFAULT_CLIENT_IDS.get(provider_key, "")
+                    os.getenv(f"AETHER_{effective_key.upper()}_CLIENT_ID", "").strip()
+                    or DEFAULT_CLIENT_IDS.get(effective_key, "")
                 )
             if not raw.get("client_secret"):
                 raw["client_secret"] = (
-                    os.getenv(f"AETHER_{provider_key.upper()}_CLIENT_SECRET", "").strip()
-                    or DEFAULT_CLIENT_SECRETS.get(provider_key, "")
+                    os.getenv(f"AETHER_{effective_key.upper()}_CLIENT_SECRET", "").strip()
+                    or DEFAULT_CLIENT_SECRETS.get(effective_key, "")
                 )
-            raw.setdefault("tenant_id", DEFAULT_MICROSOFT_TENANT_ID if provider_key == "microsoft" else "common")
+            raw.setdefault("tenant_id", DEFAULT_MICROSOFT_TENANT_ID if effective_key == "microsoft" else "common")
             return raw
 
     def save_provider_tokens(self, provider: str, token_data: Dict[str, Any]) -> bool:

@@ -154,6 +154,58 @@ def create_contact(
     )
 
 
+def upload_pptx_to_google_slides(
+    file_path: str,
+    title: str = "",
+    open_in_browser: bool = True,
+    browser_app: str = "chrome",
+) -> Dict[str, Any]:
+    """
+    Uploads a local .pptx/.ppt/.odp presentation to Google Drive and converts it natively
+    into a Google Slides presentation, optionally opening the resulting Slides deck in the browser.
+    """
+    mgr = get_oauth_manager()
+    res = mgr.upload_pptx_to_google_slides(
+        file_path=file_path,
+        title=title or None,
+    )
+    if res.get("success") and open_in_browser and res.get("slides_url"):
+        try:
+            from tools.os_controls import navigate_browser
+            nav_res = navigate_browser(res["slides_url"], app_name=browser_app or "chrome")
+            res["browser_opened"] = bool(isinstance(nav_res, dict) and nav_res.get("status") == "success")
+        except Exception as e:
+            res["browser_opened"] = False
+            res["browser_warning"] = str(e)
+    return res
+
+
+def upload_docx_to_google_docs(
+    file_path: str,
+    title: str = "",
+    open_in_browser: bool = True,
+    browser_app: str = "chrome",
+) -> Dict[str, Any]:
+    """
+    Uploads a local .docx/.doc/.odt/.rtf document or handout to Google Drive and converts it
+    natively into a Google Docs document, optionally opening the resulting doc in the browser.
+    """
+    mgr = get_oauth_manager()
+    res = mgr.upload_docx_to_google_docs(
+        file_path=file_path,
+        title=title or None,
+    )
+    if res.get("success") and open_in_browser and res.get("docs_url"):
+        try:
+            from tools.os_controls import navigate_browser
+            nav_res = navigate_browser(res["docs_url"], app_name=browser_app or "chrome")
+            res["browser_opened"] = bool(isinstance(nav_res, dict) and nav_res.get("status") == "success")
+        except Exception as e:
+            res["browser_opened"] = False
+            res["browser_warning"] = str(e)
+    return res
+
+
 def get_email_tool_declarations() -> List[types.FunctionDeclaration]:
     """Returns Gemini FunctionDeclarations for the OAuth Email, Calendar & Contacts tool suite."""
     return [
@@ -450,6 +502,66 @@ def get_email_tool_declarations() -> List[types.FunctionDeclaration]:
                     ),
                 },
                 required=["name"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="upload_pptx_to_google_slides",
+            description=(
+                "Uploads a local presentation file (.pptx, .ppt, or .odp) to Google Drive via OAuth "
+                "and converts it natively into a Google Slides presentation, optionally opening the "
+                "converted deck directly in the user's browser."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "file_path": types.Schema(
+                        type="STRING",
+                        description="Absolute or workspace-relative path to the local .pptx, .ppt, or .odp file.",
+                    ),
+                    "title": types.Schema(
+                        type="STRING",
+                        description="Optional title for the Google Slides presentation (defaults to filename).",
+                    ),
+                    "open_in_browser": types.Schema(
+                        type="BOOLEAN",
+                        description="If true (default), opens the converted Google Slides URL in the browser immediately.",
+                    ),
+                    "browser_app": types.Schema(
+                        type="STRING",
+                        description="Browser to open Google Slides in: 'chrome' (default) or 'edge'.",
+                    ),
+                },
+                required=["file_path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="upload_docx_to_google_docs",
+            description=(
+                "Uploads a local document or handout (.docx, .doc, .odt, or .rtf — by default saved in data/docx/) "
+                "to Google Drive via OAuth and converts it natively into a Google Docs document, optionally opening "
+                "the converted doc directly in the user's browser."
+            ),
+            parameters=types.Schema(
+                type="OBJECT",
+                properties={
+                    "file_path": types.Schema(
+                        type="STRING",
+                        description="Absolute path or filename inside data/docx/ for the local .docx, .doc, .odt, or .rtf file.",
+                    ),
+                    "title": types.Schema(
+                        type="STRING",
+                        description="Optional title for the Google Docs document (defaults to filename).",
+                    ),
+                    "open_in_browser": types.Schema(
+                        type="BOOLEAN",
+                        description="If true (default), opens the converted Google Docs URL in the browser immediately.",
+                    ),
+                    "browser_app": types.Schema(
+                        type="STRING",
+                        description="Browser to open Google Docs in: 'chrome' (default) or 'edge'.",
+                    ),
+                },
+                required=["file_path"],
             ),
         ),
     ]

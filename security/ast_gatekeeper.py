@@ -83,9 +83,11 @@ BUNDLED_THIRD_PARTY_MODULES: Set[str] = {
     "comtypes",
     "docx",
     "httpx",
+    "matplotlib",
     "mss",
     "numpy",
     "openpyxl",
+    "pptx",
     "psutil",
     "pypdf",
     "pythoncom",
@@ -134,8 +136,8 @@ def format_bundled_runtime_prompt_guardrail() -> str:
         "- Aether executes scripts inside its own self-contained frozen Python 3.14 runtime (no system Python required).\n"
         "- ALLOWED LIBRARIES ONLY: Python 3.14 standard library (including `sqlite3`, `csv`, `json`, `html`, `xml`, `zipfile`, `glob`, `tempfile`, `io`, `re`, `math`, `statistics`, `datetime`, `urllib.parse`, `os`, `sys`, `time`) "
         f"plus bundled packages: {third_party}; and internal helpers: {internal}.\n"
-        "- For tabular data, databases, and spreadsheets, use `sqlite3`, `csv`, `openpyxl` (.xlsx), `docx` (.docx), `bs4` (HTML), and `numpy` (or `win32com.client` when Microsoft Office is installed).\n"
-        f"- FORBIDDEN: NEVER import unbundled packages ({forbidden}), NEVER run `pip install` or `ensurepip`, and NEVER shell out to `python`, `powershell`, or `cmd` (`subprocess`, `os.system`, `ctypes` are blocked).\n"
+        "- For documents, presentations, charts, databases, and spreadsheets, use `sqlite3`, `csv`, `openpyxl` (.xlsx), `docx` (.docx), `pptx` (.pptx), `matplotlib` (with `matplotlib.use('Agg')` for charts/graphs), `PIL` (images), `bs4` (HTML), and `numpy` (or `win32com.client` when Microsoft Office is installed).\n"
+        f"- FORBIDDEN: NEVER import unbundled packages ({forbidden}) — and NEVER write speculative `try: import <unlisted>` probes (the AST gatekeeper checks imports statically before execution). NEVER run `pip install` or `ensurepip`, and NEVER shell out to `python`, `powershell`, or `cmd` (`subprocess`, `os.system`, `ctypes` are blocked).\n"
         "- File I/O via `open()` is permitted in user directories (`Desktop`, `Documents`, `Downloads`, `%TEMP%`, `%LOCALAPPDATA%\\Aether`), but reading/writing `.env`, `config.json`, `C:\\Windows`, `C:\\Program Files`, or Aether's install/`_internal` directory is blocked."
     )
 

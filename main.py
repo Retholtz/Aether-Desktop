@@ -84,6 +84,13 @@ if len(sys.argv) >= 3 and sys.argv[1] == "--run-script":
         traceback.print_exc()
         sys.exit(1)
 
+# Fast-path API cost breakdown CLI mode (--cost-report): prints feature-level USD spend
+# from SQLite api_usage_log and exits without launching WebView2 or audio.
+if "--cost-report" in sys.argv:
+    from core.api_telemetry import format_cost_report
+    print(format_cost_report())
+    sys.exit(0)
+
 # Fast-path staged self-updater helper mode (--apply-update): runs outside the live
 # install directory without initializing WebView2, audio, or the single-instance mutex.
 if "--apply-update" in sys.argv:
@@ -97,6 +104,13 @@ if getattr(sys, "frozen", False):
 from core.screen_stream import ensure_thread_desktop, init_dpi_awareness
 init_dpi_awareness()
 ensure_thread_desktop()
+
+from core.api_telemetry import (
+    format_cost_report,
+    get_process_session_id,
+    install_genai_telemetry_hooks,
+)
+install_genai_telemetry_hooks()
 
 from core.config_manager import load_config
 from core.gui_bridge import GuiBridge
@@ -426,6 +440,12 @@ def main():
                     ctypes.windll.kernel32.CloseHandle(_single_instance_mutex)
             except Exception:
                 pass
+        try:
+            report_txt = format_cost_report(session_id=get_process_session_id())
+            print("\n" + report_txt)
+            logging.getLogger("Aether.ApiTelemetry").info("\n%s", report_txt)
+        except Exception:
+            pass
         try:
             logging.shutdown()
         except Exception:

@@ -38,7 +38,12 @@ def register_game_tools(dispatcher, game_manager, engine=None):
 
     @dispatcher.register(
         name="get_current_game_telemetry",
-        description="Returns real-time in-game telemetry, location, active profile, and Game Mode focus status for the active game."
+        description=(
+            "Returns real-time in-game telemetry directly from local game data files: current location, "
+            "cargo hold manifest & capacity, vessel/ship loadout & jump range, active project/construction "
+            "resource requirements & progress, tracked POIs, plotted route, vitals, and Game Mode status. "
+            "ALWAYS call this whenever asked what is in cargo/inventory, ship stats, or remaining project materials."
+        )
     )
     def get_current_game_telemetry() -> dict:
         active_id = game_manager.data.get("active_profile") or ""
@@ -50,6 +55,11 @@ def register_game_tools(dispatcher, game_manager, engine=None):
 
         adapter = getattr(game_manager, "active_telemetry_adapter", None) or getattr(game_manager, "ed_watcher", None)
         profile = game_manager.get_profile(active_id) if active_id else None
+        if adapter and hasattr(adapter, "refresh_companion_files"):
+            try:
+                adapter.refresh_companion_files()
+            except Exception:
+                pass
         if adapter and (adapter.is_active() or (hasattr(adapter, "state") and adapter.state.get("active"))):
             res = dict(adapter.get_state() if hasattr(adapter, "get_state") else adapter.state)
             res["active_profile"] = active_id
@@ -130,32 +140,44 @@ def register_game_tools(dispatcher, game_manager, engine=None):
     @dispatcher.register(
         name="query_game_intel",
         description=(
-            "Queries live in-game databases and APIs for commodities, market buy/sell stations, prices, "
-            "outfitting/gear, station/NPC services, navigation/routes, crafting, or lore near the player's "
-            "current telemetry location. Always call this tool directly instead of telling the player to "
-            "check an external website."
+            "Queries live in-game databases, news feeds, and APIs for commodities, market buy/sell stations, "
+            "station-to-station profitable trade routes (category='trade'), prices, outfitting/gear, station/NPC services, "
+            "navigation/routes, crafting, lore, or live in-game news bulletins near the player's current telemetry location. "
+            "Always call this tool directly instead of telling the player to check an external website."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Item, commodity, module, service, route, station, or intel subject to look up (e.g. 'Liquid Oxygen', 'Tritium', 'Material Trader', 'Frame Shift Drive (SCO)')."
+                    "description": (
+                        "Item, commodity, module, service, route, station, or intel subject to look up. "
+                        "For category='trade', pass the destination station name (e.g. 'Washer Industries') or "
+                        "'Origin Station to Destination Station' (origin defaults to current docked station). "
+                        "For category='shopping_list', pass 'project' (or leave empty) to match ALL remaining items "
+                        "from the active project tracker, OR pass a comma-separated list of commodities. "
+                        "Optional when category is 'news'."
+                    )
                 },
                 "category": {
                     "type": "string",
-                    "enum": ["market", "outfitting", "services", "navigation", "lore", "crafting"],
-                    "description": "Category of intel to look up (default: 'market')."
+                    "enum": ["market", "shopping_list", "trade", "outfitting", "services", "navigation", "lore", "crafting", "news"],
+                    "description": (
+                        "Category of intel to look up (default: 'market'; use 'shopping_list' to find one-stop stations "
+                        "stocking the majority of needed project resources or multiple commodities; use 'trade' for profitable "
+                        "station-to-station buy-here/sell-there comparisons; use 'news' for live in-game news feeds)."
+                    )
                 },
                 "location": {
                     "type": "string",
-                    "description": "Reference star system or in-game zone (defaults to player's current telemetry location if omitted)."
+                    "description": "Reference star system or destination system/zone (defaults to player's current telemetry location if omitted)."
                 }
             },
-            "required": ["query"]
+            "required": []
         }
     )
-    def query_game_intel(query: str, category: str = "market", location: Optional[str] = None) -> dict:
+    def query_game_intel(query: str = "", category: str = "market", location: Optional[str] = None) -> dict:
+        query = str(query or "").strip()
         active_id = game_manager.data.get("active_profile", "") if game_manager else ""
         profile = game_manager.get_active_profile() if game_manager else {}
         game_title = (profile.get("display_name") if profile else None) or "Active Game"
@@ -214,12 +236,24 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             except Exception:
                 pass
 
+        # Hydrate persisted tracked_projects into telemetry_state if live adapter hasn't populated active_projects yet
+        if isinstance(profile, dict) and not telemetry_state.get("active_projects") and isinstance(profile.get("tracked_projects"), dict):
+            telemetry_state["active_projects"] = dict(profile["tracked_projects"])
+
         # 3. Tier 1 Declarative REST Intel Engine (from profile override or .aethermodule.json `intel_endpoints`)
         intel_endpoints: Dict[str, Any] = {}
         if isinstance(mod, dict) and isinstance(mod.get("intel_endpoints"), dict):
             intel_endpoints.update(mod["intel_endpoints"])
         if isinstance(profile, dict) and isinstance(profile.get("intel_endpoints"), dict):
             intel_endpoints.update(profile["intel_endpoints"])
+
+        # Smart auto-upgrade: if caller passed multiple comma-separated items or "project" to category="market",
+        # route directly to `shopping_list` when available!
+        if cat_norm == "market" and "shopping_list" in intel_endpoints and (
+            "," in query
+            or query.lower() in ("", "project", "projects", "construction", "remaining", "shopping list", "project resources")
+        ):
+            cat_norm = "shopping_list"
 
         ep_spec = intel_endpoints.get(cat_norm)
         if isinstance(ep_spec, dict) and ep_spec.get("url"):
@@ -278,24 +312,36 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         if client:
             try:
                 from google.genai import types
+                from core.model_discovery import build_thinking_config
                 model_endpoint = _resolve_tier2_game_model(engine)
 
                 search_scope = f"'{domain}' and {game_title}" if domain else f"'{game_title}'"
-                prompt_content = (
-                    f"Search {search_scope} for {cat_norm} intel on '{query}' near reference location '{ref_location}'. "
-                    f"Return concrete buying/selling stations, vendors, or locations, exact prices or requirements, "
-                    f"landing pad or zone constraints, and distance from '{ref_location}' if applicable. "
-                    f"Do NOT tell the user to check a website manually; give direct actionable results."
-                )
+                if cat_norm == "news":
+                    subject = query or "latest in-game news headlines, community events, and current bulletins"
+                    prompt_content = (
+                        f"Search {search_scope} for {subject}. "
+                        f"Return the latest 3-5 headlines with dates and concise 1-2 sentence summaries. "
+                        f"Do NOT tell the user to check a website manually; give direct spoken-ready news briefs."
+                    )
+                else:
+                    prompt_content = (
+                        f"Search {search_scope} for {cat_norm} intel on '{query}' near reference location '{ref_location}'. "
+                        f"Return concrete buying/selling stations, vendors, or locations, exact prices or requirements, "
+                        f"landing pad or zone constraints, and distance from '{ref_location}' if applicable. "
+                        f"Do NOT tell the user to check a website manually; give direct actionable results."
+                    )
 
-                resp = client.models.generate_content(
-                    model=model_endpoint,
-                    contents=prompt_content,
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())],
-                        temperature=0.1,
-                    ),
-                )
+                from core.api_telemetry import api_feature_context
+                with api_feature_context("game_web_inquiry", f"intel_{cat_norm}"):
+                    resp = client.models.generate_content(
+                        model=model_endpoint,
+                        contents=prompt_content,
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())],
+                            temperature=0.1,
+                            thinking_config=build_thinking_config(model_endpoint, thinking_level="low", thinking_budget=0),
+                        ),
+                    )
                 return {
                     "status": "success",
                     "game": game_title,

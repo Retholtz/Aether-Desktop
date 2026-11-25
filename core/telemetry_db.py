@@ -101,6 +101,122 @@ def init_telemetry_db(db_path: Optional[str] = None):
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_promoted ON script_usage_stats(is_promoted)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS api_usage_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_utc TEXT NOT NULL,
+                    session_id TEXT,
+                    turn_id TEXT,
+                    loop_step INTEGER DEFAULT 1,
+                    feature_tag TEXT NOT NULL,
+                    sub_action TEXT,
+                    model_name TEXT,
+                    images_attached_count INTEGER DEFAULT 0,
+                    images_scrubbed_count INTEGER DEFAULT 0,
+                    media_resolution TEXT,
+                    system_prompt_chars INTEGER DEFAULT 0,
+                    tool_declarations_count INTEGER DEFAULT 0,
+                    history_message_count INTEGER DEFAULT 0,
+                    thinking_config TEXT,
+                    prompt_token_count INTEGER DEFAULT 0,
+                    cached_content_token_count INTEGER DEFAULT 0,
+                    tool_use_prompt_token_count INTEGER DEFAULT 0,
+                    candidates_token_count INTEGER DEFAULT 0,
+                    thoughts_token_count INTEGER DEFAULT 0,
+                    total_token_count INTEGER DEFAULT 0,
+                    prompt_image_tokens INTEGER DEFAULT 0,
+                    prompt_audio_tokens INTEGER DEFAULT 0,
+                    grounding_queries_count INTEGER DEFAULT 0,
+                    latency_ms REAL DEFAULT 0.0,
+                    estimated_cost_usd REAL DEFAULT 0.0
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_session ON api_usage_log(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_feature ON api_usage_log(feature_tag)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_ts ON api_usage_log(timestamp_utc)")
+
+
+def record_api_usage_row(record: Dict[str, Any], db_path: Optional[str] = None) -> None:
+    """Persists a single Gemini API round-trip telemetry row into `api_usage_log`."""
+    try:
+        init_telemetry_db(db_path)
+        with configure_telemetry_connection(db_path) as conn:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO api_usage_log (
+                        timestamp_utc, session_id, turn_id, loop_step, feature_tag, sub_action,
+                        model_name, images_attached_count, images_scrubbed_count, media_resolution,
+                        system_prompt_chars, tool_declarations_count, history_message_count, thinking_config,
+                        prompt_token_count, cached_content_token_count, tool_use_prompt_token_count,
+                        candidates_token_count, thoughts_token_count, total_token_count,
+                        prompt_image_tokens, prompt_audio_tokens, grounding_queries_count,
+                        latency_ms, estimated_cost_usd
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?
+                    )
+                    """,
+                    (
+                        str(record.get("timestamp_utc") or ""),
+                        str(record.get("session_id") or ""),
+                        str(record.get("turn_id") or ""),
+                        int(record.get("loop_step") or 1),
+                        str(record.get("feature_tag") or "unclassified"),
+                        str(record.get("sub_action") or ""),
+                        str(record.get("model_name") or ""),
+                        int(record.get("images_attached_count") or 0),
+                        int(record.get("images_scrubbed_count") or 0),
+                        str(record.get("media_resolution") or ""),
+                        int(record.get("system_prompt_chars") or 0),
+                        int(record.get("tool_declarations_count") or 0),
+                        int(record.get("history_message_count") or 0),
+                        str(record.get("thinking_config") or ""),
+                        int(record.get("prompt_token_count") or 0),
+                        int(record.get("cached_content_token_count") or 0),
+                        int(record.get("tool_use_prompt_token_count") or 0),
+                        int(record.get("candidates_token_count") or 0),
+                        int(record.get("thoughts_token_count") or 0),
+                        int(record.get("total_token_count") or 0),
+                        int(record.get("prompt_image_tokens") or 0),
+                        int(record.get("prompt_audio_tokens") or 0),
+                        int(record.get("grounding_queries_count") or 0),
+                        float(record.get("latency_ms") or 0.0),
+                        float(record.get("estimated_cost_usd") or 0.0),
+                    ),
+                )
+    except Exception as exc:
+        logger.debug("[TELEMETRY DB] Failed writing api_usage_log row: %s", exc)
+
+
+def query_api_usage_rows(
+    session_id: Optional[str] = None,
+    since_utc: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Queries `api_usage_log` rows filtered optionally by `session_id` or `since_utc`."""
+    try:
+        init_telemetry_db(db_path)
+        clauses: List[str] = []
+        params: List[Any] = []
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(str(session_id))
+        if since_utc:
+            clauses.append("timestamp_utc >= ?")
+            params.append(str(since_utc))
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with configure_telemetry_connection(db_path) as conn:
+            cur = conn.execute(f"SELECT * FROM api_usage_log{where} ORDER BY id ASC", tuple(params))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as exc:
+        logger.debug("[TELEMETRY DB] Failed querying api_usage_log: %s", exc)
+        return []
 
 
 def record_script_execution(
@@ -271,6 +387,39 @@ class TelemetryDB:
                     )
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_promoted ON script_usage_stats(is_promoted)")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS api_usage_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp_utc TEXT NOT NULL,
+                        session_id TEXT,
+                        turn_id TEXT,
+                        loop_step INTEGER DEFAULT 1,
+                        feature_tag TEXT NOT NULL,
+                        sub_action TEXT,
+                        model_name TEXT,
+                        images_attached_count INTEGER DEFAULT 0,
+                        images_scrubbed_count INTEGER DEFAULT 0,
+                        media_resolution TEXT,
+                        system_prompt_chars INTEGER DEFAULT 0,
+                        tool_declarations_count INTEGER DEFAULT 0,
+                        history_message_count INTEGER DEFAULT 0,
+                        thinking_config TEXT,
+                        prompt_token_count INTEGER DEFAULT 0,
+                        cached_content_token_count INTEGER DEFAULT 0,
+                        tool_use_prompt_token_count INTEGER DEFAULT 0,
+                        candidates_token_count INTEGER DEFAULT 0,
+                        thoughts_token_count INTEGER DEFAULT 0,
+                        total_token_count INTEGER DEFAULT 0,
+                        prompt_image_tokens INTEGER DEFAULT 0,
+                        prompt_audio_tokens INTEGER DEFAULT 0,
+                        grounding_queries_count INTEGER DEFAULT 0,
+                        latency_ms REAL DEFAULT 0.0,
+                        estimated_cost_usd REAL DEFAULT 0.0
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_session ON api_usage_log(session_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_feature ON api_usage_log(feature_tag)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_api_usage_ts ON api_usage_log(timestamp_utc)")
             logger.info(f"[TELEMETRY DB] Initialized database at {self.db_path}")
 
     def record_script_execution(

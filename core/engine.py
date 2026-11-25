@@ -119,19 +119,21 @@ DOSSIER_GENERATION_DIRECTIVE = """
 You are Aether's Tier 1 Conversational Front-End (Gemini 3.8 Live), engineered for sub-second, real-time voice interaction, casual chat, fast lookups, media/hardware control, and straightforward in-game advice.
 You have two companion reasoning engines:
 - **Tier 2 Moderate Engine & App-Agnostic Orchestrator (Gemini 4.0 Hydrogen)** via `delegate_moderate_task`:
-  * Use `task_type="workflow_orchestration"` for ANY multi-step desktop, browser, email, or document task across ANY application (Google Docs, Microsoft Word, Notepad, Gmail, Outlook, local files, etc.) — Hydrogen plans dynamic checklist steps, drives the app/browser, sub-contracts Neon if heavy writing is needed, and visually verifies completion on screen.
+  * Use `task_type="workflow_orchestration"` for ANY multi-step desktop, browser, email, presentation, or document task across ANY application (Google Slides, PowerPoint, LibreOffice Impress, Google Docs, Microsoft Word, Notepad, Gmail, Outlook, local files, etc.) — Hydrogen plans dynamic checklist steps, runs automation scripts, uploads/opens deliverables, sub-contracts Neon if heavy research/writing is needed, and visually verifies completion on screen.
   * Use `task_type="puzzle_reasoning"` / `"analysis"` / `"code_helper"` for tricky game puzzles/riddles, debugging code, or multi-step deduction.
-- **Tier 3 Heavy Engine (Gemini 4.0 Neon / Carbon)** via `delegate_heavy_task`: use for exhaustive research dossiers, deep multi-page guides/manuals, complex Python automation pipelines, and high-stakes calibrated correspondence.
+- **Tier 3 Heavy Engine (Gemini 4.0 Neon / Carbon)** via `delegate_heavy_task`: use for exhaustive research dossiers, deep multi-page guides/manuals, and high-stakes calibrated correspondence. (Do NOT use `delegate_heavy_task` alone for multi-step build-and-upload workflows like building a `.pptx` and uploading to Google Slides — `delegate_heavy_task` has no Drive upload or browser verification loop; route those to `delegate_moderate_task(task_type="workflow_orchestration")`.)
 
 MANDATORY TIER 2 & TIER 3 DELEGATION RULES:
 0. RETRIEVING OR RE-USING PREVIOUSLY GENERATED DOSSIERS / GUIDES (CHECK DISK FIRST!):
    - All previously generated guides and dossiers are stored locally as Markdown files in `data/dossiers/` (and the most recent one in `data/scratchpad/latest_dossier.md`).
-   - Whenever the user asks to pull up, re-open, read, or paste a **previously created** guide, document, or dossier from an earlier conversation (e.g., "pull up our previous sourdough document", "put that guide we worked on into Google Docs"):
-     * DO NOT call `delegate_heavy_task` to regenerate it from scratch!
-     * First call `search_past_sessions` OR use `execute_automation_script` to check `data/dossiers/` for the existing `.md` file, read it, and paste it directly into the target app using `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html`.
+   - Whenever the user asks to pull up, re-open, read, paste, or build slides from a **previously created** guide, document, or dossier from an earlier conversation (e.g., "pull up our previous sourdough document", "use the existing dossier to build a 26-slide presentation"):
+     * DO NOT call `delegate_heavy_task` to regenerate the dossier from scratch!
+     * For presentations/slides from an existing dossier, call `delegate_moderate_task(task_type="workflow_orchestration", ...)` passing the existing dossier path so Hydrogen builds the `.pptx` in `data/pptx/`, uploads/opens it in Google Slides (or PowerPoint/LibreOffice), and visually verifies it.
+     * For pulling up/pasting an existing `.md` dossier into Docs/Word, first call `search_past_sessions` OR use `execute_automation_script` to check `data/dossiers/` for the existing `.md` file, read it, and paste it directly into the target app using `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html`.
 1. APP-AGNOSTIC MULTI-STEP WORKFLOWS (`delegate_moderate_task` with `task_type="workflow_orchestration"`):
-   - Whenever the user asks you to perform a multi-step task across apps or web services (e.g. "Create a document explaining X in Google Docs", "Open Word and write...", "Open Notepad and paste...", "Open Gmail and write Stan Orlop a letter..."):
-     * ALWAYS call `delegate_moderate_task(task_type="workflow_orchestration", title=..., instructions=...)` so Tier 2 Hydrogen creates a step checklist, launches/focuses the exact requested app, sub-contracts Tier 3 Neon (`delegate_heavy_task`) for deep writing when appropriate, pastes/types cleanly, and visually inspects screenshots before declaring success.
+   - Whenever the user asks you to perform a multi-step task across apps or web services (e.g. "Build a PowerPoint / Google Slides presentation from this dossier", "Create a slide deck with charts and open it in Google Slides / PowerPoint / LibreOffice", "Create a document explaining X in Google Docs", "Open Word and write...", "Open Notepad and paste...", "Open Gmail and write Stan Orlop a letter..."):
+     * ALWAYS call `delegate_moderate_task(task_type="workflow_orchestration", title=..., instructions=...)` so Tier 2 Hydrogen creates a step checklist, executes scripts, uploads/launches/focuses the exact requested app, sub-contracts Tier 3 Neon (`delegate_heavy_task`) for deep writing ONLY when needed, and visually inspects screenshots before declaring success.
+     * NEVER call `delegate_heavy_task(task_type="python_automation")` directly from Tier 1 for presentation build + Google Slides upload tasks — always route those through `delegate_moderate_task(task_type="workflow_orchestration")`.
      * NEVER attempt to improvise 4+ sequential UI/browser/paste tool calls directly from Tier 1 when Hydrogen orchestration can drive the full verified checklist.
 2. TIER 3 (`delegate_heavy_task` -> GEMINI 4 NEON) — STRICTLY RESERVED (COST GUARDRAIL):
    - ONLY invoke `delegate_heavy_task` when the user explicitly requests `"use Neon"`, `"switch to Neon"`, `"use Tier 3"`, an executive summary, an exhaustive multi-page research dossier/manual, or deep Projects workspace synthesis.
@@ -3138,6 +3140,29 @@ class AetherEngine:
         """Imports subscribed YouTube channels into Aether's streaming watchlist."""
         from core.oauth_manager import get_oauth_manager
         mgr = get_oauth_manager()
+        yt_tokens = mgr.vault.get_provider_tokens("youtube")
+        goog_tokens = mgr.vault.get_provider_tokens("google") or {}
+        has_yt_scope = bool(yt_tokens) or (
+            "https://www.googleapis.com/auth/youtube.readonly" in (goog_tokens.get("scopes") or [])
+        )
+        if not has_yt_scope:
+            flow_res = mgr.start_oauth_flow("youtube")
+            if flow_res.get("success"):
+                return {
+                    "success": False,
+                    "added_count": 0,
+                    "needs_auth": True,
+                    "message": (
+                        "Opened browser to authorize YouTube Subscriptions (Google requires YouTube permissions "
+                        "to be granted separately from Google Drive). Complete sign-in, then click Sync YouTube Subscriptions again."
+                    ),
+                }
+            return {
+                "success": False,
+                "added_count": 0,
+                "message": flow_res.get("error") or "Google YouTube is not connected.",
+            }
+
         channels = mgr.fetch_youtube_subscriptions()
         if not channels:
             return {"success": False, "added_count": 0, "message": "No subscribed channels found or Google YouTube not connected."}
@@ -4460,12 +4485,41 @@ class AetherEngine:
                 or "session duration" in err_lower
                 or "duration limit" in err_lower
             )
-            if "1000" in err_lower or "1006" in err_lower or "closed" in err_lower or "normal" in err_lower or is_session_expiration:
+            # Gemini Live occasionally closes an idle pending-tool WebSocket with 1011
+            # ("Internal error encountered") during 1-3 minute background orchestration runs.
+            # Recover cleanly without killing fallback TTS audio or spamming red error cards.
+            is_transient_1011_reset = (
+                "1011" in err_lower
+                or "internal error encountered" in err_lower
+            )
+            if (
+                "1000" in err_lower
+                or "1006" in err_lower
+                or "closed" in err_lower
+                or "normal" in err_lower
+                or is_session_expiration
+                or is_transient_1011_reset
+            ):
                 if self.session is session:
                     self.session = None
                     self.live_session = None
                     self._active_cm = None
-                if is_session_expiration or was_busy:
+                if is_transient_1011_reset:
+                    logger.info(f"[RECEIVE_LOOP] Live WebSocket reset by server (1011): {e}. Recovering cleanly.")
+                    if self.is_on_demand_mode():
+                        self.conn_mgr.set_standby()
+                        cfg = self.config_getter() if self.config_getter else {}
+                        if cfg.get("audio", {}).get("mode", "always_on") == "ptt":
+                            self.notify("status", {"state": "standby", "message": f"{agent_name} is ready (Push-to-Talk)."})
+                        else:
+                            wake_phrase = cfg.get("wake_phrase", f"Hey {agent_name}")
+                            self.notify("status", {"state": "standby", "message": f"Standby — Say '{wake_phrase}' to wake {agent_name}."})
+                    else:
+                        self.conn_mgr.set_disconnected(reason="Server 1011 transient reset")
+                        self.notify("status", {"state": "reconnecting", "message": "Refreshing live session..."})
+                        if self.is_running:
+                            self.request_live_session_connect(reason="Server 1011 recovery")
+                elif is_session_expiration or was_busy:
                     print(f"[INFO] [RECEIVE_LOOP] Live session closed during active state ({e}). Auto-refreshing...")
                     logger.info(f"[RECEIVE_LOOP] Live session closed during active state ({e}). Auto-refreshing...")
                     self.conn_mgr.set_disconnected(reason="Session duration expiration")
@@ -6131,10 +6185,12 @@ class AetherEngine:
             "  3. Immediately invoke `run_saved_script(skill_name='create_table_google_docs', args={'headers': ['Feature / Spec', 'Vehicle A', 'Vehicle B'], 'rows': [['Pros', '...', '...'], ['Cons', '...', '...']], 'title': 'Comparison Title'})` for Google Docs (or `create_table_word` for Word).\n"
             "  4. The saved skill automatically loads the clipboard with formatted HTML and pastes it cleanly into the active document.\n\n"
             "DYNAMIC EXECUTION & SELF-EXTENDING LEARNING (CORTEX):\n"
-            "- Dynamic Python Generation ('Figure It Out' On-The-Fly): For ANY novel, multi-step, file/dossier lookup, document (`docx`, `pypdf`), spreadsheet (`openpyxl`, `csv`), database (`sqlite3`), HTML parsing (`bs4`), numerical analysis (`numpy`), Microsoft Office COM (Word/Excel via `win32com.client`), or window layout task without a pre-existing built-in tool or skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
+            "- Dynamic Python Generation ('Figure It Out' On-The-Fly): For ANY novel, multi-step, file/dossier lookup, document (`docx`, `pypdf`), presentation (`pptx`), charts/graphs (`matplotlib`, `PIL`), spreadsheet (`openpyxl`, `csv`), database (`sqlite3`), HTML parsing (`bs4`), numerical analysis (`numpy`), Microsoft Office COM (Word/Excel/PowerPoint via `win32com.client`), or window layout task without a pre-existing built-in tool or skill, write and execute Python code dynamically via `execute_automation_script(script_code, description)`.\n"
             f"{format_bundled_runtime_prompt_guardrail()}\n"
             "- Workspace Data & Internal Python Helper APIs Available in `execute_automation_script`:\n"
             "  * `data/dossiers/` — Directory containing all previously generated Markdown guides and dossiers (`YYYYMMDD_HHMMSS_Title.md`).\n"
+            "  * `data/pptx/` — Canonical local directory where all Aether-generated PowerPoint presentations (`.pptx`) MUST be saved (`YYYYMMDD_HHMMSS_Title.pptx`) unless the user explicitly specifies another folder.\n"
+            "  * `data/docx/` — Canonical local directory where all Aether-generated handouts and Word documents (`.docx`) MUST be saved (`YYYYMMDD_HHMMSS_Title.docx`) unless the user explicitly specifies another folder.\n"
             "  * `data/scratchpad/latest_dossier.md` — The most recently generated dossier.\n"
             "  * `data/chats/` — Raw JSON conversation session transcripts.\n"
             "  * `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html` — Converts any Markdown string/file into styled HTML + plain text on the Windows clipboard and pastes it into Google Docs, Word, or an active editor.\n"
@@ -6182,7 +6238,9 @@ class AetherEngine:
             "     * Give a brief, pleasant verbal confirmation: 'I've added File Explorer to your whitelist and opened your documents.'\n\n"
             "DETERMINISTIC DIRECT NAVIGATION PREFERENCE (SPEED & ACCURACY):\n"
             "- Always prefer direct URL navigation or direct OS commands over multi-turn visual clicking:\n"
-            "  * To create a new Google Doc, Sheet, or Slide, directly navigate to `https://docs.new`, `https://sheets.new`, or `https://slides.new` via `navigate_browser` or `launch_application` (instant 50ms) instead of hunting for template buttons.\n"
+            "  * To create a new blank Google Doc, Sheet, or Slide, directly navigate to `https://docs.new`, `https://sheets.new`, or `https://slides.new` via `navigate_browser` or `launch_application` (instant 50ms) instead of hunting for template buttons.\n"
+            "  * To build a full multi-slide presentation (with text, tables, graphs, or images) in a program-agnostic way, generate a `.pptx` deck via `execute_automation_script` (`pptx` + `matplotlib`/`PIL`) saved locally in `data/pptx/` (audience-facing bullets with zero `...` truncation; presenter pearls in Speaker Notes), then deliver it via `upload_pptx_to_google_slides` (Google Slides) or `launch_application` (PowerPoint / LibreOffice Impress).\n"
+            "  * To build formatted handouts or rich documents (with tables/charts) from a dossier, generate a `.docx` file saved locally in `data/docx/`, then deliver it via `upload_docx_to_google_docs` (Google Docs) or `launch_application` (Microsoft Word / LibreOffice Writer).\n"
             "  * To open standard folders, pass the target directly (e.g. `shell:Personal` for Documents, `shell:My Pictures\\Screenshots` for Screenshots) to `launch_application(app_name='explorer', target=...)`.\n"
             "  * For pure read-only queries or background tasks (e.g. system status, checking files), snapshots are not needed; but for document/UI modifications, follow the Closed-Loop Outcome Verification protocol.\n\n"
             "- Whitelist: If an app is blocked by the security whitelist and the user asks to add or allow it, call `add_to_whitelist(app_name)`.\n"
@@ -6572,18 +6630,33 @@ class AetherEngine:
             sentinel = object()
             stream_error: List[BaseException] = []
 
+            def _resolve_chat_feature_tag() -> str:
+                if self.is_ttrpg_session_active():
+                    return "roleplay_session"
+                if (
+                    (getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active())
+                    or (getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
+                ):
+                    return "game_ptt_copilot"
+                return "casual_chat"
+
             def _pump_stream():
+                from core.api_telemetry import api_feature_context, scrub_chat_history_images
+                feat_tag = _resolve_chat_feature_tag()
                 try:
-                    stream = (
-                        chat.send_message_stream(message, config=config)
-                        if config is not None
-                        else chat.send_message_stream(message)
-                    )
-                    for ch in stream:
-                        loop.call_soon_threadsafe(chunk_queue.put_nowait, ch)
+                    with api_feature_context(feat_tag, "chat_stream", keep_latest_images=1):
+                        stream = (
+                            chat.send_message_stream(message, config=config)
+                            if config is not None
+                            else chat.send_message_stream(message)
+                        )
+                        for ch in stream:
+                            loop.call_soon_threadsafe(chunk_queue.put_nowait, ch)
                 except BaseException as exc:
                     stream_error.append(exc)
                 finally:
+                    # Zero-retention chat history scrub: subsequent turns start with 0 historical images
+                    scrub_chat_history_images(chat, keep_latest_n=0)
                     loop.call_soon_threadsafe(chunk_queue.put_nowait, sentinel)
 
             producer = loop.run_in_executor(None, _pump_stream)
@@ -6798,11 +6871,31 @@ class AetherEngine:
             chat._config = config
         delay = initial_delay
         last_err = None
+        from core.api_telemetry import api_feature_context, scrub_chat_history_images
+        feat_tag = (
+            "roleplay_session"
+            if self.is_ttrpg_session_active()
+            else (
+                "game_ptt_copilot"
+                if (
+                    (getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active())
+                    or (getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
+                )
+                else "casual_chat"
+            )
+        )
         for attempt in range(1, max_retries + 1):
             try:
-                if config is not None:
-                    return await asyncio.to_thread(chat.send_message, message, config=config)
-                return await asyncio.to_thread(chat.send_message, message)
+                def _call_send():
+                    with api_feature_context(feat_tag, "chat_reply", keep_latest_images=1):
+                        if config is not None:
+                            return chat.send_message(message, config=config)
+                        return chat.send_message(message)
+
+                res = await asyncio.to_thread(_call_send)
+                # Zero-retention chat history scrub: subsequent turns start with 0 historical images
+                scrub_chat_history_images(chat, keep_latest_n=0)
+                return res
             except TRANSIENT_NETWORK_ERRORS as exc:
                 last_err = exc
                 err_msg = str(exc)

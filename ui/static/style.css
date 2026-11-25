@@ -2803,8 +2803,13 @@ select option,
   padding: 12px;
   font-family: inherit;
   font-size: 0.88rem;
+  line-height: 1.5;
   resize: vertical;
   box-sizing: border-box;
+}
+
+#game-scratchpad-input {
+  min-height: 290px;
 }
 
 .game-scratchpad-textarea:focus {

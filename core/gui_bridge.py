@@ -4226,6 +4226,16 @@ class GuiBridge:
         """Scans telemetry history and declarative module default_pois to populate/update POIs."""
         return self.game_mgr.scan_game_pois(game_id)
 
+    def get_game_special_instructions(self, game_id: str) -> dict:
+        """Returns game-specific setup/special instructions (profile override or module default)."""
+        if not game_id:
+            return {"success": False, "text": "", "module_default": "", "is_custom": False}
+        return {"success": True, **self.game_mgr.get_special_instructions(game_id)}
+
+    def set_game_special_instructions(self, game_id: str, text: Optional[str] = None) -> dict:
+        """Persists per-game special instructions (pass None to reset to module default)."""
+        return self.game_mgr.set_special_instructions(game_id, text)
+
     def set_game_chitchat_settings(
         self,
         game_id: str,
@@ -4233,14 +4243,32 @@ class GuiBridge:
         screen_peek: Any = False,
         allow_profanity: Any = False,
         emotive_voice: Any = False,
+        topic_jokes: Any = False,
+        topic_facts: Any = True,
+        topic_relevant: Any = True,
+        chat_local: Any = False,
+        chat_system: Any = False,
+        chat_npc: Any = False,
+        chat_squadron: Any = True,
+        chat_player: Any = True,
+        chat_translate: Any = True,
     ) -> dict:
-        """Persists per-game Companion Chit-Chat frequency, screen-peek, profanity, and emotive-voice toggles."""
+        """Persists per-game Companion Chit-Chat frequency, behavior toggles, banter topics, and chat-channel filters."""
         return self.game_mgr.set_chitchat_settings(
             game_id=game_id,
             frequency=frequency,
             screen_peek=bool(screen_peek),
             allow_profanity=bool(allow_profanity),
             emotive_voice=bool(emotive_voice),
+            topic_jokes=bool(topic_jokes),
+            topic_facts=bool(topic_facts),
+            topic_relevant=bool(topic_relevant),
+            chat_local=bool(chat_local),
+            chat_system=bool(chat_system),
+            chat_npc=bool(chat_npc),
+            chat_squadron=bool(chat_squadron),
+            chat_player=bool(chat_player),
+            chat_translate=bool(chat_translate),
         )
 
     def get_game_triggers(self, game_id: str) -> dict:
@@ -4314,9 +4342,20 @@ class GuiBridge:
             f"  action_label (short human summary of the THEN action)."
         )
         try:
-            from core.model_discovery import get_configured_game_model
+            from google.genai import types
+            from core.model_discovery import get_configured_game_model, build_thinking_config
             model, _ = get_configured_game_model(getattr(self, "_config", None), prefer_fast=False)
-            resp = client.models.generate_content(model=model, contents=prompt)
+            gen_kwargs = {"response_mime_type": "application/json", "max_output_tokens": 500}
+            think_cfg = build_thinking_config(model, thinking_level="low")
+            if think_cfg is not None:
+                gen_kwargs["thinking_config"] = think_cfg
+            from core.api_telemetry import api_feature_context
+            with api_feature_context("cockpit_control", "draft_trigger"):
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**gen_kwargs),
+                )
             raw = (getattr(resp, "text", None) or "").strip()
             if raw.startswith("```"):
                 raw = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", raw, flags=re.DOTALL).strip()
@@ -4381,10 +4420,8 @@ class GuiBridge:
 
         if success:
 
-            if self.game_mgr.user_override_game_mode is not False:
-
-                self.game_mgr.set_game_mode(True)
-
+            # Never force Game Mode ON just because the user clicked a game card in the Games tab.
+            # set_active_profile() automatically enables Game Mode & telemetry ONLY if the game process is running.
             return {
 
                 "success": True,
@@ -4812,20 +4849,22 @@ class GuiBridge:
                 f'  "steps": [ ... ]\n'
                 f'}}'
             )
+            from core.api_telemetry import api_feature_context, make_image_part
             contents: Any = (
-                [types.Part.from_bytes(data=screenshot_bytes, mime_type="image/jpeg"), prompt]
+                [make_image_part(screenshot_bytes, mime_type="image/jpeg", resolution="medium"), prompt]
                 if screenshot_bytes
                 else prompt
             )
-            res = client.models.generate_content(
-                model=base_model,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                    thinking_config=thinking_cfg,
-                ),
-            )
+            with api_feature_context("cockpit_control", "draft_macro_ai"):
+                res = client.models.generate_content(
+                    model=base_model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1,
+                        thinking_config=thinking_cfg,
+                    ),
+                )
             raw_txt = (getattr(res, "text", None) or "").strip()
             if raw_txt.startswith("```"):
                 raw_txt = re.sub(r"^```(?:json)?\s*", "", raw_txt)

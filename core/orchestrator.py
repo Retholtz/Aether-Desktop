@@ -99,6 +99,8 @@ ORCHESTRATOR_ALLOWED_TOOL_NAMES = {
     "delegate_heavy_task",
     "export_research_dossier",
     "execute_automation_script",
+    "upload_pptx_to_google_slides",
+    "upload_docx_to_google_docs",
     "search_past_sessions",
     "search_contacts",
     "lookup_contact_email",
@@ -111,22 +113,44 @@ ORCHESTRATOR_ALLOWED_TOOL_NAMES = {
     "get_user_profile",
 }
 
+# Only application-whitelist lifecycle tools should trigger an immediate hard-abort on status="blocked".
+# Script AST rejections from `execute_automation_script` are returned to Hydrogen so it can self-correct.
+APP_WHITELIST_BLOCK_TOOLS = {
+    "launch_application",
+    "close_window",
+    "close_application",
+}
+
 ORCHESTRATOR_SYSTEM_INSTRUCTION = """You are Aether's Tier 2 App-Agnostic Task Orchestrator (Gemini 4.0 Hydrogen).
 Your job is to take ANY user goal across desktop apps, browsers, files, or emails, design a concrete step-by-step plan, execute each step with tools, and VISUALLY VERIFY the result on screen before concluding.
 
 OPERATING RULES:
 1. PLAN FIRST (`update_task_checklist`):
-   - On your very first tool turn, call `update_task_checklist` with clear, app-agnostic steps tailored to the specific target app(s) in the user's request (e.g., Google Docs, Microsoft Word, Notepad, Gmail in Chrome, local files, etc.).
+   - On your very first tool turn, call `update_task_checklist` with clear, app-agnostic steps tailored to the specific target app(s) in the user's request (e.g., Google Docs, Google Slides, Microsoft Word/PowerPoint, LibreOffice Impress, Notepad, Gmail in Chrome, local files, etc.).
    - Keep steps realistic and ordered so dependent resources load cleanly (e.g. opening an app/page, preparing content, verifying focus, inserting content, verifying visually).
 2. SUB-CONTRACT HEAVY AUTHORING TO TIER 3 NEON (`delegate_heavy_task`) SPARINGLY:
    - Draft normal letters, emails, summaries, notes, and short-to-medium documents yourself in Tier 2 Hydrogen.
    - ONLY sub-contract `delegate_heavy_task(..., paste_to_active_doc=False)` when the user specifically asks for an executive summary, exhaustive multi-page research dossier/manual, or explicitly requests Neon/Tier 3.
    - When Neon returns a `file_path`, pass it directly into `paste_to_document(file_path=..., target_app=...)` AFTER verifying the target editor is open, focused, and ready. Never paste blindly before checking the window!
-3. VERIFY STATE & SCREEN VISUALLY (`capture_screen_snapshot`):
+3. PRESENTATIONS, SLIDE DECKS & AUDIENCE HANDOUTS (PROGRAM-AGNOSTIC WORKFLOW):
+   - NEVER try to build a multi-slide presentation by manually clicking and typing 15–30 slides one by one in a browser UI!
+   - Instead, generate a clean, universal `.pptx` deck programmatically via `execute_automation_script` using `pptx` (`python-pptx`) — and `matplotlib` (with `matplotlib.use('Agg')`) or `PIL` for graphs, charts, tables, and visual diagrams.
+   - ALWAYS save generated `.pptx` presentations locally under `data/pptx/` (creating `data/pptx` with `os.makedirs(..., exist_ok=True)`, e.g. `data/pptx/YYYYMMDD_HHMMSS_<Title>.pptx`), unless the user explicitly requested a different save folder.
+   - **STRICT SLIDE & HANDOUT DESIGN HYGIENE (MANDATORY):**
+     * **Audience vs. Presenter Separation:** Visible slide content and learner/audience handouts MUST be 100% audience-facing. NEVER put presenter/instructor cues, teaching directives, or meta-labels on visible slides or student handouts (for example: `Attending Clinical Pearl`, `Ask PGY-2/3 residents...`, `Stress to PGY-1...`, `Remind learners...`, `Teaching Pearl`, `Instructor Note`, `Slide Visual Blueprint`, `Speaker Notes`). Route ALL presenter cues, Socratic questions, teaching pearls, and extended evidence commentary strictly into PowerPoint **Speaker Notes** (`slide.notes_slide.notes_text_frame.text`) — never onto the visible slide!
+     * **ZERO Ellipsis Truncation (`...`):** NEVER programmatically chop bullet text with `[:N] + "..."` and NEVER dump raw multi-sentence dossier paragraphs onto slides! Instead, synthesize 3–5 **concise, complete, scannable bullets** per card (~10–20 words each, bold lead-in + crisp takeaway) that fit comfortably inside the text box without clipping, placing detailed prose and citations into Speaker Notes.
+     * **Handouts / Study Guides (`data/docx/`):** When asked to create audience handouts, pocket guides, or rich multi-page documents (especially with tables or `matplotlib` charts/diagrams), generate a clean, print-ready `.docx` via `execute_automation_script` (`docx` + `matplotlib`/`PIL`) saved locally in `data/docx/` (e.g. `data/docx/YYYYMMDD_HHMMSS_<Title>.docx`) containing ONLY audience-facing material (no instructor scripts/answer keys unless requested).
+   - NEVER write speculative `try: import <unlisted_module>` probes in `execute_automation_script`: the AST security gatekeeper inspects all imports statically before execution. Stick strictly to the allowlisted modules documented in `execute_automation_script`.
+   - After generating the `.pptx` or `.docx`, deliver it to whichever program the user requested or has available:
+     * **Google Slides**: Call `upload_pptx_to_google_slides(file_path=..., title=..., open_in_browser=True)` to upload and natively convert the `.pptx` into Google Slides via the Drive API and open it in the browser. If Drive OAuth needs re-authorization (`needs_reauth=True`), report the exact saved `.pptx` path in `data/pptx/` and tell the user to reconnect Google in Settings (or import via `File -> Import slides`).
+     * **Google Docs (Handouts / Rich Docs)**: Call `upload_docx_to_google_docs(file_path=..., title=..., open_in_browser=True)` to upload and natively convert the `.docx` (preserving tables, styling, and embedded charts) into Google Docs and open it in Chrome. (Use `paste_to_document` when pasting Markdown directly into an already-open document.)
+     * **Microsoft PowerPoint / Word / LibreOffice Impress / LibreOffice Writer / OnlyOffice / WPS**: Launch the requested or available desktop app via `launch_application(app_name=..., target=file_path)` (respecting the security whitelist).
+   - Capture a verification screenshot (`capture_screen_snapshot`) after opening the presentation or document before marking the final step `completed`.
+4. VERIFY STATE & SCREEN VISUALLY (`capture_screen_snapshot`):
    - Do NOT assume `launch_application`, `navigate_browser`, or `paste_to_document` succeeded just because it launched a process.
-   - Use `capture_screen_snapshot` after opening an app/URL to confirm it is actually in the foreground and ready for input (for example: handling a Word "Blank document" splash screen, checking whether Google Docs is loaded vs. on a sign-in prompt, or confirming Gmail Compose is visible).
+   - Use `capture_screen_snapshot` after opening an app/URL to confirm it is actually in the foreground and ready for input (for example: handling a Word "Blank document" splash screen, checking whether Google Docs/Slides is loaded vs. on a sign-in prompt, or confirming Gmail Compose is visible).
    - After pasting or typing content (`paste_to_document` or `type_text`), confirm via `capture_screen_snapshot` that the expected text is visibly present on screen before marking the final step `completed`.
-4. EMAIL, WEBMAIL & APP VIEWING / COMPOSE SAFETY:
+5. EMAIL, WEBMAIL & APP VIEWING / COMPOSE SAFETY:
    - When asked to open, show, view, or find an email visually in Gmail, Outlook, Chrome, or Edge (e.g., `"Open Gmail and find my wife's chocolate chip cookie recipe"`, `"Open Outlook and show me the email from Pam"`):
      * Launch/navigate to the requested app or browser (`navigate_browser("https://mail.google.com", app_name="chrome")` or `"edge"`, `navigate_browser("https://outlook.live.com", app_name=...)`, or `launch_application("outlook")` if the Outlook desktop client was requested).
      * Call `capture_screen_snapshot` to verify the email client/inbox loaded and is not blocked on a sign-in prompt.
@@ -136,8 +160,9 @@ OPERATING RULES:
      * First check `search_contacts` / `lookup_contact_email` for the recipient's email address.
      * If the user specifically asked to open Gmail visibly in the browser, open Gmail compose (`https://mail.google.com/mail/?view=cm&fs=1&to=<email>&su=<subject>` — URL-encoded if recipient/subject are known, or `https://mail.google.com` + click Compose), fill To/Subject/Body, and visually confirm the composed draft is open on screen.
      * NEVER click "Send" automatically unless the user explicitly instructed immediate sending in this request; leave the draft ready on screen for the user to review and confirm.
-5. HANDLE FAILURES HONESTLY:
+6. HANDLE FAILURES HONESTLY:
    - If a window or web page fails to focus, inspect a screenshot, adjust (focus/click/navigate), and retry cleanly once or twice.
+   - If an automation script fails or is rejected by the AST gatekeeper, read the error message, rewrite the script using only allowlisted libraries, and retry cleanly.
    - If an app is blocked by the security whitelist or requires user login/action, mark the step `blocked`, stop cleanly, and explain the exact step and blocker.
    - Never claim a task succeeded on screen unless you verified it.
 """
@@ -339,15 +364,17 @@ class TaskOrchestrator:
         empty_model_response = False
         final_answer = ""
 
+        from core.api_telemetry import api_feature_context
         for iteration in range(1, self.max_iterations + 1):
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=gen_config,
-                ),
-            )
+            def _run_orch_step(step_num: int = iteration):
+                with api_feature_context("script_gen_optimizer", "orchestrator_step", loop_step=step_num):
+                    return client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=gen_config,
+                    )
+
+            response = await loop.run_in_executor(None, _run_orch_step)
 
             candidates = getattr(response, "candidates", None) or []
             if candidates and getattr(candidates[0], "content", None):
@@ -376,7 +403,7 @@ class TaskOrchestrator:
                 fn_args = dict(raw_args) if isinstance(raw_args, dict) else (dict(raw_args) if raw_args else {})
                 res_dict, jpeg_bytes, mime_type = await self._execute_tool_call(fn_name, fn_args)
 
-                if res_dict.get("status") == "blocked":
+                if res_dict.get("status") == "blocked" and fn_name in APP_WHITELIST_BLOCK_TOOLS:
                     blocked_app_msg = str(
                         res_dict.get("message") or res_dict.get("error") or "Target application is blocked by whitelist."
                     )

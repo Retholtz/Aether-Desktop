@@ -134,7 +134,13 @@ def get_configured_game_model(
             or ""
         )
         if raw_t1:
-            t1_base, t1_lvl = resolve_model_profile(str(raw_t1), default_model="gemini-4-hydrogen", default_level="low")
+            t1_base, t1_lvl = resolve_model_profile(str(raw_t1), default_model="gemini-3.8-flash", default_level="none")
+            # Map Live WebSocket Tier 1 models (e.g. 'gemini-3.8-live') to their fast REST sibling ('gemini-3.8-flash')
+            # so lightweight Vision/JSON helpers stay on Tier 1 cost instead of escalating to Tier 2 Hydrogen.
+            if "live" in t1_base.lower():
+                t1_rest = re.sub(r"-live\b", "-flash", t1_base, flags=re.IGNORECASE)
+                if t1_rest != t1_base and not _is_disallowed_for_game(t1_rest):
+                    return t1_rest, "none"
             if not _is_disallowed_for_game(t1_base):
                 return t1_base, (t1_lvl or "low")
 

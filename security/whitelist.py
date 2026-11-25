@@ -37,8 +37,18 @@ COMMON_ALIASES = {
     "excel": "excel.exe",
     "microsoft excel": "excel.exe",
     "powerpoint": "powerpnt.exe",
+    "microsoft powerpoint": "powerpnt.exe",
     "ppt": "powerpnt.exe",
     "powerpnt": "powerpnt.exe",
+    "libreoffice": "soffice.exe",
+    "libre office": "soffice.exe",
+    "libreoffice impress": "simpress.exe",
+    "libre office impress": "simpress.exe",
+    "impress": "simpress.exe",
+    "libreoffice writer": "swriter.exe",
+    "libreoffice calc": "scalc.exe",
+    "onlyoffice": "DesktopEditors.exe",
+    "wps presentation": "wpp.exe",
     "spotify": "spotify.exe",
     "blender": "blender.exe",
     "file explorer": "explorer.exe",
@@ -196,7 +206,7 @@ class WhitelistValidator:
                 except OSError:
                     pass
 
-        # 4. Check AppData Local Programs and WindowsApps
+        # 4. Check AppData Local Programs, WindowsApps, and common open-source Office suites
         local_appdata = os.environ.get("LOCALAPPDATA", "")
         if local_appdata:
             base_no_ext = target_exe[:-4] if target_exe.endswith(".exe") else target_exe
@@ -207,6 +217,14 @@ class WhitelistValidator:
             for candidate in candidates:
                 if os.path.exists(candidate):
                     return candidate
+
+        if target_exe.lower() in ("soffice.exe", "simpress.exe", "swriter.exe", "scalc.exe"):
+            for env_var in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
+                prog_dir = os.environ.get(env_var, "")
+                if prog_dir:
+                    lo_path = os.path.join(prog_dir, "LibreOffice", "program", target_exe)
+                    if os.path.exists(lo_path):
+                        return lo_path
 
         return None
 

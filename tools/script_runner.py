@@ -175,6 +175,8 @@ class ScriptRunner:
             env.pop(secret_key, None)
         python_path = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = (self.workspace_root + os.pathsep + python_path) if python_path else self.workspace_root
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         if args is not None:
             env["SKILL_ARGS"] = json.dumps(args)
         return env
@@ -199,6 +201,8 @@ class ScriptRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=self.workspace_root,
             env=env
         )

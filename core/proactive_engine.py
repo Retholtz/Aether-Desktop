@@ -218,20 +218,24 @@ class ProactiveEngine:
         if genai_client:
             try:
                 from google.genai import types
+                from core.model_discovery import build_thinking_config
                 prompt = (
                     f"You are {agent_name}, {user_name}'s proactive AI desktop assistant. "
                     f"A calendar reminder was triggered: {desc}. "
                     f"Synthesize a warm, brief 1-2 sentence spoken greeting welcoming {user_name} "
                     f"and proactively mentioning this event conversationally. Ask if they need anything prepared."
                 )
-                resp = await genai_client.aio.models.generate_content(
-                    model=cortex_model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.7,
-                        max_output_tokens=100
+                gen_kwargs = {"temperature": 0.7, "max_output_tokens": 100}
+                think_cfg = build_thinking_config(cortex_model, thinking_level="none")
+                if think_cfg is not None:
+                    gen_kwargs["thinking_config"] = think_cfg
+                from core.api_telemetry import api_feature_context
+                with api_feature_context("casual_chat", "proactive_briefing"):
+                    resp = await genai_client.aio.models.generate_content(
+                        model=cortex_model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(**gen_kwargs)
                     )
-                )
                 if resp and resp.text:
                     greeting_text = resp.text.strip()
             except Exception as e:

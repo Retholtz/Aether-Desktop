@@ -348,7 +348,7 @@ function renderActiveGameDetail() {
     if (callsignInput) {
         const defaultCallsign = (profile.callsign !== undefined && profile.callsign !== null)
             ? String(profile.callsign)
-            : (activeGameId.toLowerCase().includes('elite') ? 'Commander' : '');
+            : '';
         callsignInput.value = defaultCallsign;
     }
 
@@ -484,15 +484,36 @@ function renderActiveGameDetail() {
     const ccScreen = document.getElementById('chk-game-chitchat-screen');
     const ccProfanity = document.getElementById('chk-game-chitchat-profanity');
     const ccEmotive = document.getElementById('chk-game-chitchat-emotive');
+    const ccJokes = document.getElementById('chk-game-chitchat-jokes');
+    const ccFacts = document.getElementById('chk-game-chitchat-facts');
+    const ccRelevant = document.getElementById('chk-game-chitchat-relevant');
+    const ccChatLocal = document.getElementById('chk-game-chat-local');
+    const ccChatSystem = document.getElementById('chk-game-chat-system');
+    const ccChatNpc = document.getElementById('chk-game-chat-npc');
+    const ccChatSquad = document.getElementById('chk-game-chat-squadron');
+    const ccChatPlayer = document.getElementById('chk-game-chat-player');
+    const ccChatTranslate = document.getElementById('chk-game-chat-translate');
     const ccStatus = document.getElementById('chitchat-save-status');
     if (ccFreq) ccFreq.value = profile.chitchat_frequency || 'off';
     if (ccScreen) ccScreen.checked = Boolean(profile.chitchat_screen_peek);
     if (ccProfanity) ccProfanity.checked = Boolean(profile.chitchat_allow_profanity);
     if (ccEmotive) ccEmotive.checked = Boolean(profile.chitchat_emotive_voice);
+    if (ccJokes) ccJokes.checked = Boolean(profile.chitchat_topic_jokes);
+    if (ccFacts) ccFacts.checked = profile.chitchat_topic_facts !== false;
+    if (ccRelevant) ccRelevant.checked = profile.chitchat_topic_relevant !== false;
+    if (ccChatLocal) ccChatLocal.checked = Boolean(profile.chitchat_chat_local);
+    if (ccChatSystem) ccChatSystem.checked = Boolean(profile.chitchat_chat_system);
+    if (ccChatNpc) ccChatNpc.checked = Boolean(profile.chitchat_chat_npc);
+    if (ccChatSquad) ccChatSquad.checked = profile.chitchat_chat_squadron !== false;
+    if (ccChatPlayer) ccChatPlayer.checked = profile.chitchat_chat_player !== false;
+    if (ccChatTranslate) ccChatTranslate.checked = profile.chitchat_chat_translate !== false;
     if (ccStatus) ccStatus.textContent = '';
 
     // Event Triggers (When / If -> Then) Table
     refreshGameTriggersTable(activeGameId);
+
+    // Special Instructions (game-specific setup notes from profile or module default)
+    refreshGameSpecialInstructions(activeGameId);
 
     // Custom Visual & Multi-Step Macros Table
     refreshGameMacrosTable(activeGameId, profile);
@@ -710,7 +731,7 @@ function openMacroModal(existingName = '', existingDef = null) {
     if (stepsEl) {
         const defaultSteps = isEdit && Array.isArray(existingDef.steps)
             ? existingDef.steps
-            : [{ action: "vision_click", target: "Auto Launch button", button: "left", hold_ms: 100, abort_if_not_found: true, delay_ms: 200 }];
+            : [{ action: "vision_click", target: "Target button label", button: "left", hold_ms: 100, abort_if_not_found: true, delay_ms: 200 }];
         stepsEl.value = JSON.stringify(defaultSteps, null, 2);
     }
 
@@ -1017,6 +1038,27 @@ async function deleteGamePoi(poiId, poiName) {
         }
     } catch (e) {
         console.error("delete_game_poi error:", e);
+    }
+}
+
+let specialInstructionsDebounceTimer = null;
+
+async function refreshGameSpecialInstructions(gameId) {
+    const area = document.getElementById('textarea-game-special-instructions');
+    const resetBtn = document.getElementById('btn-reset-special-instructions');
+    const statusEl = document.getElementById('special-instructions-save-status');
+    if (!area || !gameId || !window.pywebview?.api?.get_game_special_instructions) return;
+    if (statusEl) statusEl.textContent = '';
+    try {
+        const res = await window.pywebview.api.get_game_special_instructions(gameId);
+        if (res && res.success) {
+            area.value = res.text || '';
+            if (resetBtn) {
+                resetBtn.classList.toggle('hidden', !(res.module_default && res.is_custom));
+            }
+        }
+    } catch (e) {
+        console.error("get_game_special_instructions error:", e);
     }
 }
 
@@ -1857,6 +1899,46 @@ function initGamesTabEvents() {
         else if (e.key === 'Escape') { e.preventDefault(); closeRenameGameInline(); }
     });
 
+    // Special Instructions autosave & Reset to Module Default
+    document.getElementById('textarea-game-special-instructions')?.addEventListener('input', (e) => {
+        if (!activeGameId || !window.pywebview?.api?.set_game_special_instructions) return;
+        const targetGid = activeGameId;
+        const val = e.target.value;
+        const statusEl = document.getElementById('special-instructions-save-status');
+        const resetBtn = document.getElementById('btn-reset-special-instructions');
+        if (statusEl) statusEl.textContent = 'Saving...';
+        clearTimeout(specialInstructionsDebounceTimer);
+        specialInstructionsDebounceTimer = setTimeout(async () => {
+            try {
+                const res = await window.pywebview.api.set_game_special_instructions(targetGid, val);
+                if (res && res.success && activeGameId === targetGid) {
+                    if (statusEl) {
+                        statusEl.textContent = 'Saved';
+                        setTimeout(() => { if (statusEl && statusEl.textContent === 'Saved') statusEl.textContent = ''; }, 1800);
+                    }
+                    if (resetBtn) resetBtn.classList.toggle('hidden', !(res.module_default && res.is_custom));
+                }
+            } catch (err) {
+                console.error("set_game_special_instructions error:", err);
+                if (statusEl && activeGameId === targetGid) statusEl.textContent = 'Error saving';
+            }
+        }, 550);
+    });
+    document.getElementById('btn-reset-special-instructions')?.addEventListener('click', async () => {
+        if (!activeGameId || !window.pywebview?.api?.set_game_special_instructions) return;
+        try {
+            const res = await window.pywebview.api.set_game_special_instructions(activeGameId, null);
+            if (res && res.success) {
+                const area = document.getElementById('textarea-game-special-instructions');
+                const resetBtn = document.getElementById('btn-reset-special-instructions');
+                if (area) area.value = res.text || '';
+                if (resetBtn) resetBtn.classList.add('hidden');
+            }
+        } catch (err) {
+            console.error("reset special_instructions error:", err);
+        }
+    });
+
     // Modal Add / Edit Event Trigger actions
     document.getElementById('btn-add-trigger')?.addEventListener('click', () => openTriggerModal(null));
     document.getElementById('btn-close-edit-trigger-modal')?.addEventListener('click', closeTriggerModal);
@@ -1879,6 +1961,15 @@ function initGamesTabEvents() {
         const scrEl = document.getElementById('chk-game-chitchat-screen');
         const profEl = document.getElementById('chk-game-chitchat-profanity');
         const emoEl = document.getElementById('chk-game-chitchat-emotive');
+        const jokesEl = document.getElementById('chk-game-chitchat-jokes');
+        const factsEl = document.getElementById('chk-game-chitchat-facts');
+        const relEl = document.getElementById('chk-game-chitchat-relevant');
+        const cLocalEl = document.getElementById('chk-game-chat-local');
+        const cSysEl = document.getElementById('chk-game-chat-system');
+        const cNpcEl = document.getElementById('chk-game-chat-npc');
+        const cSquadEl = document.getElementById('chk-game-chat-squadron');
+        const cPlayerEl = document.getElementById('chk-game-chat-player');
+        const cTransEl = document.getElementById('chk-game-chat-translate');
         const stEl = document.getElementById('chitchat-save-status');
         try {
             const res = await window.pywebview.api.set_game_chitchat_settings(
@@ -1887,6 +1978,15 @@ function initGamesTabEvents() {
                 Boolean(scrEl && scrEl.checked),
                 Boolean(profEl && profEl.checked),
                 Boolean(emoEl && emoEl.checked),
+                Boolean(jokesEl && jokesEl.checked),
+                factsEl ? Boolean(factsEl.checked) : true,
+                relEl ? Boolean(relEl.checked) : true,
+                Boolean(cLocalEl && cLocalEl.checked),
+                Boolean(cSysEl && cSysEl.checked),
+                Boolean(cNpcEl && cNpcEl.checked),
+                cSquadEl ? Boolean(cSquadEl.checked) : true,
+                cPlayerEl ? Boolean(cPlayerEl.checked) : true,
+                cTransEl ? Boolean(cTransEl.checked) : true,
             );
             if (res && res.success) {
                 const prof = currentGamesData?.profiles?.[activeGameId];
@@ -1895,6 +1995,15 @@ function initGamesTabEvents() {
                     prof.chitchat_screen_peek = res.screen_peek;
                     prof.chitchat_allow_profanity = res.allow_profanity;
                     prof.chitchat_emotive_voice = res.emotive_voice;
+                    prof.chitchat_topic_jokes = res.topic_jokes;
+                    prof.chitchat_topic_facts = res.topic_facts;
+                    prof.chitchat_topic_relevant = res.topic_relevant;
+                    prof.chitchat_chat_local = res.chat_local;
+                    prof.chitchat_chat_system = res.chat_system;
+                    prof.chitchat_chat_npc = res.chat_npc;
+                    prof.chitchat_chat_squadron = res.chat_squadron;
+                    prof.chitchat_chat_player = res.chat_player;
+                    prof.chitchat_chat_translate = res.chat_translate;
                 }
                 if (stEl) {
                     stEl.textContent = 'Saved';
@@ -1909,6 +2018,15 @@ function initGamesTabEvents() {
     document.getElementById('chk-game-chitchat-screen')?.addEventListener('change', persistChitChat);
     document.getElementById('chk-game-chitchat-profanity')?.addEventListener('change', persistChitChat);
     document.getElementById('chk-game-chitchat-emotive')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chitchat-jokes')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chitchat-facts')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chitchat-relevant')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chat-local')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chat-system')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chat-npc')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chat-squadron')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chat-player')?.addEventListener('change', persistChitChat);
+    document.getElementById('chk-game-chat-translate')?.addEventListener('change', persistChitChat);
 
     // Modal Add / Edit POI actions & Scan POIs
     document.getElementById('btn-scan-pois')?.addEventListener('click', handleScanGamePois);
@@ -2384,7 +2502,7 @@ function renderCompanionAppsList(apps) {
     if (list.length === 0) {
         container.innerHTML = `
             <div style="padding: 14px 12px; border: 1px dashed rgba(148, 163, 184, 0.2); border-radius: 8px; text-align: center; color: var(--text-muted); font-size: 0.82rem;">
-                No 3rd-party companion programs linked yet. Click <strong>+ Add 3rd-Party Program</strong> to link tools like EDMC, EDDiscovery, SRV Survey, or EDCoPilot.
+                No 3rd-party companion programs linked yet. Click <strong>+ Add 3rd-Party Program</strong> to link external maps, telemetry loggers, overlays, or helper apps.
             </div>
         `;
         return;

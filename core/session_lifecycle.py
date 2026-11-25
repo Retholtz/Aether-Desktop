@@ -279,13 +279,15 @@ class SessionLifecycleManager:
                 return ""
 
             compactor_cfg = _build_compactor_config()
+            from core.api_telemetry import api_feature_context
             try:
                 # Use client.aio for non-blocking async generation
-                resp = await client.aio.models.generate_content(
-                    model=model,
-                    contents=full_prompt,
-                    config=compactor_cfg
-                )
+                with api_feature_context("dossier_creation", "session_compaction"):
+                    resp = await client.aio.models.generate_content(
+                        model=model,
+                        contents=full_prompt,
+                        config=compactor_cfg
+                    )
                 summary_text = _extract_summary_text(resp)
             except Exception as compactor_err:
                 logger.warning(f"[LIFECYCLE COMPACTOR] {model} failed: {compactor_err}. Attempting fallback...")
@@ -302,11 +304,12 @@ class SessionLifecycleManager:
                             max_output_tokens=1024,
                             thinking_config=build_thinking_config(fb_model, thinking_level="low"),
                         )
-                        resp = await client.aio.models.generate_content(
-                            model=fb_model,
-                            contents=full_prompt,
-                            config=fb_cfg
-                        )
+                        with api_feature_context("dossier_creation", "session_compaction_fallback"):
+                            resp = await client.aio.models.generate_content(
+                                model=fb_model,
+                                contents=full_prompt,
+                                config=fb_cfg
+                            )
                         summary_text = _extract_summary_text(resp)
                         if summary_text:
                             break

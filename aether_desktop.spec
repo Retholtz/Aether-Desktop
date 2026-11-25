@@ -56,6 +56,9 @@ hiddenimports = [
     "openpyxl",
     "et_xmlfile",
     "docx",
+    "pptx",
+    "matplotlib",
+    "matplotlib.backends.backend_agg",
     "lxml",
     "bs4",
     "soupsieve",
@@ -85,6 +88,16 @@ hiddenimports = [
 for _auto_pkg in ("openpyxl", "docx", "bs4", "lxml"):
     try:
         hiddenimports += collect_submodules(_auto_pkg)
+    except Exception:
+        pass
+
+# Collect full data + submodules for presentation/charting packages (pptx XML templates & matplotlib fonts/data)
+for _pres_pkg in ("pptx", "matplotlib"):
+    try:
+        pkg_datas, pkg_binaries, pkg_hidden = collect_all(_pres_pkg)
+        datas += pkg_datas
+        binaries += pkg_binaries
+        hiddenimports += pkg_hidden
     except Exception:
         pass
 

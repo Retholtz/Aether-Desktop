@@ -326,12 +326,14 @@ class ReflexionEngine:
             )
 
             try:
+                from core.api_telemetry import api_feature_context
                 config = self._build_generate_config(temperature=0.2)
-                response = active_client.models.generate_content(
-                    model=self.heavy_model,
-                    contents=prompt,
-                    config=config
-                )
+                with api_feature_context("script_gen_optimizer", "reflexion_optimize"):
+                    response = active_client.models.generate_content(
+                        model=self.heavy_model,
+                        contents=prompt,
+                        config=config
+                    )
                 # Always commit already-paid API results so we never discard tokens and re-bill on retry
                 raw_resp = getattr(response, "text", "") or ""
                 clean_code = extract_python_code(raw_resp)

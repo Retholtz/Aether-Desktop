@@ -121,6 +121,10 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
         self._current_file: Optional[str] = None
         self._file_handle = None
         self._lock = threading.Lock()
+        self.on_project_update: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        self.on_poi_update: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        self._last_threshold_values: Dict[str, float] = {}
+        self._last_route_destination: Optional[str] = None
 
         display_name = (
             self.profile.get("display_name")
@@ -238,15 +242,28 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
         return paths[-1] if paths else None
 
     @staticmethod
-    def _apply_poi_tracker_rule(ev: Dict[str, Any], ptracker: Dict[str, Any], tracked: Dict[str, Dict[str, Any]]) -> None:
-        """Applies one declarative poi_tracker rule to `tracked` in-place (100% game-agnostic)."""
+    def _apply_poi_tracker_rule(ev: Dict[str, Any], ptracker: Dict[str, Any], tracked: Dict[str, Dict[str, Any]]) -> Optional[str]:
+        """Applies one declarative poi_tracker rule to `tracked` in-place (100% game-agnostic). Returns resolved poi_id if updated."""
         match_eq = ptracker.get("match_equals")
         if isinstance(match_eq, dict):
             if any(str(_extract_path(ev, mk) or "").lower() != str(mv).lower() for mk, mv in match_eq.items()):
-                return
-        poi_id = str(ptracker.get("id") or "").strip()
-        if not poi_id:
-            return
+                return None
+        match_in = ptracker.get("match_in")
+        if isinstance(match_in, dict):
+            for mk, allowed_vals in match_in.items():
+                if not isinstance(allowed_vals, (list, tuple, set)):
+                    continue
+                actual = str(_extract_path(ev, mk) or "").strip().lower()
+                allowed_low = {str(v).strip().lower() for v in allowed_vals}
+                if actual not in allowed_low:
+                    return None
+        base_poi_id = str(ptracker.get("id") or "").strip()
+        if not base_poi_id:
+            return None
+
+        eid_val = _extract_path(ev, ptracker.get("entity_id_field"))
+        eid_str = str(eid_val).strip() if eid_val is not None and str(eid_val).strip() else ""
+        poi_id = f"{base_poi_id}_{eid_str}" if (ptracker.get("key_by_entity_id") and eid_str) else base_poi_id
         existing = dict(tracked.get(poi_id) or {})
 
         # Optional entity-ID correlation (e.g. match MarketID == tracked CarrierID)
@@ -255,7 +272,7 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
             expected_eid = existing.get("entity_id")
             ev_eid = _extract_path(ev, match_eid_field)
             if not expected_eid or ev_eid is None or str(ev_eid) != str(expected_eid):
-                return
+                return None
 
         # Optional callsign substring correlation (e.g. SignalName contains tracked Callsign)
         match_cs_field = ptracker.get("match_contains_callsign_field")
@@ -263,35 +280,212 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
             expected_cs = str(existing.get("callsign") or "").strip()
             haystack = str(_extract_path(ev, match_cs_field) or "").strip()
             if not expected_cs or expected_cs.lower() not in haystack.lower():
-                return
+                return None
 
-        eid_val = _extract_path(ev, ptracker.get("entity_id_field"))
         name_val = _extract_path(ev, ptracker.get("name_field"))
         callsign_val = _extract_path(ev, ptracker.get("callsign_field"))
         sys_val = _extract_path(ev, ptracker.get("system_field"))
         body_val = _extract_path(ev, ptracker.get("body_field"))
 
-        if eid_val is not None and str(eid_val).strip():
-            existing["entity_id"] = str(eid_val).strip()
+        extra_aliases: List[str] = []
+        if eid_str:
+            existing["entity_id"] = eid_str
         if callsign_val:
             existing["callsign"] = str(callsign_val).strip()
         if name_val:
-            clean_name = str(name_val).strip()
+            raw_name = str(name_val).strip()
+            clean_name = raw_name
             if ptracker.get("strip_callsign_from_name") and existing.get("callsign"):
                 cs = str(existing["callsign"]).strip()
                 if cs and clean_name.lower().endswith(cs.lower()):
                     clean_name = clean_name[: -len(cs)].strip(" -–—")
+            strip_prefixes = ptracker.get("strip_prefixes")
+            if isinstance(strip_prefixes, list):
+                for pref in strip_prefixes:
+                    p_str = str(pref or "")
+                    if p_str and clean_name.lower().startswith(p_str.lower()):
+                        trimmed = clean_name[len(p_str):].strip()
+                        if trimmed:
+                            extra_aliases.append(raw_name)
+                            clean_name = trimmed
+                        break
             if clean_name:
                 existing["name"] = clean_name
         if sys_val:
             existing["system"] = str(sys_val).strip()
         if body_val:
             existing["body"] = str(body_val).strip()
-        if isinstance(ptracker.get("aliases"), list):
-            new_al = [str(a).strip() for a in ptracker["aliases"] if str(a).strip()]
+        if isinstance(ptracker.get("aliases"), list) or extra_aliases:
+            new_al = [str(a).strip() for a in (ptracker.get("aliases") or []) if str(a).strip()] + extra_aliases
             existing["aliases"] = list(dict.fromkeys((existing.get("aliases") or []) + new_al))
         if existing.get("system") or existing.get("name") or existing.get("callsign") or existing.get("entity_id"):
             tracked[poi_id] = existing
+            return poi_id
+        return None
+
+    @staticmethod
+    def _apply_project_tracker_rule(
+        ev: Dict[str, Any],
+        proj_cfg: Dict[str, Any],
+        projects: Dict[str, Dict[str, Any]],
+        state_snapshot: Dict[str, Any],
+    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """
+        Applies one declarative `project_trackers` rule (resource-checklist snapshot or
+        incremental contribution delivery) in-place (100% game-agnostic).
+        Returns `(proj_id, project_dict)` when updated, else `None`.
+        """
+        ev_type = str(ev.get("event") or "")
+        snap_events = proj_cfg.get("snapshot_events") or []
+        contrib_events = proj_cfg.get("contribution_events") or []
+        if ev_type not in snap_events and ev_type not in contrib_events:
+            return None
+
+        base_proj_id = str(proj_cfg.get("id") or "active_project").strip()
+        if not base_proj_id:
+            return None
+
+        eid_val = _extract_path(ev, proj_cfg.get("entity_id_field"))
+        eid_raw = str(eid_val).strip() if eid_val is not None and str(eid_val).strip() else ""
+        proj_id = f"{base_proj_id}_{eid_raw}" if (proj_cfg.get("key_by_entity_id") and eid_raw) else base_proj_id
+        existing = dict(projects.get(proj_id) or {})
+        eid_str = eid_raw or str(existing.get("entity_id") or "")
+
+        # Resolve human-readable project name & parent system from tracked_pois or current state
+        proj_name = existing.get("name") or ""
+        proj_sys = existing.get("system") or ""
+        tracked_pois = state_snapshot.get("tracked_pois")
+        if isinstance(tracked_pois, dict):
+            for pinfo in tracked_pois.values():
+                if not isinstance(pinfo, dict):
+                    continue
+                if eid_str and str(pinfo.get("entity_id") or "") == eid_str:
+                    if pinfo.get("name"):
+                        proj_name = str(pinfo["name"]).strip()
+                    if pinfo.get("system"):
+                        proj_sys = str(pinfo["system"]).strip()
+                    break
+        if not proj_name or (eid_str and eid_str != str(existing.get("entity_id") or "")):
+            fb_name = state_snapshot.get(str(proj_cfg.get("name_state_fallback") or "station"))
+            if fb_name and str(fb_name).strip() and str(fb_name).strip().lower() != "unknown":
+                proj_name = str(fb_name).strip()
+        if not proj_sys or (eid_str and eid_str != str(existing.get("entity_id") or "")):
+            fb_sys = state_snapshot.get(str(proj_cfg.get("system_state_fallback") or "star_system"))
+            if fb_sys and str(fb_sys).strip() and str(fb_sys).strip().lower() != "unknown":
+                proj_sys = str(fb_sys).strip()
+
+        def _extract_res_name(item: Dict[str, Any], name_fields: List[str]) -> str:
+            for nf in name_fields:
+                v = _extract_path(item, nf)
+                if v is not None and str(v).strip():
+                    s = str(v).strip()
+                    if s.startswith("$") and s.endswith(";"):
+                        s = s.strip("$_;").replace("_name", "").replace("_", " ").title()
+                    return s
+            return ""
+
+        if ev_type in snap_events:
+            res_list_raw = _extract_path(ev, proj_cfg.get("resources_field") or "ResourcesRequired")
+            if not isinstance(res_list_raw, list):
+                return None
+            name_fields = proj_cfg.get("resource_name_fields") or ["Name_Localised", "Name"]
+            req_field = str(proj_cfg.get("required_field") or "RequiredAmount")
+            prov_field = str(proj_cfg.get("provided_field") or "ProvidedAmount")
+            resources: List[Dict[str, Any]] = []
+            total_req = 0
+            total_prov = 0
+            for r in res_list_raw:
+                if not isinstance(r, dict):
+                    continue
+                rname = _extract_res_name(r, name_fields)
+                if not rname:
+                    continue
+                try:
+                    req_amt = max(0, int(r.get(req_field) or 0))
+                    prov_amt = max(0, int(r.get(prov_field) or 0))
+                except (TypeError, ValueError):
+                    continue
+                rem_amt = max(0, req_amt - prov_amt)
+                total_req += req_amt
+                total_prov += min(req_amt, prov_amt)
+                resources.append({
+                    "name": rname,
+                    "required": req_amt,
+                    "provided": prov_amt,
+                    "remaining": rem_amt,
+                })
+            prog_raw = _extract_path(ev, proj_cfg.get("progress_field"))
+            if isinstance(prog_raw, (int, float)):
+                progress_pct = round(float(prog_raw) * (100.0 if float(prog_raw) <= 1.0 else 1.0), 1)
+            elif total_req > 0:
+                progress_pct = round((total_prov / float(total_req)) * 100.0, 1)
+            else:
+                progress_pct = 0.0
+            complete = bool(_extract_path(ev, proj_cfg.get("complete_field")))
+            failed = bool(_extract_path(ev, proj_cfg.get("failed_field")))
+            remaining_total = sum(int(x["remaining"]) for x in resources)
+            updated = {
+                "id": proj_id,
+                "label": str(proj_cfg.get("label") or "Active Project"),
+                "entity_id": eid_str,
+                "name": proj_name or existing.get("name") or str(proj_cfg.get("label") or proj_id),
+                "system": proj_sys or existing.get("system") or "",
+                "progress_pct": progress_pct,
+                "complete": complete,
+                "failed": failed,
+                "remaining_total": remaining_total,
+                "resources": resources,
+                "sync_to_scratchpad": bool(proj_cfg.get("sync_to_scratchpad", False)),
+                "updated_at": time.time(),
+            }
+            if existing.get("last_delivery"):
+                updated["last_delivery"] = existing["last_delivery"]
+            projects[proj_id] = updated
+            return proj_id, updated
+
+        # Incremental contribution / delivery event
+        if ev_type in contrib_events:
+            if not existing or not isinstance(existing.get("resources"), list):
+                return None
+            if eid_str and existing.get("entity_id") and eid_str != str(existing["entity_id"]):
+                return None
+            contribs_raw = _extract_path(ev, proj_cfg.get("contributions_field") or "Contributions")
+            if not isinstance(contribs_raw, list) or not contribs_raw:
+                return None
+            cname_fields = proj_cfg.get("contribution_name_fields") or ["Name_Localised", "Name"]
+            camt_field = str(proj_cfg.get("contribution_amount_field") or "Amount")
+            res_copy = [dict(r) for r in existing["resources"]]
+            delivered_summary: List[str] = []
+            for c in contribs_raw:
+                if not isinstance(c, dict):
+                    continue
+                cname = _extract_res_name(c, cname_fields)
+                try:
+                    camt = max(0, int(c.get(camt_field) or 0))
+                except (TypeError, ValueError):
+                    camt = 0
+                if not cname or camt <= 0:
+                    continue
+                delivered_summary.append(f"{cname} x{camt}")
+                cname_low = cname.lower()
+                for r in res_copy:
+                    if str(r.get("name") or "").lower() == cname_low:
+                        r["provided"] = int(r.get("provided") or 0) + camt
+                        r["remaining"] = max(0, int(r.get("required") or 0) - r["provided"])
+                        break
+            total_req = sum(int(r.get("required") or 0) for r in res_copy)
+            total_prov = sum(min(int(r.get("required") or 0), int(r.get("provided") or 0)) for r in res_copy)
+            existing["resources"] = res_copy
+            existing["remaining_total"] = sum(int(r.get("remaining") or 0) for r in res_copy)
+            if total_req > 0:
+                existing["progress_pct"] = round((total_prov / float(total_req)) * 100.0, 1)
+            if delivered_summary:
+                existing["last_delivery"] = ", ".join(delivered_summary)
+            existing["updated_at"] = time.time()
+            projects[proj_id] = existing
+            return proj_id, existing
+
+        return None
 
     def scan_poi_history(self, max_files: int = 40) -> Dict[str, Dict[str, Any]]:
         """
@@ -464,12 +658,76 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                                 val = float(val) * float(spec["scale"])
                             self.state[state_key] = val
 
+                # Optional declarative computed percentage/ratios (e.g. fuel_pct = fuel_main / fuel_capacity * 100)
+                computed_ratios = self._tel_cfg.get("computed_ratios") or {}
+                if isinstance(computed_ratios, dict):
+                    for out_key, rspec in computed_ratios.items():
+                        if not isinstance(rspec, dict):
+                            continue
+                        num = self.state.get(str(rspec.get("numerator") or ""))
+                        den = self.state.get(str(rspec.get("denominator") or ""))
+                        try:
+                            num_f = float(num)
+                            den_f = float(den)
+                            if den_f > 0:
+                                scale = float(rspec.get("scale") if rspec.get("scale") is not None else 100.0)
+                                self.state[out_key] = round((num_f / den_f) * scale, 1)
+                        except (TypeError, ValueError):
+                            pass
+
                 self.state["active"] = True
                 self.state["last_updated"] = time.time()
+
+                # Check declarative numeric threshold_events (e.g. FuelLevel below 25%)
+                triggered_thresholds: List[Tuple[str, Dict[str, Any], Dict[str, Any]]] = []
+                threshold_rules = self._tel_cfg.get("threshold_events") or []
+                if isinstance(threshold_rules, list) and threshold_rules:
+                    for tr in threshold_rules:
+                        if not isinstance(tr, dict):
+                            continue
+                        ev_name = str(tr.get("event") or "").strip()
+                        sfield = str(tr.get("state_field") or "").strip()
+                        if not ev_name or not sfield:
+                            continue
+                        raw_v = self.state.get(sfield)
+                        if raw_v is None:
+                            continue
+                        try:
+                            cur_v = float(raw_v)
+                        except (TypeError, ValueError):
+                            continue
+                        below = tr.get("below")
+                        above = tr.get("above")
+                        in_zone = False
+                        if below is not None and cur_v < float(below):
+                            in_zone = True
+                        if above is not None and cur_v > float(above):
+                            in_zone = True
+                        tkey = f"{ev_name}:{sfield}"
+                        prev_v = self._last_threshold_values.get(tkey)
+                        if in_zone and (prev_v is None or abs(cur_v - prev_v) >= 1.0):
+                            self._last_threshold_values[tkey] = cur_v
+                            triggered_thresholds.append(
+                                (ev_name, {"event": ev_name, "field": sfield, "value": cur_v}, dict(self.state))
+                            )
+                        elif not in_zone and tkey in self._last_threshold_values:
+                            self._last_threshold_values.pop(tkey, None)
+
+            on_event_cb = getattr(self, "on_event", None)
+            if callable(on_event_cb):
+                for ev_name, raw_ev, st_snap in triggered_thresholds:
+                    try:
+                        on_event_cb(ev_name, raw_ev, st_snap)
+                    except Exception:
+                        pass
 
             self._poll_companion_files()
         except Exception:
             pass
+
+    def refresh_companion_files(self) -> None:
+        """Public on-demand refresh of companion JSON files (e.g., cargo/inventory/route) from disk."""
+        self._poll_companion_files()
 
     def _poll_companion_files(self) -> None:
         if not self.telemetry_dir:
@@ -499,6 +757,7 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                 if not isinstance(fields, dict):
                     continue
                 with self._lock:
+                    prev_route = self.state.get("route_destination")
                     for state_key, fspec in fields.items():
                         if isinstance(fspec, str):
                             val = _extract_path(cdata, fspec)
@@ -534,6 +793,126 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                                     elif cast == "str":
                                         val = str(val)
                                     self.state[state_key] = val
+
+                    # Build live cargo-hold lookup & compute `project_still_to_buy` (project remaining minus on-board cargo)
+                    cargo_by_name: Dict[str, int] = {}
+                    for cit in (self.state.get("cargo_items") or []):
+                        if isinstance(cit, dict) and cit.get("name"):
+                            ck = str(cit["name"]).strip().lower()
+                            try:
+                                cargo_by_name[ck] = cargo_by_name.get(ck, 0) + max(0, int(cit.get("count") or 0))
+                            except (TypeError, ValueError):
+                                pass
+
+                    active_projs = self.state.get("active_projects")
+                    needed_after_cargo: Dict[str, Dict[str, Any]] = {}
+                    if isinstance(active_projs, dict) and active_projs:
+                        raw_needed: Dict[str, Dict[str, Any]] = {}
+                        for pinfo in active_projs.values():
+                            if not isinstance(pinfo, dict) or pinfo.get("complete"):
+                                continue
+                            for r in (pinfo.get("resources") or []):
+                                if not isinstance(r, dict):
+                                    continue
+                                rem = int(r.get("remaining") or 0)
+                                rname = str(r.get("name") or "").strip()
+                                if rem > 0 and rname:
+                                    k = rname.lower()
+                                    if k in raw_needed:
+                                        raw_needed[k]["project_remaining"] += rem
+                                    else:
+                                        raw_needed[k] = {"name": rname, "project_remaining": rem}
+                        still_list: List[Dict[str, Any]] = []
+                        for k, info in raw_needed.items():
+                            in_cargo = cargo_by_name.get(k, 0)
+                            still_buy = max(0, int(info["project_remaining"]) - in_cargo)
+                            if still_buy > 0:
+                                entry = {
+                                    "name": info["name"],
+                                    "project_remaining": int(info["project_remaining"]),
+                                    "in_cargo": in_cargo,
+                                    "still_to_buy": still_buy,
+                                }
+                                still_list.append(entry)
+                                needed_after_cargo[k] = {"name": info["name"], "needed": still_buy, "in_cargo": in_cargo}
+                        still_list.sort(key=lambda x: -int(x["still_to_buy"]))
+                        self.state["project_still_to_buy"] = still_list
+
+                    new_route = self.state.get("route_destination")
+                    route_changed_event = None
+                    if new_route and str(new_route).strip() != str(self._last_route_destination or "").strip():
+                        was_initialized = self._last_route_destination is not None
+                        self._last_route_destination = str(new_route).strip()
+                        if was_initialized and str(new_route).strip() != str(prev_route or "").strip():
+                            route_changed_event = (
+                                "RoutePlotted",
+                                {
+                                    "event": "RoutePlotted",
+                                    "destination_system": str(new_route).strip(),
+                                    "route_jumps": self.state.get("route_jumps", 0),
+                                },
+                                dict(self.state),
+                            )
+
+                    # Optional declarative local-market vs still-to-buy project cross-reference (0ms, 0 API calls!)
+                    pm_cfg = ext_cfg.get("project_market_matcher")
+                    if isinstance(pm_cfg, dict):
+                        out_key = str(pm_cfg.get("output_state") or "station_project_matches")
+                        cur_stn = str(self.state.get("station") or "").strip()
+                        mkt_stn = str(_extract_path(cdata, pm_cfg.get("station_field") or "StationName") or "").strip()
+                        mkt_sys = str(_extract_path(cdata, pm_cfg.get("system_field") or "StarSystem") or "").strip()
+                        if not cur_stn or (mkt_stn and mkt_stn.lower() != cur_stn.lower()):
+                            self.state.pop(out_key, None)
+                        else:
+                            raw_items = _extract_path(cdata, pm_cfg.get("items_field") or "Items") or []
+                            if isinstance(raw_items, list):
+                                name_fields = pm_cfg.get("name_fields") or ["Name_Localised", "Name"]
+                                buy_f = str(pm_cfg.get("buy_price_field") or "BuyPrice")
+                                stock_f = str(pm_cfg.get("stock_field") or "Stock")
+                                matches: List[Dict[str, Any]] = []
+                                for it in raw_items:
+                                    if not isinstance(it, dict):
+                                        continue
+                                    iname = ""
+                                    for nf in name_fields:
+                                        v = _extract_path(it, nf)
+                                        if v is not None and str(v).strip():
+                                            iname = str(v).strip()
+                                            break
+                                    if not iname:
+                                        continue
+                                    ninfo = needed_after_cargo.get(iname.lower())
+                                    if not ninfo:
+                                        continue
+                                    try:
+                                        bp = int(it.get(buy_f) or 0)
+                                        stk = int(it.get(stock_f) or 0)
+                                    except (TypeError, ValueError):
+                                        continue
+                                    if bp > 0 and stk > 0:
+                                        matches.append({
+                                            "name": ninfo["name"],
+                                            "needed": ninfo["needed"],
+                                            "in_cargo": ninfo["in_cargo"],
+                                            "stock": stk,
+                                            "buy_price": bp,
+                                            "covers_need": stk >= ninfo["needed"],
+                                        })
+                                matches.sort(key=lambda x: (-int(x["needed"]), x["buy_price"]))
+                                self.state[out_key] = {
+                                    "station": mkt_stn or cur_stn,
+                                    "system": mkt_sys or str(self.state.get("star_system") or ""),
+                                    "matched_count": len(matches),
+                                    "total_needed": len(needed_after_cargo),
+                                    "items": matches,
+                                }
+                if route_changed_event is not None:
+                    on_event_cb = getattr(self, "on_event", None)
+                    if callable(on_event_cb):
+                        try:
+                            on_event_cb(*route_changed_event)
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -566,6 +945,66 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                 if self.get_location().get("system"):
                     for ln in lines:
                         self._parse_event_line(ln.strip(), is_initial_sync=True)
+
+            # Rehydrate recent project trackers (if not yet populated from the latest file) across up to 8 recent logs
+            proj_trackers = self._tel_cfg.get("project_trackers") or []
+            if isinstance(proj_trackers, list) and proj_trackers and not self.state.get("active_projects"):
+                target_ev_names = set()
+                for pt in proj_trackers:
+                    if isinstance(pt, dict):
+                        target_ev_names.update(str(x) for x in (pt.get("snapshot_events") or []))
+                        target_ev_names.update(str(x) for x in (pt.get("contribution_events") or []))
+                poi_trackers = self._tel_cfg.get("poi_trackers") or []
+                for poit in poi_trackers:
+                    if isinstance(poit, dict):
+                        target_ev_names.update(str(x) for x in (poit.get("events") or []))
+                if target_ev_names:
+                    all_paths = self._get_sorted_journal_paths()
+                    for prev_path in all_paths[-8:]:
+                        try:
+                            with open(prev_path, "r", encoding="utf-8", errors="replace") as pf:
+                                for pln in pf:
+                                    s = pln.strip()
+                                    if not s or not s.startswith("{"):
+                                        continue
+                                    if not any(en in s for en in target_ev_names):
+                                        continue
+                                    try:
+                                        pev = json.loads(s)
+                                    except Exception:
+                                        continue
+                                    if not isinstance(pev, dict):
+                                        continue
+                                    ev_t = pev.get(self._event_field)
+                                    with self._lock:
+                                        tracked = self.state.setdefault("tracked_pois", {})
+                                        for poit in poi_trackers:
+                                            if isinstance(poit, dict) and ev_t in (poit.get("events") or []):
+                                                self._apply_poi_tracker_rule(pev, poit, tracked)
+                                        projs = self.state.setdefault("active_projects", {})
+                                        for pt in proj_trackers:
+                                            if isinstance(pt, dict):
+                                                self._apply_project_tracker_rule(pev, pt, projs, self.state)
+                        except Exception:
+                            continue
+
+            # Notify callbacks with rehydrated active projects & tracked POIs so notes/POIs stay synced on startup
+            if callable(self.on_project_update):
+                with self._lock:
+                    projs_snap = {k: dict(v) for k, v in (self.state.get("active_projects") or {}).items() if isinstance(v, dict)}
+                for pid, pdata in projs_snap.items():
+                    try:
+                        self.on_project_update(pid, pdata)
+                    except Exception:
+                        pass
+            if callable(self.on_poi_update):
+                with self._lock:
+                    pois_snap = {k: dict(v) for k, v in (self.state.get("tracked_pois") or {}).items() if isinstance(v, dict)}
+                for pid, pdata in pois_snap.items():
+                    try:
+                        self.on_poi_update(pid, pdata)
+                    except Exception:
+                        pass
         except Exception as exc:
             logger.warning("Declarative telemetry rehydration failed for '%s': %s", self.game_id, exc)
 
@@ -655,7 +1094,8 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                 if isinstance(handler.get("derived_rules"), list):
                     self._apply_derived_rules(handler["derived_rules"])
 
-            # 6. Evaluate declarative POI / asset trackers (e.g. mobile bases, home stations, carriers)
+            # 6. Evaluate declarative POI / asset trackers (e.g. mobile bases, home stations, carriers, construction sites)
+            updated_pois: List[Tuple[str, Dict[str, Any]]] = []
             poi_trackers = self._tel_cfg.get("poi_trackers") or []
             if isinstance(poi_trackers, list) and poi_trackers:
                 tracked = self.state.setdefault("tracked_pois", {})
@@ -664,13 +1104,51 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                         continue
                     if event_type not in (ptracker.get("events") or []):
                         continue
-                    poi_id = str(ptracker.get("id") or "").strip()
-                    before = dict(tracked.get(poi_id) or {}) if poi_id else {}
-                    self._apply_poi_tracker_rule(ev, ptracker, tracked)
-                    if not is_initial_sync and poi_id and tracked.get(poi_id) != before:
-                        tracked[poi_id]["updated_at"] = time.time()
+                    before_snap = {k: dict(v) for k, v in tracked.items() if isinstance(v, dict)}
+                    resolved_pid = self._apply_poi_tracker_rule(ev, ptracker, tracked)
+                    if resolved_pid and tracked.get(resolved_pid) != before_snap.get(resolved_pid):
+                        if not is_initial_sync:
+                            tracked[resolved_pid]["updated_at"] = time.time()
+                            updated_pois.append((resolved_pid, dict(tracked[resolved_pid])))
+
+            # 7. Evaluate declarative project / resource-checklist trackers (snapshots & deliveries)
+            updated_projects: List[Tuple[str, Dict[str, Any]]] = []
+            project_trackers = self._tel_cfg.get("project_trackers") or []
+            if isinstance(project_trackers, list) and project_trackers:
+                projects = self.state.setdefault("active_projects", {})
+                for pcfg in project_trackers:
+                    if not isinstance(pcfg, dict):
+                        continue
+                    before_projs = {k: dict(v) for k, v in projects.items() if isinstance(v, dict)}
+                    res_p = self._apply_project_tracker_rule(ev, pcfg, projects, self.state)
+                    if res_p is not None and not is_initial_sync:
+                        pid_u, pdata_u = res_p
+                        before_proj = before_projs.get(pid_u) or {}
+                        if (
+                            pdata_u.get("remaining_total") != before_proj.get("remaining_total")
+                            or pdata_u.get("progress_pct") != before_proj.get("progress_pct")
+                            or pdata_u.get("name") != before_proj.get("name")
+                            or pdata_u.get("complete") != before_proj.get("complete")
+                            or pdata_u.get("last_delivery") != before_proj.get("last_delivery")
+                        ):
+                            updated_projects.append((pid_u, dict(pdata_u)))
 
             state_snapshot = dict(self.state)
+
+        # Dispatch live POI and Project tracker callbacks outside the lock
+        if not is_initial_sync:
+            if callable(self.on_poi_update):
+                for pid_u, pdata_u in updated_pois:
+                    try:
+                        self.on_poi_update(pid_u, pdata_u)
+                    except Exception:
+                        pass
+            if callable(self.on_project_update):
+                for pid_u, pdata_u in updated_projects:
+                    try:
+                        self.on_project_update(pid_u, pdata_u)
+                    except Exception:
+                        pass
 
         # Emit declarative milestones only during live play
         if not is_initial_sync and self.on_milestone and callable(self.on_milestone) and milestones:
@@ -781,7 +1259,9 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                     if "shields_up" in st
                     else ""
                 )
-                lines.append(f"- Vessel: {st.get('ship_name', 'Unknown')} ({st.get('ship_type', 'Unknown')}){hull_str}{shields_str}")
+                jump_val = st.get("max_jump_range")
+                jump_str = f" | Max Jump: {round(float(jump_val), 1)} LY" if isinstance(jump_val, (int, float)) and jump_val > 0 else ""
+                lines.append(f"- Vessel: {st.get('ship_name', 'Unknown')} ({st.get('ship_type', 'Unknown')}){hull_str}{shields_str}{jump_str}")
 
             # Compact active toggle flags summary (from declared summary_flags or key flags)
             summary_flag_labels = (self._tel_cfg.get("summary_config") or {}).get("flag_labels") or {}
@@ -795,10 +1275,24 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                 if flag_parts:
                     lines.append("- Systems: " + " | ".join(flag_parts))
 
-            if st.get("cargo_count") is not None or st.get("pips") is not None:
+            if st.get("cargo_count") is not None or st.get("cargo_items") is not None or st.get("pips") is not None:
                 extra_parts = []
-                if st.get("cargo_count") is not None:
-                    extra_parts.append(f"Cargo: {st['cargo_count']} items")
+                if st.get("cargo_count") is not None or isinstance(st.get("cargo_items"), list):
+                    c_count = int(st.get("cargo_count") or 0)
+                    c_cap = st.get("cargo_capacity")
+                    cap_str = f" / {int(c_cap)}" if isinstance(c_cap, (int, float)) and int(c_cap) > 0 else ""
+                    c_items = st.get("cargo_items") if isinstance(st.get("cargo_items"), list) else []
+                    if c_items:
+                        manifest_parts = [
+                            f"{it.get('name', 'Item')} x{it.get('count', 0)}"
+                            for it in c_items[:12]
+                            if isinstance(it, dict) and int(it.get("count") or 0) > 0
+                        ]
+                        overflow = max(0, len(c_items) - 12)
+                        manifest_str = ", ".join(manifest_parts) + (f", +{overflow} more" if overflow else "")
+                        extra_parts.append(f"Cargo: {c_count}{cap_str} ({manifest_str})")
+                    else:
+                        extra_parts.append(f"Cargo: {c_count}{cap_str} ({'Empty' if c_count == 0 else 'manifest pending'})")
                 if st.get("pips") is not None:
                     extra_parts.append(f"Pips: {st['pips']}")
                 if extra_parts:
@@ -819,6 +1313,66 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                     poi_parts.append(f"{pname}{pcs} @ {psys}")
                 if poi_parts:
                     lines.append("- Tracked POIs / Assets: " + " | ".join(poi_parts))
+
+            active_projects = st.get("active_projects")
+            if isinstance(active_projects, dict) and active_projects:
+                for pinfo in active_projects.values():
+                    if not isinstance(pinfo, dict):
+                        continue
+                    pname = pinfo.get("name") or pinfo.get("label") or "Project"
+                    psys = f" @ {pinfo['system']}" if pinfo.get("system") else ""
+                    pct = pinfo.get("progress_pct", 0.0)
+                    if pinfo.get("complete"):
+                        lines.append(f"- Active Project: {pname}{psys} — COMPLETE (100%)")
+                    else:
+                        rem_items = [
+                            r for r in (pinfo.get("resources") or [])
+                            if isinstance(r, dict) and int(r.get("remaining") or 0) > 0
+                        ]
+                        rem_items.sort(key=lambda r: int(r.get("remaining") or 0), reverse=True)
+                        rem_str = ", ".join(f"{r['name']} ({r['remaining']})" for r in rem_items[:15])
+                        if len(rem_items) > 15:
+                            rem_str += f", +{len(rem_items) - 15} more"
+                        lines.append(
+                            f"- Active Project: {pname}{psys} — {pct}% complete | Remaining ({pinfo.get('remaining_total', 0)} total): {rem_str}"
+                        )
+
+            still_to_buy = st.get("project_still_to_buy")
+            if isinstance(still_to_buy, list) and st.get("active_projects"):
+                if still_to_buy:
+                    stb_txt = ", ".join(
+                        f"{it['name']} (buy {it['still_to_buy']}"
+                        + (f"; {it['in_cargo']} already in cargo)" if it.get("in_cargo") else ")")
+                        for it in still_to_buy[:12]
+                    )
+                    if len(still_to_buy) > 12:
+                        stb_txt += f", +{len(still_to_buy) - 12} more"
+                    lines.append(
+                        f"- Project Still To Buy (EXCLUDING items already in cargo hold): {stb_txt}"
+                    )
+                else:
+                    lines.append(
+                        "- Project Still To Buy: 0 — ALL remaining project materials are ALREADY in your cargo hold! Ready to deliver."
+                    )
+
+            spm = st.get("station_project_matches")
+            if isinstance(spm, dict) and st.get("docked"):
+                m_items = spm.get("items") or []
+                stn_lbl = spm.get("station") or st.get("station") or "Current Station"
+                if m_items:
+                    avail_txt = ", ".join(
+                        f"{it['name']} (still need to buy {it['needed']} / stock {it['stock']:,} @ {it['buy_price']:,} CR)"
+                        for it in m_items[:12]
+                    )
+                    lines.append(
+                        f"- Unbought Project Items Available Here ({stn_lbl}, live local market): "
+                        f"{spm.get('matched_count', len(m_items))}/{spm.get('total_needed', 0)} still-needed items — {avail_txt}"
+                    )
+                else:
+                    lines.append(
+                        f"- Unbought Project Items Available Here ({stn_lbl}, live local market): "
+                        f"0/{spm.get('total_needed', 0)} still-needed items stocked here"
+                    )
 
             if st.get("last_event"):
                 lines.append(f"- Last In-Game Event: {st['last_event']}")

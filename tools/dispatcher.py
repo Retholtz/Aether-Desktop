@@ -794,8 +794,8 @@ EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
     "name": "execute_automation_script",
     "description": (
         "Universal dynamic code execution engine. Generates and executes an on-the-fly Python script to solve novel or complex desktop tasks. "
-        "Use this for document creation (`docx`, `pypdf`), spreadsheet/table generation (`openpyxl`, `csv`), database queries (`sqlite3`), HTML parsing (`bs4`), "
-        "numerical analysis (`numpy`), Microsoft Office COM (Word/Excel via `win32com.client`), file batching, and window layouts. "
+        "Use this for document creation (`docx`, `pypdf`), slide decks (`pptx`), charts/graphs (`matplotlib`, `PIL`), spreadsheet/table generation (`openpyxl`, `csv`), "
+        "database queries (`sqlite3`), HTML parsing (`bs4`), numerical analysis (`numpy`), Microsoft Office COM (Word/Excel/PowerPoint via `win32com.client`), file batching, and window layouts. "
         "If a script fails with an exception, the full traceback is returned so you can diagnose the issue, adjust your code, and retry. "
         "When you solve a novel task with a reusable script, save it to the permanent library using `save_script_to_library`.\n"
         + format_bundled_runtime_prompt_guardrail()
@@ -814,6 +814,10 @@ EXECUTE_AUTOMATION_SCRIPT_DECLARATION = {
             "description": {
                 "type": "STRING",
                 "description": "A clear 1-line description of what this automation script does."
+            },
+            "timeout": {
+                "type": "INTEGER",
+                "description": "Optional max execution time in seconds (default 90, clamped 10-120; use 90-120 for multi-slide pptx + matplotlib chart generation)."
             }
         },
         "required": ["script_code"]
@@ -1000,7 +1004,7 @@ DELEGATE_HEAVY_TASK_DECLARATION = {
             },
             "execute_if_code": {
                 "type": "BOOLEAN",
-                "description": "Whether to automatically execute the generated Python script via ScriptRunner (for python_automation)."
+                "description": "Whether to automatically execute the generated Python script via ScriptRunner (for python_automation). Defaults to True — keep True so the script actually runs and creates its outputs; only set False if the user explicitly asked to view code without executing it."
             },
             "paste_to_active_doc": {
                 "type": "BOOLEAN",
@@ -1019,8 +1023,8 @@ DELEGATE_MODERATE_TASK_DECLARATION = {
     "name": "delegate_moderate_task",
     "description": (
         "Delegates tasks and reasoning to the Tier 2 Moderate Engine / Orchestrator (Gemini 4.0 Hydrogen). "
-        "Use `task_type='workflow_orchestration'` for ANY app-agnostic multi-step desktop, browser, email, or document task "
-        "(e.g. opening Google Docs / Word / Notepad / Gmail, planning checklist steps, sub-contracting Argon for heavy text, pasting, and visually verifying the screen). "
+        "Use `task_type='workflow_orchestration'` for ANY app-agnostic multi-step desktop, browser, email, presentation, or document task "
+        "(e.g. building PowerPoint/Google Slides/LibreOffice `.pptx` decks with charts and uploading to Google Slides, opening Google Docs / Word / Notepad / Gmail, planning checklist steps, sub-contracting Neon if heavy writing is needed, pasting, and visually verifying the screen). "
         "Use `puzzle_reasoning`, `analysis`, `correspondence`, or `code_helper` for moderate reasoning, game puzzles, or debugging."
     ),
     "parameters": {
@@ -1142,6 +1146,8 @@ try:
         search_contacts,
         update_contact,
         create_contact,
+        upload_pptx_to_google_slides,
+        upload_docx_to_google_docs,
     )
 
     _EMAIL_TOOL_SPECS = [
@@ -1294,6 +1300,36 @@ try:
                     "provider": {"type": "STRING", "description": "Provider: 'auto', 'google', or 'microsoft'."},
                 },
                 "required": ["name"],
+            },
+        ),
+        (
+            "upload_pptx_to_google_slides",
+            upload_pptx_to_google_slides,
+            "Uploads a local presentation file (.pptx, .ppt, or .odp — by default saved in data/pptx/) to Google Drive via OAuth and converts it natively into a Google Slides presentation, optionally opening the deck directly in the browser. Use this after generating a .pptx presentation with python-pptx when the user requests Google Slides.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "file_path": {"type": "STRING", "description": "Path (or filename inside data/pptx/) to the local .pptx, .ppt, or .odp presentation file."},
+                    "title": {"type": "STRING", "description": "Optional presentation title in Google Slides (defaults to filename)."},
+                    "open_in_browser": {"type": "BOOLEAN", "description": "If true (default), opens the converted Google Slides URL in the browser."},
+                    "browser_app": {"type": "STRING", "description": "Browser to open the deck in: 'chrome' (default) or 'edge'."},
+                },
+                "required": ["file_path"],
+            },
+        ),
+        (
+            "upload_docx_to_google_docs",
+            upload_docx_to_google_docs,
+            "Uploads a local document or handout (.docx, .doc, .odt, or .rtf — by default saved in data/docx/) to Google Drive via OAuth and converts it natively into a Google Docs document, optionally opening it directly in the browser. Use this after generating a rich .docx handout/report (with tables or matplotlib charts) when the user requests Google Docs.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "file_path": {"type": "STRING", "description": "Path (or filename inside data/docx/) to the local .docx, .doc, .odt, or .rtf file."},
+                    "title": {"type": "STRING", "description": "Optional document title in Google Docs (defaults to filename)."},
+                    "open_in_browser": {"type": "BOOLEAN", "description": "If true (default), opens the converted Google Docs URL in the browser."},
+                    "browser_app": {"type": "STRING", "description": "Browser to open the document in: 'chrome' (default) or 'edge'."},
+                },
+                "required": ["file_path"],
             },
         ),
     ]
@@ -1704,26 +1740,27 @@ class ToolDispatcher:
             pass
 
         try:
+            from core.api_telemetry import api_feature_context, make_image_part
+            img_part = make_image_part(jpeg_bytes, mime_type="image/jpeg", resolution="medium")
+
+            def _run_grounding(use_fast_cfg: bool):
+                with api_feature_context("cockpit_control", "visual_grounding"):
+                    if use_fast_cfg:
+                        return client.models.generate_content(
+                            model=grounding_model,
+                            contents=[img_part, prompt],
+                            config=types.GenerateContentConfig(**fast_cfg_kwargs),
+                        )
+                    return client.models.generate_content(
+                        model=grounding_model,
+                        contents=[img_part, prompt],
+                    )
+
             try:
-                response = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=grounding_model,
-                    contents=[
-                        types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
-                        prompt
-                    ],
-                    config=types.GenerateContentConfig(**fast_cfg_kwargs),
-                )
+                response = await asyncio.to_thread(_run_grounding, True)
             except Exception as cfg_err:
                 if "thinking" in str(cfg_err).lower() or "mime" in str(cfg_err).lower():
-                    response = await asyncio.to_thread(
-                        client.models.generate_content,
-                        model=grounding_model,
-                        contents=[
-                            types.Part.from_bytes(data=jpeg_bytes, mime_type="image/jpeg"),
-                            prompt
-                        ],
-                    )
+                    response = await asyncio.to_thread(_run_grounding, False)
                 else:
                     raise
             resp_text = response.text or ""
@@ -2511,11 +2548,17 @@ class ToolDispatcher:
                 script_code = str(args.get("script_code", ""))
                 script_type = str(args.get("script_type", "python"))
                 description = str(args.get("description", ""))
+                try:
+                    raw_timeout = int(args.get("timeout", 90) or 90)
+                except (TypeError, ValueError):
+                    raw_timeout = 90
+                script_timeout = max(10, min(120, raw_timeout))
                 result = await asyncio.to_thread(
                     self.script_runner.execute_script,
                     script_code=script_code,
                     script_type=script_type,
-                    description=description
+                    description=description,
+                    timeout=script_timeout,
                 )
                 self.notify("chat_event", {
                     "type": "tool",
@@ -3210,14 +3253,15 @@ class ToolDispatcher:
 
                 hb_task = asyncio.create_task(_heavy_progress_heartbeat())
                 try:
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: client.models.generate_content(
-                            model=heavy_model,
-                            contents=prompt,
-                            config=gen_config
-                        )
-                    )
+                    from core.api_telemetry import api_feature_context
+                    def _run_corr():
+                        with api_feature_context("casual_chat", "heavy_correspondence"):
+                            return client.models.generate_content(
+                                model=heavy_model,
+                                contents=prompt,
+                                config=gen_config
+                            )
+                    response = await loop.run_in_executor(None, _run_corr)
                 finally:
                     stop_hb.set()
                     hb_task.cancel()
@@ -3257,6 +3301,9 @@ class ToolDispatcher:
                 "- Standard Portrait Page Table Layout: Keep tables between 3 to 5 columns maximum so table columns do not horizontally compress or wrap letters vertically on 8.5x11 portrait pages. Group related attributes if necessary.\n"
                 "- Multi-line Table Cells: Do NOT output raw '<br>' tags in table cells. Use clean concise prose or markdown list items.\n"
                 "- Workflows & Visuals: Word processors like Google Docs do not render raw Mermaid blocks. Present workflows and sequences as clearly structured numbered phase breakdowns, step-by-step pipeline cards, or clean ASCII flow diagrams.\n"
+                "- Presentation / Teaching Dossier Separation: Whenever this dossier accompanies a slide deck, lecture, or teaching session, structure every slide section into TWO clearly labeled blocks so downstream slides and learner handouts never leak presenter cues:\n"
+                "  1. `**On-Slide Takeaways:**` — 3 to 5 crisp, complete, audience-facing bullets (~10–20 words each, bold lead-in phrase, zero ellipsis truncation) ready to place directly onto visible slides.\n"
+                "  2. `**Speaker Notes & Presenter Pearls:**` — deep clinical/domain rationale, Socratic discussion prompts (e.g., 'Ask residents...'), teaching pearls, and full trial/reference citations intended exclusively for the presenter's dossier and PowerPoint Speaker Notes.\n"
                 "- Completeness: Do NOT truncate, use placeholders, or summarize prematurely.\n"
             )
 
@@ -3279,14 +3326,15 @@ class ToolDispatcher:
 
                 hb_task = asyncio.create_task(_heavy_progress_heartbeat())
                 try:
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: client.models.generate_content(
-                            model=heavy_model,
-                            contents=prompt,
-                            config=gen_config
-                        )
-                    )
+                    from core.api_telemetry import api_feature_context
+                    def _run_dossier():
+                        with api_feature_context("dossier_creation", "heavy_research_dossier"):
+                            return client.models.generate_content(
+                                model=heavy_model,
+                                contents=prompt,
+                                config=gen_config
+                            )
+                    response = await loop.run_in_executor(None, _run_dossier)
                 finally:
                     stop_hb.set()
                     hb_task.cancel()
@@ -3329,38 +3377,89 @@ class ToolDispatcher:
 
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: client.models.generate_content(
-                        model=heavy_model,
-                        contents=prompt,
-                        config=gen_config
-                    )
-                )
+                from core.api_telemetry import api_feature_context
+                def _run_py_auto():
+                    with api_feature_context("script_gen_optimizer", "heavy_python_automation"):
+                        return client.models.generate_content(
+                            model=heavy_model,
+                            contents=prompt,
+                            config=gen_config
+                        )
+                response = await loop.run_in_executor(None, _run_py_auto)
                 raw_code = getattr(response, "text", "") or ""
                 match = re.search(r"```(?:python)?\s*([\s\S]*?)\s*```", raw_code)
                 clean_code = match.group(1).strip() if match else raw_code.strip()
+
+                # Always persist synthesized script to disk so heavy code generation is never lost in RAM
+                saved_script_path = ""
+                if clean_code:
+                    try:
+                        os.makedirs(self.script_runner.cache_dir, exist_ok=True)
+                        ts_slug = time.strftime("%Y%m%d_%H%M%S")
+                        safe_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", title or "script").strip("_")[:48] or "script"
+                        saved_script_path = os.path.join(
+                            self.script_runner.cache_dir,
+                            f"synthesized_{ts_slug}_{safe_slug}.py",
+                        )
+                        with open(saved_script_path, "w", encoding="utf-8") as sf:
+                            sf.write(clean_code)
+                    except Exception as save_err:
+                        logger.warning(f"[HEAVY_TASK] Failed persisting synthesized script: {save_err}")
+                        saved_script_path = ""
+
+                # Cap inline generated_code returned to Live session to avoid blowing the 50KB lifecycle rotation threshold
+                if len(clean_code) > 4000:
+                    code_preview = (
+                        clean_code[:4000]
+                        + f"\n# ... [truncated {len(clean_code) - 4000} chars; full script saved to {saved_script_path}]"
+                    )
+                else:
+                    code_preview = clean_code
 
                 if execute_if_code and clean_code:
                     exec_result = await asyncio.to_thread(
                         self.script_runner.execute_script,
                         script_code=clean_code,
                         script_type="python",
-                        description=f"Tier 2 Synthesized: {title}"
+                        description=f"Tier 3 Synthesized: {title}",
+                        timeout=90,
                     )
+                    exec_status = str(exec_result.get("status") or "error").lower()
+                    actual_script_path = exec_result.get("file") or saved_script_path
+                    if exec_status == "success":
+                        directive = (
+                            f"Script synthesized and executed successfully (saved to '{actual_script_path}'). "
+                            "Verify any requested files or follow-up upload steps before claiming final completion."
+                        )
+                    else:
+                        err_detail = exec_result.get("error") or exec_result.get("message") or f"status={exec_status}"
+                        directive = (
+                            f"Script execution FAILED (status={exec_status}): {err_detail}. "
+                            "Do NOT claim the task succeeded or that files were created/uploaded. Report the exact error or fix and retry."
+                        )
                     return {
-                        "status": "success",
+                        "status": "success" if exec_status == "success" else exec_status,
+                        "executed": True,
                         "task_type": "python_automation",
-                        "generated_code": clean_code,
+                        "script_path": actual_script_path,
+                        "code_chars": len(clean_code),
+                        "generated_code": code_preview,
                         "execution_result": exec_result,
-                        "directive": f"Script synthesized and executed. Report outcome ({exec_result.get('status')}) concisely over voice."
+                        "directive": directive,
                     }
                 else:
                     return {
-                        "status": "success",
+                        "status": "not_executed",
+                        "executed": False,
                         "task_type": "python_automation",
-                        "generated_code": clean_code,
-                        "directive": f"Script synthesized by Tier 2 ({heavy_model}). Ready for execution."
+                        "script_path": saved_script_path,
+                        "code_chars": len(clean_code),
+                        "generated_code": code_preview,
+                        "directive": (
+                            f"Script was synthesized by {heavy_model} and saved to '{saved_script_path}', "
+                            "but HAS NOT BEEN EXECUTED YET (execute_if_code=False). "
+                            "Do NOT tell the user any files were created or uploaded until the script is actually executed and outputs are verified."
+                        ),
                     }
             except Exception as e:
                 logger.error(f"[HEAVY_TASK] Python automation synthesis failed: {e}")
@@ -3377,14 +3476,15 @@ class ToolDispatcher:
 
             try:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: client.models.generate_content(
-                        model=heavy_model,
-                        contents=prompt,
-                        config=gen_config
-                    )
-                )
+                from core.api_telemetry import api_feature_context
+                def _run_deep_analysis():
+                    with api_feature_context("dossier_creation", "heavy_deep_analysis"):
+                        return client.models.generate_content(
+                            model=heavy_model,
+                            contents=prompt,
+                            config=gen_config
+                        )
+                response = await loop.run_in_executor(None, _run_deep_analysis)
                 analysis_text = getattr(response, "text", "") or ""
                 return {
                     "status": "success",

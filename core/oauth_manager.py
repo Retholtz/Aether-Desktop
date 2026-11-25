@@ -22,6 +22,7 @@ import html
 import http.server
 import imaplib
 import json
+import os
 import re
 import secrets
 import smtplib
@@ -55,6 +56,16 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/contacts",
+    "https://www.googleapis.com/auth/drive.file",
+]
+
+# Google Identity prohibits requesting youtube.readonly (Brand Account scope) in the
+# same OAuth consent request as drive.file (Error 400: invalid_request). YouTube uses
+# its own dedicated PKCE token slot reusing the same Google OAuth Client ID/Secret.
+GOOGLE_YOUTUBE_SCOPES = [
+    "openid",
+    "email",
+    "profile",
     "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
@@ -547,6 +558,7 @@ class OAuthManager:
         self.on_status_change = on_status_change
         self._refresh_locks: Dict[str, threading.Lock] = {
             "google": threading.Lock(),
+            "youtube": threading.Lock(),
             "microsoft": threading.Lock(),
             "imap": threading.Lock(),
             "twitch": threading.Lock(),
@@ -636,7 +648,7 @@ class OAuthManager:
         """Revokes/deletes stored tokens for the given provider."""
         provider_key = provider.lower().strip()
         tokens = self.vault.get_provider_tokens(provider_key)
-        if tokens and provider_key == "google" and tokens.get("access_token"):
+        if tokens and provider_key in ("google", "youtube") and tokens.get("access_token"):
             try:
                 requests.post(
                     "https://oauth2.googleapis.com/revoke",
@@ -659,10 +671,10 @@ class OAuthManager:
         with an ephemeral 127.0.0.1 loopback callback server.
         """
         provider_key = provider.lower().strip()
-        if provider_key not in ("google", "microsoft", "twitch"):
-            return {"success": False, "error": f"OAuth browser flow is only supported for google, microsoft, or twitch (got {provider})."}
+        if provider_key not in ("google", "youtube", "microsoft", "twitch"):
+            return {"success": False, "error": f"OAuth browser flow is only supported for google, youtube, microsoft, or twitch (got {provider})."}
 
-        client_cfg = self.vault.get_client_config(provider_key)
+        client_cfg = self.vault.get_client_config("google" if provider_key == "youtube" else provider_key)
         client_id = client_cfg.get("client_id", "").strip()
         client_secret = client_cfg.get("client_secret", "").strip()
         tenant_id = client_cfg.get("tenant_id", "common").strip() or "common"
@@ -680,7 +692,7 @@ class OAuthManager:
 
         if not client_id:
             provider_label = (
-                "Google Cloud" if provider_key == "google"
+                "Google Cloud" if provider_key in ("google", "youtube")
                 else "Microsoft Entra (Azure)" if provider_key == "microsoft"
                 else "Twitch Developer"
             )
@@ -792,12 +804,13 @@ class OAuthManager:
         # Use http://localhost:{port} per RFC 8252 Section 7.3
         redirect_uri = f"http://localhost:{port}"
 
-        if provider_key == "google":
+        if provider_key in ("google", "youtube"):
+            scopes_list = GOOGLE_YOUTUBE_SCOPES if provider_key == "youtube" else GOOGLE_SCOPES
             params = {
                 "client_id": client_id,
                 "redirect_uri": redirect_uri,
                 "response_type": "code",
-                "scope": " ".join(GOOGLE_SCOPES),
+                "scope": " ".join(scopes_list),
                 "code_challenge": code_challenge,
                 "code_challenge_method": "S256",
                 "state": expected_state,
@@ -890,7 +903,7 @@ class OAuthManager:
         tenant_id: str = "common",
     ) -> bool:
         """Exchanges an OAuth 2.0 authorization code + PKCE verifier for access and refresh tokens."""
-        if provider == "google":
+        if provider in ("google", "youtube"):
             token_url = GOOGLE_TOKEN_URL
         elif provider == "twitch":
             token_url = TWITCH_TOKEN_URL
@@ -940,7 +953,7 @@ class OAuthManager:
         """Fetches the authenticated user's email address, display name, and optional platform user ID."""
         headers = {"Authorization": f"Bearer {access_token}"}
         try:
-            if provider == "google":
+            if provider in ("google", "youtube"):
                 r = requests.get(GOOGLE_USERINFO_URL, headers=headers, timeout=10)
                 if r.ok:
                     info = r.json()
@@ -990,7 +1003,7 @@ class OAuthManager:
             if not refresh_token:
                 return access_token or None
 
-            client_cfg = self.vault.get_client_config(provider_key)
+            client_cfg = self.vault.get_client_config("google" if provider_key == "youtube" else provider_key)
             client_id = client_cfg.get("client_id", "").strip()
             client_secret = client_cfg.get("client_secret", "").strip()
             tenant_id = client_cfg.get("tenant_id", "common").strip() or "common"
@@ -998,7 +1011,7 @@ class OAuthManager:
             if not client_id:
                 return access_token or None
 
-            if provider_key == "google":
+            if provider_key in ("google", "youtube"):
                 token_url = GOOGLE_TOKEN_URL
             elif provider_key == "twitch":
                 token_url = TWITCH_TOKEN_URL
@@ -1101,10 +1114,15 @@ class OAuthManager:
 
     def fetch_youtube_subscriptions(self, max_results: int = 50) -> List[Dict[str, Any]]:
         """
-        Fetches the subscribed channels for the connected Google account via YouTube Data API v3.
+        Fetches the subscribed channels for the connected YouTube/Google account via YouTube Data API v3.
+        Uses the dedicated 'youtube' OAuth slot first (required by Google since youtube.readonly cannot
+        be combined with drive.file in one consent request), falling back to legacy 'google' tokens.
         Returns list of {'name': title, 'channel_id': channel_id}.
         """
-        access_token = self.get_valid_access_token("google")
+        if self.vault.get_provider_tokens("youtube"):
+            access_token = self.get_valid_access_token("youtube")
+        else:
+            access_token = self.get_valid_access_token("google")
         if not access_token:
             return []
 
@@ -2861,6 +2879,375 @@ class OAuthManager:
             return {"success": True, "provider": "imap", "message_id": draft_id}
         except Exception as e:
             return {"success": False, "error": f"SMTP send failed: {e}"}
+
+    # =========================================================================
+    # Google Drive API v3 -> Native Google Slides Presentation Import
+    # =========================================================================
+
+    def upload_pptx_to_google_slides(
+        self,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Uploads a local presentation file (.pptx, .ppt, or .odp) to Google Drive via
+        multipart/related upload and instructs Drive to convert it natively into a
+        Google Slides presentation (application/vnd.google-apps.presentation).
+
+        Uses least-privilege scope `https://www.googleapis.com/auth/drive.file`.
+        """
+        raw_path = str(file_path or "").strip()
+        if not raw_path:
+            return {"status": "error", "success": False, "error": "Presentation file_path is required."}
+
+        abs_path = os.path.abspath(os.path.expanduser(raw_path))
+        if not os.path.isfile(abs_path):
+            try:
+                from core.paths import user_data_path
+                pptx_candidate = os.path.abspath(user_data_path("data", "pptx", os.path.basename(raw_path)))
+                if os.path.isfile(pptx_candidate):
+                    abs_path = pptx_candidate
+            except Exception:
+                pass
+        if not os.path.isfile(abs_path):
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Presentation file not found: {abs_path}",
+            }
+
+        ext = os.path.splitext(abs_path)[1].lower()
+        mime_map = {
+            ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ".ppt": "application/vnd.ms-powerpoint",
+            ".odp": "application/vnd.oasis.opendocument.presentation",
+        }
+        source_mime = mime_map.get(ext)
+        if not source_mime:
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Unsupported presentation format '{ext}'. Expected .pptx, .ppt, or .odp.",
+            }
+
+        try:
+            file_size = os.path.getsize(abs_path)
+            if file_size <= 0:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "local_file_path": abs_path,
+                    "error": f"Presentation file is empty: {abs_path}",
+                }
+            if file_size > 50 * 1024 * 1024:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "local_file_path": abs_path,
+                    "error": f"Presentation file exceeds 50 MB upload limit ({file_size} bytes).",
+                }
+            with open(abs_path, "rb") as f:
+                file_bytes = f.read()
+        except Exception as e:
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Failed reading presentation file: {e}",
+            }
+
+        headers = self._google_headers()
+        if not headers:
+            return {
+                "status": "error",
+                "success": False,
+                "needs_reauth": True,
+                "local_file_path": abs_path,
+                "error": (
+                    "Google account is not connected or access token expired. "
+                    "Connect Google in Settings -> Integrations to enable one-click Google Slides import, "
+                    "or open/import the saved local presentation file manually."
+                ),
+            }
+
+        presentation_title = (title or "").strip() or os.path.splitext(os.path.basename(abs_path))[0]
+        metadata = {
+            "name": presentation_title,
+            "mimeType": "application/vnd.google-apps.presentation",
+        }
+        boundary = f"aether_pptx_{secrets.token_hex(16)}"
+        meta_json = json.dumps(metadata, ensure_ascii=False).encode("utf-8")
+
+        body_bytes = (
+            f"--{boundary}\r\n"
+            f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        ).encode("utf-8") + meta_json + (
+            f"\r\n--{boundary}\r\n"
+            f"Content-Type: {source_mime}\r\n\r\n"
+        ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        req_headers = dict(headers)
+        req_headers["Content-Type"] = f"multipart/related; boundary={boundary}"
+
+        try:
+            r = requests.post(
+                "https://www.googleapis.com/upload/drive/v3/files",
+                headers=req_headers,
+                params={
+                    "uploadType": "multipart",
+                    "fields": "id,name,webViewLink,mimeType",
+                },
+                data=body_bytes,
+                timeout=60,
+            )
+            if r.status_code in (401, 403):
+                err_text = r.text[:400]
+                err_low = err_text.lower()
+                if any(k in err_low for k in ("insufficient", "scope", "permission", "unauthorized", "invalid_grant")):
+                    return {
+                        "status": "error",
+                        "success": False,
+                        "needs_reauth": True,
+                        "http_status": r.status_code,
+                        "local_file_path": abs_path,
+                        "error": (
+                            "Your connected Google account needs to be re-authorized once in Settings -> Integrations "
+                            "to grant Google Drive file upload permission (drive.file) for Google Slides import. "
+                            f"Your presentation is already saved locally at '{abs_path}' so you can open it in "
+                            "PowerPoint/LibreOffice Impress or import it via File -> Import slides in Google Slides."
+                        ),
+                    }
+                return {
+                    "status": "error",
+                    "success": False,
+                    "http_status": r.status_code,
+                    "local_file_path": abs_path,
+                    "error": f"Google Drive API error ({r.status_code}): {err_text}",
+                }
+
+            if not r.ok:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "http_status": r.status_code,
+                    "local_file_path": abs_path,
+                    "error": f"Google Drive API upload failed ({r.status_code}): {r.text[:350]}",
+                }
+
+            payload = r.json() if r.content else {}
+            file_id = str(payload.get("id") or "").strip()
+            slides_url = str(payload.get("webViewLink") or "").strip()
+            if not slides_url and file_id:
+                slides_url = f"https://docs.google.com/presentation/d/{file_id}/edit"
+            resolved_name = str(payload.get("name") or presentation_title).strip()
+
+            logger.info(f"[OAUTH] Uploaded '{resolved_name}' to Google Slides (id={file_id})")
+            return {
+                "status": "success",
+                "success": True,
+                "provider": "google",
+                "file_id": file_id,
+                "title": resolved_name,
+                "slides_url": slides_url,
+                "web_view_link": slides_url,
+                "local_file_path": abs_path,
+                "message": (
+                    f"Uploaded '{resolved_name}' to Google Drive and converted it to Google Slides: {slides_url}"
+                ),
+            }
+        except Exception as e:
+            logger.error(f"[OAUTH] Google Slides Drive upload failed: {e}")
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Google Slides upload failed: {e}",
+            }
+
+    def upload_docx_to_google_docs(
+        self,
+        file_path: str,
+        title: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Uploads a local document/handout file (.docx, .doc, .odt, .rtf) to Google Drive via
+        multipart/related upload and instructs Drive to convert it natively into a
+        Google Docs document (application/vnd.google-apps.document).
+
+        Reuses the already-granted least-privilege scope `https://www.googleapis.com/auth/drive.file`.
+        """
+        raw_path = str(file_path or "").strip()
+        if not raw_path:
+            return {"status": "error", "success": False, "error": "Document file_path is required."}
+
+        abs_path = os.path.abspath(os.path.expanduser(raw_path))
+        if not os.path.isfile(abs_path):
+            try:
+                from core.paths import user_data_path
+                docx_candidate = os.path.abspath(user_data_path("data", "docx", os.path.basename(raw_path)))
+                if os.path.isfile(docx_candidate):
+                    abs_path = docx_candidate
+            except Exception:
+                pass
+        if not os.path.isfile(abs_path):
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Document file not found: {abs_path}",
+            }
+
+        ext = os.path.splitext(abs_path)[1].lower()
+        mime_map = {
+            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".doc": "application/msword",
+            ".odt": "application/vnd.oasis.opendocument.text",
+            ".rtf": "application/rtf",
+        }
+        source_mime = mime_map.get(ext)
+        if not source_mime:
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Unsupported document format '{ext}'. Expected .docx, .doc, .odt, or .rtf.",
+            }
+
+        try:
+            file_size = os.path.getsize(abs_path)
+            if file_size <= 0:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "local_file_path": abs_path,
+                    "error": f"Document file is empty: {abs_path}",
+                }
+            if file_size > 50 * 1024 * 1024:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "local_file_path": abs_path,
+                    "error": f"Document file exceeds 50 MB upload limit ({file_size} bytes).",
+                }
+            with open(abs_path, "rb") as f:
+                file_bytes = f.read()
+        except Exception as e:
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Failed reading document file: {e}",
+            }
+
+        headers = self._google_headers()
+        if not headers:
+            return {
+                "status": "error",
+                "success": False,
+                "needs_reauth": True,
+                "local_file_path": abs_path,
+                "error": (
+                    "Google account is not connected or access token expired. "
+                    "Connect Google in Settings -> Integrations to enable one-click Google Docs import, "
+                    "or open the saved local document in Word / LibreOffice Writer."
+                ),
+            }
+
+        doc_title = (title or "").strip() or os.path.splitext(os.path.basename(abs_path))[0]
+        metadata = {
+            "name": doc_title,
+            "mimeType": "application/vnd.google-apps.document",
+        }
+        boundary = f"aether_docx_{secrets.token_hex(16)}"
+        meta_json = json.dumps(metadata, ensure_ascii=False).encode("utf-8")
+
+        body_bytes = (
+            f"--{boundary}\r\n"
+            f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        ).encode("utf-8") + meta_json + (
+            f"\r\n--{boundary}\r\n"
+            f"Content-Type: {source_mime}\r\n\r\n"
+        ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        req_headers = dict(headers)
+        req_headers["Content-Type"] = f"multipart/related; boundary={boundary}"
+
+        try:
+            r = requests.post(
+                "https://www.googleapis.com/upload/drive/v3/files",
+                headers=req_headers,
+                params={
+                    "uploadType": "multipart",
+                    "fields": "id,name,webViewLink,mimeType",
+                },
+                data=body_bytes,
+                timeout=60,
+            )
+            if r.status_code in (401, 403):
+                err_text = r.text[:400]
+                err_low = err_text.lower()
+                if any(k in err_low for k in ("insufficient", "scope", "permission", "unauthorized", "invalid_grant")):
+                    return {
+                        "status": "error",
+                        "success": False,
+                        "needs_reauth": True,
+                        "http_status": r.status_code,
+                        "local_file_path": abs_path,
+                        "error": (
+                            "Your connected Google account needs to be re-authorized once in Settings -> Integrations "
+                            "to grant Google Drive file upload permission (drive.file) for Google Docs import. "
+                            f"Your document is already saved locally at '{abs_path}' so you can open it in "
+                            "Microsoft Word or LibreOffice Writer."
+                        ),
+                    }
+                return {
+                    "status": "error",
+                    "success": False,
+                    "http_status": r.status_code,
+                    "local_file_path": abs_path,
+                    "error": f"Google Drive API error ({r.status_code}): {err_text}",
+                }
+
+            if not r.ok:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "http_status": r.status_code,
+                    "local_file_path": abs_path,
+                    "error": f"Google Drive API upload failed ({r.status_code}): {r.text[:350]}",
+                }
+
+            payload = r.json() if r.content else {}
+            file_id = str(payload.get("id") or "").strip()
+            docs_url = str(payload.get("webViewLink") or "").strip()
+            if not docs_url and file_id:
+                docs_url = f"https://docs.google.com/document/d/{file_id}/edit"
+            resolved_name = str(payload.get("name") or doc_title).strip()
+
+            logger.info(f"[OAUTH] Uploaded '{resolved_name}' to Google Docs (id={file_id})")
+            return {
+                "status": "success",
+                "success": True,
+                "provider": "google",
+                "file_id": file_id,
+                "title": resolved_name,
+                "docs_url": docs_url,
+                "web_view_link": docs_url,
+                "local_file_path": abs_path,
+                "message": (
+                    f"Uploaded '{resolved_name}' to Google Drive and converted it to Google Docs: {docs_url}"
+                ),
+            }
+        except Exception as e:
+            logger.error(f"[OAUTH] Google Docs Drive upload failed: {e}")
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Google Docs upload failed: {e}",
+            }
 
 
 # Singleton accessor for engine, tools, and GUI bridge

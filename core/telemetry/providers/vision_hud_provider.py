@@ -47,10 +47,11 @@ Return strictly a JSON object:
 If no HUD bars are visible (e.g. menu, cutscene, or map screen), return {{"bars": []}}.
 """
     try:
+        from core.api_telemetry import api_feature_context, make_image_part
         try:
             from google.genai import types
 
-            part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+            part = make_image_part(img_bytes, resolution="medium", mime_type="image/jpeg")
             contents = [part, prompt]
             cfg_kwargs: Dict[str, Any] = {
                 "response_mime_type": "application/json",
@@ -73,11 +74,12 @@ If no HUD bars are visible (e.g. menu, cutscene, or map screen), return {{"bars"
             ]
             cfg = {"response_mime_type": "application/json", "temperature": 0.0}
 
-        resp = genai_client.models.generate_content(
-            model=resolved_model,
-            contents=contents,
-            config=cfg,
-        )
+        with api_feature_context("agnostic_telemetry", "hud_bar_calibration", keep_latest_images=1):
+            resp = genai_client.models.generate_content(
+                model=resolved_model,
+                contents=contents,
+                config=cfg,
+            )
         raw = (resp.text or "").strip() if resp and hasattr(resp, "text") else ""
         if raw.startswith("```"):
             raw = re.sub(r"^```(?:json)?\s*", "", raw)

@@ -230,11 +230,23 @@ class EmailMonitorService:
             f"{wrapped_untrusted}\n"
         )
         try:
-            resp = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model_id,
-                contents=prompt,
-            )
+            from google.genai import types
+            from core.model_discovery import build_thinking_config
+            gen_kwargs = {"max_output_tokens": 80, "temperature": 0.3}
+            think_cfg = build_thinking_config(model_id, thinking_level="none")
+            if think_cfg is not None:
+                gen_kwargs["thinking_config"] = think_cfg
+            from core.api_telemetry import api_feature_context
+
+            def _call_email():
+                with api_feature_context("casual_chat", "email_alert"):
+                    return client.models.generate_content(
+                        model=model_id,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(**gen_kwargs),
+                    )
+
+            resp = await asyncio.to_thread(_call_email)
             text = (getattr(resp, "text", None) or "").strip()
             text = re.sub(r"\s+", " ", text).strip().strip('"').strip("'")
             if text and len(text) <= 220:

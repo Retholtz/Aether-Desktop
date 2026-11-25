@@ -1015,6 +1015,11 @@ class TestTypedMacroSchemaAndAdHocSequenceTool(unittest.TestCase):
             self.assertEqual(prof["display_name"], "Elite Dangerous")
             self.assertEqual(prof.get("process_name"), "EliteDangerous64.exe")
 
+            # Stop any background adapter and clear host-journal POIs before attaching mock telemetry
+            if mgr.active_telemetry_adapter is not None:
+                mgr.active_telemetry_adapter.stop()
+            prof["known_pois"] = {}
+
             # Attach mock live telemetry with an older Fleet Carrier location
             mock_tel = MagicMock()
             mock_tel.get_state.return_value = {
@@ -1105,7 +1110,21 @@ class TestTypedMacroSchemaAndAdHocSequenceTool(unittest.TestCase):
             cc_res = mgr.set_chitchat_settings(gid, frequency="occasional", screen_peek=True, allow_profanity=True, emotive_voice=True)
             self.assertTrue(cc_res["success"])
             saved_cc = mgr.get_chitchat_settings(gid)
-            self.assertEqual(saved_cc, {"frequency": "occasional", "screen_peek": True, "allow_profanity": True, "emotive_voice": True})
+            self.assertEqual(saved_cc, {
+                "frequency": "occasional",
+                "screen_peek": True,
+                "allow_profanity": True,
+                "emotive_voice": True,
+                "topic_jokes": False,
+                "topic_facts": True,
+                "topic_relevant": True,
+                "chat_local": False,
+                "chat_system": False,
+                "chat_npc": False,
+                "chat_squadron": True,
+                "chat_player": True,
+                "chat_translate": True,
+            })
             self.assertIn("EMOTIVE VOCAL DELIVERY", mgr.build_copilot_personality_directive(mgr.get_profile(gid)))
 
             cc_mgr = CompanionChitChatManager(mgr, engine=None)
@@ -1149,6 +1168,648 @@ class TestTypedMacroSchemaAndAdHocSequenceTool(unittest.TestCase):
         self.assertFalse(rx._is_engine_idle())
         fake_eng.game_engine.manager.is_game_mode_active.return_value = False
         self.assertTrue(rx._is_engine_idle())
+
+    def test_special_instructions_and_user_keybind_routing_sequence(self):
+        """Special Instructions load from module default & reset cleanly; map routing pulls user keybinds strictly."""
+        from core.game_manager import GameManager
+        from core.game_nav import GameNavigator
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = GameManager(profiles_path=str(Path(tmp) / "profiles.json"))
+            mgr.add_game("Elite Dangerous", process_name="EliteDangerous64.exe")
+            gid = mgr.data["active_profile"]
+
+            si = mgr.get_special_instructions(gid)
+            self.assertIn("Interface Mode", si["text"])
+            self.assertFalse(si["is_custom"])
+
+            upd = mgr.set_special_instructions(gid, "Custom setup note")
+            self.assertEqual(upd["text"], "Custom setup note")
+            self.assertTrue(upd["is_custom"])
+
+            rst = mgr.set_special_instructions(gid, None)
+            self.assertIn("Interface Mode", rst["text"])
+            self.assertFalse(rst["is_custom"])
+            mgr.close()
+
+        # Verify pure user-keybind routing sequence (custom Shift+G, Up, Space, Down, Q) + close map
+        mock_adapter = MagicMock()
+        mock_adapter.get_state.return_value = {"route_destination": "Sol", "route_jumps": 3}
+        user_binds = {
+            "open galaxy map": {"key": "g", "modifiers": ["shift"]},
+            "ui panel up": {"key": "up", "modifiers": []},
+            "ui panel down": {"key": "down", "modifiers": []},
+            "ui panel select": {"key": "space", "modifiers": []},
+            "galaxy cam yaw left": {"key": "q", "modifiers": []},
+        }
+        routing_cfg = {
+            "search_routing": {
+                "map_open_actions": ["open galaxy map"],
+                "open_wait_sec": 0.05,
+                "pre_input_steps": [
+                    {"bind_actions": ["ui panel up"], "hold_ms": 50, "delay_ms": 50},
+                    {"bind_actions": ["ui panel select"], "hold_ms": 50, "delay_ms": 50},
+                ],
+                "input_method": "clipboard_paste",
+                "submit_key": "",
+                "select_result_wait_sec": 0.05,
+                "post_input_keys": [
+                    {"bind_actions": ["ui panel down"], "hold_ms": 50, "delay_ms": 50},
+                    {"bind_actions": ["ui panel select"], "hold_ms": 50, "delay_ms": 50},
+                    {"bind_actions": ["galaxy cam yaw left"], "hold_ms": 250, "delay_ms": 50},
+                ],
+                "prefer_plot_key_first": True,
+                "plot_bind_actions": ["ui panel select"],
+                "plot_hold_sec": 0.15,
+                "verify_telemetry_field": "route_destination",
+                "close_map_on_verified": True,
+            }
+        }
+        nav = GameNavigator(client=None, target_process="SpaceSim.exe", map_controls=routing_cfg, keybinds=user_binds, telemetry_adapter=mock_adapter)
+        pressed_keys = []
+        pressed_combos = []
+        with patch("tools.os_controls.focus_window"), \
+             patch("core.game_nav.send_directinput_key", side_effect=lambda k, duration_sec=0.1: pressed_keys.append((k, duration_sec))), \
+             patch("tools.os_controls.send_directinput_combo", side_effect=lambda mods, k, hold_duration=0.1: pressed_combos.append((list(mods), k))), \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav, "is_map_screen", return_value=False):
+            res = nav.search_and_route_destination("Sol")
+        self.assertEqual(res["status"], "success")
+        self.assertIn((["shift"], "g"), pressed_combos)
+        self.assertEqual(pressed_combos.count((["shift"], "g")), 2)  # Opened AND closed with user's Shift+G!
+        self.assertEqual([k for k, _ in pressed_keys], ["up", "space", "down", "space", "q", "space"])
+
+        # Missing required bind must report missing_keybinds cleanly (no silent hardcoded fallback)
+        nav_missing = GameNavigator(client=None, target_process="SpaceSim.exe", map_controls=routing_cfg, keybinds={"open galaxy map": {"key": "g", "modifiers": ["shift"]}}, telemetry_adapter=mock_adapter)
+        with patch("tools.os_controls.focus_window"), \
+             patch("core.game_nav.send_directinput_key"), \
+             patch("tools.os_controls.send_directinput_combo"), \
+             patch.object(nav_missing, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav_missing, "is_map_screen", return_value=True):
+            res_miss = nav_missing.search_and_route_destination("Sol")
+        self.assertEqual(res_miss["status"], "missing_keybinds")
+        self.assertIn("ui panel up", res_miss["missing_keybinds"])
+
+
+class TestSyncedUIBindsContextActionsAndNewsFeed(unittest.TestCase):
+    def test_complete_ui_task_injects_synced_user_binds_and_executes_combos(self):
+        from core.game_nav import UniversalGameNavigator
+
+        user_binds = {
+            "left panel": {"key": "1", "modifiers": ["shift"], "description": "Focus Navigation / Left Panel"},
+            "ui panel up": {"key": "up", "modifiers": [], "description": "UI Panel Up"},
+            "ui panel down": {"key": "down", "modifiers": [], "description": "UI Panel Down"},
+            "ui panel select": {"key": "space", "modifiers": [], "description": "UI Panel Select"},
+            "next panel tab": {"key": "e", "modifiers": [], "description": "Next Panel Tab"},
+            "close menu": {"key": "backspace", "modifiers": [], "description": "UI Back / Close Menu"},
+        }
+        nav = UniversalGameNavigator(
+            client=MagicMock(),
+            target_process="SpaceSim.exe",
+            game_name="Space Sim",
+            keybinds=user_binds,
+        )
+        seen_prompts = []
+        responses = iter([
+            {
+                "highlighted_now": "none",
+                "observation": "Opening left panel and tabbing to contacts",
+                "action": "KEYS",
+                "keys": ["shift+1", "e", "down", "space"],
+                "hold_ms": 80,
+                "interval_ms": 60,
+                "wait_ms": 180,
+            },
+            {
+                "highlighted_now": "Request Docking",
+                "observation": "Docking request granted banner visible",
+                "action": "VERIFIED_DONE",
+                "cleanup_keys": ["shift+1"],
+                "reason": "Docking request granted.",
+            },
+        ])
+
+        def fake_vision(frame, prompt, fast_mode=True):
+            seen_prompts.append(prompt)
+            return next(responses)
+
+        pressed_keys = []
+        pressed_combos = []
+        with patch("tools.os_controls.focus_window"), \
+             patch("core.game_nav.send_directinput_key", side_effect=lambda k, duration_sec=0.08: pressed_keys.append(k)), \
+             patch("core.game_nav.send_directinput_combo", side_effect=lambda mods, k, hold_duration=0.08: pressed_combos.append((list(mods), k))), \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)), \
+             patch.object(nav, "_call_vision_json", side_effect=fake_vision):
+            res = nav.complete_ui_task("Request docking", max_steps=4)
+
+        self.assertEqual(res["status"], "verified_done")
+        # Prompt must contain the player's actual synced binds (including shift+1 and arrow keys)
+        self.assertIn("PLAYER'S ACTUAL SYNCED UI / PANEL KEYBINDS", seen_prompts[0])
+        self.assertIn('"shift+1"', seen_prompts[0])
+        self.assertIn('"up"', seen_prompts[0])
+        self.assertIn('"down"', seen_prompts[0])
+        self.assertIn('"backspace"', seen_prompts[0])
+        # Modifier combo executed both during KEYS step and cleanup_keys!
+        self.assertEqual(pressed_combos, [(["shift"], "1"), (["shift"], "1")])
+        self.assertEqual(pressed_keys, ["e", "down", "space"])
+
+    def test_context_aware_sequences_pick_matching_vehicle_variant_and_compound_conditions(self):
+        from core.game_macro_runner import MacroRunner, evaluate_condition
+
+        # Compound condition evaluator checks
+        self.assertTrue(evaluate_condition("state.in_srv or state.on_foot", {"in_srv": False, "on_foot": True}))
+        self.assertFalse(evaluate_condition("state.in_srv or state.on_foot", {"in_srv": False, "on_foot": False}))
+        self.assertTrue(evaluate_condition("(state.docked or state.landed) and state.in_main_ship", {"docked": False, "landed": True, "in_main_ship": True}))
+        self.assertFalse(evaluate_condition("(state.docked or state.landed) and state.in_main_ship", {"docked": False, "landed": True, "in_main_ship": False}))
+
+        profile = {
+            "display_name": "Space Sim",
+            "keybinds": {
+                "ship disembark key": {"key": "f", "modifiers": []},
+                "srv disembark key": {"key": "g", "modifiers": []},
+            },
+            "sequences": {
+                "disembark from ship": {
+                    "condition": "(state.docked or state.landed) and state.in_main_ship",
+                    "condition_skip_ack": "Must be docked or landed in main ship.",
+                    "ack": "Leaving ship on foot.",
+                    "aliases": ["disembark", "get out"],
+                    "sync": True,
+                    "steps": [{"action": "trigger_bind", "phrase": "ship disembark key"}],
+                },
+                "disembark from srv": {
+                    "condition": "state.in_srv",
+                    "condition_skip_ack": "Not in SRV.",
+                    "ack": "Leaving SRV on foot.",
+                    "aliases": ["disembark", "get out"],
+                    "sync": True,
+                    "steps": [{"action": "trigger_bind", "phrase": "srv disembark key"}],
+                },
+            },
+        }
+        runner = MacroRunner()
+        pressed = []
+
+        class _FakeAdapter:
+            def __init__(self, flags):
+                self._flags = flags
+
+            def get_state_flags(self):
+                return dict(self._flags)
+
+        with patch("tools.os_controls.send_directinput_key", side_effect=lambda k, **kw: (pressed.append(k), True)[1]):
+            # When landed in main ship -> picks "disembark from ship" (key 'f')
+            res_ship = runner.execute_action("disembark", profile, _FakeAdapter({"landed": True, "in_main_ship": True, "in_srv": False}))
+            self.assertEqual(res_ship["status"], "executed")
+            self.assertEqual(res_ship["ack"], "Leaving ship on foot.")
+            # When driving SRV -> same phrase "disembark" picks "disembark from srv" (key 'g')!
+            res_srv = runner.execute_action("disembark", profile, _FakeAdapter({"landed": False, "in_main_ship": False, "in_srv": True}))
+            self.assertEqual(res_srv["status"], "executed")
+            self.assertEqual(res_srv["ack"], "Leaving SRV on foot.")
+            # When flying in space -> neither matches, skips gracefully with condition_skip_ack
+            res_fly = runner.execute_action("disembark", profile, _FakeAdapter({"landed": False, "docked": False, "in_main_ship": True, "in_srv": False}))
+            self.assertEqual(res_fly["status"], "condition_skipped")
+        self.assertEqual(pressed, ["f", "g"])
+
+    def test_declarative_news_feed_strips_html_truncates_and_works_with_empty_query(self):
+        from core.game_intel import query_declarative_intel
+        from core.game_modules import get_module_for_game
+
+        mod = get_module_for_game("elite_dangerous")
+        self.assertIsNotNone(mod)
+        news_ep = mod["intel_endpoints"]["news"]
+        self.assertEqual(news_ep["method"], "GET")
+
+        fake_feed = {
+            "data": [
+                {
+                    "attributes": {
+                        "title": "New Starport Construction Announced",
+                        "field_galnet_date": "19 NOV 3312",
+                        "body": {
+                            "value": "<p>Brewer Corporation &amp; allies have announced a <b>major</b> initiative " + ("spanning many systems " * 25) + "</p>"
+                        },
+                    }
+                }
+            ]
+        }
+        with patch("core.game_intel._http_json", return_value=fake_feed):
+            res = query_declarative_intel(news_ep, query="", location="Sol")
+
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["count"], 1)
+        row = res["results"][0]
+        self.assertEqual(row["title"], "New Starport Construction Announced")
+        self.assertEqual(row["date"], "19 NOV 3312")
+        self.assertNotIn("<p>", row["summary"])
+        self.assertNotIn("<b>", row["summary"])
+        self.assertIn("Brewer Corporation & allies", row["summary"])
+        self.assertTrue(row["summary"].endswith("..."))
+        self.assertLessEqual(len(row["summary"]), 285)
+
+
+class TestProjectTrackerConstructionPOIAndCargoManifest(unittest.TestCase):
+    def test_project_tracker_auto_updates_scratchpad_poi_and_cargo_manifest(self):
+        from core.telemetry.declarative import DeclarativeFileTelemetryAdapter
+        from core.game_manager import GameManager
+        from core.game_modules import get_module_for_game
+
+        mod = get_module_for_game("elite_dangerous")
+        self.assertIsNotNone(mod)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ed_dir = Path(tmp) / "ed_logs"
+            ed_dir.mkdir()
+            # Write Cargo.json with 1298 Aluminium
+            (ed_dir / "Cargo.json").write_text(json.dumps({
+                "timestamp": "2026-11-24T16:17:00Z",
+                "event": "Cargo",
+                "Vessel": "Ship",
+                "Count": 1298,
+                "Inventory": [
+                    {"Name": "aluminium", "Name_Localised": "Aluminium", "Count": 1298}
+                ],
+            }), encoding="utf-8")
+
+            # Write a journal with Loadout, Docked at SpaceConstructionDepot, Depot snapshot, and Contribution
+            journal_lines = [
+                json.dumps({
+                    "timestamp": "2026-11-24T16:09:08Z",
+                    "event": "Loadout",
+                    "Ship": "panthermkii",
+                    "ShipName": "HAULER ONE",
+                    "CargoCapacity": 1298,
+                    "MaxJumpRange": 38.13,
+                    "HullHealth": 1.0,
+                }),
+                json.dumps({
+                    "timestamp": "2026-11-24T16:09:08Z",
+                    "event": "Docked",
+                    "StationName": "Orbital Construction Site: Naylor's Progress",
+                    "StationType": "SpaceConstructionDepot",
+                    "MarketID": 3961205506,
+                    "StarSystem": "Col 285 Sector SJ-Q d5-68",
+                    "Body": "Col 285 Sector SJ-Q d5-68 A 4",
+                }),
+                json.dumps({
+                    "timestamp": "2026-11-24T16:09:09Z",
+                    "event": "ColonisationConstructionDepot",
+                    "MarketID": 3961205506,
+                    "ConstructionProgress": 0.581,
+                    "ConstructionComplete": False,
+                    "ConstructionFailed": False,
+                    "ResourcesRequired": [
+                        {"Name": "$aluminium_name;", "Name_Localised": "Aluminium", "RequiredAmount": 1394, "ProvidedAmount": 0},
+                        {"Name": "$titanium_name;", "Name_Localised": "Titanium", "RequiredAmount": 809, "ProvidedAmount": 0},
+                    ],
+                }),
+            ]
+            jpath = ed_dir / "Journal.2026-11-24T110710.01.log"
+            jpath.write_text("\n".join(journal_lines) + "\n", encoding="utf-8")
+
+            # Set up GameManager with a stale manual scratchpad line + personal note
+            pfile = Path(tmp) / "profiles.json"
+            mgr = GameManager(profiles_path=str(pfile))
+            mgr.add_game("Elite Dangerous", process_name="EliteDangerous64.exe")
+            gid = mgr.data["active_profile"]
+            prof = mgr.get_profile(gid)
+            prof["scratchpad_raw"] = (
+                "Personal reminder: upgrade FSD booster.\n"
+                "Station requirements for Orbital Construction Site: Naylor's Progress: Aluminium (1394), Titanium (809), Copper (122)."
+            )
+
+            tel_cfg = dict(mod["telemetry"])
+            tel_cfg["dir"] = str(ed_dir)
+            prof["telemetry"] = tel_cfg
+
+            adapter = DeclarativeFileTelemetryAdapter(game_id=gid, profile=prof, journal_dir=str(ed_dir))
+            adapter.on_project_update = lambda pid, pdata: mgr.sync_project_tracker_to_scratchpad(gid, pid, pdata)
+            adapter.on_poi_update = lambda pid, pdata: mgr.sync_tracked_poi_to_profile(gid, pid, pdata)
+            adapter._file_handle = open(jpath, "r", encoding="utf-8")
+            adapter._rehydrate_initial_state()
+            adapter.refresh_companion_files()
+            adapter._file_handle.close()
+
+            # 1. Construction Site auto-tracked as POI (keyed by MarketID so multiple sites coexist)
+            pois = adapter.get_state().get("tracked_pois", {})
+            site1_poi_key = "construction_site_3961205506"
+            self.assertIn(site1_poi_key, pois)
+            self.assertEqual(pois[site1_poi_key]["name"], "Naylor's Progress")
+            self.assertEqual(pois[site1_poi_key]["system"], "Col 285 Sector SJ-Q d5-68")
+            self.assertIn("Orbital Construction Site: Naylor's Progress", pois[site1_poi_key]["aliases"])
+            self.assertIn("construction site", pois[site1_poi_key]["aliases"])
+            # Also persisted to profile known_pois!
+            self.assertEqual(prof["known_pois"][site1_poi_key]["system"], "Col 285 Sector SJ-Q d5-68")
+
+            # 2. Cargo hold manifest + capacity + jump range appear in summary context
+            summary = adapter.get_summary_prompt_context()
+            self.assertIn("Cargo: 1298 / 1298 (Aluminium x1298)", summary)
+            self.assertIn("Max Jump: 38.1 LY", summary)
+            self.assertIn("Naylor's Progress", summary)
+            self.assertIn("Aluminium (1394)", summary)
+
+            # 3. Live ColonisationContribution immediately subtracts 1298 Aluminium -> 96 remaining AND updates scratchpad!
+            contrib_line = json.dumps({
+                "timestamp": "2026-11-24T16:23:04Z",
+                "event": "ColonisationContribution",
+                "MarketID": 3961205506,
+                "Contributions": [
+                    {"Name": "$Aluminium_name;", "Name_Localised": "Aluminium", "Amount": 1298}
+                ],
+            })
+            adapter._parse_event_line(contrib_line, is_initial_sync=False)
+
+            site1_proj_key = "active_construction_3961205506"
+            proj = adapter.get_state()["active_projects"][site1_proj_key]
+            alu = next(r for r in proj["resources"] if r["name"] == "Aluminium")
+            self.assertEqual(alu["provided"], 1298)
+            self.assertEqual(alu["remaining"], 96)
+
+            # 4. Visiting a SECOND construction project tracks BOTH simultaneously without overwriting Site 1!
+            adapter._parse_event_line(json.dumps({
+                "timestamp": "2026-11-24T16:40:00Z",
+                "event": "Docked",
+                "StationName": "Planetary Construction Site: Frontier Outpost",
+                "StationType": "PlanetaryConstructionDepot",
+                "MarketID": 4000099999,
+                "StarSystem": "HIP 99999",
+                "Body": "HIP 99999 B 2",
+            }), is_initial_sync=False)
+            adapter._parse_event_line(json.dumps({
+                "timestamp": "2026-11-24T16:40:02Z",
+                "event": "ColonisationConstructionDepot",
+                "MarketID": 4000099999,
+                "ConstructionProgress": 0.25,
+                "ConstructionComplete": False,
+                "ConstructionFailed": False,
+                "ResourcesRequired": [
+                    {"Name": "$steel_name;", "Name_Localised": "Steel", "RequiredAmount": 500, "ProvidedAmount": 100},
+                ],
+            }), is_initial_sync=False)
+
+            self.assertIn("construction_site_4000099999", prof["known_pois"])
+            self.assertIn(site1_poi_key, prof["known_pois"])
+            self.assertEqual(prof["known_pois"]["construction_site_4000099999"]["name"], "Frontier Outpost")
+            self.assertEqual(prof["known_pois"]["construction_site_4000099999"]["system"], "HIP 99999")
+
+            # Scratchpad preserves personal note, replaced stale 1394 line, AND lists BOTH concurrent projects!
+            sp = prof["scratchpad_raw"]
+            self.assertIn("Personal reminder: upgrade FSD booster.", sp)
+            self.assertNotIn("Aluminium (1394)", sp)
+            self.assertIn("Naylor's Progress", sp)
+            self.assertIn("Aluminium (96)", sp)
+            self.assertIn("Titanium (809)", sp)
+            self.assertIn("Last delivery: Aluminium x1298", sp)
+            self.assertIn("Frontier Outpost (HIP 99999)", sp)
+            self.assertIn("Steel (400)", sp)
+            mgr.close()
+
+    def test_chitchat_random_timers_topics_natural_profanity_and_user_yield_guard(self):
+        from core.game_triggers import CompanionChitChatManager
+        from core.game_manager import GameManager
+        from core.game_nav import UniversalGameNavigator
+        from core.game_modules import get_module_for_game
+
+        # 1. Verify "take us out" upgraded to ui_task in Elite module
+        mod = get_module_for_game("elite_dangerous")
+        self.assertEqual(mod["sequences"]["take us out"]["steps"][0]["action"], "ui_task")
+
+        # 2. Verify background ui_task immediately yields if player moves mouse & skips cleanup_keys
+        nav = UniversalGameNavigator(client=MagicMock(), target_process="SpaceSim.exe", game_name="Space Sim")
+        cursor_positions = iter([(100, 100), (450, 450)])
+        with patch("tools.os_controls.focus_window"), \
+             patch("win32api.GetCursorPos", side_effect=lambda: next(cursor_positions)), \
+             patch.object(nav, "capture_viewport", return_value=(b"jpg", 1920, 1080)):
+            res_yield = nav.complete_ui_task(
+                "Repair ship",
+                max_steps=3,
+                abort_on_user_input=True,
+                allow_cleanup_keys=False,
+            )
+        self.assertEqual(res_yield["status"], "aborted_user_active")
+
+        # 3. Verify randomized Chit-Chat timers, topic checkboxes, persistent history, and sparse profanity
+        with tempfile.TemporaryDirectory() as tmp:
+            pfile = Path(tmp) / "profiles.json"
+            mgr = GameManager(profiles_path=str(pfile))
+            mgr.add_game("Space Sim", process_name="SpaceSim.exe")
+            gid = mgr.data["active_profile"]
+            res_set = mgr.set_chitchat_settings(
+                gid,
+                frequency="chatty",
+                screen_peek=False,
+                allow_profanity=True,
+                emotive_voice=True,
+                topic_jokes=True,
+                topic_facts=True,
+                topic_relevant=False,
+            )
+            self.assertTrue(res_set["success"])
+            self.assertTrue(res_set["topic_jokes"])
+            self.assertFalse(res_set["topic_relevant"])
+
+            mgr.record_chitchat_history(gid, "joke: navigation humor (Sol)")
+            cc = CompanionChitChatManager(mgr, engine=MagicMock())
+            cc.stop()
+            cc._roll_timers_locked("chatty")
+            self.assertGreaterEqual(cc._next_idle_sec, 60.0)
+            self.assertLessEqual(cc._next_idle_sec, 240.0)
+
+            settings = cc._get_settings(gid)
+            # First session remark must NEVER allow profanity even if allow_profanity=True
+            self.assertFalse(cc._should_allow_profanity_now(settings, urgent=True, peek_mood="combat"))
+            # Jokes & facts must NEVER allow profanity even later in session
+            cc._session_chitchat_count = 3
+            self.assertFalse(cc._should_allow_profanity_now(settings, urgent=True, banter_angle="joke"))
+            self.assertFalse(cc._should_allow_profanity_now(settings, urgent=True, banter_angle="fact"))
+
+            # Topic pool with only jokes + facts enabled should only pick joke or fact
+            picked = {cc._pick_idle_banter_angle(settings)[0] for _ in range(4)}
+            self.assertEqual(picked, {"joke", "fact"})
+
+            prompt = cc._build_chitchat_prompt(gid, "Quiet stretch in Sol", settings, banter_angle="joke", theme_seed="engineering")
+            self.assertIn("STRICT ANTI-REPETITION", prompt)
+            self.assertIn("joke: navigation humor (Sol)", prompt)
+            self.assertIn("no profanity on this line", prompt)
+
+            # 4. Verify chat channel filtering & foreign-language translation relay
+            mgr.game_mode_enabled = True
+            mgr.is_game_running = lambda _g=None: True
+            fake_engine = MagicMock()
+            fake_engine.is_running = True
+            fake_engine.is_speaking = False
+            fake_engine._is_speaking = False
+            fake_engine.is_user_speaking = False
+            fake_engine._user_speaking = False
+            cc.engine = fake_engine
+            dispatched_prompts = []
+            with patch("core.game_triggers._dispatch_engine_proactive_prompt", side_effect=lambda _e, p: (dispatched_prompts.append(p), True)[1]):
+                # NPC chat is OFF by default -> must NOT relay!
+                self.assertFalse(cc.on_telemetry_event(gid, "ReceiveText", {"Channel": "npc", "From": "Station", "Message_Localised": "Observe protocol"}, {}))
+                # System chat is OFF by default -> must NOT relay!
+                self.assertFalse(cc.on_telemetry_event(gid, "ReceiveText", {"Channel": "starsystem", "From": "RandomPilot", "Message": "o7"}, {}))
+                # Player chat is ON + translate ON -> MUST relay with English translation instruction!
+                self.assertTrue(cc.on_telemetry_event(gid, "ReceiveText", {"Channel": "player", "From": "George0001", "Message": "¿Dónde están todos los Thargoids?"}, {}))
+            self.assertEqual(len(dispatched_prompts), 1)
+            self.assertIn("George0001", dispatched_prompts[0])
+            self.assertIn("¿Dónde están todos los Thargoids?", dispatched_prompts[0])
+            self.assertIn("translate it naturally into English", dispatched_prompts[0])
+
+            # 5. Verify combined dock trigger, KGBFOAM StartJump derivation, and FuelLevel threshold triggers
+            el_triggers = {t["id"]: t for t in mod["default_triggers"]}
+            self.assertIn("auto_dock_services", el_triggers)
+            self.assertIn("auto_scoopable_star_callout", el_triggers)
+            self.assertIn("auto_fuel_low_25", el_triggers)
+            self.assertIn("auto_fuel_critical_10", el_triggers)
+
+            from core.telemetry.declarative import DeclarativeFileTelemetryAdapter
+            with tempfile.TemporaryDirectory() as td:
+                tp = Path(td)
+                (tp / "Status.json").write_text(json.dumps({"Fuel": {"FuelMain": 3.0}, "Flags": 0}), encoding="utf-8")
+                prof_el = {"display_name": "Elite Dangerous", "telemetry": {**mod["telemetry"], "dir": td}}
+                el_adp = DeclarativeFileTelemetryAdapter(game_id="elite_dangerous", profile=prof_el, journal_dir=td)
+                fired_events = []
+                el_adp.on_event = lambda ev_t, raw_e, st_s: fired_events.append((ev_t, dict(st_s)))
+                # Loadout sets FuelCapacity.Main = 32 -> 3.0 / 32 = 9.4% (<10%)
+                el_adp._parse_event_line(json.dumps({"event": "Loadout", "Ship": "panthermkii", "FuelCapacity": {"Main": 32.0}}))
+                el_adp._parse_event_line(json.dumps({"event": "StartJump", "JumpType": "Hyperspace", "StarSystem": "Deciat", "StarClass": "K"}))
+                self.assertEqual(el_adp.get_state()["next_star_scoopable"], "Scoopable (KGBFOAM)")
+                el_adp._parse_event_line(json.dumps({"event": "StartJump", "JumpType": "Hyperspace", "StarSystem": "HIP 1", "StarClass": "L"}))
+                self.assertEqual(el_adp.get_state()["next_star_scoopable"], "NOT scoopable")
+                el_adp._poll_status_file()
+                self.assertAlmostEqual(el_adp.get_state()["fuel_pct"], 9.4, places=1)
+                self.assertTrue(any(ev_t == "FuelLevel" for ev_t, _ in fired_events))
+            mgr.close()
+
+    def test_declarative_trade_pair_computes_station_to_station_profits_and_trip_total(self):
+        from core.game_intel import query_declarative_intel
+        from core.game_modules import get_module_for_game
+
+        mod = get_module_for_game("elite_dangerous")
+        trade_ep = mod["intel_endpoints"]["trade"]
+        self.assertEqual(trade_ep["mode"], "trade_pair")
+
+        def fake_http(url, method="POST", payload=None, timeout_sec=10.0, headers=None):
+            sname = ((payload or {}).get("filters") or {}).get("name", {}).get("value", "")
+            if sname == "Harebell 4":
+                return {
+                    "results": [{
+                        "name": "Harebell 4",
+                        "system_name": "HIP 75521",
+                        "market": [
+                            {"commodity": "Lepidolite", "buy_price": 457, "supply": 20000},
+                            {"commodity": "Progenitor Cells", "buy_price": 5826, "supply": 15000},
+                            {"commodity": "Biowaste", "buy_price": 500, "supply": 0},
+                        ],
+                    }]
+                }
+            return {
+                "results": [{
+                    "name": "Washer Industries",
+                    "system_name": "Col 285 Sector OE-F c12-5",
+                    "market": [
+                        {"commodity": "Lepidolite", "sell_price": 3999, "demand": 1},
+                        {"commodity": "Progenitor Cells", "sell_price": 7445, "demand": 171326},
+                        {"commodity": "Biowaste", "sell_price": 900, "demand": 500},
+                    ],
+                }]
+            }
+
+        tel = {"station": "Harebell 4", "star_system": "HIP 75521", "cargo_capacity": 1298, "cargo_count": 164}
+        with patch("core.game_intel._http_json", side_effect=fake_http):
+            res = query_declarative_intel(
+                trade_ep,
+                query="Washer Industries",
+                location="Col 285 Sector OE-F c12-5",
+                telemetry_state=tel,
+            )
+
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["count"], 2)  # Biowaste excluded (0 supply)
+        self.assertEqual(res["results"][0]["commodity"], "Lepidolite")
+        self.assertEqual(res["results"][0]["profit_per_unit"], 3542)
+        self.assertFalse(res["results"][0]["high_demand"])
+        self.assertEqual(res["results"][1]["commodity"], "Progenitor Cells")
+        self.assertTrue(res["results"][1]["high_demand"])
+        self.assertEqual(res["results"][1]["haul_qty"], 1134)  # 1298 - 164 free cargo!
+        self.assertEqual(res["results"][1]["est_trip_profit"], 1619 * 1134)
+        self.assertIn("[low demand]", res["intel"])
+
+    def test_declarative_shopping_list_ranks_one_stop_stations_and_excludes_carriers(self):
+        from core.game_intel import query_declarative_intel, _VALUE_RESOLVER_CACHE
+        from core.game_modules import get_module_for_game
+
+        _VALUE_RESOLVER_CACHE.clear()
+        mod = get_module_for_game("elite_dangerous")
+        shop_ep = mod["intel_endpoints"]["shopping_list"]
+        self.assertEqual(shop_ep["mode"], "shopping_list")
+
+        fake_vocab = {"values": ["Aluminium", "Titanium", "Polymers", "Copper"]}
+        fake_stations = {
+            "results": [
+                {
+                    "name": "PRIVATE CARRIER",
+                    "system_name": "Sol",
+                    "type": "Drake-Class Carrier",
+                    "distance": 0.5,
+                    "large_pads": 8,
+                    "market": [
+                        {"commodity": "Aluminium", "buy_price": 1000, "supply": 5000},
+                        {"commodity": "Titanium", "buy_price": 1000, "supply": 5000},
+                        {"commodity": "Polymers", "buy_price": 1000, "supply": 5000},
+                    ],
+                },
+                {
+                    "name": "Small Depot",
+                    "system_name": "Sol",
+                    "type": "Coriolis Starport",
+                    "distance": 2.0,
+                    "large_pads": 4,
+                    "market": [
+                        {"commodity": "Aluminium", "buy_price": 1900, "supply": 500},
+                    ],
+                },
+                {
+                    "name": "Mega Hub",
+                    "system_name": "Alpha Centauri",
+                    "type": "Orbis Starport",
+                    "distance": 4.3,
+                    "large_pads": 6,
+                    "market": [
+                        {"commodity": "Aluminium", "buy_price": 1800, "supply": 5000},
+                        {"commodity": "Titanium", "buy_price": 900, "supply": 4000},
+                        {"commodity": "Polymers", "buy_price": 200, "supply": 3000},
+                    ],
+                },
+            ]
+        }
+        tel = {
+            "star_system": "Sol",
+            "needs_large_pad": True,
+            "active_projects": {
+                "active_construction_1": {
+                    "name": "Naylor's Progress",
+                    "complete": False,
+                    "resources": [
+                        {"name": "Aluminium", "remaining": 96},
+                        {"name": "Titanium", "remaining": 809},
+                        {"name": "Polymers", "remaining": 390},
+                        {"name": "Steel", "remaining": 0},
+                    ],
+                }
+            },
+        }
+        with patch("core.game_intel._http_json", side_effect=[fake_vocab, fake_stations]):
+            res = query_declarative_intel(shop_ep, query="project", location="Sol", telemetry_state=tel)
+
+        self.assertEqual(res["status"], "success")
+        # Carrier must be excluded; Mega Hub (3/3) must beat Small Depot (1/3) even though slightly farther!
+        self.assertEqual(res["count"], 2)
+        self.assertEqual(res["results"][0]["station"], "Mega Hub")
+        self.assertEqual(res["results"][0]["matched_count"], 3)
+        self.assertEqual(res["results"][0]["total_needed"], 3)
+        self.assertEqual(res["results"][0]["full_cover_count"], 3)
+        self.assertIn("Stocks 3/3 items", res["intel"])
 
 
 if __name__ == "__main__":

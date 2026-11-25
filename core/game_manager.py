@@ -158,7 +158,6 @@ class GameManager:
         self.data = self._load_profiles()
         self.active_telemetry_adapter: Optional[BaseTelemetryAdapter] = None
         self.macro_runner = MacroRunner()
-        self._init_telemetry_watchers()
 
         # Dedicated Game Mode state & automatic foreground window watcher
         self.game_mode_enabled: bool = False
@@ -169,12 +168,13 @@ class GameManager:
         self._stop_foreground_watcher = threading.Event()
         self._last_detected_game: Optional[str] = None
 
-        # Check if a configured game is already running at startup
+        # Only activate Game Mode and start telemetry watchers at startup if a configured game is actually running
         detected = self.detect_foreground_game() or self.detect_running_game()
         if detected:
             self.data["active_profile"] = detected
             self.game_mode_enabled = True
             self._last_detected_game = detected
+            self._update_telemetry_adapter(detected)
         else:
             self.game_mode_enabled = False
             self._last_detected_game = None
@@ -224,6 +224,14 @@ class GameManager:
             profile=prof,
             on_milestone=on_milestone
         )
+        if hasattr(self.active_telemetry_adapter, "on_project_update"):
+            self.active_telemetry_adapter.on_project_update = (
+                lambda pid, pdata, _gid=game_id: self.sync_project_tracker_to_scratchpad(_gid, pid, pdata)
+            )
+        if hasattr(self.active_telemetry_adapter, "on_poi_update"):
+            self.active_telemetry_adapter.on_poi_update = (
+                lambda pid, pdata, _gid=game_id: self.sync_tracked_poi_to_profile(_gid, pid, pdata)
+            )
         if hasattr(self, "on_telemetry_event") and callable(self.on_telemetry_event):
             def _on_ev(ev_type: str, raw_ev: Dict[str, Any], st_snap: Dict[str, Any], _gid=game_id):
                 try:
@@ -232,6 +240,168 @@ class GameManager:
                     pass
             self.active_telemetry_adapter.on_event = _on_ev
         self.active_telemetry_adapter.start()
+
+    def sync_project_tracker_to_scratchpad(
+        self,
+        game_id: str,
+        project_id: str,
+        project_data: Dict[str, Any],
+    ) -> bool:
+        """
+        Automatically persists & syncs one or more declarative `project_trackers` into a clearly
+        delimited managed block in `profile['scratchpad_raw']`, preserving all user-written notes
+        above/below it (100% game-agnostic). Supports tracking multiple concurrent projects!
+        Returns True if scratchpad or persisted project state changed.
+        """
+        if not isinstance(project_data, dict) or not project_data.get("sync_to_scratchpad"):
+            return False
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return False
+
+            tracked_projects = profile.setdefault("tracked_projects", {})
+            # Deduplicate any legacy un-suffixed key with the same entity_id
+            new_eid = str(project_data.get("entity_id") or "").strip()
+            if new_eid:
+                for old_k in list(tracked_projects.keys()):
+                    if old_k != project_id and str((tracked_projects.get(old_k) or {}).get("entity_id") or "").strip() == new_eid:
+                        tracked_projects.pop(old_k, None)
+            tracked_projects[project_id] = dict(project_data)
+
+            start_marker = "--- LIVE PROJECT TRACKER (AUTO-UPDATED) ---"
+            end_marker = "--- END LIVE PROJECT TRACKER ---"
+
+            # Sort: in-progress projects first (newest updated first), completed projects below
+            ordered_projects = sorted(
+                [p for p in tracked_projects.values() if isinstance(p, dict) and p.get("sync_to_scratchpad")],
+                key=lambda p: (bool(p.get("complete")), -float(p.get("updated_at") or 0.0)),
+            )
+
+            block_lines = [start_marker]
+            all_names_low = []
+            for idx, pdata in enumerate(ordered_projects):
+                if idx > 0:
+                    block_lines.append("")
+                label = str(pdata.get("label") or "Active Project").strip()
+                pname = str(pdata.get("name") or pdata.get("id") or "Project").strip()
+                all_names_low.append(pname.lower())
+                psys = str(pdata.get("system") or "").strip()
+                sys_part = f" ({psys})" if psys and psys.lower() != "unknown" else ""
+                pct = pdata.get("progress_pct", 0.0)
+                complete = bool(pdata.get("complete"))
+
+                if complete:
+                    block_lines.append(f"{label}: {pname}{sys_part} — COMPLETE (100%)")
+                else:
+                    rem_items = [
+                        r for r in (pdata.get("resources") or [])
+                        if isinstance(r, dict) and int(r.get("remaining") or 0) > 0
+                    ]
+                    rem_items.sort(key=lambda r: int(r.get("remaining") or 0), reverse=True)
+                    rem_total = int(pdata.get("remaining_total") or sum(int(r.get("remaining") or 0) for r in rem_items))
+                    block_lines.append(f"{label}: {pname}{sys_part} — {pct}% complete")
+                    if rem_items:
+                        items_str = ", ".join(f"{r['name']} ({r['remaining']})" for r in rem_items)
+                        block_lines.append(f"Remaining ({rem_total} total across {len(rem_items)} items): {items_str}")
+                    else:
+                        block_lines.append("Remaining: 0 (all required materials delivered!)")
+                    if pdata.get("last_delivery"):
+                        block_lines.append(f"Last delivery: {pdata['last_delivery']}")
+            block_lines.append(end_marker)
+            managed_block = "\n".join(block_lines)
+
+            existing_raw = str(profile.get("scratchpad_raw") or "")
+            pattern = re.compile(
+                re.escape(start_marker) + r".*?" + re.escape(end_marker),
+                flags=re.DOTALL,
+            )
+            if pattern.search(existing_raw):
+                new_raw = pattern.sub(lambda _m: managed_block, existing_raw).strip()
+            else:
+                # Strip any stale static one-line checklist for any tracked project name to avoid conflicting totals
+                kept_lines = []
+                for ln in existing_raw.splitlines():
+                    ln_low = ln.lower()
+                    if (
+                        any(len(pn) >= 5 and pn in ln_low for pn in all_names_low)
+                        and "requirements for" in ln_low
+                        and ln.count("(") >= 3
+                    ):
+                        continue
+                    kept_lines.append(ln)
+                user_part = "\n".join(kept_lines).strip()
+                new_raw = f"{user_part}\n\n{managed_block}" if user_part else managed_block
+
+            if new_raw == existing_raw.strip():
+                return False
+            profile["scratchpad_raw"] = new_raw
+            self._save_profiles(self.data, target_game_id=game_id)
+            return True
+
+    def sync_tracked_poi_to_profile(
+        self,
+        game_id: str,
+        poi_id: str,
+        poi_data: Dict[str, Any],
+    ) -> bool:
+        """
+        Persists auto-discovered live POIs (from declarative `poi_trackers`) into `profile['known_pois']`
+        so course plotting resolves them even across restarts, without overwriting manual user edits.
+        """
+        if not poi_id or not isinstance(poi_data, dict):
+            return False
+        psys = str(poi_data.get("system") or "").strip()
+        pname = str(poi_data.get("name") or "").strip()
+        if not psys or psys.lower() == "unknown" or not pname:
+            return False
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return False
+            known = profile.setdefault("known_pois", {})
+            # Deduplicate any legacy un-suffixed telemetry POI with the same entity_id
+            new_eid = str(poi_data.get("entity_id") or "").strip()
+            if new_eid:
+                for old_k in list(known.keys()):
+                    old_v = known.get(old_k)
+                    if (
+                        old_k != poi_id
+                        and isinstance(old_v, dict)
+                        and old_v.get("source") == "telemetry"
+                        and str(old_v.get("entity_id") or "").strip() == new_eid
+                    ):
+                        known.pop(old_k, None)
+            existing = known.get(poi_id) if isinstance(known.get(poi_id), dict) else None
+            # Respect explicit manual/voice overrides unless entity_id changed to a newer site
+            if existing and existing.get("source") in ("manual", "voice"):
+                if not poi_data.get("entity_id") or str(existing.get("entity_id") or "") == str(poi_data.get("entity_id")):
+                    return False
+            merged_aliases = list(dict.fromkeys(
+                [str(a).strip() for a in ((existing.get("aliases") if existing else None) or []) if str(a).strip()]
+                + [str(a).strip() for a in (poi_data.get("aliases") or []) if str(a).strip()]
+            ))
+            updated = {
+                "id": poi_id,
+                "name": pname,
+                "system": psys,
+                "callsign": str(poi_data.get("callsign") or (existing.get("callsign") if existing else "") or "").strip(),
+                "entity_id": str(poi_data.get("entity_id") or (existing.get("entity_id") if existing else "") or "").strip(),
+                "aliases": merged_aliases,
+                "source": "telemetry",
+                "updated_at": float(poi_data.get("updated_at") or time.time()),
+            }
+            if existing and (
+                existing.get("name") == updated["name"]
+                and existing.get("system") == updated["system"]
+                and existing.get("callsign") == updated["callsign"]
+                and existing.get("entity_id") == updated["entity_id"]
+                and existing.get("aliases") == updated["aliases"]
+            ):
+                return False
+            known[poi_id] = updated
+            self._save_profiles(self.data, target_game_id=game_id)
+            return True
 
     def _migrate_monolithic_to_dir(self) -> Dict[str, Any]:
         """Migrates monolithic games_profiles.json to individual data/games/<id>.json files."""
@@ -488,10 +658,18 @@ class GameManager:
             return True
         if game_id in self.data.get("profiles", {}):
             self.data["active_profile"] = game_id
-            if self.user_override_game_mode is not False:
-                self.game_mode_enabled = True
-                self.user_override_game_mode = True
-            self._update_telemetry_adapter(game_id)
+            running_now = self.is_game_running(game_id)
+            if running_now:
+                if self.user_override_game_mode is not False:
+                    self.game_mode_enabled = True
+                self._last_detected_game = game_id
+                self._update_telemetry_adapter(game_id)
+            else:
+                # Browsing/selecting a game profile in the UI while the game is NOT running
+                # must NOT engage Game Mode, telemetry watchers, Chit-Chat, or Vision polling.
+                if self.user_override_game_mode is not True:
+                    self.game_mode_enabled = False
+                self._update_telemetry_adapter("")
             self._save_profiles(self.data)
             self._notify_mode_changed()
             return True
@@ -1376,6 +1554,8 @@ class GameManager:
             if detected_id != active_id:
                 self.set_active_profile(detected_id)
             else:
+                if self.active_telemetry_adapter is None:
+                    self._update_telemetry_adapter(detected_id)
                 if self.user_override_game_mode is not False and not self.game_mode_enabled:
                     self.game_mode_enabled = True
                     self._notify_mode_changed()
@@ -1383,12 +1563,14 @@ class GameManager:
                     self._notify_mode_changed()
         else:
             if getattr(self, "_last_detected_game", None) is not None:
-                # Game just closed/terminated
+                # Game just closed/terminated — stop telemetry adapter and disable Game Mode
                 self.user_override_game_mode = None
+                self._update_telemetry_adapter("")
                 if self.game_mode_enabled:
                     self.game_mode_enabled = False
                     self._notify_mode_changed()
             elif self.user_override_game_mode is None and self.game_mode_enabled:
+                self._update_telemetry_adapter("")
                 self.game_mode_enabled = False
                 self._notify_mode_changed()
 
@@ -2329,12 +2511,58 @@ class GameManager:
             "pois": self.get_merged_pois(game_id),
         }
 
+    def get_special_instructions(self, game_id: str) -> Dict[str, Any]:
+        """Returns game-specific setup/special instructions (profile override or declarative module default)."""
+        profile = self.get_profile(game_id)
+        mod_default = ""
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            if isinstance(mod, dict) and mod.get("special_instructions"):
+                mod_default = str(mod["special_instructions"]).strip()
+        except Exception:
+            pass
+        if isinstance(profile, dict) and "special_instructions" in profile and profile["special_instructions"] is not None:
+            text = str(profile["special_instructions"])
+            is_custom = text.strip() != mod_default.strip()
+        else:
+            text = mod_default
+            is_custom = False
+        return {"text": text, "module_default": mod_default, "is_custom": is_custom}
+
+    def set_special_instructions(self, game_id: str, text: Optional[str]) -> Dict[str, Any]:
+        """Saves per-game special instructions (pass None to reset back to the module default)."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return {"success": False, "error": f"Game profile '{game_id}' not found."}
+        if text is None:
+            profile.pop("special_instructions", None)
+        else:
+            profile["special_instructions"] = str(text)
+        self._save_profiles(self.data, target_game_id=game_id)
+        info = self.get_special_instructions(game_id)
+        return {"success": True, **info}
+
     # --- Companion Chit-Chat Settings (100% Game-Agnostic) ---
 
     def get_chitchat_settings(self, game_id: str) -> Dict[str, Any]:
         profile = self.get_profile(game_id)
         if not profile:
-            return {"frequency": "off", "screen_peek": False, "allow_profanity": False, "emotive_voice": False}
+            return {
+                "frequency": "off",
+                "screen_peek": False,
+                "allow_profanity": False,
+                "emotive_voice": False,
+                "topic_jokes": False,
+                "topic_facts": True,
+                "topic_relevant": True,
+                "chat_local": False,
+                "chat_system": False,
+                "chat_npc": False,
+                "chat_squadron": True,
+                "chat_player": True,
+                "chat_translate": True,
+            }
         freq = str(profile.get("chitchat_frequency") or "off").strip().lower()
         if freq not in ("off", "rare", "occasional", "chatty"):
             freq = "off"
@@ -2343,6 +2571,15 @@ class GameManager:
             "screen_peek": bool(profile.get("chitchat_screen_peek", False)),
             "allow_profanity": bool(profile.get("chitchat_allow_profanity", False)),
             "emotive_voice": bool(profile.get("chitchat_emotive_voice", False)),
+            "topic_jokes": bool(profile.get("chitchat_topic_jokes", False)),
+            "topic_facts": bool(profile.get("chitchat_topic_facts", True)),
+            "topic_relevant": bool(profile.get("chitchat_topic_relevant", True)),
+            "chat_local": bool(profile.get("chitchat_chat_local", False)),
+            "chat_system": bool(profile.get("chitchat_chat_system", False)),
+            "chat_npc": bool(profile.get("chitchat_chat_npc", False)),
+            "chat_squadron": bool(profile.get("chitchat_chat_squadron", True)),
+            "chat_player": bool(profile.get("chitchat_chat_player", True)),
+            "chat_translate": bool(profile.get("chitchat_chat_translate", True)),
         }
 
     def set_chitchat_settings(
@@ -2352,6 +2589,15 @@ class GameManager:
         screen_peek: bool = False,
         allow_profanity: bool = False,
         emotive_voice: bool = False,
+        topic_jokes: bool = False,
+        topic_facts: bool = True,
+        topic_relevant: bool = True,
+        chat_local: bool = False,
+        chat_system: bool = False,
+        chat_npc: bool = False,
+        chat_squadron: bool = True,
+        chat_player: bool = True,
+        chat_translate: bool = True,
     ) -> Dict[str, Any]:
         profile = self.get_profile(game_id)
         if not profile:
@@ -2363,6 +2609,15 @@ class GameManager:
         profile["chitchat_screen_peek"] = bool(screen_peek)
         profile["chitchat_allow_profanity"] = bool(allow_profanity)
         profile["chitchat_emotive_voice"] = bool(emotive_voice)
+        profile["chitchat_topic_jokes"] = bool(topic_jokes)
+        profile["chitchat_topic_facts"] = bool(topic_facts)
+        profile["chitchat_topic_relevant"] = bool(topic_relevant)
+        profile["chitchat_chat_local"] = bool(chat_local)
+        profile["chitchat_chat_system"] = bool(chat_system)
+        profile["chitchat_chat_npc"] = bool(chat_npc)
+        profile["chitchat_chat_squadron"] = bool(chat_squadron)
+        profile["chitchat_chat_player"] = bool(chat_player)
+        profile["chitchat_chat_translate"] = bool(chat_translate)
         self._save_profiles(self.data, target_game_id=game_id)
         return {
             "success": True,
@@ -2370,7 +2625,32 @@ class GameManager:
             "screen_peek": bool(screen_peek),
             "allow_profanity": bool(allow_profanity),
             "emotive_voice": bool(emotive_voice),
+            "topic_jokes": bool(topic_jokes),
+            "topic_facts": bool(topic_facts),
+            "topic_relevant": bool(topic_relevant),
+            "chat_local": bool(chat_local),
+            "chat_system": bool(chat_system),
+            "chat_npc": bool(chat_npc),
+            "chat_squadron": bool(chat_squadron),
+            "chat_player": bool(chat_player),
+            "chat_translate": bool(chat_translate),
         }
+
+    def record_chitchat_history(self, game_id: str, entry: str, max_entries: int = 250) -> None:
+        """Persists up to 250 recent Chit-Chat joke/fact/topic entries so Aether avoids repeating itself across sessions."""
+        clean = str(entry or "").strip()[:180]
+        if not game_id or not clean:
+            return
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return
+            hist = profile.setdefault("chitchat_history", [])
+            if not isinstance(hist, list):
+                hist = []
+            hist.append(clean)
+            profile["chitchat_history"] = hist[-max(10, int(max_entries)):]
+            self._save_profiles(self.data, target_game_id=game_id)
 
     # --- Event Triggers (When / If -> Then) CRUD (100% Game-Agnostic) ---
 
@@ -2624,11 +2904,13 @@ Format strictly as valid JSON.
                 response_mime_type="application/json",
                 thinking_config=thinking_cfg,
             )
-            res = client.models.generate_content(
-                model=base_model,
-                contents=prompt,
-                config=gen_cfg,
-            )
+            from core.api_telemetry import api_feature_context
+            with api_feature_context("dossier_creation", "game_keybind_defaults"):
+                res = client.models.generate_content(
+                    model=base_model,
+                    contents=prompt,
+                    config=gen_cfg,
+                )
             raw_text = ""
             if res and getattr(res, "candidates", None):
                 cand = res.candidates[0]

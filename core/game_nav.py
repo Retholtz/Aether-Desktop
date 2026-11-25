@@ -8,7 +8,7 @@ import io
 import re
 import time
 import json
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 import mss
 from PIL import Image, ImageGrab
 
@@ -20,6 +20,7 @@ from tools.os_controls import (
     drag_viewport,
     zoom_viewport,
     send_directinput_key,
+    send_directinput_combo,
     move_mouse_absolute,
     click_mouse_button,
     drag_mouse_relative,
@@ -96,52 +97,64 @@ class UniversalGameNavigator:
         """Returns a low-latency JSON GenerateContentConfig (temperature=0.0, minimal/zero thinking)."""
         try:
             from google.genai import types
+            from core.model_discovery import build_thinking_config
 
             cfg_kwargs: Dict[str, Any] = {
                 "response_mime_type": "application/json",
                 "temperature": 0.0,
+                "max_output_tokens": 350,
             }
-            if hasattr(types, "ThinkingConfig"):
-                try:
-                    if fast_mode:
-                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-                    else:
-                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
-                except Exception:
-                    try:
-                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
-                    except Exception:
-                        pass
+            think_cfg = build_thinking_config(self.model_endpoint, thinking_level="none" if fast_mode else "low")
+            if think_cfg is not None:
+                cfg_kwargs["thinking_config"] = think_cfg
             return types.GenerateContentConfig(**cfg_kwargs)
         except Exception:
             return {"response_mime_type": "application/json", "temperature": 0.0}
 
-    def _call_vision_json(self, img_bytes: bytes, prompt: str, fast_mode: bool = False) -> Dict[str, Any]:
-        """Executes a low-latency structured-JSON multimodal call and parses the response."""
-        try:
-            from google.genai import types
-            part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
-            contents = [part, prompt]
-        except Exception:
-            contents = [
-                {
-                    "parts": [
-                        {"inline_data": {"mime_type": "image/jpeg", "data": img_bytes}},
-                        {"text": prompt},
-                    ]
-                }
-            ]
+    def _call_vision_json(
+        self,
+        img_bytes: bytes,
+        prompt: str,
+        fast_mode: bool = False,
+        resolution: str = "medium",
+        sub_action: str = "vision_step",
+        loop_step: int = 1,
+        roi_bbox: Optional[Tuple[float, float, float, float]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Executes a low-latency structured-JSON multimodal call with explicit per-image
+        `media_resolution` ('low' ~280 tok, 'medium' ~560 tok default, 'high' ~1,120 tok OCR only),
+        optional ROI panel cropping, automatic single-retry flex from 'medium' -> 'high' if text
+        is reported unreadable, and `cockpit_control` cost attribution.
+        """
+        from core.api_telemetry import api_feature_context, crop_image_roi, make_image_part
 
-        res = self.client.models.generate_content(
-            model=self.model_endpoint,
-            contents=contents,
-            config=self._build_low_latency_json_config(fast_mode=fast_mode),
-        )
-        raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
-        if raw_text.startswith("```"):
-            raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
-            raw_text = re.sub(r"\s*```$", "", raw_text)
-        return json.loads(raw_text) if raw_text else {}
+        work_bytes = crop_image_roi(img_bytes, roi_bbox) if roi_bbox else img_bytes
+
+        def _invoke(res_level: str, step_idx: int) -> Dict[str, Any]:
+            part = make_image_part(work_bytes, resolution=res_level, mime_type="image/jpeg")
+            contents = [part, prompt]
+            with api_feature_context("cockpit_control", sub_action, loop_step=step_idx, keep_latest_images=1):
+                res = self.client.models.generate_content(
+                    model=self.model_endpoint,
+                    contents=contents,
+                    config=self._build_low_latency_json_config(fast_mode=fast_mode),
+                )
+            raw_text = res.text.strip() if res and hasattr(res, "text") and res.text else ""
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                raw_text = re.sub(r"\s*```$", "", raw_text)
+            return json.loads(raw_text) if raw_text else {}
+
+        parsed = _invoke(resolution, loop_step)
+        # Automatic single retry flexing medium -> high ONLY if the model reports text was unreadable
+        if (
+            str(resolution).lower() == "medium"
+            and isinstance(parsed, dict)
+            and bool(parsed.get("unreadable"))
+        ):
+            parsed = _invoke("high", loop_step)
+        return parsed
 
     def _fetch_landmark_web_context(self, landmark_description: str) -> str:
         """
@@ -166,11 +179,13 @@ class UniversalGameNavigator:
                 f'In the video game "{self.game_name}", where on the world map is "{landmark_description}" located? '
                 f"Reply in 1-2 short sentences naming the region/province, nearby major landmarks, and cardinal direction."
             )
-            res = self.client.models.generate_content(
-                model=self.model_endpoint,
-                contents=prompt,
-                config=types.GenerateContentConfig(**cfg_kwargs),
-            )
+            from core.api_telemetry import api_feature_context
+            with api_feature_context("game_web_inquiry", "landmark_bearing"):
+                res = self.client.models.generate_content(
+                    model=self.model_endpoint,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**cfg_kwargs),
+                )
             return (res.text or "").strip() if res and hasattr(res, "text") else ""
         except Exception:
             return ""
@@ -573,8 +588,21 @@ If the element is not visible on screen, return {{"found": false}}.
                     send_directinput_key(resolved_map_key, duration_sec=0.12)
                 time.sleep(open_wait)
 
+        missing_binds: List[str] = []
+
+        def _press_resolved_bind(key_name: str, mods: List[str], hold_s: float) -> None:
+            if mods:
+                send_directinput_combo(mods, key_name, hold_duration=hold_s)
+            else:
+                send_directinput_key(key_name, duration_sec=hold_s)
+
         def _exec_routing_step(step_spec: Any) -> bool:
-            """Executes a declarative routing step: gamepad button (with keyboard fallback) or keyboard key."""
+            """
+            Executes a declarative routing step:
+            1. `bind_actions`: strictly pulls the user's synced keybind from profile (no hardcoded default overrides).
+            2. `gamepad`: optional ViGEmBus button (only when explicitly configured without `bind_actions`).
+            3. `key`: explicit key when no `bind_actions` is used.
+            """
             if isinstance(step_spec, str) and step_spec.strip():
                 send_directinput_key(step_spec.strip(), duration_sec=0.1)
                 time.sleep(0.35)
@@ -584,17 +612,30 @@ If the element is not visible on screen, return {{"found": false}}.
             hold_s = max(0.05, float(step_spec.get("hold_ms") or 100) / 1000.0)
             wait_s = max(0.05, float(step_spec.get("delay_ms") or 350) / 1000.0)
             sent = False
-            if step_spec.get("gamepad"):
-                try:
-                    from tools.os_controls import send_gamepad_button
-                    sent = bool(send_gamepad_button(str(step_spec["gamepad"]).strip(), duration_sec=hold_s))
-                except Exception:
-                    sent = False
-            if not sent and (step_spec.get("fallback_key") or step_spec.get("key")):
-                k = str(step_spec.get("fallback_key") or step_spec.get("key")).strip()
-                if k:
-                    send_directinput_key(k, duration_sec=hold_s)
+
+            bind_actions = step_spec.get("bind_actions")
+            if isinstance(bind_actions, list) and bind_actions:
+                r_key, r_mods = self._resolve_keyboard_bind([str(a) for a in bind_actions if str(a).strip()], fallback_key="")
+                if r_key:
+                    _press_resolved_bind(r_key, r_mods, hold_s)
                     sent = True
+                else:
+                    label = str(bind_actions[0])
+                    if label not in missing_binds:
+                        missing_binds.append(label)
+                    return False
+            else:
+                if step_spec.get("gamepad"):
+                    try:
+                        from tools.os_controls import send_gamepad_button
+                        sent = bool(send_gamepad_button(str(step_spec["gamepad"]).strip(), duration_sec=hold_s))
+                    except Exception:
+                        sent = False
+                if not sent and (step_spec.get("fallback_key") or step_spec.get("key")):
+                    k = str(step_spec.get("fallback_key") or step_spec.get("key")).strip()
+                    if k:
+                        send_directinput_key(k, duration_sec=hold_s)
+                        sent = True
             if sent:
                 time.sleep(wait_s)
             return sent
@@ -607,9 +648,22 @@ If the element is not visible on screen, return {{"found": false}}.
         focused_via_vision = False
 
         if isinstance(pre_steps, list) and pre_steps:
+            all_ok = True
             for ps in pre_steps:
-                if _exec_routing_step(ps):
-                    focused_via_steps = True
+                if not _exec_routing_step(ps):
+                    all_ok = False
+                    break
+            focused_via_steps = all_ok
+            if missing_binds:
+                return {
+                    "status": "missing_keybinds",
+                    "missing_keybinds": missing_binds,
+                    "destination": dest_clean,
+                    "message": (
+                        f"Missing synced keybind(s) required for map navigation: {', '.join(missing_binds)}. "
+                        f"Please run 'Scan / Sync Keybinds' in the Games tab (and verify Special Instructions)."
+                    ),
+                }
 
         if not focused_via_steps and search_hint and self.client:
             pt = self.locate_ui_element_point(search_hint)
@@ -653,7 +707,27 @@ If the element is not visible on screen, return {{"found": false}}.
         # 4. Trigger Plot Route (declarative pre-plot cursor nudge + key hold and/or vision click-hold)
         plot_hint = str(routing_cfg.get("plot_visual_hint") or "").strip()
         plot_hold_sec = float(routing_cfg.get("plot_hold_sec") or 0.15)
-        eff_plot_key = str(routing_cfg.get("plot_key") if "plot_key" in routing_cfg else plot_key or "").strip()
+        plot_bind_actions = routing_cfg.get("plot_bind_actions")
+        eff_plot_mods: List[str] = []
+        if isinstance(plot_bind_actions, list) and plot_bind_actions:
+            eff_plot_key, eff_plot_mods = self._resolve_keyboard_bind(
+                [str(a) for a in plot_bind_actions if str(a).strip()],
+                fallback_key="",
+            )
+            if not eff_plot_key:
+                missing_binds.append(str(plot_bind_actions[0]))
+        else:
+            eff_plot_key = str(routing_cfg.get("plot_key") if "plot_key" in routing_cfg else plot_key or "").strip()
+        if missing_binds:
+            return {
+                "status": "missing_keybinds",
+                "missing_keybinds": missing_binds,
+                "destination": dest_clean,
+                "message": (
+                    f"Missing synced keybind(s) required for map navigation: {', '.join(missing_binds)}. "
+                    f"Please run 'Scan / Sync Keybinds' in the Games tab (and verify Special Instructions)."
+                ),
+            }
         prefer_key_first = bool(routing_cfg.get("prefer_plot_key_first", False))
         pre_plot_move_center = bool(routing_cfg.get("pre_plot_move_center", False))
         pre_plot_nudge = routing_cfg.get("pre_plot_mouse_nudge")
@@ -693,7 +767,7 @@ If the element is not visible on screen, return {{"found": false}}.
             if not eff_plot_key:
                 return False
             _apply_pre_plot_cursor_nudge()
-            send_directinput_key(eff_plot_key, duration_sec=max(0.15, plot_hold_sec))
+            _press_resolved_bind(eff_plot_key, eff_plot_mods, max(0.15, plot_hold_sec))
             time.sleep(0.4)
             return True
 
@@ -741,6 +815,12 @@ If the element is not visible on screen, return {{"found": false}}.
                     verified_route, route_jumps = _check_route_verified(verify_timeout)
 
         if verified_route:
+            if routing_cfg.get("close_map_on_verified") and resolved_map_key:
+                try:
+                    time.sleep(0.25)
+                    _press_resolved_bind(resolved_map_key, resolved_map_mods, 0.12)
+                except Exception:
+                    pass
             status = "success"
             jump_note = f" ({route_jumps} jumps)" if route_jumps is not None else ""
             msg = f"Route plotted and confirmed to '{verified_route}'{jump_note}."
@@ -776,6 +856,8 @@ If the element is not visible on screen, return {{"found": false}}.
         preferred_input: str = "auto",
         target_process: Optional[str] = None,
         learned_recipe: Optional[Dict[str, Any]] = None,
+        abort_on_user_input: bool = False,
+        allow_cleanup_keys: bool = True,
     ) -> Dict[str, Any]:
         """
         Universal Closed-Loop Vision UI/Menu Navigator (100% game-agnostic).
@@ -806,12 +888,105 @@ If the element is not visible on screen, return {{"found": false}}.
             except Exception:
                 pass
 
+        def _format_synced_ui_binds() -> str:
+            """
+            Builds a concise, 100% game-agnostic summary of the player's ACTUAL synced UI, panel,
+            menu, tab, page, and map keybinds so Vision never guesses default keys (like W/S/A/D or 1/E).
+            """
+            if not isinstance(self.keybinds, dict) or not self.keybinds:
+                return ""
+            ui_keywords = (
+                "ui", "panel", "menu", "tab", "page", "select", "back", "close",
+                "left", "right", "up", "down", "next", "prev", "previous",
+                "map", "inventory", "journal", "codex", "comms", "role",
+                "navigation", "systems", "pause", "escape", "confirm", "cancel",
+                "cycle", "focus", "interact", "recall", "dismiss", "board", "deploy",
+            )
+            scored: List[Tuple[int, str]] = []
+            seen_entries: set = set()
+            for phrase, info in self.keybinds.items():
+                if not isinstance(info, dict):
+                    continue
+                k = str(info.get("key") or "").strip().lower()
+                if not k:
+                    continue
+                # Skip non-keyboard tokens that cannot be typed via KEYS (Vision can still CLICK)
+                if k.startswith(("gamepad_", "pad_", "btn_", "joy_", "mouse_", "wheel_", "scroll_")):
+                    continue
+                mods = [str(m).strip().lower() for m in (info.get("modifiers") or []) if str(m).strip()]
+                key_expr = "+".join(mods + [k]) if mods else k
+                p_low = str(phrase).strip().lower()
+                desc = str(info.get("description") or "").strip()
+                desc_low = desc.lower()
+                aliases_low = " ".join(str(a).lower() for a in (info.get("aliases") or []))
+                hay = f"{p_low} {desc_low} {aliases_low}"
+                score = 0
+                if any(tok in p_low or tok in desc_low for tok in ("ui ", "panel", "tab", "page", "select", "back", "close menu")):
+                    score += 3
+                if any(kw in hay for kw in ui_keywords):
+                    score += 1
+                if score <= 0:
+                    continue
+                dedup_key = (p_low, key_expr)
+                if dedup_key in seen_entries:
+                    continue
+                seen_entries.add(dedup_key)
+                label = f"{phrase} ({desc})" if desc and desc_low != p_low else str(phrase)
+                scored.append((score, f"  - {label}: \"{key_expr}\""))
+            if not scored:
+                return ""
+            scored.sort(key=lambda item: (-item[0], item[1]))
+            lines = [line for _, line in scored[:28]]
+            return (
+                "PLAYER'S ACTUAL SYNCED UI / PANEL KEYBINDS (STRICT — ALWAYS use these exact keys/combos "
+                "instead of assuming default W/S/A/D, 1/2/3/4, or Q/E keys; modifier combos like \"shift+g\" or \"ctrl+1\" are supported):\n"
+                + "\n".join(lines)
+                + "\n"
+            )
+
+        synced_ui_binds_block = _format_synced_ui_binds()
+
+        def _press_key_or_combo(key_expr: str, hold_s: float = 0.08) -> None:
+            raw = str(key_expr or "").strip().lower()
+            if not raw:
+                return
+            if "+" in raw and len(raw) > 1:
+                parts = [p.strip() for p in raw.split("+") if p.strip()]
+                if len(parts) >= 2:
+                    mods = parts[:-1]
+                    base_k = parts[-1]
+                    send_directinput_combo(mods, base_k, hold_duration=hold_s)
+                    return
+            send_directinput_key(raw, duration_sec=hold_s)
+
+        def _get_cursor_pos() -> Optional[Tuple[int, int]]:
+            try:
+                import win32api
+                pt = win32api.GetCursorPos()
+                return (int(pt[0]), int(pt[1]))
+            except Exception:
+                return None
+
+        expected_cursor: Optional[Tuple[int, int]] = _get_cursor_pos() if abort_on_user_input else None
+
+        def _user_took_over() -> bool:
+            if not abort_on_user_input or expected_cursor is None:
+                return False
+            cur = _get_cursor_pos()
+            if cur is None:
+                return False
+            dx = abs(cur[0] - expected_cursor[0])
+            dy = abs(cur[1] - expected_cursor[1])
+            return (dx > 90) or (dy > 90)
+
         def _run_cleanup_keys(ckeys: Any) -> List[str]:
             executed_cleanup: List[str] = []
+            if not allow_cleanup_keys:
+                return executed_cleanup
             if isinstance(ckeys, list) and ckeys:
                 clean_ckeys = [str(k).strip().lower() for k in ckeys if str(k).strip()]
                 for idx, ck in enumerate(clean_ckeys[:3]):
-                    send_directinput_key(ck, duration_sec=0.08)
+                    _press_key_or_combo(ck, hold_s=0.08)
                     executed_cleanup.append(ck)
                     if idx < len(clean_ckeys[:3]) - 1:
                         time.sleep(0.12)
@@ -820,13 +995,14 @@ If the element is not visible on screen, return {{"found": false}}.
             return executed_cleanup
 
         def _execute_recorded_action(act_spec: Dict[str, Any], vw: int, vh: int) -> None:
+            nonlocal expected_cursor
             atype = str(act_spec.get("action") or "").upper()
             if atype == "KEYS":
                 keys_list = act_spec.get("keys") or []
                 hold_s = max(0.05, min(1.5, float(act_spec.get("hold_ms") or 80) / 1000.0))
                 int_s = max(0.05, min(0.6, float(act_spec.get("interval_ms") or 130) / 1000.0))
                 for idx, kname in enumerate(keys_list):
-                    send_directinput_key(str(kname).strip().lower(), duration_sec=hold_s)
+                    _press_key_or_combo(str(kname).strip().lower(), hold_s=hold_s)
                     if idx < len(keys_list) - 1:
                         time.sleep(int_s)
             elif atype == "CLICK":
@@ -839,6 +1015,8 @@ If the element is not visible on screen, return {{"found": false}}.
                     nudge_mouse_relative(1, 0)
                     time.sleep(0.16)
                     click_mouse_button(btn, hold_duration=hold_s)
+                    if abort_on_user_input:
+                        expected_cursor = _get_cursor_pos()
             wait_s = max(0.15, min(1.0, float(act_spec.get("wait_ms") or 300) / 1000.0))
             time.sleep(wait_s)
 
@@ -847,23 +1025,46 @@ If the element is not visible on screen, return {{"found": false}}.
 
         # 0. Fast-Path Self-Learning Replay + 1-Shot Visual Verification
         if isinstance(learned_recipe, dict) and isinstance(learned_recipe.get("actions"), list) and learned_recipe["actions"]:
+            if _user_took_over():
+                return {
+                    "status": "aborted_user_active",
+                    "verified": False,
+                    "goal": clean_goal,
+                    "steps_executed": 0,
+                    "message": f"Yielded '{clean_goal}' because player is actively using the mouse.",
+                }
             _, vw, vh = self.capture_viewport()
             for r_act in learned_recipe["actions"]:
+                if _user_took_over():
+                    return {
+                        "status": "aborted_user_active",
+                        "verified": False,
+                        "goal": clean_goal,
+                        "steps_executed": 0,
+                        "message": f"Yielded '{clean_goal}' because player moved the mouse.",
+                    }
                 if isinstance(r_act, dict):
                     _execute_recorded_action(r_act, vw, vh)
             verify_frame, _, _ = self.capture_viewport()
             replay_verify_prompt = f"""
 Inspect this live game screenshot right after replaying a saved UI sequence for the goal: "{clean_goal}".
-CRITICAL RULES:
+{synced_ui_binds_block}CRITICAL RULES:
 - Do NOT say completed=true if the target action button/icon is still visibly ENABLED, LIT, or shows ANY non-zero cost (even a tiny cost like 10 CR, or even if a resource bar looks almost full).
 - Only return completed=true if the target button is now visibly DISABLED / GREYED OUT / 0 cost, OR a clear confirmation banner/state change shows the action just succeeded.
-- If a temporary side panel/menu is still open on screen that should be closed to return to gameplay, list the key(s) to close it in "cleanup_keys" (otherwise []).
+- If a temporary side panel/menu is still open on screen that should be closed to return to gameplay, list the player's actual key(s) to close it in "cleanup_keys" (otherwise []).
 
 Return ONLY JSON:
 {{"completed": true or false, "observation": "Brief 1-sentence confirmation of what just succeeded or what is still needed", "cleanup_keys": []}}
 """
             try:
-                replay_check = self._call_vision_json(verify_frame, replay_verify_prompt, fast_mode=True) or {}
+                replay_check = self._call_vision_json(
+                    verify_frame,
+                    replay_verify_prompt,
+                    fast_mode=True,
+                    resolution="low",
+                    sub_action="ui_replay_verify",
+                    loop_step=1,
+                ) or {}
             except TypeError:
                 replay_check = self._call_vision_json(verify_frame, replay_verify_prompt) or {}
             if bool(replay_check.get("completed")):
@@ -900,7 +1101,22 @@ Return ONLY JSON:
             )
         )
 
+        bg_safety_note = (
+            "\n   - BACKGROUND TRIGGER SAFETY: If the player has already navigated into a different sub-menu (such as a Market, Trade, Outfitting, Inventory, Missions, or Map screen) where the target button is NOT visible, IMMEDIATELY return \"CANNOT_COMPLETE\" — NEVER press Escape/Back to close or leave the player's open screen!"
+            if abort_on_user_input
+            else ""
+        )
+
         for step_num in range(1, capped_steps + 1):
+            if _user_took_over():
+                return {
+                    "status": "aborted_user_active",
+                    "verified": False,
+                    "goal": clean_goal,
+                    "steps_executed": len(recorded_actions),
+                    "history": history,
+                    "message": f"Yielded '{clean_goal}' because player is actively moving the mouse.",
+                }
             frame_bytes, width, height = self.capture_viewport()
             prior_summary = "\n".join(f"  - Step {i + 1}: {h}" for i, h in enumerate(history)) or "  (none yet)"
             has_acted = len(recorded_actions) > 0
@@ -913,7 +1129,7 @@ Return ONLY JSON:
 You are an autonomous visual UI/menu agent operating inside the game "{self.game_name or 'Active Game'}".
 GOAL: "{clean_goal}"
 
-Previous steps already executed in this attempt:
+{synced_ui_binds_block}Previous steps already executed in this attempt:
 {prior_summary}
 
 Carefully inspect the live screenshot:
@@ -922,11 +1138,11 @@ Carefully inspect the live screenshot:
    STRICT VERIFICATION GUARD:
    - NEVER return "VERIFIED_DONE" if the target action button/icon (e.g. Refuel, Repair, Restock, Buy, Request, Confirm) is STILL VISIBLY ENABLED, LIT, or shows ANY non-zero cost (even a tiny cost like 10 CR, or even if a fuel/ammo/health bar looks almost full!). You MUST activate/press that button first!
    - Only return "VERIFIED_DONE" when the target button itself is visibly DISABLED / GREYED OUT / 0 cost, OR a clear confirmation banner/state change shows the action succeeded.
-   - When returning "VERIFIED_DONE": if earlier steps opened a temporary side panel/overlay to perform this task (and the player should return to the main cockpit/gameplay view), set "cleanup_keys" to the key(s) that close that panel (e.g. ["1"] or ["escape"]); otherwise set "cleanup_keys": [].
-3. Check if the GOAL is IMPOSSIBLE from this screen and no obvious key opens the needed menu. If so, return action "CANNOT_COMPLETE" with a clear reason.
+   - When returning "VERIFIED_DONE": if earlier steps opened a temporary side panel/overlay to perform this task (and the player should return to the main cockpit/gameplay view), set "cleanup_keys" to the player's actual synced key(s) that close that panel (or ["escape"] if no panel toggle bind is listed); otherwise set "cleanup_keys": [].
+3. Check if the GOAL is IMPOSSIBLE from this screen and no obvious key opens the needed menu. If so, return action "CANNOT_COMPLETE" with a clear reason.{bg_safety_note}
 4. Otherwise, decide the BEST NEXT ACTION to advance toward the goal:
    - {input_hint}
-   - For "KEYS": list the exact ordered keys to press (e.g. ["space"] if the target icon/button is ALREADY highlighted, ["a", "space"] if one icon to the left, ["w", "w"] to move up 2 rows, ["1", "e", "e"] to open a side panel and tab right twice). You may batch 1-4 clear sequential keys in one step to reduce latency.
+   - For "KEYS": list the exact ordered keys (or modifier combos like "shift+1") using the PLAYER'S ACTUAL SYNCED KEYBINDS above (never guess default W/S/A/D or 1/E/Q if a synced bind is listed — e.g. if UI Up/Down/Left/Right are bound to "up"/"down"/"left"/"right", emit those exact arrow key names!). You may batch 1-4 clear sequential keys in one step to reduce latency.
    - For "CLICK": return normalized [y, x] coordinates (0-1000 scale, center of target button/icon) and "button" ("left" or "right").
 
 Return ONLY valid JSON:
@@ -934,7 +1150,7 @@ Return ONLY valid JSON:
   "highlighted_now": "What is currently highlighted/focused on screen (or 'none')",
   "observation": "Brief 1-sentence assessment of current UI state",
   "action": "KEYS" | "CLICK" | "VERIFIED_DONE" | "CANNOT_COMPLETE",
-  "keys": ["w", "space"],
+  "keys": ["down", "space"],
   "hold_ms": 80,
   "interval_ms": 130,
   "point": [y_normalized, x_normalized],
@@ -945,7 +1161,14 @@ Return ONLY valid JSON:
 }}
 """
             try:
-                decision = self._call_vision_json(frame_bytes, prompt, fast_mode=True)
+                decision = self._call_vision_json(
+                    frame_bytes,
+                    prompt,
+                    fast_mode=True,
+                    resolution="medium",
+                    sub_action="complete_ui_task",
+                    loop_step=step_num,
+                )
             except TypeError:
                 decision = self._call_vision_json(frame_bytes, prompt)
             if not isinstance(decision, dict) or not decision:
@@ -1023,7 +1246,7 @@ Return ONLY valid JSON:
                 interval_ms = max(50, min(600, int(decision.get("interval_ms") or 130)))
                 clean_keys = [str(k).strip().lower() for k in keys if str(k).strip()]
                 for idx, key_name in enumerate(clean_keys):
-                    send_directinput_key(key_name, duration_sec=hold_ms / 1000.0)
+                    _press_key_or_combo(key_name, hold_s=hold_ms / 1000.0)
                     if idx < len(clean_keys) - 1:
                         time.sleep(interval_ms / 1000.0)
                 recorded_actions.append({
@@ -1049,6 +1272,8 @@ Return ONLY valid JSON:
                 nudge_mouse_relative(1, 0)
                 time.sleep(0.16)
                 click_mouse_button(btn, hold_duration=hold_ms / 1000.0)
+                if abort_on_user_input:
+                    expected_cursor = _get_cursor_pos()
                 recorded_actions.append({
                     "action": "CLICK",
                     "point": [y_norm, x_norm],
@@ -1065,13 +1290,20 @@ Return ONLY valid JSON:
         final_frame, _, _ = self.capture_viewport()
         verify_prompt = f"""
 Inspect this live game screenshot to verify whether the action we JUST executed for "{clean_goal}" succeeded.
-CRITICAL: Do NOT return completed=true if the target action button is still visibly enabled/lit or shows a non-zero cost (even 10 CR).
-If a temporary side panel/menu should now be closed to return to gameplay, include the close key(s) in "cleanup_keys" (otherwise []).
+{synced_ui_binds_block}CRITICAL: Do NOT return completed=true if the target action button is still visibly enabled/lit or shows a non-zero cost (even 10 CR).
+If a temporary side panel/menu should now be closed to return to gameplay, include the player's actual synced close key(s) in "cleanup_keys" (otherwise []).
 Return ONLY JSON:
 {{"completed": true or false, "observation": "Brief 1-sentence confirmation or what is still missing", "cleanup_keys": []}}
 """
         try:
-            final_check = self._call_vision_json(final_frame, verify_prompt, fast_mode=True) or {}
+            final_check = self._call_vision_json(
+                final_frame,
+                verify_prompt,
+                fast_mode=True,
+                resolution="low",
+                sub_action="ui_final_verify",
+                loop_step=capped_steps + 1,
+            ) or {}
         except TypeError:
             final_check = self._call_vision_json(final_frame, verify_prompt) or {}
         if bool(final_check.get("completed")):

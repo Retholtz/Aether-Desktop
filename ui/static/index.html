@@ -208,8 +208,8 @@
                         <input type="checkbox" id="chk-game-multiple-characters" />
                         <span>Multiple Main Characters</span>
                       </label>
-                      <label for="input-game-callsign" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign.">Callsign:</label>
-                      <input type="text" id="input-game-callsign" class="hud-select game-callsign-input" placeholder="Blank (none) or e.g. Kliff; Oongka" title="Optional in-game callsign(s) separated by ';' (e.g. Kliff; Oongka; Damiane, or Michael; Mike; Commander). Leave blank for no callsign." />
+                      <label for="input-game-callsign" title="Optional in-game callsign(s) separated by ';' (e.g. Michael; Captain; Ace). Leave blank for no callsign.">Callsign:</label>
+                      <input type="text" id="input-game-callsign" class="hud-select game-callsign-input" placeholder="Blank (none) or e.g. Michael; Captain" title="Optional in-game callsign(s) separated by ';' (e.g. Michael; Captain; Ace). Leave blank for no callsign." />
                     </div>
                   </div>
 
@@ -273,34 +273,93 @@
                       </select>
                       <span id="copilot-vibe-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
                     </div>
-                    <textarea id="textarea-game-copilot-personality" class="modal-input" rows="2" style="width: 100%; resize: vertical; font-size: 0.8rem; line-height: 1.4;" placeholder="Optional custom co-pilot personality (free text) — e.g. Dry humor like TARS from Interstellar, loves playful banter, calls out cool sights, never repeats the same canned line..."></textarea>
+                    <textarea id="textarea-game-copilot-personality" class="modal-input" rows="2" style="width: 100%; resize: vertical; font-size: 0.8rem; line-height: 1.4;" placeholder="Optional custom co-pilot personality (free text) — e.g. Dry humor, playful banter, observant wingman, concise tactical callouts..."></textarea>
 
                     <!-- Companion Chit-Chat Controls -->
                     <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 8px; padding-top: 10px; border-top: 1px solid rgba(148, 163, 184, 0.12); width: 100%;">
                       <div class="game-setting-field">
-                        <label for="select-game-chitchat-freq" class="game-setting-label" title="How often Aether makes unprompted in-character remarks about game events or quiet cruising.">Chit-Chat:</label>
-                        <select id="select-game-chitchat-freq" class="hud-select" style="width: auto; min-width: 155px;">
+                        <label for="select-game-chitchat-freq" class="game-setting-label" title="How often Aether makes unprompted in-character remarks using randomized natural intervals.">Chit-Chat:</label>
+                        <select id="select-game-chitchat-freq" class="hud-select" style="width: auto; min-width: 175px;">
                           <option value="off">🔇 Off</option>
-                          <option value="rare">💬 Rare (Quiet)</option>
-                          <option value="occasional">💬 Occasional</option>
-                          <option value="chatty">🗣️ Chatty</option>
+                          <option value="rare">💬 Rare (6–12m)</option>
+                          <option value="occasional">💬 Occasional (3–7m)</option>
+                          <option value="chatty">🗣️ Chatty (1–4m)</option>
                         </select>
                       </div>
-                      <label class="game-multi-char-label" for="chk-game-chitchat-screen" title="Telemetry and Log events are used by default. When checked, Aether also glances at your live game screen to react to sights like binary/neutron stars or stations.">
+                      <label class="game-multi-char-label" for="chk-game-chitchat-screen" title="Telemetry and Log events are used by default. When checked, Aether also glances at your live game screen to react to notable visuals, landmarks, or encounters.">
                         <input type="checkbox" id="chk-game-chitchat-screen" />
                         <span>👁️ Allow Screen Peek</span>
                       </label>
-                      <label class="game-multi-char-label" for="chk-game-chitchat-profanity" title="Allows occasional natural, dramatic casual swearing during startling or intense moments.">
+                      <label class="game-multi-char-label" for="chk-game-chitchat-profanity" title="Allows sparse, natural casual swearing only during genuinely intense or startling moments (never back-to-back).">
                         <input type="checkbox" id="chk-game-chitchat-profanity" />
                         <span>🌶️ Casual Profanity</span>
                       </label>
-                      <label class="game-multi-char-label" for="chk-game-chitchat-emotive" title="Dynamically adjusts Aether's speaking pace, whisper volume, and vocal urgency to match combat, stealth/hordes, or quiet cruising.">
+                      <label class="game-multi-char-label" for="chk-game-chitchat-emotive" title="Dynamically adjusts Aether's speaking pace, whisper volume, and vocal urgency to match combat, stealth, tense moments, or quiet exploration.">
                         <input type="checkbox" id="chk-game-chitchat-emotive" />
                         <span>🎭 Emotive Voice</span>
                       </label>
                       <span id="chitchat-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
                     </div>
+                    <!-- Chit-Chat Topic Checkboxes -->
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 4px; width: 100%;">
+                      <span class="game-setting-label" style="min-width: auto;" title="Choose what kinds of ambient banter Aether brings up during quiet stretches. Past jokes and facts are logged so Aether avoids repeating them.">Topics:</span>
+                      <label class="game-multi-char-label" for="chk-game-chitchat-jokes" title="Tell occasional fresh, genre-appropriate jokes during quiet stretches (past jokes are logged to avoid repeats).">
+                        <input type="checkbox" id="chk-game-chitchat-jokes" />
+                        <span>😄 Jokes</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chitchat-facts" title="Share interesting in-world lore or real-world facts tied to the game's setting.">
+                        <input type="checkbox" id="chk-game-chitchat-facts" checked />
+                        <span>📚 Facts &amp; Trivia</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chitchat-relevant" title="Comment on your active goals, checklists, nearby surroundings, and recent discoveries.">
+                        <input type="checkbox" id="chk-game-chitchat-relevant" checked />
+                        <span>🧭 Relevant Info</span>
+                      </label>
+                    </div>
+                    <!-- In-Game Chat Window Channel Reactions -->
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 4px; width: 100%;">
+                      <span class="game-setting-label" style="min-width: auto;" title="Select which in-game chat channels Aether summarizes aloud. Unchecked channels stay silent to minimize chatter.">Chat Window:</span>
+                      <label class="game-multi-char-label" for="chk-game-chat-player" title="Summarize direct, wing/party, and player-to-player chat messages aloud.">
+                        <input type="checkbox" id="chk-game-chat-player" checked />
+                        <span>👤 Player</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chat-squadron" title="Summarize squadron, guild, or clan channel messages aloud.">
+                        <input type="checkbox" id="chk-game-chat-squadron" checked />
+                        <span>🛡️ Squadron / Guild</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chat-local" title="Summarize local area / instance chat messages aloud.">
+                        <input type="checkbox" id="chk-game-chat-local" />
+                        <span>📍 Local</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chat-system" title="Summarize system-wide or zone-wide public chat messages aloud.">
+                        <input type="checkbox" id="chk-game-chat-system" />
+                        <span>🌐 System / Zone</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chat-npc" title="React to NPC hails, station controllers, and ambient automated messages.">
+                        <input type="checkbox" id="chk-game-chat-npc" />
+                        <span>🤖 NPC</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-chat-translate" title="Automatically translate foreign-language player chat messages into English when summarizing aloud.">
+                        <input type="checkbox" id="chk-game-chat-translate" checked />
+                        <span>🌍 Translate to English</span>
+                      </label>
+                    </div>
                   </div>
+                </section>
+
+                <!-- Special Instructions / Setup Notes Card -->
+                <section class="game-card" id="card-game-special-instructions" style="margin-top: 16px;">
+                  <div class="game-card-header card-header-flex">
+                    <div>
+                      <h3>📋 SPECIAL INSTRUCTIONS</h3>
+                      <p class="subtitle field-hint">Game-specific setup notes, keybind tips, or reminders stored with this game profile and its module.</p>
+                    </div>
+                    <div class="header-action-group card-header-actions" style="display: flex; align-items: center; gap: 8px;">
+                      <span id="special-instructions-save-status" class="field-hint" style="font-size: 0.74rem;"></span>
+                      <button type="button" id="btn-reset-special-instructions" class="btn-secondary-sm hidden" title="Restore the default instructions from this game's module">↺ Reset Default</button>
+                    </div>
+                  </div>
+                  <textarea id="textarea-game-special-instructions" class="modal-input" rows="5" style="width: 100%; margin-top: 8px; resize: vertical; font-size: 0.82rem; line-height: 1.45;" placeholder="Add game-specific setup instructions, keybind notes, or special reminders..."></textarea>
                 </section>
 
                 <!-- 3rd-Party Companion Apps Card -->
@@ -308,7 +367,7 @@
                   <div class="game-card-header card-header-flex">
                     <div>
                       <h3>3RD-PARTY COMPANION APPS</h3>
-                      <p class="subtitle field-hint">Link helper tools (e.g. EDMC, EDDiscovery, SRV Survey, EDCoPilot, Little Navmap). Aether tracks whether they are running, can ask to launch inactive ones when you start the game, and mutes duplicate callouts when toggled.</p>
+                      <p class="subtitle field-hint">Link helper tools such as external maps, telemetry loggers, overlays, or companion apps. Aether tracks whether they are running, can offer to launch inactive ones with your game, and mutes duplicate callouts when toggled.</p>
                     </div>
                     <div class="header-action-group card-header-actions">
                       <button type="button" id="btn-add-companion-app" class="btn-primary-sm btn-primary-blue" title="Link a 3rd-party helper program to this game">+ Add 3rd-Party Program</button>
@@ -321,11 +380,36 @@
               </div>
 
               <!-- ========================================================= -->
-              <!-- SUB-TAB 2: POIs, PLAYER GOALS & CO-PILOT INTEL            -->
+              <!-- SUB-TAB 2: PLAYER GOALS, CO-PILOT INTEL & POIs            -->
               <!-- ========================================================= -->
               <div id="game-subtab-intel" class="game-subtab-pane hidden">
-                <!-- Points of Interest & Saved Locations Card -->
-                <section class="game-card" id="card-game-pois">
+                <!-- 1. Player Goals & Checklists (Full-Width, Expanded Vertical Space) -->
+                <section class="game-card" id="card-game-goals">
+                  <div class="game-card-header">
+                    <h3>📝 PLAYER GOALS &amp; CHECKLISTS</h3>
+                    <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
+                  </div>
+                  <p class="field-hint">Your personal notes, shopping lists, and auto-updated live project trackers. Say <em>"Aether, note down..."</em> or edit directly.</p>
+                  <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints..."></textarea>
+                </section>
+
+                <!-- 2. Co-Pilot Intel & Milestone Log -->
+                <section class="game-card copilot-card" id="card-game-copilot-log" style="margin-top: 16px;">
+                  <div class="game-card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <h3>🧭 CO-PILOT INTEL &amp; LOG</h3>
+                      <span id="badge-copilot-count" class="badge-count">0</span>
+                    </div>
+                    <button type="button" id="btn-clear-copilot-log" class="btn-text-action" title="Clear recorded observations">Clear Log</button>
+                  </div>
+                  <p class="field-hint">Landmarks, clues, and milestones captured by Aether for proactive in-game guidance.</p>
+                  <div id="copilot-log-list" class="copilot-log-list">
+                    <!-- Populated dynamically -->
+                  </div>
+                </section>
+
+                <!-- 3. Points of Interest & Saved Locations Card -->
+                <section class="game-card" id="card-game-pois" style="margin-top: 16px;">
                   <div class="game-card-header card-header-flex">
                     <div>
                       <h3 style="margin: 0;">📍 POINTS OF INTEREST &amp; SAVED LOCATIONS</h3>
@@ -351,34 +435,6 @@
                     </tbody>
                   </table>
                 </section>
-
-                <!-- Hybrid Split Layout: Player Goals vs Co-Pilot Intel & Log -->
-                <div class="game-companion-grid" style="margin-top: 16px;">
-                  <!-- Left Side: Player Scratchpad & Goals -->
-                  <section class="game-card">
-                    <div class="game-card-header">
-                      <h3>📝 PLAYER GOALS &amp; CHECKLISTS</h3>
-                      <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
-                    </div>
-                    <p class="field-hint">Your personal notes and shopping lists. Say <em>"Aether, note down..."</em> or edit directly.</p>
-                    <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints..."></textarea>
-                  </section>
-
-                  <!-- Right Side: Co-Pilot Intel & Milestone Log -->
-                  <section class="game-card copilot-card">
-                    <div class="game-card-header" style="display: flex; justify-content: space-between; align-items: center;">
-                      <div style="display: flex; align-items: center; gap: 8px;">
-                        <h3>🧭 CO-PILOT INTEL &amp; LOG</h3>
-                        <span id="badge-copilot-count" class="badge-count">0</span>
-                      </div>
-                      <button type="button" id="btn-clear-copilot-log" class="btn-text-action" title="Clear recorded observations">Clear Log</button>
-                    </div>
-                    <p class="field-hint">Landmarks, clues, and milestones captured by Aether for proactive in-game guidance.</p>
-                    <div id="copilot-log-list" class="copilot-log-list">
-                      <!-- Populated dynamically -->
-                    </div>
-                  </section>
-                </div>
               </div>
 
               <!-- ========================================================= -->
@@ -390,7 +446,7 @@
                   <div class="game-card-header card-header-flex">
                     <div>
                       <h3 style="margin: 0;">🔁 EVENT TRIGGERS (WHEN → THEN)</h3>
-                      <p class="subtitle field-hint">Automatic rules fired by live game events (e.g. <em>When entering a new system → Discovery Scan</em>, <em>When docked → Refuel</em>). Toggle each rule On/Off anytime.</p>
+                      <p class="subtitle field-hint">Automatic rules fired by live game events. Toggle each rule On or Off anytime.</p>
                     </div>
                     <div class="header-action-group card-header-actions">
                       <button type="button" id="btn-add-trigger" class="btn-primary-sm btn-primary-blue">+ Add Trigger</button>
@@ -421,7 +477,7 @@
                         <h3 style="margin: 0;">⚡ MACROS &amp; AUTOMATION SEQUENCES</h3>
                         <span id="badge-macros-count" class="badge-count">0</span>
                       </div>
-                      <p class="subtitle field-hint">Multi-step keystroke and vision-click workflows. Aether matches your intent naturally (e.g. <em>"Let's get outta this station"</em> → <strong>Take Us Out</strong>).</p>
+                      <p class="subtitle field-hint">Voice-triggered multi-step keystroke and vision-click workflows. Aether matches your spoken intent naturally.</p>
                     </div>
                     <div class="header-action-group card-header-actions">
                       <button type="button" id="btn-add-macro" class="btn-primary-sm btn-primary-blue">+ Add Macro</button>
@@ -2460,7 +2516,7 @@
               <div style="background: var(--bg-deep); border: 1px solid rgba(56, 189, 248, 0.18); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                 <div>
                   <div style="display: flex; align-items: center; gap: 8px;">
-                    <strong style="color: var(--text-main); font-size: 0.94rem;">Google (Gmail, Calendar &amp; Contacts)</strong>
+                    <strong style="color: var(--text-main); font-size: 0.94rem;">Google (Gmail, Calendar, Contacts, Docs &amp; Slides)</strong>
                     <span id="oauthGoogleStatusBadge" class="step-status-pill pending">DISCONNECTED</span>
                   </div>
                   <div id="oauthGoogleAccountLabel" style="color: var(--text-muted); font-size: 0.82rem; margin-top: 4px;">Not connected</div>
@@ -3212,14 +3268,14 @@
       <div class="modal-body">
         <div class="modal-field">
           <label for="input-add-game-name" class="modal-label">Game Display Name <span style="color: #ef4444;">*</span></label>
-          <input type="text" id="input-add-game-name" class="modal-input" placeholder="e.g. Star Citizen, Cyberpunk 2077, Elite Dangerous" autocomplete="off" />
+          <input type="text" id="input-add-game-name" class="modal-input" placeholder="e.g. My Favorite Game" autocomplete="off" />
           <span class="modal-hint">The title shown in your companion sidebar and voice commands.</span>
         </div>
 
         <div class="modal-field">
           <label for="input-add-game-proc" class="modal-label">Executable / Process Name (Optional)</label>
           <div style="display: flex; gap: 8px; align-items: center;">
-            <input type="text" id="input-add-game-proc" class="modal-input" style="flex: 1;" placeholder="e.g. StarCitizen.exe" autocomplete="off" />
+            <input type="text" id="input-add-game-proc" class="modal-input" style="flex: 1;" placeholder="e.g. GameExecutable.exe" autocomplete="off" />
             <button type="button" id="btn-browse-game-exe" class="btn-secondary-sm" title="Browse File Explorer to locate game executable">
               📁 Browse...
             </button>
@@ -3265,14 +3321,14 @@
       <div class="modal-body">
         <div class="modal-field">
           <label for="input-companion-app-name" class="modal-label">Program Display Name <span style="color: #ef4444;">*</span></label>
-          <input type="text" id="input-companion-app-name" class="modal-input" placeholder="e.g. EDMC, EDDiscovery, SRV Survey, EDCoPilot" autocomplete="off" />
+          <input type="text" id="input-companion-app-name" class="modal-input" placeholder="e.g. Companion Map, Telemetry Logger, Overlay Helper" autocomplete="off" />
           <span class="modal-hint">The name Aether uses when referencing or offering to launch this helper app.</span>
         </div>
 
         <div class="modal-field">
           <label for="input-companion-app-proc" class="modal-label">Executable / Path <span style="color: #ef4444;">*</span></label>
           <div style="display: flex; gap: 8px; align-items: center;">
-            <input type="text" id="input-companion-app-proc" class="modal-input" style="flex: 1;" placeholder="e.g. C:\...\EDMarketConnector.exe" autocomplete="off" />
+            <input type="text" id="input-companion-app-proc" class="modal-input" style="flex: 1;" placeholder="e.g. C:\Path\To\HelperApp.exe" autocomplete="off" />
             <button type="button" id="btn-browse-companion-exe" class="btn-secondary-sm" title="Browse File Explorer to locate helper executable">
               📁 Browse...
             </button>
@@ -3380,7 +3436,7 @@
         <div class="modal-field" style="background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px;">
           <label for="input-macro-ai-prompt" class="modal-label" style="color: #60a5fa;">✨ Generate Macro from Plain English (Optional)</label>
           <div style="display: flex; gap: 8px; margin-top: 4px;">
-            <input type="text" id="input-macro-ai-prompt" class="modal-input" style="flex: 1;" placeholder="e.g. Check if docked, find Auto Launch on screen and click it — or Press X 5 times with 20ms pause" autocomplete="off" />
+            <input type="text" id="input-macro-ai-prompt" class="modal-input" style="flex: 1;" placeholder="Describe the steps in plain English (e.g. open menu, click confirm, or press X 3 times)" autocomplete="off" />
             <button type="button" id="btn-generate-macro-steps" class="btn-secondary-sm" style="white-space: nowrap;">✨ Generate</button>
           </div>
           <label style="display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.76rem; color: var(--text-muted); cursor: pointer;">
@@ -3392,28 +3448,28 @@
 
         <div class="modal-field">
           <label for="input-macro-name" class="modal-label">Macro Name / Primary Phrase <span style="color: #ef4444;">*</span></label>
-          <input type="text" id="input-macro-name" class="modal-input" placeholder="e.g. take us out, full engines, request docking" autocomplete="off" />
+          <input type="text" id="input-macro-name" class="modal-input" placeholder="e.g. quick heal, open map, equip loadout" autocomplete="off" />
         </div>
 
         <div class="modal-field">
           <label for="input-macro-aliases" class="modal-label">Alternate Trigger Phrases (comma-separated)</label>
-          <input type="text" id="input-macro-aliases" class="modal-input" placeholder="e.g. auto launch, undock, launch ship" autocomplete="off" />
+          <input type="text" id="input-macro-aliases" class="modal-input" placeholder="e.g. heal up, use potion, restore health" autocomplete="off" />
           <span class="modal-hint">Exact phrases fire instantly (&lt;50ms). Aether also matches natural phrasing using the Intent description below.</span>
         </div>
 
         <div class="modal-field">
           <label for="input-macro-desc" class="modal-label">Intent / When Aether Should Use This Macro</label>
-          <input type="text" id="input-macro-desc" class="modal-input" placeholder="e.g. Undock and leave the station or carrier via Auto Launch" autocomplete="off" />
+          <input type="text" id="input-macro-desc" class="modal-input" placeholder="Describe when Aether should trigger this workflow" autocomplete="off" />
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
           <div class="modal-field">
             <label for="input-macro-condition" class="modal-label">Telemetry Condition (Optional)</label>
-            <input type="text" id="input-macro-condition" class="modal-input" placeholder="e.g. state.docked or !state.landing_gear_down" autocomplete="off" />
+            <input type="text" id="input-macro-condition" class="modal-input" placeholder="e.g. state.in_menu or !state.in_combat" autocomplete="off" />
           </div>
           <div class="modal-field">
             <label for="input-macro-ack" class="modal-label">Spoken Confirmation (Optional)</label>
-            <input type="text" id="input-macro-ack" class="modal-input" placeholder="e.g. Engaging Auto Launch, Commander." autocomplete="off" />
+            <input type="text" id="input-macro-ack" class="modal-input" placeholder="e.g. Done." autocomplete="off" />
           </div>
         </div>
 
@@ -3428,7 +3484,7 @@
               <button type="button" class="btn-secondary-sm btn-macro-snippet" data-snippet="paste" style="padding: 2px 7px; font-size: 0.72rem;">+ Paste</button>
             </div>
           </div>
-          <textarea id="textarea-macro-steps" class="modal-input" rows="8" style="font-family: Consolas, monospace; font-size: 0.8rem; line-height: 1.4; resize: vertical;" placeholder='[{"action": "vision_click", "target": "Auto Launch button", "button": "left", "hold_ms": 100, "abort_if_not_found": true}]'></textarea>
+          <textarea id="textarea-macro-steps" class="modal-input" rows="8" style="font-family: Consolas, monospace; font-size: 0.8rem; line-height: 1.4; resize: vertical;" placeholder='[{"action": "vision_click", "target": "Confirm button", "button": "left", "hold_ms": 100, "abort_if_not_found": true}]'></textarea>
           <span id="macro-steps-error" class="modal-hint" style="color: #f87171; display: none;"></span>
         </div>
       </div>
@@ -3453,20 +3509,20 @@
         <input type="hidden" id="input-poi-id" value="" />
         <div class="modal-field">
           <label for="input-poi-name" class="modal-label">POI / Asset Name <span style="color: #ef4444;">*</span></label>
-          <input type="text" id="input-poi-name" class="modal-input" placeholder="e.g. Lone Wolf, Home Base, Main Camp" autocomplete="off" />
+          <input type="text" id="input-poi-name" class="modal-input" placeholder="e.g. Home Base, Main Camp, Outpost Alpha" autocomplete="off" />
         </div>
         <div class="modal-field">
           <label for="input-poi-callsign" class="modal-label">Callsign / Registry ID (Optional)</label>
-          <input type="text" id="input-poi-callsign" class="modal-input" placeholder="e.g. T9J-44F" autocomplete="off" />
+          <input type="text" id="input-poi-callsign" class="modal-input" placeholder="Optional ID or tag" autocomplete="off" />
         </div>
         <div class="modal-field">
           <label for="input-poi-location" class="modal-label">Routable Map System / Region <span style="color: #ef4444;">*</span></label>
-          <input type="text" id="input-poi-location" class="modal-input" placeholder="e.g. Col 285 Sector SJ-Q d5-68" autocomplete="off" />
+          <input type="text" id="input-poi-location" class="modal-input" placeholder="e.g. Northern Valley, Sector 7" autocomplete="off" />
           <span class="modal-hint">This is the top-level map system or region Aether will plot when you ask to navigate to this POI.</span>
         </div>
         <div class="modal-field">
           <label for="input-poi-aliases" class="modal-label">Voice Aliases (comma-separated)</label>
-          <input type="text" id="input-poi-aliases" class="modal-input" placeholder="e.g. carrier, my carrier, home" autocomplete="off" />
+          <input type="text" id="input-poi-aliases" class="modal-input" placeholder="e.g. home, main base, camp" autocomplete="off" />
         </div>
         <span id="poi-modal-error" class="modal-hint" style="color: #f87171; display: none;"></span>
       </div>
@@ -3494,7 +3550,7 @@
         <div class="modal-field" style="background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px;">
           <label for="input-trigger-ai-prompt" class="modal-label" style="color: #60a5fa;">✨ Generate Trigger from Plain English (Optional)</label>
           <div style="display: flex; gap: 8px; margin-top: 4px;">
-            <input type="text" id="input-trigger-ai-prompt" class="modal-input" style="flex: 1;" placeholder="e.g. When entering a new system, wait 2.5 seconds and hold right mouse for 5.8 seconds" autocomplete="off" />
+            <input type="text" id="input-trigger-ai-prompt" class="modal-input" style="flex: 1;" placeholder="Describe the event and action in plain English..." autocomplete="off" />
             <button type="button" id="btn-generate-trigger" class="btn-secondary-sm" style="white-space: nowrap;">✨ Generate</button>
           </div>
           <span id="trigger-ai-status" class="modal-hint" style="display: block; margin-top: 4px;">Aether will draft the When/If condition and Then action below for you to review or tweak.</span>
@@ -3502,18 +3558,18 @@
 
         <div class="modal-field">
           <label for="input-trigger-name" class="modal-label">Rule Name <span style="color: #ef4444;">*</span></label>
-          <input type="text" id="input-trigger-name" class="modal-input" placeholder="e.g. Auto Discovery Scan, Auto Refuel on Dock" autocomplete="off" />
+          <input type="text" id="input-trigger-name" class="modal-input" placeholder="Enter a short name for this rule" autocomplete="off" />
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
           <div class="modal-field">
             <label for="select-trigger-event" class="modal-label">WHEN (Game Event) <span style="color: #ef4444;">*</span></label>
             <select id="select-trigger-event" class="modal-input"></select>
-            <input type="text" id="input-trigger-custom-event" class="modal-input hidden" style="margin-top: 6px;" placeholder="Exact telemetry event name (e.g. FSDJump)" autocomplete="off" />
+            <input type="text" id="input-trigger-custom-event" class="modal-input hidden" style="margin-top: 6px;" placeholder="Exact telemetry event name" autocomplete="off" />
           </div>
           <div class="modal-field">
             <label for="input-trigger-condition" class="modal-label">IF Condition (Optional)</label>
-            <input type="text" id="input-trigger-condition" class="modal-input" placeholder="e.g. !state.hardpoints_deployed" autocomplete="off" />
+            <input type="text" id="input-trigger-condition" class="modal-input" placeholder="e.g. !state.in_combat" autocomplete="off" />
           </div>
         </div>
 
@@ -3543,7 +3599,7 @@
           <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
             <div>
               <label for="input-trigger-phrase" class="modal-label">Keybind Phrase</label>
-              <input type="text" id="input-trigger-phrase" class="modal-input" placeholder="e.g. deploy hardpoints" autocomplete="off" />
+              <input type="text" id="input-trigger-phrase" class="modal-input" placeholder="Synced keybind phrase" autocomplete="off" />
             </div>
             <div>
               <label for="input-trigger-hold-ms" class="modal-label">Hold (ms, 0=tap)</label>
@@ -3554,27 +3610,27 @@
 
         <div id="field-trigger-macro" class="modal-field hidden">
           <label for="input-trigger-macro-name" class="modal-label">Saved Macro Name</label>
-          <input type="text" id="input-trigger-macro-name" class="modal-input" placeholder="e.g. take us out" autocomplete="off" />
+          <input type="text" id="input-trigger-macro-name" class="modal-input" placeholder="Name of a saved macro" autocomplete="off" />
         </div>
 
         <div id="field-trigger-sequence" class="modal-field hidden">
           <label for="textarea-trigger-steps" class="modal-label">Sequence Steps (JSON Array)</label>
-          <textarea id="textarea-trigger-steps" class="modal-input" rows="4" style="font-family: Consolas, monospace; font-size: 0.8rem;" placeholder='[{"action": "click", "button": "right", "hold_ms": 5800}]'></textarea>
+          <textarea id="textarea-trigger-steps" class="modal-input" rows="4" style="font-family: Consolas, monospace; font-size: 0.8rem;" placeholder='[{"action": "press", "key": "f", "hold_ms": 200}]'></textarea>
         </div>
 
         <div id="field-trigger-ui-task" class="modal-field hidden">
           <label for="input-trigger-goal" class="modal-label">UI Task Goal</label>
-          <input type="text" id="input-trigger-goal" class="modal-input" placeholder="e.g. Refuel ship, Repair ship, Restock ship" autocomplete="off" />
+          <input type="text" id="input-trigger-goal" class="modal-input" placeholder="Describe the on-screen menu action to complete" autocomplete="off" />
         </div>
 
         <div id="field-trigger-speak" class="modal-field hidden">
           <label for="input-trigger-speak-text" class="modal-label">Voice Callout / Remark</label>
-          <input type="text" id="input-trigger-speak-text" class="modal-input" placeholder="e.g. Shields are down, watch your hull!" autocomplete="off" />
+          <input type="text" id="input-trigger-speak-text" class="modal-input" placeholder="What Aether should say when this event fires" autocomplete="off" />
         </div>
 
         <div class="modal-field">
           <label for="input-trigger-action-label" class="modal-label">Short Action Summary (Optional)</label>
-          <input type="text" id="input-trigger-action-label" class="modal-input" placeholder="e.g. Discovery Scan (Hold Secondary Fire 5.8s)" autocomplete="off" />
+          <input type="text" id="input-trigger-action-label" class="modal-input" placeholder="Optional short summary shown in the table" autocomplete="off" />
         </div>
 
         <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text-main); cursor: pointer;">

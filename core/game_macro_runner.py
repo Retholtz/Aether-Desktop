@@ -11,7 +11,9 @@ supporting:
 - `wait`: timed delay
 """
 
+import ast
 import difflib
+import re
 import time
 import threading
 from typing import Dict, Any, Optional, List, Tuple
@@ -22,7 +24,7 @@ import tools.os_controls as os_controls
 
 logger = get_logger("MacroRunner")
 
-VALID_STEP_ACTIONS = {"press", "trigger_bind", "vision_click", "click", "type", "paste", "wait"}
+VALID_STEP_ACTIONS = {"press", "trigger_bind", "vision_click", "ui_task", "click", "type", "paste", "wait"}
 
 
 def normalize_macro_step(step: Any) -> Optional[Dict[str, Any]]:
@@ -54,6 +56,8 @@ def normalize_macro_step(step: Any) -> Optional[Dict[str, Any]]:
                 out["phrase"] = val
             elif act == "vision_click" and isinstance(val, str):
                 out["target"] = val
+            elif act == "ui_task" and isinstance(val, str):
+                out["goal"] = val
             elif act in ("type", "paste") and isinstance(val, str):
                 out["text"] = val
             elif act == "click" and isinstance(val, str):
@@ -110,6 +114,9 @@ def normalize_and_validate_macro_steps(
         elif act == "vision_click" and not str(step.get("target") or step.get("element") or "").strip():
             errors.append(f"Step #{idx} ('vision_click') is missing a 'target' UI description.")
             continue
+        elif act == "ui_task" and not str(step.get("goal") or "").strip():
+            errors.append(f"Step #{idx} ('ui_task') is missing a 'goal' description.")
+            continue
         normalized.append(step)
 
     return normalized, errors
@@ -117,39 +124,58 @@ def normalize_and_validate_macro_steps(
 
 def evaluate_condition(condition_str: str, state_flags: Dict[str, Any]) -> bool:
     """
-    Evaluates a simple precondition expression against state flags.
+    Safely evaluates simple or compound boolean precondition expressions against `state_flags`
+    using a strictly allowlisted AST walker (no eval()).
     Examples:
         "!state.landing_gear_down" -> True if landing_gear_down is False
         "state.docked" -> True if docked is True
         "state.shields_up == false" -> True if shields_up is False
+        "state.in_srv or state.on_foot" -> True if either flag is True
+        "(state.docked or state.landed) and state.in_main_ship" -> Compound boolean logic
     """
     if not condition_str or not isinstance(condition_str, str):
         return True
 
-    expr = condition_str.strip()
-    try:
-        invert = expr.startswith("!")
-        if invert:
-            expr = expr[1:].strip()
-
-        if expr.startswith("state."):
-            flag_name = expr[len("state."):].strip()
-            if "==" in flag_name:
-                parts = flag_name.split("==", 1)
-                k = parts[0].strip()
-                v = parts[1].strip().lower() in ("true", "1")
-                res = bool(state_flags.get(k, False)) == v
-            elif "!=" in flag_name:
-                parts = flag_name.split("!=", 1)
-                k = parts[0].strip()
-                v = parts[1].strip().lower() in ("true", "1")
-                res = bool(state_flags.get(k, False)) != v
-            else:
-                res = bool(state_flags.get(flag_name, False))
-
-            return not res if invert else res
-
+    raw = condition_str.strip()
+    if not raw:
         return True
+    try:
+        # Normalize JS/C-style boolean tokens into valid Python boolean syntax (outside !=)
+        py_expr = re.sub(r"&&", " and ", raw)
+        py_expr = re.sub(r"\|\|", " or ", py_expr)
+        py_expr = re.sub(r"!(?!=)", " not ", py_expr)
+        py_expr = re.sub(r"\btrue\b", "True", py_expr, flags=re.IGNORECASE)
+        py_expr = re.sub(r"\bfalse\b", "False", py_expr, flags=re.IGNORECASE)
+
+        tree = ast.parse(py_expr, mode="eval")
+
+        def _eval_node(node: ast.AST) -> Any:
+            if isinstance(node, ast.Expression):
+                return bool(_eval_node(node.body))
+            if isinstance(node, ast.BoolOp):
+                if isinstance(node.op, ast.And):
+                    return all(bool(_eval_node(v)) for v in node.values)
+                if isinstance(node.op, ast.Or):
+                    return any(bool(_eval_node(v)) for v in node.values)
+                raise ValueError("Unsupported boolean operator")
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+                return not bool(_eval_node(node.operand))
+            if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+                left = _eval_node(node.left)
+                right = _eval_node(node.comparators[0])
+                op = node.ops[0]
+                if isinstance(op, ast.Eq):
+                    return bool(left) == bool(right) if isinstance(right, bool) else left == right
+                if isinstance(op, ast.NotEq):
+                    return bool(left) != bool(right) if isinstance(right, bool) else left != right
+                raise ValueError("Unsupported comparison operator")
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "state":
+                return state_flags.get(node.attr, False)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float, str)):
+                return node.value
+            raise ValueError(f"Unsupported AST node: {type(node).__name__}")
+
+        return bool(_eval_node(tree))
     except Exception as e:
         logger.warning(f"Error evaluating condition '{condition_str}': {e}")
         return True
@@ -216,16 +242,32 @@ class MacroRunner:
         if isinstance(profile.get("sequences"), dict):
             merged_sequences.update(profile["sequences"])
 
-        # 1. Check for Composite Sequence match (case-insensitive names & aliases)
-        seq_def = None
-        seq_matched_name = clean_phrase
+        # 1. Check for Context-Aware Composite Sequence match (case-insensitive names & aliases)
+        # If multiple sequences share a name/alias (e.g. different vehicle/mode contexts), prefer
+        # the first variant whose `condition` is satisfied by current `state_flags`, then an
+        # unconditional match, falling back to the first match so `condition_skip_ack` still fires.
+        matched_candidates: List[Tuple[str, Any]] = []
         for seq_name, item in merged_sequences.items():
             sname_low = str(seq_name).lower().strip()
             aliases = [str(a).lower().strip() for a in (item.get("aliases") or [])] if isinstance(item, dict) else []
             if sname_low == clean_phrase or clean_phrase in aliases:
-                seq_def = item
-                seq_matched_name = sname_low
-                break
+                matched_candidates.append((sname_low, item))
+
+        seq_def = None
+        seq_matched_name = clean_phrase
+        if matched_candidates:
+            conditioned_hit = None
+            unconditional_hit = None
+            for cand_name, cand_item in matched_candidates:
+                cond = cand_item.get("condition") if isinstance(cand_item, dict) else None
+                if cond:
+                    if evaluate_condition(cond, state_flags):
+                        conditioned_hit = (cand_name, cand_item)
+                        break
+                elif unconditional_hit is None:
+                    unconditional_hit = (cand_name, cand_item)
+            chosen = conditioned_hit or unconditional_hit or matched_candidates[0]
+            seq_matched_name, seq_def = chosen
         if seq_def is not None:
             return self._run_sequence(
                 seq_matched_name,
@@ -342,6 +384,8 @@ class MacroRunner:
             bind_phrase = str(step.get("phrase") or step.get("bind") or "").strip()
             repeat = max(1, min(50, int(step.get("repeat") or 1)))
             interval_sec = max(0.0, float(step.get("interval_ms") if step.get("interval_ms") is not None else 50) / 1000.0)
+            hold_ms_raw = step.get("hold_ms")
+            hold_sec = max(0.02, float(hold_ms_raw) / 1000.0) if hold_ms_raw is not None else None
             entry = _resolve_bind_entry(bind_phrase, profile)
             if not entry:
                 if step.get("abort_if_not_found"):
@@ -354,12 +398,53 @@ class MacroRunner:
                         break
                     if k:
                         if mods:
-                            os_controls.send_directinput_combo(mods, k)
+                            if hold_sec is not None:
+                                os_controls.send_directinput_combo(mods, k, hold_duration=hold_sec)
+                            else:
+                                os_controls.send_directinput_combo(mods, k)
                         else:
-                            os_controls.send_directinput_key(k)
+                            if hold_sec is not None:
+                                os_controls.send_directinput_key(k, duration_sec=hold_sec)
+                            else:
+                                os_controls.send_directinput_key(k)
                     if idx < repeat - 1 and interval_sec > 0:
                         if self._abort_event.wait(interval_sec):
                             break
+
+        elif action_type == "ui_task":
+            goal = str(step.get("goal") or "").strip()
+            max_steps = max(1, min(10, int(step.get("max_steps") or 6)))
+            pref_input = str(step.get("preferred_input") or "auto").strip().lower()
+            abort_failed = bool(step.get("abort_if_not_found", True))
+            if not goal:
+                if abort_failed:
+                    return {"status": "failed", "message": "ui_task step missing 'goal' description."}
+            elif not vision_client:
+                if abort_failed:
+                    return {"status": "failed", "message": f"Vision client unavailable to complete UI task '{goal}'."}
+            else:
+                from core.game_nav import UniversalGameNavigator
+                proc = profile.get("process_name") or profile.get("display_name") or ""
+                nav = UniversalGameNavigator(
+                    client=vision_client,
+                    model_endpoint=model_endpoint,
+                    target_process=proc,
+                    game_name=profile.get("display_name", ""),
+                    keybinds=profile.get("keybinds") or {},
+                )
+                learned = (profile.get("learned_ui_recipes") or {}).get(goal.lower()) if isinstance(profile.get("learned_ui_recipes"), dict) else None
+                ui_res = nav.complete_ui_task(
+                    goal=goal,
+                    max_steps=max_steps,
+                    preferred_input=pref_input,
+                    learned_recipe=learned,
+                )
+                if not isinstance(ui_res, dict) or ui_res.get("status") != "verified_done":
+                    if abort_failed:
+                        return {
+                            "status": ui_res.get("status", "failed") if isinstance(ui_res, dict) else "failed",
+                            "message": (ui_res.get("message") if isinstance(ui_res, dict) else None) or f"UI task '{goal}' did not complete.",
+                        }
 
         elif action_type == "vision_click":
             target = str(step.get("target") or step.get("element") or "").strip()

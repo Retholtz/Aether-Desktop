@@ -12,6 +12,7 @@
   ],
   "universe_name": "Milky Way",
   "default_callsign": "Commander",
+  "special_instructions": "In order for Aether to complete Galaxy Map navigation cleanly, open Options -> General Controls -> Interface Mode and change UI Panel navigation keybinds:\n  W -> Up Arrow\n  S -> Down Arrow\n  A -> Left Arrow\n  D -> Right Arrow\n\n*** This resolves the redundant default keybind conflict between UI Interface Mode and Galaxy Camera Controls. After changing these in-game, click 'Scan / Sync Keybinds' on the Controls & Extensions tab. ***",
   "default_pois": [
     { "id": "felicity_farseer", "name": "Felicity Farseer", "system": "Deciat", "aliases": ["Farseer", "Farseer Inc"] },
     { "id": "elvira_martuuk", "name": "Elvira Martuuk", "system": "Khun", "aliases": ["Martuuk", "Long Sight Base"] },
@@ -88,6 +89,7 @@
   ],
   "trigger_events": [
     { "category": "Navigation & Travel", "event": "StartJump", "label": "Charging Jump (StartJump)", "description": "Fires when initiating a hyperspace or supercruise jump." },
+    { "category": "Navigation & Travel", "event": "RoutePlotted", "label": "Route Plotted (RoutePlotted)", "description": "Fires when a new destination star system is plotted in the Galaxy Map." },
     { "category": "Navigation & Travel", "event": "FSDJump", "label": "Arrived in New System (FSDJump)", "description": "Fires right after completing a hyperspace jump into a star system." },
     { "category": "Navigation & Travel", "event": "SupercruiseEntry", "label": "Entered Supercruise (SupercruiseEntry)", "description": "Fires upon entering supercruise." },
     { "category": "Navigation & Travel", "event": "SupercruiseExit", "label": "Dropped from Supercruise (SupercruiseExit)", "description": "Fires when dropping into normal space." },
@@ -96,6 +98,7 @@
     { "category": "Navigation & Travel", "event": "Touchdown", "label": "Landed on Surface (Touchdown)", "description": "Fires upon touching down on a planetary surface." },
     { "category": "Navigation & Travel", "event": "Liftoff", "label": "Lifted Off Surface (Liftoff)", "description": "Fires when taking off from a planetary surface." },
     { "category": "Navigation & Travel", "event": "FuelScoop", "label": "Fuel Scooping (FuelScoop)", "description": "Fires when scooping fuel from a star." },
+    { "category": "Navigation & Travel", "event": "FuelLevel", "label": "Low Fuel Threshold (FuelLevel)", "description": "Fires when main fuel percentage drops below configured warning thresholds (e.g. <25% or <10%)." },
     { "category": "Navigation & Travel", "event": "JetConeBoost", "label": "Neutron / White Dwarf Supercharge (JetConeBoost)", "description": "Fires when FSD is supercharged in a jet cone." },
 
     { "category": "Docking & Starport", "event": "DockingRequested", "label": "Docking Requested (DockingRequested)", "description": "Fires when transmitting a docking request." },
@@ -133,6 +136,8 @@
     { "category": "Missions, Trade & Signals", "event": "MissionFailed", "label": "Mission Failed (MissionFailed)", "description": "Fires when a mission fails or expires." },
     { "category": "Missions, Trade & Signals", "event": "MarketBuy", "label": "Commodities Purchased (MarketBuy)", "description": "Fires when buying commodities at a market." },
     { "category": "Missions, Trade & Signals", "event": "MarketSell", "label": "Commodities Sold (MarketSell)", "description": "Fires when selling commodities at a market." },
+    { "category": "Missions, Trade & Signals", "event": "ColonisationContribution", "label": "Construction Delivery Made (ColonisationContribution)", "description": "Fires when delivering commodities to a colonisation construction depot." },
+    { "category": "Missions, Trade & Signals", "event": "ColonisationConstructionDepot", "label": "Construction Depot Status Updated (ColonisationConstructionDepot)", "description": "Fires with live construction project progress and remaining material requirements." },
     { "category": "Missions, Trade & Signals", "event": "USSDrop", "label": "Dropped into Signal Source (USSDrop)", "description": "Fires when dropping into a signal source." },
     { "category": "Missions, Trade & Signals", "event": "ReceiveText", "label": "Incoming Comms / NPC Hail (ReceiveText)", "description": "Fires when receiving an in-game message or pirate hail." },
 
@@ -173,45 +178,72 @@
       "enabled": false
     },
     {
-      "id": "auto_dock_refuel",
-      "name": "Auto Refuel on Dock",
+      "id": "auto_dock_services",
+      "name": "Auto Refuel, Repair & Restock on Dock",
       "event": "Docked",
       "event_label": "Docked at Station / Carrier",
       "condition": "",
       "action_type": "ui_task",
-      "action_label": "Refuel Ship",
-      "description": "Automatically clicks Refuel in Starport Services after docking.",
-      "goal": "Refuel ship",
-      "delay_ms": 2500,
+      "action_label": "Refuel, Repair & Restock (Single Pass)",
+      "description": "In one fast pass after docking, moves to the Refuel icon and activates Refuel, Repair, and Restock in sequence using your synced UI keys (yields immediately if you move your mouse).",
+      "goal": "On the station main menu, activate Refuel, Repair, and Restock in a single fast pass (move to Refuel once, then batch Select, UI Right, Select, UI Right, Select using synced UI keys; skip any that are already disabled/0 CR and stop immediately without closing the station menu)",
+      "delay_ms": 3200,
       "cooldown_sec": 20,
       "enabled": false
     },
     {
-      "id": "auto_dock_repair",
-      "name": "Auto Repair on Dock",
-      "event": "Docked",
-      "event_label": "Docked at Station / Carrier",
-      "condition": "",
-      "action_type": "ui_task",
-      "action_label": "Repair Ship",
-      "description": "Automatically clicks Repair in Starport Services after docking.",
-      "goal": "Repair ship",
-      "delay_ms": 800,
-      "cooldown_sec": 20,
+      "id": "auto_trade_check_on_route",
+      "name": "Pre-Departure Best Trade Suggestion",
+      "event": "RoutePlotted",
+      "event_label": "Route Plotted (RoutePlotted)",
+      "condition": "state.docked",
+      "action_type": "trade_check",
+      "action_label": "Check Best Profitable Trade Before Undocking",
+      "description": "When you plot a route while docked, checks live market prices between your current station and your destination system and suggests the top profitable commodity to load up on before you leave.",
+      "delay_ms": 500,
+      "cooldown_sec": 30,
       "enabled": false
     },
     {
-      "id": "auto_dock_restock",
-      "name": "Auto Restock on Dock",
-      "event": "Docked",
-      "event_label": "Docked at Station / Carrier",
-      "condition": "",
-      "action_type": "ui_task",
-      "action_label": "Restock Ship",
-      "description": "Automatically clicks Restock in Starport Services after docking.",
-      "goal": "Restock ship",
-      "delay_ms": 800,
-      "cooldown_sec": 20,
+      "id": "auto_scoopable_star_callout",
+      "name": "Scoopable Star Check on FSD Charge (KGBFOAM)",
+      "event": "StartJump",
+      "event_label": "Charging Jump (StartJump)",
+      "condition": "state.next_star_class != ''",
+      "action_type": "speak",
+      "action_label": "Report Next Star Scoopable Status",
+      "description": "On FSD spin-up for a hyperspace jump, tells you the destination star class and whether it is fuel-scoopable (KGBFOAM).",
+      "speak_text": "Jumping to {next_star_system} — Class {next_star_class} star ({next_star_scoopable}).",
+      "delay_ms": 0,
+      "cooldown_sec": 10,
+      "enabled": false
+    },
+    {
+      "id": "auto_fuel_low_25",
+      "name": "Low Fuel Warning (<25%)",
+      "event": "FuelLevel",
+      "event_label": "Low Fuel Threshold (FuelLevel)",
+      "condition": "state.fuel_pct < 25 and state.fuel_pct >= 10",
+      "action_type": "speak",
+      "action_label": "Warn Fuel Below 25%",
+      "description": "Warns you when your main fuel tank drops below 25%.",
+      "speak_text": "Heads up — main fuel tank is below 25% ({fuel_pct}% remaining). Plan a scoopable star or refueling stop soon.",
+      "delay_ms": 0,
+      "cooldown_sec": 120,
+      "enabled": false
+    },
+    {
+      "id": "auto_fuel_critical_10",
+      "name": "Critical Fuel Warning (<10%)",
+      "event": "FuelLevel",
+      "event_label": "Low Fuel Threshold (FuelLevel)",
+      "condition": "state.fuel_pct < 10",
+      "action_type": "speak",
+      "action_label": "Urgent Warning: Fuel Below 10%",
+      "description": "Delivers an urgent warning when your main fuel tank drops below 10%.",
+      "speak_text": "Critical fuel warning — below 10% ({fuel_pct}% remaining)! Divert to a scoopable star or station immediately!",
+      "delay_ms": 0,
+      "cooldown_sec": 60,
       "enabled": false
     },
     {
@@ -301,23 +333,25 @@
       "map_key": "m",
       "open_wait_sec": 1.4,
       "pre_input_steps": [
-        { "gamepad": "dpad_up", "fallback_key": "up", "hold_ms": 100, "delay_ms": 300 }
+        { "bind_actions": ["ui panel up", "UI_Up"], "hold_ms": 100, "delay_ms": 250 },
+        { "bind_actions": ["ui panel select", "UI_Select"], "hold_ms": 100, "delay_ms": 250 }
       ],
       "search_box_visual_hint": "Galaxy Map search text box labeled 'Search' near the top of the screen",
       "input_method": "clipboard_paste",
       "submit_key": "",
       "select_result_wait_sec": 0.45,
       "post_input_keys": [
-        { "gamepad": "dpad_down", "fallback_key": "down", "hold_ms": 100, "delay_ms": 350 },
-        { "key": "space", "hold_ms": 120, "delay_ms": 1100 },
-        { "key": "a", "hold_ms": 100, "delay_ms": 250 }
+        { "bind_actions": ["ui panel down", "UI_Down"], "hold_ms": 100, "delay_ms": 300 },
+        { "bind_actions": ["ui panel select", "UI_Select"], "hold_ms": 100, "delay_ms": 1100 },
+        { "bind_actions": ["galaxy cam yaw left", "CamYawLeft"], "hold_ms": 250, "delay_ms": 300 }
       ],
       "plot_visual_hint": "Route Plotter / Plot Route button icon on the right-hand system info sidebar",
       "prefer_plot_key_first": true,
       "pre_plot_move_center": false,
       "pre_plot_mouse_nudge": false,
-      "plot_key": "space",
+      "plot_bind_actions": ["ui panel select", "UI_Select"],
       "plot_hold_sec": 1.25,
+      "close_map_on_verified": true,
       "verify_telemetry_field": "route_destination",
       "verify_timeout_sec": 3.0
     },
@@ -396,6 +430,69 @@
         "phrase": "balance power",
         "description": "Balance Power Distribution",
         "aliases": ["reset power", "equalize power"]
+      },
+      "UI_Up": {
+        "phrase": "ui panel up",
+        "description": "UI Panel Up",
+        "aliases": ["ui up"]
+      },
+      "UI_Down": {
+        "phrase": "ui panel down",
+        "description": "UI Panel Down",
+        "aliases": ["ui down"]
+      },
+      "UI_Left": {
+        "phrase": "ui panel left",
+        "description": "UI Panel Left",
+        "aliases": ["ui left"]
+      },
+      "UI_Right": {
+        "phrase": "ui panel right",
+        "description": "UI Panel Right",
+        "aliases": ["ui right"]
+      },
+      "UI_Select": {
+        "phrase": "ui panel select",
+        "description": "UI Panel Select",
+        "aliases": ["ui select"]
+      },
+      "CycleNextPanel": {
+        "phrase": "next panel tab",
+        "description": "Next Panel Tab",
+        "aliases": ["cycle next panel", "tab right"]
+      },
+      "CyclePreviousPanel": {
+        "phrase": "previous panel tab",
+        "description": "Previous Panel Tab",
+        "aliases": ["cycle previous panel", "tab left"]
+      },
+      "CycleNextPage": {
+        "phrase": "next page",
+        "description": "Next UI Page",
+        "aliases": ["cycle next page"]
+      },
+      "CyclePreviousPage": {
+        "phrase": "previous page",
+        "description": "Previous UI Page",
+        "aliases": ["cycle previous page"]
+      },
+      "PrimaryFire": {
+        "phrase": "primary fire",
+        "description": "Primary Fire"
+      },
+      "SecondaryFire": {
+        "phrase": "secondary fire",
+        "description": "Secondary Fire"
+      },
+      "RecallDismissShip": {
+        "phrase": "recall dismiss ship",
+        "description": "Recall / Dismiss Ship",
+        "aliases": ["recall ship bind", "dismiss ship bind"]
+      },
+      "CamYawLeft": {
+        "phrase": "galaxy cam yaw left",
+        "description": "Galaxy Cam Yaw Left",
+        "aliases": ["cam yaw left"]
       },
       "ToggleCargoScoop": {
         "phrase": "toggle cargo scoop",
@@ -529,8 +626,8 @@
       },
       "UI_Back": {
         "phrase": "close menu",
-        "description": "Back / Close Map or Menu",
-        "aliases": ["close map", "close galaxy map", "close system map", "back", "exit menu", "escape"]
+        "description": "UI Back / Close Map or Menu",
+        "aliases": ["ui back", "ui panel back", "close map", "close galaxy map", "close system map", "back", "exit menu", "escape"]
       },
       "ShipSpotLightToggle": {
         "phrase": "toggle ship lights",
@@ -614,20 +711,103 @@
   },
   "sequences": {
     "take us out": {
-      "description": "Click Auto Launch on station/carrier menu when docked",
+      "description": "Select and activate Auto Launch (or Launch) on the station/carrier menu using synced UI keybinds + Vision verification",
       "condition": "state.docked",
       "condition_skip_ack": "We are not currently docked at a station or carrier.",
-      "ack": "Engaging Auto Launch, Commander.",
-      "aliases": ["auto launch", "launch ship", "undock"],
+      "ack": "Engaging launch sequence, Commander.",
+      "aliases": ["auto launch", "launch ship", "undock", "take off", "depart station"],
       "sync": true,
       "steps": [
         {
-          "action": "vision_click",
-          "target": "Auto Launch button in the station or carrier services menu",
-          "button": "left",
-          "hold_ms": 100,
+          "action": "ui_task",
+          "goal": "Select and activate Auto Launch (or Launch if Auto Launch is unavailable) on the station or carrier services menu to undock",
+          "preferred_input": "auto",
+          "max_steps": 5,
+          "abort_if_not_found": true
+        }
+      ]
+    },
+    "recall ship": {
+      "description": "Recall or dismiss your ship while in the SRV or on foot (uses synced RecallDismissShip bind)",
+      "condition": "state.in_srv or state.on_foot",
+      "condition_skip_ack": "You are already aboard your ship, Commander.",
+      "ack": "Transmitting ship recall/dismiss signal.",
+      "aliases": ["dismiss ship", "call ship", "send ship away"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "trigger_bind",
+          "phrase": "recall dismiss ship",
           "abort_if_not_found": true,
-          "delay_ms": 200
+          "delay_ms": 150
+        }
+      ]
+    },
+    "deploy srv": {
+      "description": "Deploy SRV from the Role/Bottom panel when landed in main ship (uses synced UI/panel keybinds)",
+      "condition": "state.landed and state.in_main_ship",
+      "condition_skip_ack": "We need to be landed in our main ship to deploy the SRV.",
+      "ack": "Deploying the SRV now, Commander.",
+      "aliases": ["launch srv", "get in srv", "board srv"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "ui_task",
+          "goal": "Open the Role/Bottom panel, select the SRV bay, and select Deploy",
+          "preferred_input": "keyboard",
+          "max_steps": 6,
+          "abort_if_not_found": true
+        }
+      ]
+    },
+    "board ship from srv": {
+      "description": "Board main ship from the SRV Role/Bottom panel (uses synced UI/panel keybinds)",
+      "condition": "state.in_srv",
+      "condition_skip_ack": "You are not currently in an SRV.",
+      "ack": "Boarding the main ship from the SRV.",
+      "aliases": ["board ship", "dock srv", "embark"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "ui_task",
+          "goal": "Open the Role/Bottom panel in the SRV and select Board Ship",
+          "preferred_input": "keyboard",
+          "max_steps": 6,
+          "abort_if_not_found": true
+        }
+      ]
+    },
+    "disembark from ship": {
+      "description": "Disembark on foot from your docked or landed main ship via the Role/Bottom panel",
+      "condition": "(state.docked or state.landed) and state.in_main_ship",
+      "condition_skip_ack": "We must be docked or landed before disembarking.",
+      "ack": "Disembarking on foot from the ship.",
+      "aliases": ["disembark", "get out", "leave ship", "step outside"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "ui_task",
+          "goal": "Open the Role/Bottom panel in the cockpit and select Disembark",
+          "preferred_input": "keyboard",
+          "max_steps": 6,
+          "abort_if_not_found": true
+        }
+      ]
+    },
+    "disembark from srv": {
+      "description": "Disembark on foot from the SRV via the Role/Bottom panel",
+      "condition": "state.in_srv",
+      "condition_skip_ack": "You are not currently in an SRV.",
+      "ack": "Disembarking on foot from the SRV.",
+      "aliases": ["disembark", "get out", "leave srv"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "ui_task",
+          "goal": "Open the Role/Bottom panel in the SRV and select Disembark",
+          "preferred_input": "keyboard",
+          "max_steps": 6,
+          "abort_if_not_found": true
         }
       ]
     }
@@ -635,6 +815,14 @@
   "companion_resources": {
     "market": {
       "name": "Inara / Spansh",
+      "domain": "spansh.co.uk"
+    },
+    "trade": {
+      "name": "Spansh / Inara Trade Routes",
+      "domain": "spansh.co.uk"
+    },
+    "shopping_list": {
+      "name": "Spansh Multi-Commodity Station Finder",
       "domain": "spansh.co.uk"
     },
     "navigation": {
@@ -648,6 +836,10 @@
     "services": {
       "name": "Spansh Station Services",
       "domain": "spansh.co.uk"
+    },
+    "news": {
+      "name": "GalNet News (Frontier Official)",
+      "domain": "community.elitedangerous.com"
     }
   },
   "intel_endpoints": {
@@ -704,6 +896,65 @@
         "supply": "market[commodity~={canonical_query}].supply",
         "sell_price_cr": "market[commodity~={canonical_query}].sell_price",
         "demand": "market[commodity~={canonical_query}].demand"
+      }
+    },
+    "trade": {
+      "name": "Spansh Live Station-to-Station Trade Comparison (EDDN)",
+      "mode": "trade_pair",
+      "method": "POST",
+      "url": "https://spansh.co.uk/api/stations/search",
+      "timeout_sec": 12.0,
+      "max_results": 8,
+      "fallback_to_web_search": true,
+      "results_path": "results",
+      "market_list_path": "market",
+      "item_name_field": "commodity",
+      "buy_price_field": "buy_price",
+      "sell_price_field": "sell_price",
+      "supply_field": "supply",
+      "demand_field": "demand",
+      "station_body_template": {
+        "filters": {
+          "name": { "value": "{station_name}" },
+          "system_name": { "value": "{system_name}" }
+        },
+        "size": 3
+      }
+    },
+    "shopping_list": {
+      "name": "Spansh Multi-Commodity Project Station Finder (EDDN)",
+      "mode": "shopping_list",
+      "method": "POST",
+      "url": "https://spansh.co.uk/api/stations/search",
+      "default_location": "Sol",
+      "timeout_sec": 12.0,
+      "max_results": 5,
+      "fallback_to_web_search": true,
+      "results_path": "results",
+      "market_list_path": "market",
+      "item_name_field": "commodity",
+      "buy_price_field": "buy_price",
+      "supply_field": "supply",
+      "exclude_station_types": ["Drake-Class Carrier", "Squadron Carrier"],
+      "value_resolver": {
+        "url": "https://spansh.co.uk/api/stations/field_values/market",
+        "values_path": "values"
+      },
+      "body_template": {
+        "filters": {
+          "has_market": { "value": true },
+          "has_large_pad": {
+            "$if": "telemetry.needs_large_pad",
+            "$value": { "value": true }
+          }
+        },
+        "reference_system": "{location}",
+        "sort": [
+          {
+            "distance": { "direction": "asc" }
+          }
+        ],
+        "size": 25
       }
     },
     "outfitting": {
@@ -839,6 +1090,22 @@
         "security": "security",
         "population": "population"
       }
+    },
+    "news": {
+      "name": "GalNet News Feed (Frontier Official)",
+      "method": "GET",
+      "url": "https://cms.zaonce.net/en-GB/jsonapi/node/galnet_article?sort=-published_at&page[limit]=5",
+      "timeout_sec": 10.0,
+      "max_results": 5,
+      "strip_html": true,
+      "max_field_chars": 280,
+      "fallback_to_web_search": true,
+      "results_path": "data",
+      "result_fields": {
+        "title": "attributes.title",
+        "date": "attributes.field_galnet_date",
+        "summary": "attributes.body.value"
+      }
     }
   },
   "telemetry": {
@@ -882,7 +1149,15 @@
       "hull_health": 1.0,
       "shields_up": true,
       "fuel_main": null,
+      "fuel_capacity": null,
+      "fuel_pct": null,
+      "next_star_system": null,
+      "next_star_class": "",
+      "next_star_scoopable": null,
       "cargo_count": 0,
+      "cargo_capacity": null,
+      "cargo_items": [],
+      "max_jump_range": null,
       "legal_status": "Clean",
       "pips": [2.0, 2.0, 2.0],
       "gui_focus": 0
@@ -913,6 +1188,12 @@
       "pips": { "path": "Pips", "list_scale": 0.5 },
       "gui_focus": "GuiFocus"
     },
+    "computed_ratios": {
+      "fuel_pct": { "numerator": "fuel_main", "denominator": "fuel_capacity", "scale": 100.0 }
+    },
+    "threshold_events": [
+      { "event": "FuelLevel", "state_field": "fuel_pct", "below": 25 }
+    ],
     "companion_extractors": [
       {
         "file": "NavRoute.json",
@@ -927,12 +1208,24 @@
           "cargo_count": { "path": "Count", "cast": "int" },
           "cargo_items": {
             "list_map": "Inventory",
-            "limit": 15,
+            "limit": 50,
             "fields": {
               "name": ["Name_Localised", "Name"],
               "count": "Count"
             }
           }
+        }
+      },
+      {
+        "file": "Market.json",
+        "project_market_matcher": {
+          "station_field": "StationName",
+          "system_field": "StarSystem",
+          "items_field": "Items",
+          "name_fields": ["Name_Localised", "Name"],
+          "buy_price_field": "BuyPrice",
+          "stock_field": "Stock",
+          "output_state": "station_project_matches"
         }
       }
     ],
@@ -976,11 +1269,34 @@
         "set_state": { "body": "Body" }
       },
       {
+        "events": ["StartJump"],
+        "set_state": {
+          "next_star_system": { "path": "StarSystem", "default": "", "allow_none": true },
+          "next_star_class": { "path": "StarClass", "default": "", "allow_none": true }
+        },
+        "derived_rules": [
+          {
+            "source_state": "next_star_class",
+            "target_state": "next_star_scoopable",
+            "default": "NOT scoopable",
+            "cases": [
+              {
+                "in": ["k", "g", "b", "f", "o", "a", "m"],
+                "value": "Scoopable (KGBFOAM)"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "events": ["Loadout"],
         "set_state": {
           "ship_type": "Ship",
           "ship_name": "ShipName",
-          "hull_health": { "path": "HullHealth", "default": 1.0 }
+          "hull_health": { "path": "HullHealth", "default": 1.0 },
+          "cargo_capacity": "CargoCapacity",
+          "max_jump_range": "MaxJumpRange",
+          "fuel_capacity": "FuelCapacity.Main"
         },
         "derived_rules": [
           {
@@ -1037,6 +1353,52 @@
         "match_contains_callsign_field": "SignalName",
         "name_field": "SignalName",
         "strip_callsign_from_name": true
+      },
+      {
+        "id": "construction_site",
+        "key_by_entity_id": true,
+        "events": ["Location", "Docked", "Undocked", "DockingRequested", "DockingGranted"],
+        "match_in": {
+          "StationType": ["SpaceConstructionDepot", "PlanetaryConstructionDepot"]
+        },
+        "entity_id_field": "MarketID",
+        "name_field": "StationName",
+        "strip_prefixes": ["Orbital Construction Site: ", "Planetary Construction Site: "],
+        "system_field": "StarSystem",
+        "body_field": "Body",
+        "aliases": [
+          "construction site",
+          "my construction site",
+          "our construction site",
+          "construction project",
+          "my construction project",
+          "our construction project",
+          "construction depot",
+          "colony site"
+        ]
+      }
+    ],
+    "project_trackers": [
+      {
+        "id": "active_construction",
+        "key_by_entity_id": true,
+        "label": "Construction Project",
+        "snapshot_events": ["ColonisationConstructionDepot"],
+        "contribution_events": ["ColonisationContribution"],
+        "entity_id_field": "MarketID",
+        "name_state_fallback": "station",
+        "system_state_fallback": "star_system",
+        "progress_field": "ConstructionProgress",
+        "complete_field": "ConstructionComplete",
+        "failed_field": "ConstructionFailed",
+        "resources_field": "ResourcesRequired",
+        "resource_name_fields": ["Name_Localised", "Name"],
+        "required_field": "RequiredAmount",
+        "provided_field": "ProvidedAmount",
+        "contributions_field": "Contributions",
+        "contribution_name_fields": ["Name_Localised", "Name"],
+        "contribution_amount_field": "Amount",
+        "sync_to_scratchpad": true
       }
     ],
     "milestone_rules": [
