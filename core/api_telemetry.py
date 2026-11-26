@@ -31,6 +31,7 @@ logger = get_logger("ApiTelemetry")
 VALID_FEATURE_TAGS = frozenset({
     "casual_chat",
     "dossier_creation",
+    "document_builder",
     "agnostic_telemetry",
     "game_ptt_copilot",
     "cockpit_control",
@@ -472,6 +473,15 @@ def _extract_usage_and_grounding(response: Any) -> Dict[str, int]:
                 except (TypeError, ValueError):
                     pass
 
+        # Gemini Live WebSocket UsageMetadata uses `response_token_count` instead of `candidates_token_count`
+        if out["candidates_token_count"] == 0:
+            resp_tok = getattr(um, "response_token_count", None)
+            if resp_tok is not None:
+                try:
+                    out["candidates_token_count"] = int(resp_tok)
+                except (TypeError, ValueError):
+                    pass
+
         details = getattr(um, "prompt_tokens_details", None) or []
         for det in details:
             mod = str(getattr(det, "modality", "") or "").upper()
@@ -770,3 +780,48 @@ def format_cost_report(
         )
 
     return "\n".join(lines)
+
+
+def record_live_session_usage(
+    response: Any,
+    *,
+    model_name: str = "gemini-3.8-live",
+    feature_tag: str = "casual_chat",
+    sub_action: str = "live_websocket_turn",
+    db_path: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Meters token usage & USD cost emitted by Gemini Multimodal Live WebSocket frames
+    (`response.usage_metadata`) into `api_usage_log` and `[API_COST]` logs so `--cost-report`
+    has zero blind spots for Live voice/video/text sessions.
+    """
+    um = getattr(response, "usage_metadata", None)
+    if um is None:
+        return None
+    usage = _extract_usage_and_grounding(response)
+    if usage["prompt_token_count"] <= 0 and usage["candidates_token_count"] <= 0 and usage["total_token_count"] <= 0:
+        return None
+    tag = str(feature_tag or "casual_chat").strip().lower()
+    if tag not in VALID_FEATURE_TAGS:
+        tag = "casual_chat"
+    return _finalize_and_log_call(
+        ctx={
+            "feature_tag": tag,
+            "sub_action": sub_action,
+            "loop_step": 1,
+            "turn_id": uuid.uuid4().hex[:10],
+        },
+        model_name=model_name,
+        diag={
+            "system_prompt_chars": 0,
+            "tool_declarations_count": 0,
+            "history_message_count": 1,
+            "thinking_config": "live",
+            "media_resolution": "",
+        },
+        imgs_kept=1 if usage["prompt_image_tokens"] > 0 else 0,
+        imgs_scrubbed=0,
+        response=response,
+        latency_ms=0.0,
+        db_path=db_path,
+    )

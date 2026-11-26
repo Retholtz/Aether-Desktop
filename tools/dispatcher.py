@@ -1313,6 +1313,7 @@ try:
                     "title": {"type": "STRING", "description": "Optional presentation title in Google Slides (defaults to filename)."},
                     "open_in_browser": {"type": "BOOLEAN", "description": "If true (default), opens the converted Google Slides URL in the browser."},
                     "browser_app": {"type": "STRING", "description": "Browser to open the deck in: 'chrome' (default) or 'edge'."},
+                    "lecture_spec_path": {"type": "STRING", "description": "Optional path to lecture_spec.json to enforce deterministic validation gate prior to upload."},
                 },
                 "required": ["file_path"],
             },
@@ -1320,7 +1321,7 @@ try:
         (
             "upload_docx_to_google_docs",
             upload_docx_to_google_docs,
-            "Uploads a local document or handout (.docx, .doc, .odt, or .rtf — by default saved in data/docx/) to Google Drive via OAuth and converts it natively into a Google Docs document, optionally opening it directly in the browser. Use this after generating a rich .docx handout/report (with tables or matplotlib charts) when the user requests Google Docs.",
+            "Uploads a local document or handout (.docx, .doc, .odt, or .rtf — by default saved in data/docx/ or outputs/<job_id>/) to Google Drive via OAuth and converts it natively into a Google Docs document, optionally opening it directly in the browser. Use this after generating and validating a rich .docx handout/report when the user requests Google Docs.",
             {
                 "type": "OBJECT",
                 "properties": {
@@ -1328,6 +1329,7 @@ try:
                     "title": {"type": "STRING", "description": "Optional document title in Google Docs (defaults to filename)."},
                     "open_in_browser": {"type": "BOOLEAN", "description": "If true (default), opens the converted Google Docs URL in the browser."},
                     "browser_app": {"type": "STRING", "description": "Browser to open the document in: 'chrome' (default) or 'edge'."},
+                    "lecture_spec_path": {"type": "STRING", "description": "Optional path to lecture_spec.json to enforce deterministic validation gate prior to upload."},
                 },
                 "required": ["file_path"],
             },
@@ -1342,6 +1344,122 @@ try:
         _CUSTOM_TOOL_HANDLERS[_t_name] = _t_fn
 except Exception as _email_reg_err:
     logger.warning(f"[DISPATCHER] Failed registering OAuth email tools: {_email_reg_err}")
+
+# Register Document/Presentation Compiler, Deterministic Validator & Visual QA Gate Tools
+try:
+    from core.document_compiler import compile_presentation_bundle as _compile_bundle_fn
+    from core.doc_validator import validate_compiled_artifacts as _validate_artifacts_fn
+
+    def compile_presentation_bundle(
+        lecture_spec_path: str,
+        job_id: str = "",
+        build_pptx: bool = True,
+        build_docx: bool = True,
+        dossier_path: str = "",
+    ) -> Dict[str, Any]:
+        """Deterministically compiles `lecture_spec.json` into 300-DPI charts, .pptx slides, and .docx handout under outputs/<job_id>/ and runs full validation."""
+        return _compile_bundle_fn(
+            lecture_spec_path=lecture_spec_path,
+            job_id=job_id,
+            build_pptx=bool(build_pptx),
+            build_docx=bool(build_docx),
+            mirror_to_data_dirs=True,
+            dossier_path=dossier_path or None,
+        )
+
+    def validate_document_artifacts(
+        lecture_spec_path: str,
+        pptx_path: str = "",
+        docx_path: str = "",
+        chart_pngs: Optional[List[str]] = None,
+        dossier_path: str = "",
+    ) -> Dict[str, Any]:
+        """Runs zero-token deterministic validation on lecture_spec.json, .pptx, .docx, and chart PNGs before upload."""
+        return _validate_artifacts_fn(
+            lecture_spec_path,
+            pptx_path=pptx_path or None,
+            docx_path=docx_path or None,
+            chart_pngs=chart_pngs or [],
+            dossier_path=dossier_path or None,
+        )
+
+    def run_visual_qa_check(
+        pptx_path: str = "",
+        chart_pngs: Optional[List[str]] = None,
+        job_id: str = "",
+    ) -> Dict[str, Any]:
+        """Runs low-cost MEDIA_RESOLUTION_LOW Hydrogen Visual QA on chart PNGs and 4-up slide contact sheets before upload."""
+        from core.visual_qa import run_visual_qa_gate
+        from core.manifest_indexer import resolve_gemini_client
+        from core.paths import get_outputs_dir
+
+        qa_dir = os.path.join(get_outputs_dir(job_id), "visual_qa") if job_id else None
+        client = resolve_gemini_client()
+        return run_visual_qa_gate(
+            client=client,
+            model="gemini-4-hydrogen",
+            chart_pngs=chart_pngs or [],
+            pptx_path=pptx_path or None,
+            qa_dir=qa_dir,
+        )
+
+    _DOC_PIPELINE_TOOL_SPECS = [
+        (
+            "compile_presentation_bundle",
+            compile_presentation_bundle,
+            "Deterministically compiles a Neon-authored `lecture_spec.json` into 300-DPI matplotlib charts, a 16:9 `.pptx` deck (programmatic Slide 1 roadmap, slide-bound tables/charts, structured case cards, Speaker Notes), and a synchronized `.docx` audience handout under `outputs/<job_id>/` (mirrored to `data/pptx/` and `data/docx/`), automatically running zero-token validation.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "lecture_spec_path": {"type": "STRING", "description": "Path to `lecture_spec.json` generated by Neon."},
+                    "job_id": {"type": "STRING", "description": "Optional job identifier for outputs/<job_id>/."},
+                    "build_pptx": {"type": "BOOLEAN", "description": "Whether to compile the .pptx deck (default True)."},
+                    "build_docx": {"type": "BOOLEAN", "description": "Whether to compile the .docx handout (default True)."},
+                    "dossier_path": {"type": "STRING", "description": "Optional dossier .md path for cross-artifact fact checking."},
+                },
+                "required": ["lecture_spec_path"],
+            },
+        ),
+        (
+            "validate_document_artifacts",
+            validate_document_artifacts,
+            "Runs the zero-token deterministic validator (`core/doc_validator.py`) across `lecture_spec.json`, `.pptx`, `.docx`, and chart PNGs (checking schema/index integrity, balanced delimiters, zero truncation/Markdown leaks, naked decimals like `.1 U/kg`, dropped cards/bullets, cross-artifact canonical_facts consistency, and smooth curve continuity). Must pass with 0 errors before uploading to Google Workspace.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "lecture_spec_path": {"type": "STRING", "description": "Path to `lecture_spec.json`."},
+                    "pptx_path": {"type": "STRING", "description": "Optional path to compiled `.pptx`."},
+                    "docx_path": {"type": "STRING", "description": "Optional path to compiled `.docx`."},
+                    "chart_pngs": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Optional list of chart PNG paths."},
+                    "dossier_path": {"type": "STRING", "description": "Optional path to dossier `.md`."},
+                },
+                "required": ["lecture_spec_path"],
+            },
+        ),
+        (
+            "run_visual_qa_check",
+            run_visual_qa_check,
+            "Runs the low-cost `MEDIA_RESOLUTION_LOW` (~280 tok/img) Visual QA gate on generated chart PNGs and (when PowerPoint/LibreOffice is installed) 4-up slide contact sheets, checking for clipped text, broken/jagged chart curves, misaligned tables, or blank slides before uploading to Google Workspace.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "pptx_path": {"type": "STRING", "description": "Optional path to compiled `.pptx`."},
+                    "chart_pngs": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "List of generated chart PNG paths."},
+                    "job_id": {"type": "STRING", "description": "Optional job_id for storing contact sheets under outputs/<job_id>/visual_qa."},
+                },
+                "required": [],
+            },
+        ),
+    ]
+    for _t_name, _t_fn, _t_desc, _t_params in _DOC_PIPELINE_TOOL_SPECS:
+        _CUSTOM_TOOL_DECLARATIONS[_t_name] = {
+            "name": _t_name,
+            "description": _t_desc,
+            "parameters": _t_params,
+        }
+        _CUSTOM_TOOL_HANDLERS[_t_name] = _t_fn
+except Exception as _doc_pipe_err:
+    logger.warning(f"[DISPATCHER] Failed registering document pipeline tools: {_doc_pipe_err}")
 
 
 def get_all_tool_declarations() -> List[dict]:
@@ -3307,6 +3425,14 @@ class ToolDispatcher:
                 "- Completeness: Do NOT truncate, use placeholders, or summarize prematurely.\n"
             )
 
+            wants_lecture_spec = any(
+                kw in f"{title} {instructions}".lower()
+                for kw in ("slide", "slides", "presentation", "powerpoint", "pptx", "lecture", "curriculum", "handout", "teaching dossier", "deck")
+            )
+            if wants_lecture_spec:
+                from core.doc_validator import format_lecture_spec_schema_prompt
+                prompt += "\n" + format_lecture_spec_schema_prompt()
+
             try:
                 loop = asyncio.get_running_loop()
                 t_start = time.monotonic()
@@ -3338,11 +3464,39 @@ class ToolDispatcher:
                 finally:
                     stop_hb.set()
                     hb_task.cancel()
-                markdown_content = getattr(response, "text", "") or ""
-                if not markdown_content.strip():
+                raw_markdown_content = getattr(response, "text", "") or ""
+                if not raw_markdown_content.strip():
                     return {"status": "error", "message": "Heavy reasoning model returned empty content."}
 
-                return await self._finalize_heavy_document_output(
+                # Extract & persist single-source-of-truth lecture_spec.json under outputs/<job_id>/
+                lecture_spec_path = ""
+                job_id = ""
+                job_dir = ""
+                spec_validation = None
+                markdown_content = raw_markdown_content
+                if wants_lecture_spec:
+                    from core.doc_validator import extract_lecture_spec_from_text, validate_lecture_spec
+                    from core.paths import get_outputs_dir
+                    clean_md, parsed_spec, parse_err = extract_lecture_spec_from_text(raw_markdown_content)
+                    if clean_md:
+                        markdown_content = clean_md
+                    if parsed_spec is not None:
+                        safe_slug = re.sub(r"[^A-Za-z0-9]+", "_", title or "lecture").strip("_")[:32] or "lecture"
+                        job_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{safe_slug}"
+                        job_dir = get_outputs_dir(job_id)
+                        lecture_spec_path = os.path.join(job_dir, "lecture_spec.json")
+                        with open(lecture_spec_path, "w", encoding="utf-8") as sf:
+                            json.dump(parsed_spec, sf, indent=2, ensure_ascii=False)
+                        spec_validation = validate_lecture_spec(parsed_spec)
+                        logger.info(
+                            "[HEAVY_TASK] Saved lecture_spec.json to %s (%s)",
+                            lecture_spec_path,
+                            spec_validation.get("summary", ""),
+                        )
+                    elif parse_err:
+                        logger.warning("[HEAVY_TASK] lecture_spec.json parse error: %s", parse_err)
+
+                final_res = await self._finalize_heavy_document_output(
                     task_type="research_dossier",
                     title=title,
                     instructions=instructions,
@@ -3354,6 +3508,12 @@ class ToolDispatcher:
                     heavy_model=heavy_model,
                     is_dossier=True,
                 )
+                if lecture_spec_path:
+                    final_res["job_id"] = job_id
+                    final_res["job_dir"] = job_dir
+                    final_res["lecture_spec_path"] = lecture_spec_path
+                    final_res["spec_validation"] = spec_validation
+                return final_res
             except Exception as e:
                 logger.error(f"[HEAVY_TASK] Research dossier synthesis failed: {e}")
                 return {"status": "error", "message": str(e)}

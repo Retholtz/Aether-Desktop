@@ -1005,7 +1005,7 @@ class AetherEngine:
         self._last_live_turn_completed_ts: float = time.time()
         self.last_agent_turn_timestamp: float = 0.0
         self._connect_in_progress: bool = False
-        self._linger_seconds: float = float(self.config.get("live_linger_seconds", 300.0))
+        self._linger_seconds: float = float(self.config.get("live_linger_seconds", 60.0))
 
         try:
             import main
@@ -1090,7 +1090,7 @@ class AetherEngine:
             return False
         if now is None:
             now = time.time()
-        linger_limit = float(getattr(self, "_linger_seconds", 300.0))
+        linger_limit = float(getattr(self, "_linger_seconds", 60.0))
         linger_elapsed = now - getattr(self, "_last_live_turn_completed_ts", now)
         if linger_elapsed < linger_limit:
             return False
@@ -1153,7 +1153,7 @@ class AetherEngine:
                 # 0. On-Demand Ephemeral WebSocket: Linger Window (PTT / Wake Word mode)
                 if self.should_disconnect_for_linger(now):
                     linger_elapsed = now - getattr(self, "_last_live_turn_completed_ts", now)
-                    linger_limit = int(getattr(self, "_linger_seconds", 300.0))
+                    linger_limit = int(getattr(self, "_linger_seconds", 60.0))
                     logger.info(f"[LIVE ON-DEMAND] {linger_limit}s linger window expired ({linger_elapsed:.1f}s idle). Transitioning to Standby.")
                     self.request_live_session_disconnect(reason=f"Linger timeout ({linger_limit}s idle)")
                     continue
@@ -1166,9 +1166,14 @@ class AetherEngine:
                     and not self.session_lifecycle.rotation_in_progress
                     and self._is_audio_idle_for_rotation()
                 ):
-                    reason = "Session lifecycle threshold" if self.session_lifecycle.needs_rotation() else "Pending context reset"
-                    self.request_live_session_rotation(reason=reason)
-                # 2. Hard safeguard: if session elapsed >= 480s (8 min) or idle for > 420s (7 min), FORCE rotation before gateway timeout
+                    has_pending_text = hasattr(self, "_text_queue") and not self._text_queue.empty()
+                    if self.is_on_demand_mode() and not has_pending_text and not getattr(self, "_in_active_turn", False):
+                        logger.info("[LIVE ON-DEMAND] Lifecycle threshold reached while idle. Transitioning to Standby instead of opening a fresh idle socket.")
+                        self.request_live_session_disconnect(reason="On-demand idle standby (lifecycle threshold)")
+                    else:
+                        reason = "Session lifecycle threshold" if self.session_lifecycle.needs_rotation() else "Pending context reset"
+                        self.request_live_session_rotation(reason=reason)
+                # 2. Hard safeguard: if session elapsed >= 480s (8 min) or idle for > 420s (7 min), disconnect to Standby (on-demand) or rotate (always-on)
                 elif (
                     self.is_running
                     and hasattr(self, "session_lifecycle")
@@ -1181,10 +1186,14 @@ class AetherEngine:
                     elapsed = self.session_lifecycle.get_elapsed_seconds()
                     idle_time = now - self.conn_mgr.last_heartbeat_ts
                     if elapsed >= 480 or idle_time >= 420:
-                        logger.info(f"[LIFECYCLE] Force idle rotation: elapsed={elapsed:.0f}s, idle={idle_time:.0f}s. Reconnecting before gateway timeout.")
                         self._in_active_turn = False
                         self._is_transcribing = False
-                        self.request_live_session_rotation(reason="Idle Timeout Prevention")
+                        if self.is_on_demand_mode():
+                            logger.info(f"[LIVE ON-DEMAND] Force idle standby: elapsed={elapsed:.0f}s, idle={idle_time:.0f}s.")
+                            self.request_live_session_disconnect(reason="On-demand idle standby")
+                        else:
+                            logger.info(f"[LIFECYCLE] Force idle rotation: elapsed={elapsed:.0f}s, idle={idle_time:.0f}s. Reconnecting before gateway timeout.")
+                            self.request_live_session_rotation(reason="Idle Timeout Prevention")
             elif self.conn_mgr.state in (ConnectionState.DISCONNECTED, ConnectionState.RECONNECTING):
                 has_queued_work = hasattr(self, "_text_queue") and not self._text_queue.empty()
                 if (not self.is_on_demand_mode() or has_queued_work) and self.conn_mgr.should_attempt_reconnect():
@@ -3635,9 +3644,9 @@ class AetherEngine:
                             except Exception as audio_err:
                                 logger.debug(f"[SEND_LOOP] audio send exception: {audio_err}")
 
-                # 3. Stream real-time desktop vision frames if enabled
+                # 3. Stream real-time desktop vision frames ONLY if explicitly enabled (default False; on-demand tools handle screenshots)
                 vision_cfg = current_cfg.get("vision", {})
-                if vision_cfg.get("enabled", True):
+                if vision_cfg.get("enabled", False):
                     vision_fps = float(vision_cfg.get("fps", 1.0))
                     vision_interval = 1.0 / max(0.2, min(5.0, vision_fps))
                     now = time.time()
@@ -3752,6 +3761,31 @@ class AetherEngine:
                         break
 
                     self.conn_mgr.record_activity()
+
+                    # Meter Gemini Live WebSocket usage_metadata when provided by the gateway
+                    if getattr(response, "usage_metadata", None) is not None:
+                        try:
+                            from core.api_telemetry import record_live_session_usage
+                            live_feat = (
+                                "roleplay_session"
+                                if self.is_ttrpg_session_active()
+                                else (
+                                    "game_ptt_copilot"
+                                    if (
+                                        (getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active())
+                                        or (getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
+                                    )
+                                    else "casual_chat"
+                                )
+                            )
+                            record_live_session_usage(
+                                response,
+                                model_name=model_id or "gemini-3.8-live",
+                                feature_tag=live_feat,
+                                sub_action="live_websocket_turn",
+                            )
+                        except Exception:
+                            pass
 
                     # 0. Handle Tool Calls from Model via Modular Dispatcher
                     tool_call = getattr(response, "tool_call", None)

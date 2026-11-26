@@ -159,11 +159,32 @@ def upload_pptx_to_google_slides(
     title: str = "",
     open_in_browser: bool = True,
     browser_app: str = "chrome",
+    lecture_spec_path: str = "",
 ) -> Dict[str, Any]:
     """
     Uploads a local .pptx/.ppt/.odp presentation to Google Drive and converts it natively
     into a Google Slides presentation, optionally opening the resulting Slides deck in the browser.
+    Runs the zero-token deterministic validator gate if `lecture_spec_path` is provided or co-located.
     """
+    import os
+    spec_path = (lecture_spec_path or "").strip()
+    if not spec_path and file_path:
+        sibling_spec = os.path.join(os.path.dirname(os.path.abspath(os.path.expanduser(file_path))), "lecture_spec.json")
+        if os.path.isfile(sibling_spec):
+            spec_path = sibling_spec
+    if spec_path and os.path.isfile(spec_path) and file_path and str(file_path).lower().endswith(".pptx"):
+        from core.doc_validator import validate_compiled_artifacts
+        val = validate_compiled_artifacts(spec_path, pptx_path=file_path)
+        if not val.get("passed"):
+            return {
+                "status": "validation_failed",
+                "success": False,
+                "blocked_upload": True,
+                "local_file_path": os.path.abspath(os.path.expanduser(file_path)),
+                "validation": val,
+                "error": f"Upload blocked by deterministic validator: {val.get('summary')}",
+            }
+
     mgr = get_oauth_manager()
     res = mgr.upload_pptx_to_google_slides(
         file_path=file_path,
@@ -185,11 +206,32 @@ def upload_docx_to_google_docs(
     title: str = "",
     open_in_browser: bool = True,
     browser_app: str = "chrome",
+    lecture_spec_path: str = "",
 ) -> Dict[str, Any]:
     """
     Uploads a local .docx/.doc/.odt/.rtf document or handout to Google Drive and converts it
     natively into a Google Docs document, optionally opening the resulting doc in the browser.
+    Runs the zero-token deterministic validator gate if `lecture_spec_path` is provided or co-located.
     """
+    import os
+    spec_path = (lecture_spec_path or "").strip()
+    if not spec_path and file_path:
+        sibling_spec = os.path.join(os.path.dirname(os.path.abspath(os.path.expanduser(file_path))), "lecture_spec.json")
+        if os.path.isfile(sibling_spec):
+            spec_path = sibling_spec
+    if spec_path and os.path.isfile(spec_path) and file_path and str(file_path).lower().endswith(".docx"):
+        from core.doc_validator import validate_compiled_artifacts
+        val = validate_compiled_artifacts(spec_path, docx_path=file_path)
+        if not val.get("passed"):
+            return {
+                "status": "validation_failed",
+                "success": False,
+                "blocked_upload": True,
+                "local_file_path": os.path.abspath(os.path.expanduser(file_path)),
+                "validation": val,
+                "error": f"Upload blocked by deterministic validator: {val.get('summary')}",
+            }
+
     mgr = get_oauth_manager()
     res = mgr.upload_docx_to_google_docs(
         file_path=file_path,

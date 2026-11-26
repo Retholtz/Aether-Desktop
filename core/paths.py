@@ -93,3 +93,15 @@ def get_logs_dir() -> str:
     logs_dir = user_data_path("logs")
     os.makedirs(logs_dir, exist_ok=True)
     return logs_dir
+
+
+def get_outputs_dir(job_id: str = "") -> str:
+    """
+    Returns the guaranteed-writable outputs directory for document/presentation jobs:
+    - Frozen builds: %LOCALAPPDATA%\\Aether\\outputs[\\<job_id>]
+    - Source/dev builds: <repo_root>\\outputs[\\<job_id>]
+    """
+    clean_job = "".join(c if (c.isalnum() or c in ("-", "_")) else "_" for c in str(job_id or "").strip()).strip("_")
+    out_dir = user_data_path("outputs", clean_job) if clean_job else user_data_path("outputs")
+    os.makedirs(out_dir, exist_ok=True)
+    return out_dir

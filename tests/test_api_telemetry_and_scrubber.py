@@ -304,6 +304,67 @@ class TestWorkOrderV2TelemetryAndScrubber(unittest.TestCase):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def test_live_websocket_cost_hardening_defaults_and_metering(self):
+        """
+        Verifies:
+        1. Continuous 1 FPS live video streaming defaults OFF (vision.enabled=False).
+        2. On-demand Live WebSocket linger defaults to 60.0s (not 300.0s).
+        3. record_live_session_usage meters Gemini Live `response_token_count` into --cost-report.
+        """
+        import os
+        from core.api_telemetry import format_cost_report, record_live_session_usage
+        from core.config_manager import ConfigManager
+        from core.engine import AetherEngine
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_mgr = ConfigManager(config_path=os.path.join(tmp, "fresh_config.json"))
+            self.assertFalse(cfg_mgr.config["vision"]["enabled"])
+
+            with patch("core.engine.DesktopNotificationWatcher", return_value=MagicMock()), \
+                 patch("core.engine.LiveStreamService", return_value=MagicMock()), \
+                 patch("core.engine.SteamService", return_value=MagicMock()), \
+                 patch("core.engine.GameEngine", return_value=MagicMock()):
+                eng = AetherEngine(config_getter=lambda: {"audio": {"mode": "ptt"}})
+            self.assertEqual(eng._linger_seconds, 60.0)
+
+            db_path = os.path.join(tmp, "telemetry.db")
+            fake_live_resp = SimpleNamespace(
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=4200,
+                    cached_content_token_count=0,
+                    tool_use_prompt_token_count=0,
+                    response_token_count=650,
+                    thoughts_token_count=0,
+                    total_token_count=4850,
+                    prompt_tokens_details=[SimpleNamespace(modality="AUDIO", token_count=320)],
+                ),
+                candidates=[],
+            )
+            row = record_live_session_usage(
+                fake_live_resp,
+                model_name="gemini-3.8-live",
+                feature_tag="casual_chat",
+                db_path=db_path,
+            )
+            self.assertIsNotNone(row)
+            self.assertEqual(row["candidates_token_count"], 650)
+            self.assertGreater(row["estimated_cost_usd"], 0.0)
+            rep = format_cost_report(db_path=db_path)
+            self.assertIn("gemini-3.8-live", rep)
+            self.assertIn("live_websocket_turn", rep)
+
+            # Verify Continuous Live Video 10x cost confirmation modal is present & wired in UI
+            with open(os.path.join("ui", "static", "index.html"), "r", encoding="utf-8") as hf:
+                idx_html = hf.read()
+            self.assertIn("modal-live-video-cost-warning", idx_html)
+            self.assertIn("10-fold", idx_html)
+            self.assertIn("btn-confirm-live-video-cost", idx_html)
+
+            with open(os.path.join("ui", "static", "app.js"), "r", encoding="utf-8") as jf:
+                app_js = jf.read()
+            self.assertIn("modal-live-video-cost-warning", app_js)
+            self.assertIn("wiredCostWarning", app_js)
+
 
 if __name__ == "__main__":
     unittest.main()

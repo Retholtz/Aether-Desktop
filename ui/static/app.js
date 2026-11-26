@@ -1791,10 +1791,58 @@ window.aetherUI = {
       }
 
       // Vision
-      const resolvedVisionEnabled = vision.enabled !== undefined ? vision.enabled : (cfg.vision_enabled !== undefined ? cfg.vision_enabled : true);
+      const resolvedVisionEnabled = vision.enabled !== undefined ? vision.enabled : (cfg.vision_enabled !== undefined ? cfg.vision_enabled : false);
       const visEnabledEl = document.getElementById("visionEnabledCheck");
       if (visEnabledEl) {
         visEnabledEl.checked = Boolean(resolvedVisionEnabled);
+        if (!visEnabledEl.dataset.wiredCostWarning) {
+          visEnabledEl.dataset.wiredCostWarning = "1";
+          const costModal = document.getElementById("modal-live-video-cost-warning");
+          const closeBtn = document.getElementById("btn-close-live-video-cost-modal");
+          const cancelBtn = document.getElementById("btn-cancel-live-video-cost");
+          const confirmBtn = document.getElementById("btn-confirm-live-video-cost");
+
+          const hideCostModal = () => {
+            if (costModal) costModal.classList.add("hidden");
+          };
+          const cancelEnable = () => {
+            visEnabledEl.checked = false;
+            hideCostModal();
+          };
+          const confirmEnable = () => {
+            visEnabledEl.checked = true;
+            hideCostModal();
+          };
+
+          if (closeBtn) closeBtn.addEventListener("click", cancelEnable);
+          if (cancelBtn) cancelBtn.addEventListener("click", cancelEnable);
+          if (confirmBtn) confirmBtn.addEventListener("click", confirmEnable);
+          if (costModal) {
+            costModal.addEventListener("click", (ev) => {
+              if (ev.target === costModal) cancelEnable();
+            });
+          }
+          document.addEventListener("keydown", (ev) => {
+            if (ev.key === "Escape" && costModal && !costModal.classList.contains("hidden")) {
+              cancelEnable();
+            }
+          });
+
+          visEnabledEl.addEventListener("change", () => {
+            if (visEnabledEl.checked) {
+              // Hold unchecked until user explicitly confirms the 10x API cost warning modal
+              visEnabledEl.checked = false;
+              if (costModal) {
+                costModal.classList.remove("hidden");
+              } else {
+                const ok = window.confirm(
+                  "High API Cost Warning: Enabling Continuous Live Video Stream will increase your Gemini API cost ~10-fold (60 frames/minute). On-demand vision works without this. Proceed?"
+                );
+                visEnabledEl.checked = Boolean(ok);
+              }
+            }
+          });
+        }
       }
       if (vision.fps !== undefined && vision.fps !== null) {
         const fpsEl = document.getElementById("visionFps");
@@ -2210,7 +2258,7 @@ window.aetherUI = {
           output_sample_rate: 24000
         },
         vision: {
-          enabled: document.getElementById("visionEnabledCheck") ? document.getElementById("visionEnabledCheck").checked : (this.currentConfig?.vision?.enabled ?? true),
+          enabled: document.getElementById("visionEnabledCheck") ? document.getElementById("visionEnabledCheck").checked : (this.currentConfig?.vision?.enabled ?? false),
           fps: document.getElementById("visionFps") ? (parseFloat(document.getElementById("visionFps").value) || 1.0) : (this.currentConfig?.vision?.fps ?? 1.0),
           monitor: document.getElementById("monitorSelect")?.value || this.currentConfig?.vision?.monitor || "auto",
           endpoint: document.getElementById("visionEndpointSelect")?.value || this.currentConfig?.vision?.endpoint || "gemini-3.8-flash-snapshot",

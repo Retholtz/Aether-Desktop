@@ -83,6 +83,7 @@ BUNDLED_THIRD_PARTY_MODULES: Set[str] = {
     "comtypes",
     "docx",
     "httpx",
+    "lxml",
     "matplotlib",
     "mss",
     "numpy",
@@ -114,6 +115,9 @@ ALLOWED_MODULES: Set[str] = set(BUNDLED_RUNTIME_MODULES)
 
 # Approved internal Aether modules (strictly excludes security.*, core.config_manager, core.oauth_manager, etc.)
 ALLOWED_INTERNAL_MODULES: Set[str] = {
+    "core.doc_validator",
+    "core.document_compiler",
+    "core.paths",
     "core.screen_stream",
     "tools.clipboard",
     "tools.gui_primitives",

@@ -481,9 +481,9 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg.setdefault("auto_check_updates", True)
     cfg.setdefault("skipped_update_version", "")
 
-    # Desktop Vision schema defaults
+    # Desktop Vision schema defaults (continuous Live video OFF by default; on-demand snapshots always active)
     vision_cfg = cfg.setdefault("vision", {})
-    vision_cfg.setdefault("enabled", True)
+    vision_cfg.setdefault("enabled", False)
     vision_cfg.setdefault("fps", 1.0)
     vision_cfg.setdefault("monitor", "auto")
     vision_cfg.setdefault("endpoint", "gemini-3.8-flash-snapshot")

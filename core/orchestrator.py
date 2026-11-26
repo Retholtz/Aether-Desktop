@@ -99,6 +99,9 @@ ORCHESTRATOR_ALLOWED_TOOL_NAMES = {
     "delegate_heavy_task",
     "export_research_dossier",
     "execute_automation_script",
+    "compile_presentation_bundle",
+    "validate_document_artifacts",
+    "run_visual_qa_check",
     "upload_pptx_to_google_slides",
     "upload_docx_to_google_docs",
     "search_past_sessions",
@@ -132,19 +135,25 @@ OPERATING RULES:
    - Draft normal letters, emails, summaries, notes, and short-to-medium documents yourself in Tier 2 Hydrogen.
    - ONLY sub-contract `delegate_heavy_task(..., paste_to_active_doc=False)` when the user specifically asks for an executive summary, exhaustive multi-page research dossier/manual, or explicitly requests Neon/Tier 3.
    - When Neon returns a `file_path`, pass it directly into `paste_to_document(file_path=..., target_app=...)` AFTER verifying the target editor is open, focused, and ready. Never paste blindly before checking the window!
-3. PRESENTATIONS, SLIDE DECKS & AUDIENCE HANDOUTS (PROGRAM-AGNOSTIC WORKFLOW):
+3. PRESENTATIONS, SLIDE DECKS & AUDIENCE HANDOUTS (DETERMINISTIC ZERO-INVENTION COMPILER WORKFLOW):
    - NEVER try to build a multi-slide presentation by manually clicking and typing 15–30 slides one by one in a browser UI!
-   - Instead, generate a clean, universal `.pptx` deck programmatically via `execute_automation_script` using `pptx` (`python-pptx`) — and `matplotlib` (with `matplotlib.use('Agg')`) or `PIL` for graphs, charts, tables, and visual diagrams.
-   - ALWAYS save generated `.pptx` presentations locally under `data/pptx/` (creating `data/pptx` with `os.makedirs(..., exist_ok=True)`, e.g. `data/pptx/YYYYMMDD_HHMMSS_<Title>.pptx`), unless the user explicitly requested a different save folder.
-   - **STRICT SLIDE & HANDOUT DESIGN HYGIENE (MANDATORY):**
-     * **Audience vs. Presenter Separation:** Visible slide content and learner/audience handouts MUST be 100% audience-facing. NEVER put presenter/instructor cues, teaching directives, or meta-labels on visible slides or student handouts (for example: `Attending Clinical Pearl`, `Ask PGY-2/3 residents...`, `Stress to PGY-1...`, `Remind learners...`, `Teaching Pearl`, `Instructor Note`, `Slide Visual Blueprint`, `Speaker Notes`). Route ALL presenter cues, Socratic questions, teaching pearls, and extended evidence commentary strictly into PowerPoint **Speaker Notes** (`slide.notes_slide.notes_text_frame.text`) — never onto the visible slide!
-     * **ZERO Ellipsis Truncation (`...`):** NEVER programmatically chop bullet text with `[:N] + "..."` and NEVER dump raw multi-sentence dossier paragraphs onto slides! Instead, synthesize 3–5 **concise, complete, scannable bullets** per card (~10–20 words each, bold lead-in + crisp takeaway) that fit comfortably inside the text box without clipping, placing detailed prose and citations into Speaker Notes.
-     * **Handouts / Study Guides (`data/docx/`):** When asked to create audience handouts, pocket guides, or rich multi-page documents (especially with tables or `matplotlib` charts/diagrams), generate a clean, print-ready `.docx` via `execute_automation_script` (`docx` + `matplotlib`/`PIL`) saved locally in `data/docx/` (e.g. `data/docx/YYYYMMDD_HHMMSS_<Title>.docx`) containing ONLY audience-facing material (no instructor scripts/answer keys unless requested).
-   - NEVER write speculative `try: import <unlisted_module>` probes in `execute_automation_script`: the AST security gatekeeper inspects all imports statically before execution. Stick strictly to the allowlisted modules documented in `execute_automation_script`.
-   - After generating the `.pptx` or `.docx`, deliver it to whichever program the user requested or has available:
-     * **Google Slides**: Call `upload_pptx_to_google_slides(file_path=..., title=..., open_in_browser=True)` to upload and natively convert the `.pptx` into Google Slides via the Drive API and open it in the browser. If Drive OAuth needs re-authorization (`needs_reauth=True`), report the exact saved `.pptx` path in `data/pptx/` and tell the user to reconnect Google in Settings (or import via `File -> Import slides`).
-     * **Google Docs (Handouts / Rich Docs)**: Call `upload_docx_to_google_docs(file_path=..., title=..., open_in_browser=True)` to upload and natively convert the `.docx` (preserving tables, styling, and embedded charts) into Google Docs and open it in Chrome. (Use `paste_to_document` when pasting Markdown directly into an already-open document.)
-     * **Microsoft PowerPoint / Word / LibreOffice Impress / LibreOffice Writer / OnlyOffice / WPS**: Launch the requested or available desktop app via `launch_application(app_name=..., target=file_path)` (respecting the security whitelist).
+   - **SINGLE-SOURCE-OF-TRUTH (`lecture_spec.json`) & ZERO-INVENTION RULE (CRITICAL):**
+     * When `lecture_spec.json` is available (produced by Neon under `outputs/<job_id>/lecture_spec.json`), treat it as the **exclusive source of truth**.
+     * **PREFERRED FAST PATH:** Call `compile_presentation_bundle(lecture_spec_path=..., job_id=..., build_pptx=True, build_docx=True, dossier_path=...)` — this deterministically loads `lecture_spec.json`, renders 300-DPI smooth `matplotlib` charts, compiles the `.pptx` deck + `.docx` handout into `outputs/<job_id>/` (and mirrors validated outputs to `data/pptx/` and `data/docx/`), and runs full zero-token validation automatically!
+     * If writing custom Python via `execute_automation_script`, you MUST load `lecture_spec.json` via `json.load()`. NEVER hardcode or regenerate clinical facts, numerical thresholds, tables, or module roadmaps from parametric memory!
+     * **BAN NAIVE STRING CHOPPING:** NEVER split or truncate bullets using `.split(".")`, `.split(",")`, or character slicing (`text[:N] + "..."`). Render Neon's concise bullets verbatim with proper word-wrap and font-size bounds; if a multi-card/dense slide overflows, split cleanly onto a `(Cont.)` slide.
+     * **PROGRAMMATIC ROADMAP & SLIDE-BOUND VISUALS:** Slide 1's module overview MUST be computed programmatically from `spec["modules"]` (`slide_start`–`slide_end`). Every `table` and `chart_spec` MUST render strictly on its owning `slide["slide_number"]`—never matched by independent counters.
+     * **AUDIENCE VS. PRESENTER SEPARATION:** Visible slides and learner handouts MUST be 100% audience-facing (zero `Attending Clinical Pearl`, `Ask PGY-...`, `Slide Visual Blueprint`, raw Markdown/backticks, or naked decimals like `.1 U/kg` — always `0.1 U/kg`). Inject `slide["speaker_notes"]` into `pptx_slide.notes_slide.notes_text_frame.text`.
+   - **MANDATORY VALIDATION + VISUAL QA GATE BEFORE UPLOAD (MAX 2 REPAIR CYCLES):**
+     * Before calling `upload_pptx_to_google_slides` or `upload_docx_to_google_docs`, ALWAYS verify:
+       1. `validate_document_artifacts(lecture_spec_path=..., pptx_path=..., docx_path=..., chart_pngs=...)` passes with **0 errors**.
+       2. `run_visual_qa_check(pptx_path=..., chart_pngs=..., job_id=...)` passes at `MEDIA_RESOLUTION_LOW` with **0 blocking visual defects**.
+     * If either check reports errors/defects, fix the targeted slide/chart and re-validate (max 2 repair cycles). Never upload unverified or broken artifacts to Google Workspace; if unresolved after 2 retries, keep locally and notify the user.
+   - NEVER write speculative `try: import <unlisted_module>` probes in `execute_automation_script`: the AST security gatekeeper inspects all imports statically before execution.
+   - After passing validation + Visual QA, deliver to the requested program:
+     * **Google Slides**: `upload_pptx_to_google_slides(file_path=..., title=..., open_in_browser=True, lecture_spec_path=...)`.
+     * **Google Docs (Handouts / Rich Docs)**: `upload_docx_to_google_docs(file_path=..., title=..., open_in_browser=True, lecture_spec_path=...)`.
+     * **Microsoft PowerPoint / Word / LibreOffice Impress / LibreOffice Writer / OnlyOffice / WPS**: `launch_application(app_name=..., target=file_path)` (respecting the security whitelist).
    - Capture a verification screenshot (`capture_screen_snapshot`) after opening the presentation or document before marking the final step `completed`.
 4. VERIFY STATE & SCREEN VISUALLY (`capture_screen_snapshot`):
    - Do NOT assume `launch_application`, `navigate_browser`, or `paste_to_document` succeeded just because it launched a process.
@@ -365,9 +374,16 @@ class TaskOrchestrator:
         final_answer = ""
 
         from core.api_telemetry import api_feature_context
+        is_doc_builder_task = any(
+            kw in f"{title} {instructions}".lower()
+            for kw in ("slide", "slides", "presentation", "powerpoint", "pptx", "handout", "docx", "curriculum", "lecture", "google docs", "google slides", "dossier")
+        )
+        orch_feature_tag = "document_builder" if is_doc_builder_task else "script_gen_optimizer"
+        orch_start_ts = time.time()
+
         for iteration in range(1, self.max_iterations + 1):
             def _run_orch_step(step_num: int = iteration):
-                with api_feature_context("script_gen_optimizer", "orchestrator_step", loop_step=step_num):
+                with api_feature_context(orch_feature_tag, "orchestrator_step", loop_step=step_num):
                     return client.models.generate_content(
                         model=model,
                         contents=contents,
@@ -468,6 +484,13 @@ class TaskOrchestrator:
             status = "error"
         else:
             status = "success"
+        if is_doc_builder_task:
+            try:
+                from core.visual_qa import log_pipeline_cost_receipt
+                log_pipeline_cost_receipt(title[:40] or "doc_job", since_ts=orch_start_ts)
+            except Exception as cost_err:
+                logger.debug("[ORCHESTRATOR] Cost receipt summary skipped: %s", cost_err)
+
         return {
             "status": status,
             "model": model,

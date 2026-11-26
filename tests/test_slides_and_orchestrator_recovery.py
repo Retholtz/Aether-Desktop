@@ -374,10 +374,11 @@ class TestGoogleDocsDriveImportAndSlideHygiene(unittest.TestCase):
         self.assertIn("upload_docx_to_google_docs", ORCHESTRATOR_ALLOWED_TOOL_NAMES)
         decl_names = {d.get("name") for d in get_all_tool_declarations()}
         self.assertIn("upload_docx_to_google_docs", decl_names)
-        self.assertIn("ZERO Ellipsis Truncation", ORCHESTRATOR_SYSTEM_INSTRUCTION)
-        self.assertIn("Audience vs. Presenter Separation", ORCHESTRATOR_SYSTEM_INSTRUCTION)
-        self.assertIn("Speaker Notes", ORCHESTRATOR_SYSTEM_INSTRUCTION)
-        self.assertIn("data/docx/", ORCHESTRATOR_SYSTEM_INSTRUCTION)
+        instr_low = ORCHESTRATOR_SYSTEM_INSTRUCTION.lower()
+        self.assertIn("ban naive string chopping", instr_low)
+        self.assertIn("audience vs. presenter separation", instr_low)
+        self.assertIn("speaker_notes", instr_low)
+        self.assertIn("data/docx/", instr_low)
 
     def test_upload_docx_to_google_docs_success_and_data_docx_resolution(self):
         mgr = OAuthManager()

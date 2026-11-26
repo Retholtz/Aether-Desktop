@@ -1824,9 +1824,9 @@
                 <div class="form-group">
                   <label class="hud-checkbox">
                     <input type="checkbox" id="visionEnabledCheck">
-                    <span>Enable Desktop Screen Capture</span>
+                    <span>Continuous Live Video Stream (Optional &mdash; High Token Cost)</span>
                   </label>
-                  <span class="input-hint">Periodically streams your desktop screen to Gemini Multimodal Live.</span>
+                  <span class="input-hint">Streams continuous desktop video to Gemini Multimodal Live while connected. Keep OFF for normal use &mdash; on-demand screen inspection &amp; visual verification remain fully active.</span>
                 </div>
 
                 <div class="form-group">
@@ -3253,6 +3253,38 @@
         <span class="fab-text" id="fabButtonText">START ASSISTANT</span>
       </button>
     </footer>
+  </div>
+
+  <!-- Modal: Continuous Live Video High-Cost Confirmation -->
+  <div id="modal-live-video-cost-warning" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="liveVideoCostWarnTitle">
+    <div class="modal-card" style="max-width: 500px; border: 1px solid rgba(245, 158, 11, 0.55);">
+      <div class="modal-header" style="border-bottom: 1px solid rgba(245, 158, 11, 0.25);">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1.2rem;">⚠️</span>
+          <h3 id="liveVideoCostWarnTitle" style="margin: 0; font-size: 1rem; color: #fbbf24;">High API Cost Warning (10&times; Token Usage)</h3>
+        </div>
+        <button type="button" class="modal-close-btn" id="btn-close-live-video-cost-modal" title="Cancel">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 16px; color: var(--text-main); font-size: 0.9rem; line-height: 1.55;">
+        <p style="margin: 0 0 10px 0;">
+          Enabling <strong>Continuous Live Video Stream</strong> continuously sends desktop frames (up to 60 screenshots/minute) to Gemini Live whenever a session is active.
+        </p>
+        <p style="margin: 0 0 10px 0; color: #fca5a5;">
+          <strong>This will increase your Gemini API cost by ~10-fold or more</strong>, even during brief casual conversations.
+        </p>
+        <p style="margin: 0; color: var(--text-muted); font-size: 0.84rem;">
+          You do <strong>not</strong> need this enabled for Aether to see your screen &mdash; on-demand screen inspection, clicking, visual verification, and Game Mode snapshots all stay fully active while this option is OFF.
+        </p>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border-subtle);">
+        <button type="button" id="btn-cancel-live-video-cost" class="btn-primary-sm" style="padding: 8px 14px; font-weight: 600;">
+          Keep OFF (Recommended)
+        </button>
+        <button type="button" id="btn-confirm-live-video-cost" class="hud-btn-ghost sm" style="padding: 8px 14px; color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.55); font-weight: 600;">
+          I Understand &mdash; Enable Live Video
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Modal: Add New Game -->
