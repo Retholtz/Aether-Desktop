@@ -193,7 +193,7 @@ def export_pptx_slide_thumbnails(pptx_path: str, out_dir: str) -> List[str]:
 def run_visual_qa_gate(
     *,
     client: Any,
-    model: str = "gemini-4-hydrogen",
+    model: Optional[str] = None,
     chart_pngs: Optional[Sequence[str]] = None,
     pptx_path: Optional[str] = None,
     qa_dir: Optional[str] = None,
@@ -202,8 +202,13 @@ def run_visual_qa_gate(
     """
     Executes the low-cost visual QA pass at `MEDIA_RESOLUTION_LOW` (~280 tok/image)
     tagged `feature_tag="document_builder", sub_action="visual_qa"`.
+    When `model` is omitted, dynamically resolves the Tier 2 endpoint from Settings.
     """
     from google.genai import types
+    if not model:
+        from core.config_manager import load_config
+        from core.model_discovery import resolve_tier_model
+        model, _, _ = resolve_tier_model(load_config() or {}, tier=2)
 
     targets: List[tuple[str, str]] = []  # (label, file_path)
     for png in (chart_pngs or []):

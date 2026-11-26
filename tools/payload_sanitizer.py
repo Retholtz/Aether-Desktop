@@ -182,6 +182,14 @@ EXEMPT_TOOLS = {
     "delegate_heavy_task",
     "export_research_dossier",
     "paste_to_document",
+    "extract_lecture_spec_from_dossier",
+    "revise_lecture_spec",
+    "compile_presentation_bundle",
+    "validate_document_artifacts",
+    "run_visual_qa_check",
+    "upload_pptx_to_google_slides",
+    "upload_docx_to_google_docs",
+    "upload_xlsx_to_google_sheets",
 }
 
 

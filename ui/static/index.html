@@ -44,7 +44,7 @@
         <div class="hud-tabs-divider" role="separator"></div>
         <div class="hud-tabs-row hud-tabs-secondary">
           <button type="button" class="hud-tab nav-btn" data-tab="tab-dossiers" id="btn-tab-dossiers">
-            <span class="tab-icon icon">📑</span> DOSSIERS
+            <span class="tab-icon icon">📑</span> DOCUMENTS
           </button>
           <button type="button" class="hud-tab nav-btn" data-tab="tab-settings" id="btn-tab-settings">
             <span class="tab-icon icon">⚙️</span> SETTINGS
@@ -3129,54 +3129,71 @@
       </section>
 
       <!-- ============================================================= -->
-      <!-- TAB: DOSSIER VIEWER (WORD/DOCS FORMATTED REPORTS)             -->
+      <!-- TAB: DOCUMENTS HUB (DOSSIERS / DOCX / PPTX / XLSX)            -->
       <!-- ============================================================= -->
       <section id="tab-dossiers" class="tab-pane hidden">
         <div class="stored-chats-layout">
-          <!-- Left Master Pane: Saved Dossiers List -->
+          <!-- Left Master Pane: Documents Library with 4 Category Sub-Tabs -->
           <aside class="stored-chats-sidebar">
             <div class="stored-sidebar-header">
               <div class="stored-sidebar-title-row">
-                <span class="stored-sidebar-title">SAVED DOSSIERS</span>
-                <span id="dossiersCount" class="stored-count-badge">0 DOSSIERS</span>
+                <span class="stored-sidebar-title" id="documentsSidebarTitle">DOCUMENTS</span>
+                <span id="dossiersCount" class="stored-count-badge">0 FILES</span>
+              </div>
+              <div class="doc-category-tabs" id="docCategoryTabs" role="tablist" aria-label="Document categories">
+                <button type="button" class="doc-cat-tab active" data-doc-cat="dossiers" role="tab" aria-selected="true" title="data/dossiers/">Dossiers</button>
+                <button type="button" class="doc-cat-tab" data-doc-cat="docx" role="tab" aria-selected="false" title="data/docx/">DOCX</button>
+                <button type="button" class="doc-cat-tab" data-doc-cat="pptx" role="tab" aria-selected="false" title="data/pptx/">PPTX</button>
+                <button type="button" class="doc-cat-tab" data-doc-cat="xlsx" role="tab" aria-selected="false" title="data/xlsx/">XLSX</button>
               </div>
               <div class="stored-search-bar">
                 <input
                   type="text"
                   id="dossiersSearch"
                   class="stored-search-input"
-                  placeholder="Filter by title, category, content..."
+                  placeholder="Filter documents by title, filename..."
                   autocomplete="off"
                 />
-                <button type="button" class="hud-btn-ghost sm" id="refreshDossiersBtn" title="Refresh dossier list">
+                <button type="button" class="hud-btn-ghost sm" id="openDocFolderBtn" title="Open folder in File Explorer">
+                  📂
+                </button>
+                <button type="button" class="hud-btn-ghost sm" id="refreshDossiersBtn" title="Refresh document list">
                   🔄
                 </button>
               </div>
             </div>
 
             <div id="dossiersList" class="stored-sessions-list">
-              <div class="stored-empty-state">Loading saved dossiers...</div>
+              <div class="stored-empty-state">Loading saved documents...</div>
             </div>
           </aside>
 
-          <!-- Right Detail Pane: Word / Google Docs Style Document Viewer -->
+          <!-- Right Detail Pane: Unified Print-Ready Document Viewer -->
           <section class="stored-chats-detail">
             <div id="dossierDetailPlaceholder" class="stored-detail-placeholder">
               <div class="placeholder-icon">📑</div>
-              <div class="placeholder-title">No Dossier Selected</div>
-              <div class="placeholder-desc">Select a dossier from the list on the left to read it in a formatted Word/Docs-style page view, copy rich HTML, or print to PDF.</div>
+              <div class="placeholder-title">No Document Selected</div>
+              <div class="placeholder-desc">Select a Dossier, Word Doc (.docx), Presentation (.pptx), or Spreadsheet (.xlsx) on the left to preview natively, copy, open in its desktop app, or print to PDF.</div>
             </div>
 
             <div id="dossierDetailView" class="dossier-detail-view hidden">
               <div class="dossier-toolbar">
                 <div class="dossier-toolbar-meta">
-                  <span id="dossierDetailTitle" class="dossier-toolbar-title">Document</span>
+                  <div class="dossier-title-row">
+                    <span id="dossierDetailTitle" class="dossier-toolbar-title">Document</span>
+                    <button type="button" class="doc-title-edit-btn" id="renameDocBtn" title="Rename document title">✏️</button>
+                    <div id="docTitleEditWrap" class="doc-title-edit-wrap hidden">
+                      <input type="text" id="docTitleEditInput" class="doc-title-edit-input" maxlength="140" aria-label="Edit document title" />
+                      <button type="button" class="hud-btn-secondary sm" id="docTitleSaveBtn" title="Save title">✓</button>
+                      <button type="button" class="hud-btn-ghost sm" id="docTitleCancelBtn" title="Cancel">✕</button>
+                    </div>
+                  </div>
                   <span id="dossierDetailMeta" class="dossier-toolbar-sub">0 words</span>
                 </div>
                 <div class="dossier-toolbar-actions">
                   <div class="dossier-zoom-group" title="Document zoom & width">
                     <button type="button" class="hud-btn-ghost sm" id="dossierZoomOutBtn" title="Zoom out">−</button>
-                    <select id="dossierZoomSelect" class="hud-select sm dossier-zoom-select" aria-label="Dossier Zoom">
+                    <select id="dossierZoomSelect" class="hud-select sm dossier-zoom-select" aria-label="Document Zoom">
                       <option value="fit" selected>Fit</option>
                       <option value="0.75">75%</option>
                       <option value="0.9">90%</option>
@@ -3188,12 +3205,13 @@
                     </select>
                     <button type="button" class="hud-btn-ghost sm" id="dossierZoomInBtn" title="Zoom in">+</button>
                   </div>
-                  <button type="button" class="hud-btn-secondary sm" id="copyDossierRichBtn" title="Copy formatted rich HTML (paste directly into Word or Google Docs)">📋 COPY FOR WORD/DOCS</button>
-                  <button type="button" class="hud-btn-ghost sm" id="copyDossierMdBtn" title="Copy raw Markdown source">MD</button>
+                  <button type="button" class="hud-btn-secondary sm" id="copyDossierRichBtn" title="Copy formatted content to clipboard">📋 COPY</button>
+                  <button type="button" class="hud-btn-ghost sm" id="copyDossierMdBtn" title="Copy raw text / Markdown source">MD</button>
                   <button type="button" class="hud-btn-ghost sm" id="toggleDossierThemeBtn" title="Toggle Paper / Dark reading mode">🌙 DARK</button>
-                  <button type="button" class="hud-btn-ghost sm" id="openDossierExternalBtn" title="Open file in default Windows app">↗ OPEN</button>
+                  <button type="button" class="hud-btn-ghost sm" id="openDossierExternalBtn" title="Open file in default Windows app (Word / PowerPoint / Excel)">↗ OPEN</button>
                   <button type="button" class="hud-btn-ghost sm" id="printDossierBtn" title="Print or Save as PDF">🖨️ PRINT / PDF</button>
-                  <button type="button" class="hud-btn-ghost sm danger" id="deleteCurrentDossierBtn" title="Delete this dossier permanently">🗑️ DELETE</button>
+                  <button type="button" class="hud-btn-secondary sm" id="syncDocToDriveBtn" title="Upload and organize this file in Google Drive (/Aether/...)">☁️ SYNC TO DRIVE</button>
+                  <button type="button" class="hud-btn-ghost sm danger" id="deleteCurrentDossierBtn" title="Delete this document permanently">🗑️ DELETE</button>
                 </div>
               </div>
 

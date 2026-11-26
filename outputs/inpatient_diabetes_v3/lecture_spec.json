@@ -1,0 +1,1791 @@
+{
+  "metadata": {
+    "title": "Inpatient Diabetes Management",
+    "subtitle": "Evidence-Based Curriculum for Internal Medicine Residency Training (PGY-1 to PGY-3)",
+    "audience": "Internal Medicine Residents (PGY-1 to PGY-3), Sub-Interns, and Inpatient Teaching Faculty",
+    "total_slides": 26,
+    "guidelines_version": "ADA Standards of Care 2024-2025; Endocrine Society 2022; ADA/EASD/JBDS Consensus Report June 2024; Multi-Society Perioperative GLP-1 Guidance Oct 2024"
+  },
+  "canonical_facts": {
+    "hyperglycemia_initiation_threshold": ">= 180 mg/dL",
+    "icu_target_bg": "140-180 mg/dL",
+    "non_icu_target_bg": "100-180 mg/dL",
+    "relaxed_target_bg": "< 200-250 mg/dL",
+    "hba1c_check_window": "within 3 months",
+    "diabetes_hba1c_threshold": ">= 6.5%",
+    "tdd_high_risk_ckd_elderly": "0.2-0.3 units/kg/day",
+    "tdd_standard_t2dm": "0.4-0.5 units/kg/day",
+    "tdd_severe_resistance": "0.6 units/kg/day",
+    "hypoglycemia_level_1": "< 70 mg/dL and >= 54 mg/dL",
+    "hypoglycemia_level_2": "< 54 mg/dL",
+    "hypoglycemia_dose_reduction": "20%-50%",
+    "dka_glucose_threshold_2024": ">= 200 mg/dL or prior diabetes",
+    "dka_ketone_threshold_2024": "beta-hydroxybutyrate >= 3.0 mmol/L",
+    "dka_acidosis_threshold_2024": "pH < 7.3 or HCO3- < 18 mmol/L",
+    "hhs_glucose_threshold_2024": ">= 600 mg/dL",
+    "hhs_osmolality_threshold_2024": "> 300 mOsm/kg",
+    "dka_potassium_hold_insulin": "< 3.5 mEq/L",
+    "dka_iv_insulin_rate": "0.1 units/kg/hr",
+    "hhs_iv_insulin_rate": "0.05 units/kg/hr",
+    "dka_dextrose_add_threshold": "< 250 mg/dL",
+    "dka_resolution_ketones": "beta-hydroxybutyrate < 0.6 mmol/L",
+    "dka_resolution_acid_base": "pH >= 7.3 or HCO3- >= 18 mmol/L",
+    "iv_to_sq_overlap_window": "2 hours",
+    "sglt2i_preop_hold": "3 days (4 days for ertugliflozin)"
+  },
+  "modules": [
+    {
+      "id": 1,
+      "name": "Foundations and Evidence-Based Targets",
+      "slide_start": 1,
+      "slide_end": 4
+    },
+    {
+      "id": 2,
+      "name": "T1DM vs. T2DM and the Death of Sliding Scale Monotherapy",
+      "slide_start": 5,
+      "slide_end": 8
+    },
+    {
+      "id": 3,
+      "name": "Designing and Titrating Subcutaneous Insulin Regimens",
+      "slide_start": 9,
+      "slide_end": 12
+    },
+    {
+      "id": 4,
+      "name": "High-Risk Clinical Scenarios and Comorbidities",
+      "slide_start": 13,
+      "slide_end": 18
+    },
+    {
+      "id": 5,
+      "name": "Hyperglycemic Emergencies: DKA and HHS",
+      "slide_start": 19,
+      "slide_end": 22
+    },
+    {
+      "id": 6,
+      "name": "Safe Transitions of Care and Resident Ward Cases",
+      "slide_start": 23,
+      "slide_end": 26
+    }
+  ],
+  "slides": [
+    {
+      "slide_number": 1,
+      "module_id": 1,
+      "title": "The Inpatient Burden of Dysglycemia and Curriculum Roadmap",
+      "layout_type": "title_roadmap",
+      "bullets": [
+        "Hyperglycemia above 140 mg/dL affects 32%-38% of non-ICU patients and 40%-50% of ICU patients.",
+        "Inpatient dysglycemia follows a U-shaped mortality curve driven by severe hyperglycemia above 200 mg/dL and hypoglycemia below 70 mg/dL.",
+        "Three inpatient phenotypes exist: known diabetes, undiagnosed diabetes (HbA1c >= 6.5%), and stress hyperglycemia (HbA1c < 6.5%).",
+        "Six modules cover targets, basal-bolus dosing, high-risk scenarios, 2024 DKA/HHS updates, and safe discharge."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: Umpierrez et al. (J Clin Endocrinol Metab 2002) showed newly discovered inpatient hyperglycemia carried an 18-fold higher in-hospital mortality (16%) versus normoglycemia (1.7%) and higher mortality than known diabetes (3%). Attending Pearl: Stress to PGY-1s that stress hyperglycemia is not benign; it impairs neutrophil chemotaxis, phagocytosis, and complement activation, increasing surgical site and nosocomial infections."
+    },
+    {
+      "slide_number": 2,
+      "module_id": 1,
+      "title": "Pathophysiology of Inpatient Hyperglycemia",
+      "layout_type": "bullets",
+      "bullets": [
+        "Acute illness surges cortisol, epinephrine, glucagon, and growth hormone, driving hepatic gluconeogenesis and peripheral insulin resistance.",
+        "Pro-inflammatory cytokines TNF-alpha and IL-6 blunt skeletal muscle GLUT4 translocation and worsen insulin resistance.",
+        "Iatrogenic triggers include glucocorticoids, catecholamine vasopressors, dextrose IV fluids, enteral/parenteral nutrition, and calcineurin inhibitors.",
+        "Hyperglycemia causes oxidative stress, endothelial dysfunction, platelet activation, and osmotic diuresis with electrolyte wasting."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: Mechanistic clinical studies confirm lowering BG below 180 mg/dL restores neutrophil oxidative burst capacity and reduces microvascular endothelial injury. Attending Pearl: As acute infection or inflammation resolves, counter-regulatory hormones drop rapidly. Failing to proactively down-titrate insulin as steroids taper or sepsis resolves is a primary driver of late-hospitalization hypoglycemia."
+    },
+    {
+      "slide_number": 3,
+      "module_id": 1,
+      "title": "Evolution of Glycemic Targets: From Leuven to NICE-SUGAR",
+      "layout_type": "bullets_plus_chart",
+      "bullets": [
+        "Leuven I (2001, n=1,548 surgical ICU) showed intensive IV insulin (80-110 mg/dL) reduced mortality from 8.0% to 4.6%.",
+        "Leuven II (2006, n=1,200 medical ICU) showed no mortality benefit and 6-fold higher severe hypoglycemia (18.7% vs. 3.1%).",
+        "NICE-SUGAR (2009, n=6,104) compared 81-108 mg/dL versus < 180 mg/dL across medical and surgical ICUs.",
+        "Intensive control in NICE-SUGAR increased 90-day mortality (27.5% vs. 24.9%, p=0.02) and severe hypoglycemia < 40 mg/dL (6.8% vs. 0.5%)."
+      ],
+      "table": null,
+      "chart_spec": {
+        "title": "NICE-SUGAR (n = 6,104): Intensive vs. Conventional ICU Targets",
+        "chart_type": "grouped_bar",
+        "x_label": "Clinical Outcome",
+        "y_label": "Incidence (%)",
+        "series": [
+          {
+            "name": "Intensive (81-108 mg/dL)",
+            "x": [
+              "90-Day Mortality",
+              "Severe Hypoglycemia (< 40 mg/dL)"
+            ],
+            "y": [
+              27.5,
+              6.8
+            ]
+          },
+          {
+            "name": "Conventional (< 180 mg/dL)",
+            "x": [
+              "90-Day Mortality",
+              "Severe Hypoglycemia (< 40 mg/dL)"
+            ],
+            "y": [
+              24.9,
+              0.5
+            ]
+          }
+        ],
+        "annotations": [],
+        "smooth_continuous": false
+      },
+      "cards": null,
+      "speaker_notes": "Evidence Base: NICE-SUGAR Investigators (NEJM 2009) permanently shifted global inpatient practice away from tight normoglycemia toward moderate, hypoglycemia-safe targets. Attending Pearl: Ask PGY-2/3 residents why Leuven I differed from NICE-SUGAR: Leuven I used aggressive early parenteral dextrose nutrition creating artificial hyperglycemia in controls, arterial sampling, and a single specialized surgical unit."
+    },
+    {
+      "slide_number": 4,
+      "module_id": 1,
+      "title": "Current Glycemic Targets and Admission Diagnostic Workup",
+      "layout_type": "table_slide",
+      "bullets": [
+        "Initiate insulin for persistent hyperglycemia >= 180 mg/dL on two occasions within 24 hours.",
+        "Check admission HbA1c for all diabetes or hyperglycemia (> 140 mg/dL) patients without a result in the past 3 months.",
+        "Obtain baseline BMP (creatinine, eGFR, potassium, bicarbonate) and accurate body weight in kilograms on admission."
+      ],
+      "table": {
+        "title": "ADA 2024-2025 & Endocrine Society 2022 Glycemic Targets",
+        "headers": [
+          "Patient Population",
+          "Target Blood Glucose",
+          "Clinical Caveats"
+        ],
+        "rows": [
+          [
+            "Critically Ill (ICU)",
+            "140-180 mg/dL (7.8-10.0 mmol/L)",
+            "Use validated IV insulin protocol; 110-140 mg/dL only if low hypoglycemia risk"
+          ],
+          [
+            "Non-Critically Ill (Floor)",
+            "100-180 mg/dL (5.6-10.0 mmol/L)",
+            "Endocrine Society notes pre-meal < 140 mg/dL and random < 180 mg/dL"
+          ],
+          [
+            "Terminally Ill / High Risk",
+            "< 200-250 mg/dL",
+            "Purely to prevent osmotic symptoms and dehydration"
+          ]
+        ]
+      },
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA Standards of Care in Diabetes (2024/2025, Section 16) and Endocrine Society 2022 Guideline. Attending Pearl: Point out that HbA1c may be falsely low after recent blood transfusion, acute blood loss, hemolysis, erythropoietin therapy, or ESRD with shortened RBC lifespan. Always interpret HbA1c in clinical context."
+    },
+    {
+      "slide_number": 5,
+      "module_id": 2,
+      "title": "Type 1 vs. Type 2 Diabetes in the Hospital: The Absolute Basal Rule",
+      "layout_type": "bullets",
+      "bullets": [
+        "T1DM involves absolute beta-cell destruction; continuous basal insulin is mandatory to suppress lipolysis and ketogenesis.",
+        "NEVER withhold basal insulin completely in T1DM, even if NPO or mildly hypoglycemic, or DKA develops within 4-8 hours.",
+        "Long-standing insulinopenic T2DM can behave like T1DM and develop DKA if basal insulin is abruptly omitted.",
+        "Pancreatogenic diabetes (Type 3c) lacks both insulin and glucagon, causing brittle glycemic swings and severe hypoglycemia."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA Standards of Care (2024/2025) and Joint British Diabetes Societies (JBDS) Inpatient Safety Guidelines. Attending Pearl: Teach the T1DM Safety Reflex: If a T1DM patient has a morning BG of 85 mg/dL and is NPO, do NOT hold basal insulin. Reduce the basal dose by 20% and initiate dextrose-containing maintenance IV fluids (e.g., D5 1/2 NS at 75-100 mL/hr) to safely cover basal insulin."
+    },
+    {
+      "slide_number": 6,
+      "module_id": 2,
+      "title": "Why Sliding Scale Insulin (SSI) Monotherapy Fails",
+      "layout_type": "bullets_plus_chart",
+      "bullets": [
+        "SSI monotherapy reacts retrospectively to hyperglycemia and provides zero basal coverage, causing overnight and pre-meal spikes.",
+        "RABBIT 2 (n=130 medical T2DM) showed basal-bolus achieved BG < 140 mg/dL in 66% vs. 38% with SSI.",
+        "RABBIT 2 Surgery (n=211) showed basal-bolus cut composite postoperative complications nearly two-thirds (8.6% vs. 24.3%, p=0.003).",
+        "Correctional-only insulin is acceptable only for mild stress hyperglycemia (140-180 mg/dL); escalate if required > 2 times in 24 hours."
+      ],
+      "table": null,
+      "chart_spec": {
+        "title": "RABBIT 2 & RABBIT 2 Surgery: Basal-Bolus vs. Sliding Scale (SSI)",
+        "chart_type": "grouped_bar",
+        "x_label": "Trial Endpoint",
+        "y_label": "Patients (%)",
+        "series": [
+          {
+            "name": "Basal-Bolus Insulin",
+            "x": [
+              "Target BG < 140\n(RABBIT 2)",
+              "Post-Op Compl.\n(RABBIT 2 Surg)"
+            ],
+            "y": [
+              66.0,
+              8.6
+            ]
+          },
+          {
+            "name": "SSI Monotherapy",
+            "x": [
+              "Target BG < 140\n(RABBIT 2)",
+              "Post-Op Compl.\n(RABBIT 2 Surg)"
+            ],
+            "y": [
+              38.0,
+              24.3
+            ]
+          }
+        ],
+        "annotations": [],
+        "smooth_continuous": false
+      },
+      "cards": null,
+      "speaker_notes": "Evidence Base: Umpierrez et al., Diabetes Care 2007 (RABBIT 2) and Diabetes Care 2011 (RABBIT 2 Surgery). Attending Pearl: Frame SSI monotherapy to interns as putting out a kitchen fire only after the smoke alarm goes off, instead of turning off the stove."
+    },
+    {
+      "slide_number": 7,
+      "module_id": 2,
+      "title": "Pharmacokinetics of Inpatient Insulins",
+      "layout_type": "bullets_plus_chart",
+      "bullets": [
+        "Rapid-acting analogs (lispro, aspart, glulisine) onset in 10-15 min, peak 1-2 hr, and last 3-5 hr.",
+        "Regular insulin onsets in 30-60 min, peaks 2-4 hr, and lasts 5-8 hr; used for IV drips and TPN.",
+        "NPH onsets in 1-2 hr, peaks 4-8 hr, and lasts 12-18 hr; ideal for morning prednisone and tube feeds.",
+        "Glargine U-100 lasts 20-24 hr peakless; degludec lasts 36-42+ hr and takes 3-4 days for steady state.",
+        "U-500 regular insulin exhibits dual prandial and basal kinetics; always dispense dedicated U-500 syringes or pens."
+      ],
+      "table": null,
+      "chart_spec": {
+        "title": "Inpatient Insulin Pharmacokinetic Time-Action Profiles",
+        "chart_type": "line",
+        "x_label": "Hours Post-Injection",
+        "y_label": "Relative Insulin Activity",
+        "series": [
+          {
+            "name": "Lispro / Aspart",
+            "x": [
+              0.0,
+              0.25,
+              0.5,
+              0.75,
+              1.0,
+              1.25,
+              1.5,
+              1.75,
+              2.0,
+              2.5,
+              3.0,
+              3.5,
+              4.0,
+              4.5,
+              5.0,
+              5.5,
+              6.0,
+              7.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0,
+              12.0,
+              13.0,
+              14.0,
+              15.0,
+              16.0,
+              17.0,
+              18.0,
+              19.0,
+              20.0,
+              21.0,
+              22.0,
+              23.0,
+              24.0
+            ],
+            "y": [
+              0.0,
+              1.0,
+              2.5,
+              4.3,
+              6.1,
+              7.7,
+              8.9,
+              9.4,
+              9.5,
+              8.0,
+              6.2,
+              4.4,
+              2.8,
+              1.5,
+              0.6,
+              0.2,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "name": "Regular U-100",
+            "x": [
+              0.0,
+              0.25,
+              0.5,
+              0.75,
+              1.0,
+              1.25,
+              1.5,
+              1.75,
+              2.0,
+              2.5,
+              3.0,
+              3.5,
+              4.0,
+              4.5,
+              5.0,
+              5.5,
+              6.0,
+              7.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0,
+              12.0,
+              13.0,
+              14.0,
+              15.0,
+              16.0,
+              17.0,
+              18.0,
+              19.0,
+              20.0,
+              21.0,
+              22.0,
+              23.0,
+              24.0
+            ],
+            "y": [
+              0.0,
+              0.3,
+              0.8,
+              1.6,
+              2.6,
+              3.7,
+              4.8,
+              5.7,
+              6.4,
+              7.2,
+              7.5,
+              7.0,
+              6.0,
+              4.8,
+              3.6,
+              2.5,
+              1.6,
+              0.5,
+              0.1,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "name": "NPH",
+            "x": [
+              0.0,
+              0.25,
+              0.5,
+              0.75,
+              1.0,
+              1.25,
+              1.5,
+              1.75,
+              2.0,
+              2.5,
+              3.0,
+              3.5,
+              4.0,
+              4.5,
+              5.0,
+              5.5,
+              6.0,
+              7.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0,
+              12.0,
+              13.0,
+              14.0,
+              15.0,
+              16.0,
+              17.0,
+              18.0,
+              19.0,
+              20.0,
+              21.0,
+              22.0,
+              23.0,
+              24.0
+            ],
+            "y": [
+              0.0,
+              0.1,
+              0.2,
+              0.4,
+              0.6,
+              0.9,
+              1.2,
+              1.6,
+              2.0,
+              2.8,
+              3.6,
+              4.4,
+              5.0,
+              5.5,
+              5.8,
+              6.0,
+              6.0,
+              5.6,
+              4.8,
+              3.8,
+              2.8,
+              2.0,
+              1.3,
+              0.8,
+              0.4,
+              0.2,
+              0.1,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "name": "Glargine U-100",
+            "x": [
+              0.0,
+              0.25,
+              0.5,
+              0.75,
+              1.0,
+              1.25,
+              1.5,
+              1.75,
+              2.0,
+              2.5,
+              3.0,
+              3.5,
+              4.0,
+              4.5,
+              5.0,
+              5.5,
+              6.0,
+              7.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0,
+              12.0,
+              13.0,
+              14.0,
+              15.0,
+              16.0,
+              17.0,
+              18.0,
+              19.0,
+              20.0,
+              21.0,
+              22.0,
+              23.0,
+              24.0
+            ],
+            "y": [
+              0.0,
+              0.2,
+              0.5,
+              0.8,
+              1.1,
+              1.4,
+              1.7,
+              2.0,
+              2.2,
+              2.4,
+              2.5,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.6,
+              2.5,
+              2.4,
+              2.3,
+              2.2,
+              2.0,
+              1.8,
+              1.5,
+              1.2,
+              0.9,
+              0.6
+            ]
+          },
+          {
+            "name": "Degludec (Steady State)",
+            "x": [
+              0.0,
+              0.25,
+              0.5,
+              0.75,
+              1.0,
+              1.25,
+              1.5,
+              1.75,
+              2.0,
+              2.5,
+              3.0,
+              3.5,
+              4.0,
+              4.5,
+              5.0,
+              5.5,
+              6.0,
+              7.0,
+              8.0,
+              9.0,
+              10.0,
+              11.0,
+              12.0,
+              13.0,
+              14.0,
+              15.0,
+              16.0,
+              17.0,
+              18.0,
+              19.0,
+              20.0,
+              21.0,
+              22.0,
+              23.0,
+              24.0
+            ],
+            "y": [
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0,
+              2.0
+            ]
+          }
+        ],
+        "annotations": [
+          {
+            "x": 2,
+            "y": 9.5,
+            "text": "Rapid Peak (1-2 hr)"
+          },
+          {
+            "x": 6,
+            "y": 6.0,
+            "text": "NPH Peak (4-8 hr)"
+          }
+        ],
+        "smooth_continuous": true
+      },
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA Pharmacologic Approaches and ISMP High-Alert Medication Safety Guidelines. Attending Pearl: U-500 insulin is a major inpatient safety hazard. Never draw U-500 into a U-100 syringe. Confirm dedicated U-500 syringes or KwikPen, or convert temporarily to U-100 basal-bolus at 80% of home TDD if intake is unpredictable."
+    },
+    {
+      "slide_number": 8,
+      "module_id": 2,
+      "title": "Managing Home Non-Insulin Agents on Admission",
+      "layout_type": "table_slide",
+      "bullets": [
+        "Discontinue most oral and non-insulin injectable agents on admission and transition to scheduled insulin.",
+        "Weekly GLP-1 RAs remain active for 5-7 days after holding, blunting postprandial excursions.",
+        "DPP-4 inhibitors may be continued with basal insulin in stable non-ICU T2DM with BG < 200 mg/dL."
+      ],
+      "table": {
+        "title": "Admission Disposition of Home Non-Insulin Diabetes Medications",
+        "headers": [
+          "Medication Class",
+          "Inpatient Action",
+          "Primary Clinical Rationale"
+        ],
+        "rows": [
+          [
+            "Metformin",
+            "Hold on admission",
+            "Risk of MALA in AKI, sepsis, hypoperfusion, or contrast with eGFR < 30"
+          ],
+          [
+            "SGLT2 Inhibitors",
+            "Hold on admission",
+            "High risk of euglycemic DKA, volume depletion; may resume pre-discharge in stable HF"
+          ],
+          [
+            "Sulfonylureas / Meglitinides",
+            "Hold on admission",
+            "Prolonged severe hypoglycemia when meals are delayed, especially in CKD/elderly"
+          ],
+          [
+            "Thiazolidinediones (TZDs)",
+            "Hold on admission",
+            "Fluid retention, heart failure exacerbation, and slow onset/offset"
+          ],
+          [
+            "GLP-1 / GIP-GLP-1 RAs",
+            "Hold on admission",
+            "Delayed gastric emptying worsens inpatient nausea and procedural aspiration risk"
+          ],
+          [
+            "DPP-4 Inhibitors",
+            "Selective inpatient use",
+            "Sita-Hospital trial showed non-inferiority with basal insulin in mild-moderate T2DM"
+          ]
+        ]
+      },
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: Sita-Hospital Trial (Pasquel et al., Lancet Diabetes Endocrinol 2017) and Endocrine Society 2022 Guideline. Attending Pearl: Long-acting weekly GLP-1 RAs (semaglutide, tirzepatide) have a 5-7 day half-life; even when held, the drug remains active throughout hospitalization, increasing sensitivity to added prandial insulin."
+    },
+    {
+      "slide_number": 9,
+      "module_id": 3,
+      "title": "Calculating Total Daily Dose (TDD): Weight-Based and Home Conversions",
+      "layout_type": "bullets",
+      "bullets": [
+        "High hypoglycemia risk (age > 70, eGFR < 45-60, frail, hepatic failure, new T1DM): start 0.2-0.3 units/kg/day.",
+        "Standard T2DM: start 0.4 units/kg/day for BG 140-200 mg/dL or 0.5 units/kg/day for BG > 200 mg/dL.",
+        "Severe insulin resistance (BMI > 35 kg/m2, high-dose steroids, severe sepsis): start 0.6 units/kg/day.",
+        "Split TDD into 50% basal insulin and 50% prandial insulin divided equally across three meals.",
+        "Reduce home basal insulin by 20%-25% on admission if poor appetite, NPO status, AKI, or HbA1c < 7.0%."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA 2024/2025 Standards of Care and Endocrine Society 2022 Clinical Practice Guideline. Attending Pearl: Walk through a quick mental math example: An 80 kg, 58-year-old man with T2DM, normal creatinine, BG 240 mg/dL, eating well -> 0.5 units/kg = 40 units TDD -> 20 units glargine QHS + 7 units lispro TID AC + moderate correctional scale."
+    },
+    {
+      "slide_number": 10,
+      "module_id": 3,
+      "title": "Basal-Bolus vs. Basal-Plus Regimens",
+      "layout_type": "bullets",
+      "bullets": [
+        "Basal-bolus-correction is preferred for patients with consistent oral intake and persistent BG > 180 mg/dL.",
+        "Basal-plus (basal plus correctional, no scheduled prandial) fits NPO, poor oral intake, or elderly/frail patients.",
+        "Basal-Plus Trial (n=375) showed glargine 0.25 units/kg plus correction was non-inferior to full basal-bolus.",
+        "For erratic appetite, dose rapid-acting insulin immediately post-meal: full dose if >= 50% eaten, half if 25%-50%, hold if < 25%."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: Basal-Plus Trial (Umpierrez et al., Diabetes Care 2013). Attending Pearl: Post-meal rapid-acting insulin dosing is one of the highest-yield practical safety tools on medicine wards for patients with nausea or fluctuating intake. Explicitly teach interns how to write clear nursing parameters for this order."
+    },
+    {
+      "slide_number": 11,
+      "module_id": 3,
+      "title": "Correctional Insulin Scales and Avoiding Insulin Stacking",
+      "layout_type": "table_slide",
+      "bullets": [
+        "Match correctional scale intensity to patient TDD, age, renal function, and steroid exposure.",
+        "Avoid dosing rapid-acting correctional insulin more often than every 4 hours to prevent insulin stacking.",
+        "Use conservative bedtime (QHS) correction (treat only if BG > 200 mg/dL at half dose) to avoid 03:00 AM hypoglycemia."
+      ],
+      "table": {
+        "title": "Standardized Inpatient Correctional Insulin Scales",
+        "headers": [
+          "Pre-Meal / POC BG",
+          "Low-Dose (TDD < 40 U)",
+          "Moderate-Dose (TDD 40-80 U)",
+          "High-Dose (TDD > 80 U)"
+        ],
+        "rows": [
+          [
+            "150-199 mg/dL",
+            "1 unit",
+            "2 units",
+            "3-4 units"
+          ],
+          [
+            "200-249 mg/dL",
+            "2 units",
+            "4 units",
+            "6-7 units"
+          ],
+          [
+            "250-299 mg/dL",
+            "3 units",
+            "6 units",
+            "9-10 units"
+          ],
+          [
+            "300-349 mg/dL",
+            "4 units",
+            "8 units",
+            "12-13 units"
+          ],
+          [
+            ">= 350 mg/dL",
+            "5 units (notify MD)",
+            "10 units (notify MD)",
+            "15 units (notify MD)"
+          ]
+        ]
+      },
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA Inpatient Glycemic Safety Standards and SHM Glycemic Control Implementation Guide. Attending Pearl: Teach residents the 1800 Rule for estimating the Insulin Sensitivity Factor (ISF) in T1DM or complex patients: ISF = 1800 / TDD. If TDD = 45 units, 1 unit of rapid-acting insulin lowers BG by ~40 mg/dL."
+    },
+    {
+      "slide_number": 12,
+      "module_id": 3,
+      "title": "Daily Bedside Titration: Pattern Management for Morning Rounds",
+      "layout_type": "bullets",
+      "bullets": [
+        "Attribute fasting BG to basal insulin, pre-lunch to breakfast bolus, pre-dinner to lunch bolus, and bedtime to dinner bolus.",
+        "Stabilize fasting BG first: increase basal by 10% for fasting 140-180 mg/dL or 20% for fasting > 180-200 mg/dL.",
+        "Alternatively, incorporate 50%-80% of prior 24-hour correctional insulin into scheduled basal or bolus doses.",
+        "After unexplained BG < 70 mg/dL, reduce responsible insulin by 20%; after BG < 54 mg/dL, reduce by 30%-50%.",
+        "Avoid over-basalization (> 0.5 units/kg/day or > 60% of TDD with normal fasting and high bedtime BG)."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: RABBIT 2 Titration Protocol and SHM Inpatient Glycemic Control Resource Room. Attending Pearl: Emphasize the Rule of Over-Basalization: If basal exceeds 0.5 units/kg/day and fasting BG is 100-120 mg/dL while bedtime BG is 260 mg/dL, stop raising basal! Pushing basal causes nocturnal hypoglycemia (BeAM effect: Bedtime-to-Morning drop > 50 mg/dL); escalate prandial insulin instead."
+    },
+    {
+      "slide_number": 13,
+      "module_id": 4,
+      "title": "Managing the NPO Patient and Perioperative Glycemic Care",
+      "layout_type": "bullets",
+      "bullets": [
+        "Hold SGLT2 inhibitors 3 days pre-op (4 days for ertugliflozin); hold metformin and sulfonylureas morning of surgery.",
+        "Per Oct 2024 Multi-Society GLP-1 guidance, stable patients may continue with a 24-hr liquid diet; hold if GI symptoms/escalation.",
+        "Give 75%-80% of usual long-acting basal insulin pre-op (never hold completely in T1DM) and 50% of morning NPH.",
+        "Hold prandial insulin while NPO, check POC BG q4-6h, and maintain perioperative BG between 100-180 mg/dL."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA 2024/2025 Standards of Care; Endocrine Society 2022 Guideline; 2024 Multi-Society GLP-1 Perioperative Guidance (Oct 2024). Attending Pearl: A common intern error is holding all insulin at midnight when a patient is made NPO after midnight. Reinforce that basal insulin covers hepatic glucose output, not breakfast!"
+    },
+    {
+      "slide_number": 14,
+      "module_id": 4,
+      "title": "Glucocorticoid-Induced Hyperglycemia",
+      "layout_type": "bullets_plus_chart",
+      "bullets": [
+        "Morning prednisone peaks in 4-8 hours (afternoon/evening hyperglycemia) and wanes overnight, sparing morning fasting BG.",
+        "Administer NPH concurrently with morning prednisone: 0.1 U/kg per 10 mg prednisone up to 0.4 U/kg for >= 40 mg.",
+        "Long-acting or split-dose steroids (dexamethasone, BID methylprednisolone) require 24-hour basal-bolus with 30%-50% higher TDD.",
+        "Reduce steroid-targeted NPH or basal-bolus doses by 20%-50% on the exact day steroids are tapered or stopped."
+      ],
+      "table": null,
+      "chart_spec": {
+        "title": "Matching Morning Prednisone Excursion with Morning NPH",
+        "chart_type": "line",
+        "x_label": "Hours Post 08:00 AM Dose",
+        "y_label": "Relative Glycemic / Insulin Effect",
+        "y_lim": [
+          0,
+          11
+        ],
+        "legend_loc": "upper right",
+        "series": [
+          {
+            "name": "Morning Prednisone Hyperglycemic Effect",
+            "x": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24
+            ],
+            "y": [
+              0.5,
+              1.2,
+              2.5,
+              4.2,
+              6.0,
+              7.5,
+              8.2,
+              8.0,
+              7.2,
+              6.0,
+              4.8,
+              3.6,
+              2.6,
+              1.8,
+              1.2,
+              0.8,
+              0.6,
+              0.5,
+              0.4,
+              0.4,
+              0.4,
+              0.4,
+              0.4,
+              0.4,
+              0.4
+            ]
+          },
+          {
+            "name": "Morning NPH Action (0.1-0.4 U/kg)",
+            "x": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24
+            ],
+            "y": [
+              0.0,
+              0.6,
+              2.0,
+              3.8,
+              5.6,
+              7.0,
+              7.8,
+              7.6,
+              6.8,
+              5.6,
+              4.4,
+              3.3,
+              2.3,
+              1.5,
+              0.9,
+              0.5,
+              0.2,
+              0.1,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "name": "Glargine Basal (Mismatched Flat Profile)",
+            "x": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24
+            ],
+            "y": [
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5,
+              2.5
+            ]
+          }
+        ],
+        "annotations": [
+          {
+            "x": 6,
+            "y": 8.2,
+            "text": "Matched Peak (12:00-16:00)"
+          },
+          {
+            "x": 20,
+            "y": 2.5,
+            "text": "Overnight Glargine Hypoglycemia Risk"
+          }
+        ],
+        "smooth_continuous": true
+      },
+      "cards": null,
+      "speaker_notes": "Evidence Base: Endocrine Society 2022 Inpatient Guideline; Umpierrez et al. steroid protocols; ADA 2024/2025. Attending Pearl: If a patient on morning prednisone receives escalating glargine instead of NPH to chase 17:00 BG spikes of 320 mg/dL, they will predictably crash into severe hypoglycemia at 04:00 AM when the prednisone wears off."
+    },
+    {
+      "slide_number": 15,
+      "module_id": 4,
+      "title": "Enteral Nutrition (Tube Feeds) and Total Parenteral Nutrition (TPN)",
+      "layout_type": "bullets",
+      "bullets": [
+        "Continuous tube feeds: give basal insulin (glargine daily or NPH q8-12h at 40% TDD) plus regular q6h or rapid-acting q4h.",
+        "Cyclic nocturnal tube feeds: give NPH at feed start plus q4-6h correction; bolus feeds: give rapid-acting before each bolus.",
+        "TPN gold standard: add regular insulin to the TPN bag at 0.1 units per gram of dextrose (1 U per 10 g).",
+        "On TPN day 2, add 80% of prior 24-hour correctional insulin into the next day's TPN bag.",
+        "Safety protocol: if continuous tube feeds or TPN stop abruptly, immediately start IV D10W at the feed rate and check BG q1-2h."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ASPEN Clinical Guidelines; ADA 2024/2025; Endocrine Society 2022. Attending Pearl: Make the D10W nursing order automatic! Whenever an intern orders basal insulin for continuous tube feeds, instruct them to enter a linked conditional order: If tube feeds are held > 1 hour, start D10W IV at the tube feed mL/hr rate and notify MD."
+    },
+    {
+      "slide_number": 16,
+      "module_id": 4,
+      "title": "Renal Impairment (CKD/ESRD) and Hepatic Failure",
+      "layout_type": "bullets",
+      "bullets": [
+        "Kidneys clear 30%-50% of exogenous insulin and supply 20%-40% of fasting gluconeogenesis; eGFR < 45 prolongs insulin half-life.",
+        "Reduce initial TDD to 0.25-0.3 units/kg/day in CKD (reduce 25% if eGFR 10-50; 50% if eGFR < 10 or on HD).",
+        "Baldwin et al. (2012) showed lowering TDD from 0.5 to 0.25 U/kg/day in CKD halved hypoglycemia (15.8% vs. 30.0%).",
+        "Reduce basal insulin by 20%-25% on hemodialysis days due to post-dialysis insulin sensitivity.",
+        "Cirrhosis depletes hepatic glycogen and impairs gluconeogenesis; start 0.2-0.3 U/kg/day using rapid-acting analogs."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: Baldwin et al., Diabetes Care 2012. Attending Pearl: Watch out for acute kidney injury (AKI) developing mid-hospitalization! A sudden unexplained drop in morning glucose or recurrent hypoglycemia in a previously stable ward patient is often an early clinical clue to worsening AKI, occult sepsis, or adrenal insufficiency."
+    },
+    {
+      "slide_number": 17,
+      "module_id": 4,
+      "title": "Inpatient Diabetes Technology: Insulin Pumps, AID Systems, and CGMs",
+      "layout_type": "bullets",
+      "bullets": [
+        "Alert, competent non-ICU patients may self-manage personal insulin pumps/AID systems if supplies and hospital policy allow.",
+        "Discontinue pumps and switch to SQ/IV insulin for delirium, DKA/HHS, ICU care, suicidal ideation, or MRI procedures.",
+        "Never disconnect a T1DM insulin pump without giving SQ basal insulin first or starting an IV insulin drip.",
+        "Personal CGMs may continue with mandatory fingerstick confirmation for BG < 70 or > 300 mg/dL, rapid change, or vasopressors.",
+        "Watch CGM interferences: hydroxyurea falsely elevates Dexcom/Medtronic; high-dose IV Vitamin C falsely elevates FreeStyle Libre."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA 2024/2025 Standards of Care (Section 16) and Endocrine Society 2022 Guideline. Attending Pearl: Always document the patient's pump basal rates, insulin-to-carb ratio, and sensitivity factor in the admission note. Remember insulin pumps contain only rapid-acting insulin; once disconnected, zero basal insulin remains within 2-3 hours."
+    },
+    {
+      "slide_number": 18,
+      "module_id": 4,
+      "title": "Inpatient Hypoglycemia: Classification, Acute Rescue, and Prevention",
+      "layout_type": "bullets",
+      "bullets": [
+        "ADA tiers: Level 1 is BG < 70 and >= 54 mg/dL; Level 2 < 54 mg/dL; Level 3 requires external assistance.",
+        "Awake patients: give 15-20 g oral fast-acting carbohydrate, recheck BG in 15 min, and repeat if still < 70 mg/dL.",
+        "NPO or altered patients with IV access: give 25-50 mL IV D50W (12.5-25 g) or 100-250 mL D10W; recheck in 15 min.",
+        "No IV access: give glucagon 1 mg IM/SQ or 3 mg intranasal (ineffective in severe cirrhosis or starvation).",
+        "Every Level 1-3 event mandates auditing triggers and reducing the offending insulin dose by 20%-30%."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA 2024/2025 Standards of Care and NICE-SUGAR secondary analysis. Attending Pearl: Beware the Sulfonylurea Rebound Trap! In sulfonylurea overdose or AKI-induced hypoglycemia, IV D50W triggers an endogenous insulin surge causing recurrent hypoglycemia 1-2 hours later. Admit 24-48 hours, run continuous D10W, and give Octreotide 50-100 mcg SQ q6-8h."
+    },
+    {
+      "slide_number": 19,
+      "module_id": 5,
+      "title": "Diagnostic Criteria for DKA and HHS: 2024 Consensus Update",
+      "layout_type": "table_slide",
+      "bullets": [
+        "2024 consensus lowered DKA glucose threshold to >= 200 mg/dL or prior diabetes to capture euglycemic DKA.",
+        "Euglycemic DKA is precipitated by SGLT2 inhibitors, pregnancy, prolonged fasting, alcohol use, or partial pre-hospital insulin.",
+        "Up to one-third of hyperglycemic crisis patients present with DKA/HHS overlap."
+      ],
+      "table": {
+        "title": "2024 ADA/EASD/JBDS Diagnostic Criteria: DKA vs. HHS",
+        "headers": [
+          "Parameter",
+          "Diabetic Ketoacidosis (DKA)",
+          "Hyperosmolar Hyperglycemic State (HHS)",
+          "Resolution Target"
+        ],
+        "rows": [
+          [
+            "Plasma Glucose",
+            ">= 200 mg/dL (11.1 mmol/L) or prior diabetes",
+            ">= 600 mg/dL (33.3 mmol/L)",
+            "DKA: < 200 mg/dL; HHS: < 250 mg/dL"
+          ],
+          [
+            "Ketosis",
+            "Serum beta-hydroxybutyrate >= 3.0 mmol/L or urine >= 2+",
+            "Serum beta-hydroxybutyrate < 3.0 mmol/L or urine < 2+",
+            "DKA: beta-hydroxybutyrate < 0.6 mmol/L"
+          ],
+          [
+            "Acid-Base Status",
+            "Venous/arterial pH < 7.3 or HCO3- < 18 mmol/L",
+            "Venous/arterial pH >= 7.3 and HCO3- >= 15 mmol/L",
+            "DKA: pH >= 7.3 or HCO3- >= 18 mmol/L"
+          ],
+          [
+            "Effective Osmolality",
+            "Variable (usually <= 300 mOsm/kg unless overlap)",
+            "> 300 mOsm/kg (or total > 320 mOsm/kg)",
+            "HHS: < 300 mOsm/kg + baseline mentation"
+          ]
+        ]
+      },
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: Umpierrez et al., Hyperglycemic Crises in Adults With Diabetes: A Consensus Report (Diabetes Care / Diabetologia, June 2024). Attending Pearl: Never rely solely on urine nitroprusside strips to track DKA resolution! Nitroprusside detects acetoacetate, not beta-hydroxybutyrate. As DKA resolves, beta-hydroxybutyrate oxidizes to acetoacetate, making urine ketones appear worse. Always order serum beta-hydroxybutyrate."
+    },
+    {
+      "slide_number": 20,
+      "module_id": 5,
+      "title": "Acute Resuscitation: Fluids, Electrolytes, and Potassium Safety Gates",
+      "layout_type": "bullets",
+      "bullets": [
+        "Resuscitate volume first with balanced crystalloids (LR or Plasma-Lyte) or 0.9% NS at 500-1,000 mL/hr for 2-4 hours.",
+        "Switch to 0.45% NaCl at 250-500 mL/hr if corrected sodium is >= 135 mEq/L.",
+        "Potassium safety gate: if K+ < 3.5 mEq/L, HOLD insulin and infuse KCl 10-20 mEq/hr until K+ >= 3.5 mEq/L.",
+        "If K+ is 3.5-5.0 mEq/L, add 20-40 mEq KCl/L IVF; if K+ > 5.0 mEq/L, start insulin and recheck q2h.",
+        "Avoid routine bicarbonate unless pH < 7.0; replace phosphate only if < 1.0 mg/dL or cardiopulmonary weakness."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: 2024 ADA/EASD/JBDS Consensus Report; Self et al. (JAMA Netw Open 2020) showed balanced crystalloids accelerated DKA resolution by ~4 hours vs. 0.9% NS. Attending Pearl: In HHS, fluid resuscitation alone drops BG by 50-100 mg/dL/hr. Avoid dropping serum osmolality faster than 3-8 mOsm/kg/hr or Na+ faster than 10 mEq/L per 24 hours to prevent cerebral edema."
+    },
+    {
+      "slide_number": 21,
+      "module_id": 5,
+      "title": "IV Insulin Infusions, Dextrose Addition, and Resolution Criteria",
+      "layout_type": "bullets",
+      "bullets": [
+        "Start DKA IV regular insulin at 0.1 units/kg/hr; start HHS at 0.05 units/kg/hr after initial fluid resuscitation.",
+        "Mild-to-moderate uncomplicated DKA may be treated with SQ rapid-acting analogs (0.1-0.2 U/kg q2-4h) in ED/step-down.",
+        "When DKA BG reaches < 250 mg/dL (or immediately in euDKA), add D5W/D10W and halve IV insulin to 0.05 units/kg/hr.",
+        "Check POC BG q1h and BMP, venous pH, and serum beta-hydroxybutyrate q2-4h.",
+        "DKA resolution requires ALL: beta-hydroxybutyrate < 0.6 mmol/L, pH >= 7.3 or HCO3- >= 18 mmol/L, and BG < 200 mg/dL."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: 2024 ADA/EASD/JBDS Hyperglycemic Crises Consensus Report. Attending Pearl: Teach residents about early basal insulin co-administration: giving SQ glargine (0.15-0.3 units/kg) within the first 12 hours of the IV insulin infusion accelerates DKA resolution, prevents rebound hyperglycemia, and shortens ICU length of stay without increasing hypoglycemia (Hsia et al. 2012; Thammakosol et al. 2023)."
+    },
+    {
+      "slide_number": 22,
+      "module_id": 5,
+      "title": "Transitioning Off the IV Insulin Drip: The 2-Hour Overlap and Math",
+      "layout_type": "bullets_plus_chart",
+      "bullets": [
+        "IV insulin half-life is 5-7 minutes while SQ basal takes 1-2 hours; stopping simultaneously triggers rebound DKA.",
+        "Administer SQ basal insulin 2 hours BEFORE discontinuing the IV insulin infusion.",
+        "Drip-rate method: multiply average stable hourly IV rate by 24 hours, take 60%-80% as TDD, split 50% basal / 50% prandial.",
+        "Home-regimen or weight-based (0.3-0.5 units/kg/day) methods are valid alternatives depending on prior control.",
+        "Check POC BG 2 hours after stopping the drip and then AC/QHS to confirm smooth glycemic handoff."
+      ],
+      "table": null,
+      "chart_spec": {
+        "title": "IV-to-SQ Transition Kinetics: Avoiding the Insulin Vacuum",
+        "chart_type": "line",
+        "x_label": "Hours After SQ Basal Dose (t = 0)",
+        "y_label": "Effective Systemic Insulin (%)",
+        "y_lim": [
+          0,
+          130
+        ],
+        "legend_loc": "upper right",
+        "series": [
+          {
+            "name": "Correct 2-Hr Overlap (SQ at t=0, IV Stopped t=2)",
+            "x": [
+              0.0,
+              0.125,
+              0.25,
+              0.375,
+              0.5,
+              0.625,
+              0.75,
+              0.875,
+              1.0,
+              1.125,
+              1.25,
+              1.375,
+              1.5,
+              1.625,
+              1.75,
+              1.875,
+              2.0,
+              2.25,
+              2.5,
+              2.75,
+              3.0,
+              3.25,
+              3.5,
+              3.75,
+              4.0
+            ],
+            "y": [
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100
+            ]
+          },
+          {
+            "name": "SQ Glargine Absorption Ramp (%)",
+            "x": [
+              0.0,
+              0.125,
+              0.25,
+              0.375,
+              0.5,
+              0.625,
+              0.75,
+              0.875,
+              1.0,
+              1.125,
+              1.25,
+              1.375,
+              1.5,
+              1.625,
+              1.75,
+              1.875,
+              2.0,
+              2.25,
+              2.5,
+              2.75,
+              3.0,
+              3.25,
+              3.5,
+              3.75,
+              4.0
+            ],
+            "y": [
+              0,
+              2,
+              6,
+              10,
+              16,
+              22,
+              30,
+              39,
+              48,
+              57,
+              66,
+              74,
+              82,
+              88,
+              93,
+              96,
+              98,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100,
+              100
+            ]
+          },
+          {
+            "name": "Simultaneous Stop at t=0 (Rebound DKA Risk)",
+            "x": [
+              0.0,
+              0.125,
+              0.25,
+              0.375,
+              0.5,
+              0.625,
+              0.75,
+              0.875,
+              1.0,
+              1.125,
+              1.25,
+              1.375,
+              1.5,
+              1.625,
+              1.75,
+              1.875,
+              2.0,
+              2.25,
+              2.5,
+              2.75,
+              3.0,
+              3.25,
+              3.5,
+              3.75,
+              4.0
+            ],
+            "y": [
+              100,
+              83,
+              68,
+              54,
+              42,
+              31,
+              22,
+              16,
+              14,
+              15,
+              18,
+              25,
+              35,
+              46,
+              58,
+              68,
+              78,
+              90,
+              96,
+              99,
+              100,
+              100,
+              100,
+              100,
+              100
+            ]
+          }
+        ],
+        "annotations": [
+          {
+            "x": 1.0,
+            "y": 14,
+            "text": "Insulin Vacuum (Rebound DKA)"
+          },
+          {
+            "x": 2.0,
+            "y": 98,
+            "text": "Safe to Stop IV Drip (t = 2 hr)"
+          }
+        ],
+        "smooth_continuous": true
+      },
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA 2024/2025 Standards of Care and 2024 Hyperglycemic Crises Consensus Report. Attending Pearl: Walk through morning ICU math: Stable IV rate over last 6 hours is 2 units/hr. 2 x 24 = 48 units/day. Take 70%-80% (~36 units TDD) -> give 18 units glargine SQ at 08:00, stop IV drip at 10:00, and start 6 units lispro TID AC + correction."
+    },
+    {
+      "slide_number": 23,
+      "module_id": 6,
+      "title": "HbA1c-Guided Discharge Medication Reconciliation",
+      "layout_type": "bullets_plus_chart",
+      "bullets": [
+        "HbA1c < 7.0%: resume pre-admission outpatient regimen after verifying renal safety for metformin and SGLT2 inhibitors.",
+        "HbA1c 7.0%-9.0%: resume safe oral agents and intensify with SGLT2i/GLP-1 RA or 50% of hospital basal dose.",
+        "HbA1c > 9.0%-10.0%: discharge on basal-bolus (80% hospital TDD) or basal (80% hospital basal) plus oral/GLP-1 therapy.",
+        "Reduce hospital basal insulin by 10%-20% at discharge if severe infection or high-dose steroids are resolving.",
+        "Provide an explicit written insulin taper schedule when discharging on a short glucocorticoid taper."
+      ],
+      "table": null,
+      "chart_spec": {
+        "title": "HbA1c-Stratified Discharge Insulin Intensification",
+        "chart_type": "bar",
+        "x_label": "Admission HbA1c Tier",
+        "y_label": "Hospital Insulin Dose Carried to Discharge (%)",
+        "series": [
+          {
+            "name": "Recommended Discharge Insulin Intensity",
+            "x": [
+              "HbA1c < 7.0%\n(Resume Home)",
+              "HbA1c 7.0%-9.0%\n(Add 50% Basal)",
+              "HbA1c > 9.0%-10.0%\n(80% TDD/Basal)"
+            ],
+            "y": [
+              0,
+              50,
+              80
+            ]
+          }
+        ],
+        "annotations": [],
+        "smooth_continuous": false
+      },
+      "cards": null,
+      "speaker_notes": "Evidence Base: Umpierrez et al. (Diabetes Care 2014) showed admission HbA1c-guided discharge reduced HbA1c by 1.5%-2.2% at 12 weeks safely; ADA 2024/2025. Attending Pearl: Inpatient insulin resistance resolves rapidly once home after infection or inflammation clears, so a 10%-20% basal reduction prevents post-discharge hypoglycemia."
+    },
+    {
+      "slide_number": 24,
+      "module_id": 6,
+      "title": "Essential Discharge Logistics, Education, and Reducing 30-Day Readmissions",
+      "layout_type": "bullets",
+      "bullets": [
+        "Up to 20% of hospitalized diabetes patients are readmitted within 30 days due to medication errors and missing supplies.",
+        "Verify formulary coverage with pharmacy and prescribe five essentials: insulin, pen needles/syringes, glucometer/strips/lancets, glucagon, and sharps disposal.",
+        "Pen needles (4 mm x 32G) or syringes are the most frequently forgotten discharge prescription.",
+        "Teach survival skills: Rule-of-15 hypoglycemia rescue, injection technique, and T1DM sick-day rules.",
+        "Schedule outpatient primary care or endocrinology follow-up within 1-2 weeks for new/modified insulin or DKA/HHS."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Evidence Base: ADA 2024/2025 Standards of Care (Section 16) and SHM Project BOOST / Glycemic Transitions Toolkit. Attending Pearl: Remind residents to check formulary tiering before writing for brand-name glargine versus biosimilar insulin glargine-yfgn or degludec so patients do not abandon prescriptions at the pharmacy due to high copays."
+    },
+    {
+      "slide_number": 25,
+      "module_id": 6,
+      "title": "Interactive Tiered Resident Case Vignettes (PGY-1, PGY-2, PGY-3)",
+      "layout_type": "case_cards",
+      "bullets": [],
+      "table": null,
+      "chart_spec": null,
+      "cards": [
+        {
+          "title": "Case 1 (PGY-1): Ward Admission & TDD",
+          "items": [
+            "68F (70 kg), T2DM on metformin, HbA1c 8.4%, eating 75% of meals.",
+            "AKI on admission: Cr 1.9 mg/dL, eGFR 28, BG 254 mg/dL.",
+            "Prompt: Which meds do you hold, and how do you dose initial insulin?"
+          ]
+        },
+        {
+          "title": "Case 2 (PGY-2): Steroids & NPO",
+          "items": [
+            "62M (80 kg), T1DM (glargine 22 U QHS, lispro 6 U TID).",
+            "On prednisone 40 mg AM; now NPO for procedure. PM BG 295, AM 105.",
+            "Prompt: How do you manage basal/bolus insulin while NPO and once eating?"
+          ]
+        },
+        {
+          "title": "Case 3 (PGY-3): Euglycemic DKA",
+          "items": [
+            "54M with T2DM on empagliflozin, post-op day 1 with acute acidosis.",
+            "Labs: BG 178 mg/dL, HCO3- 11, K+ 3.2 mEq/L, pH 7.18, beta-OHB 4.8.",
+            "Prompt: What is the first step, IV insulin/dextrose plan, and SQ overlap?"
+          ]
+        }
+      ],
+      "speaker_notes": "Attending Pearl: Call on interns for Case 1, PGY-2s for Case 2, and PGY-3s for Case 3 to keep all training levels actively engaged and psychologically safe. Emphasize potassium-first safety in Case 3 and permanent documentation of SGLT2i peri-procedural hold risk."
+    },
+    {
+      "slide_number": 26,
+      "module_id": 6,
+      "title": "High-Yield Summary: The Attending's 5 Golden Rules",
+      "layout_type": "summary_rules",
+      "bullets": [
+        "Target the safe middle: 140-180 mg/dL in ICU and 100-180 mg/dL on floor; hypoglycemia kills faster than mild hyperglycemia.",
+        "Never starve T1DM of basal insulin: NPO means reduce basal by 20% and add dextrose IVF if needed.",
+        "Bury sliding scale monotherapy: use weight-based basal-bolus or basal-plus and titrate daily via 4-point patterns.",
+        "Respect high-risk curves: NPH for prednisone, 0.25-0.3 U/kg in CKD, D10W for tube feeds, K+ gate, 2-hr DKA overlap.",
+        "Discharge with precision: check HbA1c, verify formulary coverage, prescribe needles/glucometer/glucagon, and book 1-2 week follow-up."
+      ],
+      "table": null,
+      "chart_spec": null,
+      "cards": null,
+      "speaker_notes": "Attending Pearl: End the presentation by distributing a pocket card or QR code to the hospital's electronic glycemic order set so residents immediately apply the session's calculations during afternoon admissions."
+    }
+  ],
+  "handout_sections": [
+    {
+      "title": "Glycemic Targets, TDD Dosing, and Daily Titration",
+      "target_pages": 1,
+      "summary": "Core inpatient targets, T1DM basal safety, weight-based TDD initiation, and daily 4-point pattern titration.",
+      "rules": [
+        "Initiate insulin for persistent hyperglycemia >= 180 mg/dL on two occasions within 24 hours.",
+        "Target BG 140-180 mg/dL in ICU and 100-180 mg/dL on non-ICU floors (< 200-250 mg/dL if terminally ill).",
+        "Check admission HbA1c if no result exists within 3 months (diabetes >= 6.5%).",
+        "NEVER withhold basal insulin completely in T1DM; reduce by 20% when NPO and start D5 1/2 NS if BG drops.",
+        "Weight-based TDD: 0.2-0.3 units/kg/day (CKD eGFR < 45, age > 70, frail, hepatic failure), 0.4-0.5 units/kg/day (standard T2DM), 0.6 units/kg/day (BMI > 35, high-dose steroids).",
+        "Split TDD 50% basal / 50% prandial; use Basal-Plus (basal + correction) for NPO or poor PO intake.",
+        "Hypoglycemia tiers: Level 1 (< 70 mg/dL and >= 54 mg/dL) and Level 2 (< 54 mg/dL). Reduce responsible insulin by 20%-50% after any event."
+      ],
+      "tables": [
+        {
+          "title": "Standardized Inpatient Correctional Insulin Scales",
+          "headers": [
+            "Pre-Meal / POC BG",
+            "Low-Dose (TDD < 40 U)",
+            "Moderate-Dose (TDD 40-80 U)",
+            "High-Dose (TDD > 80 U)"
+          ],
+          "rows": [
+            [
+              "150-199 mg/dL",
+              "1 unit",
+              "2 units",
+              "3-4 units"
+            ],
+            [
+              "200-249 mg/dL",
+              "2 units",
+              "4 units",
+              "6-7 units"
+            ],
+            [
+              "250-299 mg/dL",
+              "3 units",
+              "6 units",
+              "9-10 units"
+            ],
+            [
+              "300-349 mg/dL",
+              "4 units",
+              "8 units",
+              "12-13 units"
+            ],
+            [
+              ">= 350 mg/dL",
+              "5 units (notify MD)",
+              "10 units (notify MD)",
+              "15 units (notify MD)"
+            ]
+          ]
+        },
+        {
+          "title": "Inpatient Insulin Pharmacokinetics Quick Reference",
+          "headers": [
+            "Insulin Class",
+            "Onset",
+            "Peak",
+            "Duration",
+            "Primary Inpatient Role"
+          ],
+          "rows": [
+            [
+              "Lispro / Aspart / Glulisine",
+              "10-15 min",
+              "1-2 hr",
+              "3-5 hr",
+              "Prandial boluses, q4-6h correction, mild DKA SQ"
+            ],
+            [
+              "Regular U-100",
+              "30-60 min",
+              "2-4 hr",
+              "5-8 hr",
+              "IV infusions (DKA/HHS/ICU), TPN admixtures"
+            ],
+            [
+              "NPH",
+              "1-2 hr",
+              "4-8 hr",
+              "12-18 hr",
+              "Morning prednisone, continuous/cyclic tube feeds"
+            ],
+            [
+              "Glargine U-100 / Detemir",
+              "1-2 hr",
+              "Peakless",
+              "20-24 hr",
+              "First-line basal coverage, IV-to-SQ transition"
+            ],
+            [
+              "Degludec / Glargine U-300",
+              "1-6 hr",
+              "Peakless",
+              "36-42+ hr",
+              "Home continuation; avoid daily titration of degludec"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "High-Risk Scenarios and 2024 DKA/HHS Protocol",
+      "target_pages": 1,
+      "summary": "Perioperative holds, glucocorticoid NPH matching, enteral/TPN safety, and 2024 ADA/EASD/JBDS DKA/HHS resuscitation.",
+      "rules": [
+        "Hold SGLT2 inhibitors 3 days pre-op (4 days for ertugliflozin); hold metformin and sulfonylureas morning of surgery; give 75%-80% basal insulin pre-op.",
+        "Match morning prednisone with morning NPH (0.1 U/kg per 10 mg up to 0.4 U/kg for >= 40 mg); cut dose 20%-50% on the exact day steroids taper.",
+        "Enteral/TPN safety: add 0.1 U regular insulin per gram of dextrose in TPN; order conditional IV D10W if continuous tube feeds stop abruptly.",
+        "2024 DKA criteria: BG >= 200 mg/dL or prior diabetes, beta-hydroxybutyrate >= 3.0 mmol/L, and pH < 7.3 or HCO3- < 18 mmol/L.",
+        "2024 HHS criteria: BG >= 600 mg/dL, effective osmolality > 300 mOsm/kg, beta-hydroxybutyrate < 3.0 mmol/L, pH >= 7.3 and HCO3- >= 15 mmol/L.",
+        "Potassium safety gate: if K+ < 3.5 mEq/L, HOLD insulin and infuse KCl 10-20 mEq/hr until K+ >= 3.5 mEq/L.",
+        "DKA IV regular insulin: 0.1 units/kg/hr (HHS: 0.05 units/kg/hr). When BG < 250 mg/dL (or immediately in euDKA), add D5W/D10W and halve insulin to 0.05 units/kg/hr.",
+        "DKA resolution: beta-hydroxybutyrate < 0.6 mmol/L, pH >= 7.3 or HCO3- >= 18 mmol/L, and BG < 200 mg/dL. Overlap SQ basal insulin 2 hours before stopping IV drip."
+      ],
+      "tables": [
+        {
+          "title": "2024 ADA/EASD/JBDS Diagnostic Criteria: DKA vs. HHS",
+          "headers": [
+            "Parameter",
+            "DKA",
+            "HHS",
+            "Resolution Target"
+          ],
+          "rows": [
+            [
+              "Plasma Glucose",
+              ">= 200 mg/dL or prior diabetes",
+              ">= 600 mg/dL",
+              "DKA: < 200 mg/dL; HHS: < 250 mg/dL"
+            ],
+            [
+              "Ketosis",
+              "beta-hydroxybutyrate >= 3.0 mmol/L",
+              "beta-hydroxybutyrate < 3.0 mmol/L",
+              "DKA: beta-hydroxybutyrate < 0.6 mmol/L"
+            ],
+            [
+              "Acid-Base",
+              "pH < 7.3 or HCO3- < 18 mmol/L",
+              "pH >= 7.3 and HCO3- >= 15 mmol/L",
+              "DKA: pH >= 7.3 or HCO3- >= 18 mmol/L"
+            ],
+            [
+              "Effective Osmolality",
+              "Variable (usually <= 300 mOsm/kg)",
+              "> 300 mOsm/kg",
+              "HHS: < 300 mOsm/kg + baseline mentation"
+            ]
+          ]
+        },
+        {
+          "title": "DKA/HHS Potassium Safety Gate and Electrolyte Resuscitation",
+          "headers": [
+            "Serum Potassium",
+            "Insulin Action",
+            "Potassium Replacement Protocol"
+          ],
+          "rows": [
+            [
+              "< 3.5 mEq/L",
+              "HOLD IV insulin",
+              "Infuse KCl 10-20 mEq/hr until K+ >= 3.5 mEq/L"
+            ],
+            [
+              "3.5-5.0 mEq/L",
+              "Start IV insulin",
+              "Add 20-40 mEq KCl/L of IVF (goal K+ 4.0-5.0 mEq/L)"
+            ],
+            [
+              "> 5.0 mEq/L",
+              "Start IV insulin",
+              "Hold KCl supplementation; recheck BMP/K+ q2h"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Inpatient-to-Discharge Transition Checklist and Clinical Pearls",
+      "target_pages": 1,
+      "summary": "HbA1c-guided discharge intensification, 5 essential discharge prescriptions, survival skills, and 60-second morning rounds audit.",
+      "rules": [
+        "Morning Rounds 60-Second Audit: scan 24-hr min/max BG, verify PO intake, check creatinine/AKI, confirm steroid tapers, and verify D10W order for tube feeds.",
+        "Reduce hospital basal insulin by 10%-20% at discharge if acute infection, inflammation, or high-dose steroids are resolving.",
+        "Clinical Pearl: Beware the Sulfonylurea Rebound Trap—treat AKI/sulfonylurea hypoglycemia with continuous D10W and Octreotide 50-100 mcg SQ q6-8h.",
+        "Clinical Pearl: Never track DKA resolution with urine nitroprusside strips; always order serum beta-hydroxybutyrate.",
+        "Prescribe all 5 discharge essentials: formulary-verified insulin, pen needles/syringes, glucometer/strips/lancets, rescue glucagon, and sharps disposal.",
+        "Schedule outpatient primary care or endocrinology follow-up within 1-2 weeks for new/modified insulin or recent DKA/HHS."
+      ],
+      "tables": [
+        {
+          "title": "Admission HbA1c-Guided Discharge Regimen Algorithm",
+          "headers": [
+            "Admission HbA1c",
+            "Recommended Discharge Strategy",
+            "Key Safety Verification"
+          ],
+          "rows": [
+            [
+              "< 7.0%",
+              "Resume pre-admission outpatient regimen",
+              "Verify renal safety for metformin/SGLT2i and ensure no unresolved AKI"
+            ],
+            [
+              "7.0%-9.0%",
+              "Resume safe oral agents + intensify (SGLT2i/GLP-1 RA or 50% hospital basal)",
+              "Prioritize SGLT2i for HF/CKD and GLP-1 RA for ASCVD/obesity"
+            ],
+            [
+              "> 9.0%-10.0%",
+              "Basal-bolus (~80% hospital TDD) or basal (80% hospital basal) + oral/GLP-1",
+              "Confirm patient affordability and teach hypoglycemia survival skills"
+            ]
+          ]
+        },
+        {
+          "title": "Inpatient-to-Discharge Transition Checklist",
+          "headers": [
+            "Transition Domain",
+            "Required Action Before Discharge"
+          ],
+          "rows": [
+            [
+              "Formulary & Cost",
+              "Verify insurance coverage for insulin pens/vials with inpatient pharmacist"
+            ],
+            [
+              "Supplies & Rescue",
+              "Send Rx for pen needles (4 mm x 32G) or syringes, glucometer/strips/lancets, and glucagon"
+            ],
+            [
+              "Survival Skills",
+              "Teach Rule-of-15 hypoglycemia rescue, injection technique, and T1DM sick-day rules"
+            ],
+            [
+              "Steroid Taper",
+              "Provide written insulin taper schedule matching outpatient prednisone stop date"
+            ],
+            [
+              "Follow-Up",
+              "Book PCP or Endocrinology visit within 1-2 weeks"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

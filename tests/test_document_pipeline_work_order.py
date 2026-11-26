@@ -444,6 +444,320 @@ class TestDocumentPipelineWorkOrder(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(os.path.isfile(res["lecture_spec_path"]))
         self.assertTrue(res["spec_validation"]["passed"])
 
+    async def test_dispatcher_can_invoke_compile_and_validate_tools_via_dispatch(self):
+        """Regression test: ToolDispatcher.dispatch() uses inspect.signature() on PEP 649 annotations (Python 3.14)."""
+        spec = _build_26_slide_diabetes_lecture_spec()
+        spec_path = os.path.join(self.temp_dir, "lecture_spec.json")
+        with open(spec_path, "w", encoding="utf-8") as f:
+            json.dump(spec, f, indent=2)
+
+        disp = ToolDispatcher(config_getter=lambda: {})
+        val_res = await disp.dispatch("validate_document_artifacts", {"lecture_spec_path": spec_path})
+        self.assertTrue(val_res["passed"], f"validate_document_artifacts dispatch failed: {val_res}")
+
+        with patch("core.document_compiler.get_outputs_dir", return_value=os.path.join(self.temp_dir, "outputs", "disp_job")), \
+             patch("core.document_compiler.user_data_path", side_effect=lambda *parts: os.path.join(self.temp_dir, *parts)):
+            comp_res = await disp.dispatch("compile_presentation_bundle", {
+                "lecture_spec_path": spec_path,
+                "job_id": "disp_job",
+                "build_pptx": True,
+                "build_docx": False,
+            })
+        self.assertTrue(comp_res["passed"], f"compile_presentation_bundle dispatch failed: {comp_res}")
+        self.assertEqual(comp_res["status"], "success")
+        self.assertTrue(os.path.isfile(comp_res["pptx_path"]))
+
+    async def test_pre_flight_fixes_dossier_auto_attach_docx_schema_and_standby_tts_close(self):
+        """Regression tests for dossier auto-attachment, docx bullets/table fallback, spacing tolerance, and Standby TTS socket closure."""
+        # 1. Docx compiler handles singular `table` + `bullets` keys and spacing-tolerant canonical_facts check
+        spec = _build_26_slide_diabetes_lecture_spec()
+        spec["canonical_facts"]["dka_k_hold"] = "<3.5 mEq/L"
+        spec["handout_sections"] = [{
+            "title": "DKA & Glycemic Targets",
+            "bullets": [
+                "DKA glucose >= 200 mg/dL; hold insulin if K+ < 3.5 mEq/L; add dextrose at BG < 250 mg/dL; BHB >= 3.0 mmol/L.",
+                "Standard inpatient target 140-180 mg/dL; discharge A1C < 7.0% resumes home regimen.",
+            ],
+            "table": {
+                "title": "Key Thresholds",
+                "headers": ["Parameter", "Threshold"],
+                "rows": [["Hold Insulin K+", "< 3.5 mEq/L"], ["DKA Glucose", ">= 200 mg/dL"]],
+            },
+        }]
+        spec_path = os.path.join(self.temp_dir, "spec_singular.json")
+        with open(spec_path, "w", encoding="utf-8") as f:
+            json.dump(spec, f, indent=2)
+        docx_out = os.path.join(self.temp_dir, "handout_singular.docx")
+        from core.document_compiler import compile_docx_handout_from_spec
+        compile_docx_handout_from_spec(spec, docx_out)
+        val = validate_compiled_artifacts(spec_path, docx_path=docx_out)
+        self.assertTrue(val["passed"], f"Docx with singular table/bullets should pass: {val['errors']}")
+
+        # 2. execute_heavy_task(python_automation) auto-attaches referenced data/dossiers/*.md content
+        dossier_dir = os.path.join(self.temp_dir, "data", "dossiers")
+        os.makedirs(dossier_dir, exist_ok=True)
+        dossier_fp = os.path.join(dossier_dir, "test_diabetes_dossier.md")
+        with open(dossier_fp, "w", encoding="utf-8") as df:
+            df.write("# Inpatient Diabetes 2024 Consensus\nHold insulin if K+ < 3.5 mEq/L.\n")
+
+        captured_prompts = []
+        class _FakeModels:
+            def generate_content(self, model, contents, config=None):
+                captured_prompts.append(str(contents))
+                return SimpleNamespace(text="```python\nprint('ok')\n```")
+
+        fake_client = SimpleNamespace(models=_FakeModels())
+        disp = ToolDispatcher(config_getter=lambda: {})
+        disp.genai_client = fake_client
+        disp.script_runner.cache_dir = os.path.join(self.temp_dir, "scripts_cache")
+        with patch("tools.dispatcher.user_data_path", side_effect=lambda *parts: os.path.join(self.temp_dir, *parts)):
+            await disp.execute_heavy_task(
+                task_type="python_automation",
+                title="Generate lecture_spec.json",
+                instructions="Read data/dossiers/test_diabetes_dossier.md and generate lecture_spec.json.",
+                context_data="Source dossier path: data/dossiers/test_diabetes_dossier.md",
+                execute_if_code=False,
+            )
+        self.assertEqual(len(captured_prompts), 1)
+        self.assertIn("Hold insulin if K+ < 3.5 mEq/L.", captured_prompts[0])
+        self.assertIn("AUTHORITATIVE SOURCE DOSSIER", captured_prompts[0])
+
+        # 3. _disconnect_live_session closes any pre-warmed _tts_live_session on Standby
+        from core.engine import AetherEngine, ConnectionState
+        eng = object.__new__(AetherEngine)
+        eng.conn_mgr = SimpleNamespace(state=ConnectionState.CONNECTED, set_standby=lambda: setattr(eng.conn_mgr, "state", ConnectionState.STANDBY))
+        eng.session = None
+        eng.live_session = None
+        eng._active_cm = None
+        eng._active_recv_task = None
+        eng.config_getter = lambda: {"audio": {"mode": "ptt"}}
+        eng.notify = lambda *a, **kw: None
+        closed_tts = []
+        eng._tts_live_session = object()
+        eng._tts_live_ctx = object()
+        async def _fake_close_tts():
+            closed_tts.append(True)
+            eng._tts_live_session = None
+            eng._tts_live_ctx = None
+        eng._close_tts_live_session = _fake_close_tts
+        await eng._disconnect_live_session(reason="Linger timeout (60s idle)")
+        self.assertEqual(closed_tts, [True])
+        self.assertIsNone(eng._tts_live_session)
+
+    async def test_settings_tier_resolver_ast_re_compile_tier2_repair_and_extract_tool(self):
+        """Regression tests for Settings-driven Tier 1/2/3 resolver, re.compile() AST fix, Tier 2 in-place script repair, and Tier 2 extract_lecture_spec_from_dossier."""
+        # 1. Settings single-source-of-truth Tier resolver (supports arbitrary future endpoints without hardcoded names)
+        from core.model_discovery import resolve_tier_model
+        future_cfg = {
+            "api": {"live_model_id": "gemini-5-live"},
+            "tier2_moderate_model": "gemini-5-spark:low",
+            "tier3_heavy_model": "gemini-5-nova:high",
+        }
+        m1, l1, lbl1 = resolve_tier_model(future_cfg, tier=1)
+        m2, l2, lbl2 = resolve_tier_model(future_cfg, tier=2)
+        m3, l3, lbl3 = resolve_tier_model(future_cfg, tier=3)
+        self.assertEqual((m1, lbl1), ("gemini-5-live", "Tier 1 (Gemini 5 Live)"))
+        self.assertEqual((m2, l2, lbl2), ("gemini-5-spark", "low", "Tier 2 (Gemini 5 Spark)"))
+        self.assertEqual((m3, l3, lbl3), ("gemini-5-nova", "high", "Tier 3 (Gemini 5 Nova)"))
+
+        # 2. AST Gatekeeper allows re.compile() while still blocking builtin compile()
+        from security.ast_gatekeeper import validate_python_code
+        ok_re, reason_re = validate_python_code("import re\np = re.compile(r'\\d+')\nprint(p.findall('a1b2'))\n")
+        self.assertTrue(ok_re, f"re.compile() should be allowed: {reason_re}")
+        ok_builtin, _ = validate_python_code("code = compile('1+1', '<x>', 'eval')\n")
+        self.assertFalse(ok_builtin, "builtin compile() must remain blocked")
+
+        # 3. Tier 3 script blocked by pathlib is auto-repaired IN-PLACE by Tier 2 (no duplicate Tier 3 call)
+        calls_seen = []
+        class _RepairMockModels:
+            def generate_content(self, model, contents, config=None):
+                calls_seen.append(model)
+                if len(calls_seen) == 1:
+                    # Tier 3 produces script using forbidden pathlib
+                    return SimpleNamespace(text="```python\nfrom pathlib import Path\nprint('hello')\n```")
+                # Tier 2 patches pathlib -> os.path in-place
+                return SimpleNamespace(text="```python\nimport os\nprint('repaired_ok')\n```")
+
+        disp = ToolDispatcher(config_getter=lambda: future_cfg)
+        disp.genai_client = SimpleNamespace(models=_RepairMockModels())
+        disp.script_runner.cache_dir = os.path.join(self.temp_dir, "scripts_cache")
+        res = await disp.execute_heavy_task(
+            task_type="python_automation",
+            title="Build Sample Automation",
+            instructions="Write a tiny print script.",
+            execute_if_code=True,
+        )
+        self.assertEqual(res["status"], "success", f"Expected Tier 2 in-place repair to succeed: {res}")
+        self.assertTrue(res["repaired_by_tier2"])
+        self.assertEqual(res["repair_attempts"], 1)
+        self.assertEqual(calls_seen, ["gemini-5-nova", "gemini-5-spark"])
+
+        # 4. Dedup blocks 'Build Sample Automation v2' right after 'Build Sample Automation'
+        dup_res = await disp.execute_heavy_task(
+            task_type="python_automation",
+            title="Build Sample Automation v2",
+            instructions="Try again from scratch.",
+            execute_if_code=True,
+        )
+        self.assertEqual(dup_res["status"], "deduplicated")
+
+        # 5. extract_lecture_spec_from_dossier uses Tier 2 (from Settings) and outputs validated lecture_spec.json
+        dossier_dir = os.path.join(self.temp_dir, "data", "dossiers")
+        os.makedirs(dossier_dir, exist_ok=True)
+        dossier_fp = os.path.join(dossier_dir, "sample_dossier.md")
+        with open(dossier_fp, "w", encoding="utf-8") as df:
+            df.write("# Inpatient Diabetes Dossier\nHold insulin if K+ < 3.5 mEq/L.\n")
+
+        valid_spec = _build_26_slide_diabetes_lecture_spec()
+        extract_models_called = []
+        class _ExtractMockModels:
+            def generate_content(self, model, contents, config=None):
+                extract_models_called.append(model)
+                return SimpleNamespace(text=json.dumps(valid_spec))
+
+        out_job_dir = os.path.join(self.temp_dir, "outputs", "t2_extract_job")
+        with patch("core.config_manager.load_config", return_value=future_cfg), \
+             patch("core.manifest_indexer.resolve_gemini_client", return_value=SimpleNamespace(models=_ExtractMockModels())), \
+             patch("core.paths.get_outputs_dir", return_value=out_job_dir):
+            ext_res = await disp.dispatch("extract_lecture_spec_from_dossier", {
+                "dossier_path": dossier_fp,
+                "job_id": "t2_extract_job",
+                "target_slides": 26,
+            })
+        self.assertEqual(ext_res["status"], "success", f"extract_lecture_spec_from_dossier failed: {ext_res}")
+        self.assertTrue(ext_res["passed"])
+        self.assertEqual(extract_models_called, ["gemini-5-spark"])
+        self.assertTrue(os.path.isfile(ext_res["lecture_spec_path"]))
+
+    async def test_revise_lecture_spec_flex_steps_and_honest_error_notifications(self):
+        """Regression tests for revise_lecture_spec, flexible orchestrator step budgets, and honest end-user error cards."""
+        # 1. revise_lecture_spec saves a V2 spec with charts using configured Tier 2 model
+        v1_spec = _build_26_slide_diabetes_lecture_spec()
+        v1_path = os.path.join(self.temp_dir, "v1_lecture_spec.json")
+        with open(v1_path, "w", encoding="utf-8") as f:
+            json.dump(v1_spec, f, indent=2)
+
+        v2_spec = _build_26_slide_diabetes_lecture_spec()
+        v2_spec["metadata"]["title"] = "Inpatient Diabetes Management (Version 2)"
+        rev_models = []
+        class _ReviseMockModels:
+            def generate_content(self, model, contents, config=None):
+                rev_models.append(model)
+                return SimpleNamespace(text=json.dumps(v2_spec))
+
+        future_cfg = {"tier2_moderate_model": "gemini-5-spark:medium", "max_orchestrator_steps": 6}
+        disp = ToolDispatcher(config_getter=lambda: future_cfg)
+        v2_job_dir = os.path.join(self.temp_dir, "outputs", "inpatient_diabetes_v2")
+        with patch("core.config_manager.load_config", return_value=future_cfg), \
+             patch("core.manifest_indexer.resolve_gemini_client", return_value=SimpleNamespace(models=_ReviseMockModels())), \
+             patch("core.paths.get_outputs_dir", return_value=v2_job_dir):
+            rev_res = await disp.dispatch("revise_lecture_spec", {
+                "lecture_spec_path": v1_path,
+                "revision_instructions": "Create Version 2 with smooth PK chart.",
+                "job_id": "inpatient_diabetes_v2",
+            })
+        self.assertEqual(rev_res["status"], "success", f"revise_lecture_spec failed: {rev_res}")
+        self.assertTrue(rev_res["passed"])
+        self.assertEqual(rev_models, ["gemini-5-spark"])
+        self.assertGreaterEqual(rev_res["chart_count"], 1)
+        self.assertTrue(os.path.isfile(rev_res["lecture_spec_path"]))
+
+        # 2. Orchestrator honors flexible step budget and returns explicit error/message + UI error card on step cap
+        from core.orchestrator import TaskOrchestrator
+        events = []
+        disp.notify = lambda ev, payload: events.append((ev, payload))
+
+        class _LoopingMockModels:
+            def generate_content(self, model, contents, config=None):
+                fc = SimpleNamespace(name="wait_seconds", args={"seconds": 0.2, "reason": "loop"})
+                return SimpleNamespace(candidates=[], function_calls=[fc], text="")
+
+        fake_client = SimpleNamespace(models=_LoopingMockModels())
+        orch = TaskOrchestrator(disp, max_iterations=15)
+        with patch("asyncio.sleep", return_value=None):
+            orch_res = await orch.run(
+                client=fake_client,
+                model="gemini-5-spark",
+                thinking_level="medium",
+                title="Create Version 2 Slides",
+                instructions="Revise the presentation.",
+            )
+        self.assertEqual(orch_res["status"], "error")
+        self.assertEqual(orch_res["steps_budget"], 6)
+        self.assertIn("6/6", orch_res["error"])
+        self.assertEqual(orch_res["message"], orch_res["error"])
+
+        # 3. delegate_moderate_task emits an explicit error chat card (never 'Completed') when orchestrator fails
+        events.clear()
+        async def _fake_exec_mod(**kwargs):
+            return orch_res
+        disp.execute_moderate_task = _fake_exec_mod
+        await disp.dispatch("delegate_moderate_task", {
+            "task_type": "workflow_orchestration",
+            "title": "Create Version 2 Slides",
+            "instructions": "Revise the presentation.",
+            "enable_tools": True,
+        })
+        err_cards = [p for ev, p in events if ev == "chat_event" and p.get("type") == "error"]
+        self.assertTrue(err_cards, f"Expected an error chat_event card on failure, got: {events}")
+        self.assertIn("did not complete", err_cards[0]["content"])
+        self.assertNotIn("Completed", err_cards[0]["content"])
+
+    async def test_revise_lecture_spec_surgical_patch_mode_explicit_and_autodetect(self):
+        """Verifies Surgical Patch Mode sends only targeted slides and merges cleanly without rewriting all 26 slides."""
+        base_spec = _build_26_slide_diabetes_lecture_spec()
+        spec_path = os.path.join(self.temp_dir, "patch_base_spec.json")
+        with open(spec_path, "w", encoding="utf-8") as f:
+            json.dump(base_spec, f, indent=2)
+
+        patched_s25 = json.loads(json.dumps(base_spec["slides"][24]))
+        patched_s25["title"] = "Resident Board Cases (Tightened Cards)"
+        captured_prompts = []
+
+        class _PatchMockModels:
+            def generate_content(self, model, contents, config=None):
+                captured_prompts.append(str(contents))
+                if len(captured_prompts) == 1:
+                    return SimpleNamespace(text=json.dumps({"slides": [patched_s25]}))
+                s6 = json.loads(json.dumps(base_spec["slides"][5]))
+                s7 = json.loads(json.dumps(base_spec["slides"][6]))
+                s6["title"] = "Updated Slide 6 Chart"
+                return SimpleNamespace(text=json.dumps({"slides": [s6, s7]}))
+
+        future_cfg = {"tier2_moderate_model": "gemini-5-spark:medium"}
+        disp = ToolDispatcher(config_getter=lambda: future_cfg)
+        with patch("core.config_manager.load_config", return_value=future_cfg), \
+             patch("core.manifest_indexer.resolve_gemini_client", return_value=SimpleNamespace(models=_PatchMockModels())):
+            # 1. Explicit target_slides=[25]
+            res1 = await disp.dispatch("revise_lecture_spec", {
+                "lecture_spec_path": spec_path,
+                "revision_instructions": "Tighten Case Cards on Slide 25 so text never clips.",
+                "target_slides": [25],
+            })
+            # 2. Auto-detected from "slide 6 and slide 7"
+            res2 = await disp.dispatch("revise_lecture_spec", {
+                "lecture_spec_path": spec_path,
+                "revision_instructions": "Fix overlapping x-axis tick labels on slide 6 and slide 7.",
+            })
+
+        self.assertTrue(res1["passed"])
+        self.assertTrue(res1["patch_mode"])
+        self.assertEqual(res1["patched_slides"], [25])
+        # Prompt for Slide 25 patch must be compact (does not serialize Slide 1's full content)
+        self.assertIn("TARGET SLIDES TO PATCH", captured_prompts[0])
+        self.assertLess(len(captured_prompts[0]), 6000)
+
+        self.assertTrue(res2["passed"])
+        self.assertTrue(res2["patch_mode"])
+        self.assertEqual(res2["patched_slides"], [6, 7])
+
+        with open(spec_path, "r", encoding="utf-8") as f:
+            merged = json.load(f)
+        self.assertEqual(len(merged["slides"]), 26)
+        self.assertEqual(merged["slides"][5]["title"], "Updated Slide 6 Chart")
+        self.assertEqual(merged["slides"][24]["title"], "Resident Board Cases (Tightened Cards)")
+        self.assertEqual(merged["slides"][0]["title"], base_spec["slides"][0]["title"])
+
     def test_packaging_pins_tools_and_telemetry_cost_receipt_under_1_dollar(self):
         """Verifies Task 5: frozen dependencies pinned, pipeline tools registered, and cost receipt < $1.00."""
         for pkg in ("pptx", "docx", "matplotlib", "PIL", "numpy", "lxml"):

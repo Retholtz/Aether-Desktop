@@ -460,13 +460,18 @@ class ASTSecurityGatekeeper(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute):
         attr = node.attr
+        is_safe_re_compile = (
+            attr == "compile"
+            and isinstance(node.value, ast.Name)
+            and self.module_aliases.get(node.value.id, node.value.id) == "re"
+        )
         if attr in BLOCKED_DUNDER_NAMES:
             self.violations.append(f"Access to restricted dunder attribute '{attr}' is prohibited.")
         elif attr.startswith("__") and attr.endswith("__") and attr not in ALLOWED_DUNDER_ATTRS:
             self.violations.append(f"Access to restricted dunder attribute '{attr}' is prohibited.")
         elif attr in BLOCKED_GLOBAL_ATTRS:
             self.violations.append(f"Access to restricted attribute '{attr}' is prohibited.")
-        elif attr in BLOCKED_CALLS:
+        elif attr in BLOCKED_CALLS and not is_safe_re_compile:
             self.violations.append(f"Reference to prohibited attribute '{attr}' is blocked.")
 
         if isinstance(node.value, ast.Name):
@@ -496,7 +501,12 @@ class ASTSecurityGatekeeper(ast.NodeVisitor):
         # 2. Attribute method calls: os.system(...), o.system(...), win32com.client.Dispatch(...)
         elif isinstance(node.func, ast.Attribute):
             attr_name = node.func.attr
-            if attr_name in BLOCKED_CALLS:
+            is_safe_re_compile = (
+                attr_name == "compile"
+                and isinstance(node.func.value, ast.Name)
+                and self.module_aliases.get(node.func.value.id, node.func.value.id) == "re"
+            )
+            if attr_name in BLOCKED_CALLS and not is_safe_re_compile:
                 self.violations.append(f"Prohibited method invocation '{attr_name}()'.")
             elif isinstance(node.func.value, ast.Name):
                 raw_obj = node.func.value.id

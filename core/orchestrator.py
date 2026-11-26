@@ -78,7 +78,7 @@ WAIT_SECONDS_DECLARATION: Dict[str, Any] = {
     },
 }
 
-# App-agnostic tool allowlist exposed to Tier 2 Hydrogen orchestrator
+# App-agnostic tool allowlist exposed to Tier 2 Orchestrator
 ORCHESTRATOR_ALLOWED_TOOL_NAMES = {
     "launch_application",
     "focus_window",
@@ -99,11 +99,14 @@ ORCHESTRATOR_ALLOWED_TOOL_NAMES = {
     "delegate_heavy_task",
     "export_research_dossier",
     "execute_automation_script",
+    "extract_lecture_spec_from_dossier",
+    "revise_lecture_spec",
     "compile_presentation_bundle",
     "validate_document_artifacts",
     "run_visual_qa_check",
     "upload_pptx_to_google_slides",
     "upload_docx_to_google_docs",
+    "upload_xlsx_to_google_sheets",
     "search_past_sessions",
     "search_contacts",
     "lookup_contact_email",
@@ -117,44 +120,55 @@ ORCHESTRATOR_ALLOWED_TOOL_NAMES = {
 }
 
 # Only application-whitelist lifecycle tools should trigger an immediate hard-abort on status="blocked".
-# Script AST rejections from `execute_automation_script` are returned to Hydrogen so it can self-correct.
+# Script AST rejections from `execute_automation_script` are returned to Tier 2 so it can self-correct.
 APP_WHITELIST_BLOCK_TOOLS = {
     "launch_application",
     "close_window",
     "close_application",
 }
 
-ORCHESTRATOR_SYSTEM_INSTRUCTION = """You are Aether's Tier 2 App-Agnostic Task Orchestrator (Gemini 4.0 Hydrogen).
+ORCHESTRATOR_SYSTEM_INSTRUCTION = """You are Aether's Tier 2 App-Agnostic Task Orchestrator.
 Your job is to take ANY user goal across desktop apps, browsers, files, or emails, design a concrete step-by-step plan, execute each step with tools, and VISUALLY VERIFY the result on screen before concluding.
 
 OPERATING RULES:
 1. PLAN FIRST (`update_task_checklist`):
    - On your very first tool turn, call `update_task_checklist` with clear, app-agnostic steps tailored to the specific target app(s) in the user's request (e.g., Google Docs, Google Slides, Microsoft Word/PowerPoint, LibreOffice Impress, Notepad, Gmail in Chrome, local files, etc.).
    - Keep steps realistic and ordered so dependent resources load cleanly (e.g. opening an app/page, preparing content, verifying focus, inserting content, verifying visually).
-2. SUB-CONTRACT HEAVY AUTHORING TO TIER 3 NEON (`delegate_heavy_task`) SPARINGLY:
-   - Draft normal letters, emails, summaries, notes, and short-to-medium documents yourself in Tier 2 Hydrogen.
-   - ONLY sub-contract `delegate_heavy_task(..., paste_to_active_doc=False)` when the user specifically asks for an executive summary, exhaustive multi-page research dossier/manual, or explicitly requests Neon/Tier 3.
-   - When Neon returns a `file_path`, pass it directly into `paste_to_document(file_path=..., target_app=...)` AFTER verifying the target editor is open, focused, and ready. Never paste blindly before checking the window!
+2. SUB-CONTRACT HEAVY AUTHORING TO TIER 3 (`delegate_heavy_task`) SPARINGLY:
+   - Draft normal letters, emails, summaries, notes, and short-to-medium documents yourself in Tier 2.
+   - ONLY sub-contract `delegate_heavy_task(..., paste_to_active_doc=False)` when the user asks to author a **brand-new** exhaustive multi-page research dossier/manual from scratch, or explicitly requests Tier 3.
+   - **NEVER** call `delegate_heavy_task` to convert an *already-existing* dossier into `lecture_spec.json`, and **NEVER** re-call `delegate_heavy_task` to regenerate a saved script that failed a small AST/runtime error — revise/patch the saved script in place in Tier 2!
+   - When Tier 3 returns a `file_path`, pass it directly into `paste_to_document(file_path=..., target_app=...)` AFTER verifying the target editor is open, focused, and ready. Never paste blindly before checking the window!
 3. PRESENTATIONS, SLIDE DECKS & AUDIENCE HANDOUTS (DETERMINISTIC ZERO-INVENTION COMPILER WORKFLOW):
    - NEVER try to build a multi-slide presentation by manually clicking and typing 15–30 slides one by one in a browser UI!
    - **SINGLE-SOURCE-OF-TRUTH (`lecture_spec.json`) & ZERO-INVENTION RULE (CRITICAL):**
-     * When `lecture_spec.json` is available (produced by Neon under `outputs/<job_id>/lecture_spec.json`), treat it as the **exclusive source of truth**.
-     * **PREFERRED FAST PATH:** Call `compile_presentation_bundle(lecture_spec_path=..., job_id=..., build_pptx=True, build_docx=True, dossier_path=...)` — this deterministically loads `lecture_spec.json`, renders 300-DPI smooth `matplotlib` charts, compiles the `.pptx` deck + `.docx` handout into `outputs/<job_id>/` (and mirrors validated outputs to `data/pptx/` and `data/docx/`), and runs full zero-token validation automatically!
-     * If writing custom Python via `execute_automation_script`, you MUST load `lecture_spec.json` via `json.load()`. NEVER hardcode or regenerate clinical facts, numerical thresholds, tables, or module roadmaps from parametric memory!
-     * **BAN NAIVE STRING CHOPPING:** NEVER split or truncate bullets using `.split(".")`, `.split(",")`, or character slicing (`text[:N] + "..."`). Render Neon's concise bullets verbatim with proper word-wrap and font-size bounds; if a multi-card/dense slide overflows, split cleanly onto a `(Cont.)` slide.
+     * **Step A — Get or Revise `lecture_spec.json`:**
+       - If `outputs/<job_id>/lecture_spec.json` does not exist yet and a dossier `.md` already exists on disk, call `extract_lecture_spec_from_dossier(dossier_path=..., job_id=..., target_slides=...)` directly in Tier 2!
+       - If revising an EXISTING presentation/handout (e.g., "Version 2", adding charts, updating slides, refining handout layout), ALWAYS call `revise_lecture_spec(lecture_spec_path=..., revision_instructions=..., job_id=..., dossier_path=..., target_slides=...)` in **1 single step**!
+       - **COST-SAVER (SURGICAL PATCH MODE):** When fixing 1–6 specific slides (e.g. Slide 25 Case Cards or Visual QA chart fixes on Slides 6 & 7), ALWAYS pass `target_slides=[25]` (or `[6, 7]`) so only those slide(s) are patched (~90% faster & cheaper, preserving all other slides verbatim)!
+       - NEVER burn multiple `execute_automation_script` steps reading `lecture_spec.json` or `core/document_compiler.py` line-by-line!
+       - Do NOT call `delegate_heavy_task` (Tier 3) and do NOT write `import inspect` / `getattr` / `core.__doc__` probing scripts!
+     * **Step B — Compile Deterministically (In-Place by Default):** Call `compile_presentation_bundle(lecture_spec_path=..., job_id=..., build_pptx=True, build_docx=True, dossier_path=..., create_new_copy=False)` — this deterministically loads `lecture_spec.json`, renders 300-DPI smooth `matplotlib` charts, compiles the `.pptx` deck + `.docx` handout into `outputs/<job_id>/` (mirrored to `data/pptx/` and `data/docx/`), and runs full zero-token validation automatically!
+       - **IN-PLACE VS. NEW COPY RULE:** Keep `create_new_copy=False` (default) for fixes, single-slide tweaks (e.g. "fix Slide 25"), and Visual QA repair passes so the existing local file is updated in place without cluttering `data/pptx/` with duplicate drafts. ONLY set `create_new_copy=True` (or use a new versioned `job_id` like `..._v2`) when the user explicitly asks to `"make a copy"` or `"create Version 2"` while preserving the original!
+     * If writing custom Python via `execute_automation_script`, you MUST load `lecture_spec.json` via `json.load()` and use `os`/`os.path` (never `pathlib`, `shutil`, `inspect`, `traceback`, or `getattr`). NEVER hardcode or regenerate clinical facts, numerical thresholds, tables, or module roadmaps from parametric memory!
+     * **BAN NAIVE STRING CHOPPING:** NEVER split or truncate bullets using `.split(".")`, `.split(",")`, or character slicing (`text[:N] + "..."`). Render concise bullets verbatim with proper word-wrap and font-size bounds; if a multi-card/dense slide overflows, split cleanly onto a `(Cont.)` slide.
      * **PROGRAMMATIC ROADMAP & SLIDE-BOUND VISUALS:** Slide 1's module overview MUST be computed programmatically from `spec["modules"]` (`slide_start`–`slide_end`). Every `table` and `chart_spec` MUST render strictly on its owning `slide["slide_number"]`—never matched by independent counters.
      * **AUDIENCE VS. PRESENTER SEPARATION:** Visible slides and learner handouts MUST be 100% audience-facing (zero `Attending Clinical Pearl`, `Ask PGY-...`, `Slide Visual Blueprint`, raw Markdown/backticks, or naked decimals like `.1 U/kg` — always `0.1 U/kg`). Inject `slide["speaker_notes"]` into `pptx_slide.notes_slide.notes_text_frame.text`.
-   - **MANDATORY VALIDATION + VISUAL QA GATE BEFORE UPLOAD (MAX 2 REPAIR CYCLES):**
+   - **Step C — MANDATORY VALIDATION + VISUAL QA GATE BEFORE UPLOAD (MAX 2 REPAIR CYCLES):**
      * Before calling `upload_pptx_to_google_slides` or `upload_docx_to_google_docs`, ALWAYS verify:
-       1. `validate_document_artifacts(lecture_spec_path=..., pptx_path=..., docx_path=..., chart_pngs=...)` passes with **0 errors**.
+       1. `validate_document_artifacts(lecture_spec_path=..., pptx_path=..., docx_path=..., chart_pngs=...)` passes with **0 errors** (if `compile_presentation_bundle` already returned `passed=True`, you may proceed directly to Visual QA).
        2. `run_visual_qa_check(pptx_path=..., chart_pngs=..., job_id=...)` passes at `MEDIA_RESOLUTION_LOW` with **0 blocking visual defects**.
-     * If either check reports errors/defects, fix the targeted slide/chart and re-validate (max 2 repair cycles). Never upload unverified or broken artifacts to Google Workspace; if unresolved after 2 retries, keep locally and notify the user.
-   - NEVER write speculative `try: import <unlisted_module>` probes in `execute_automation_script`: the AST security gatekeeper inspects all imports statically before execution.
-   - After passing validation + Visual QA, deliver to the requested program:
-     * **Google Slides**: `upload_pptx_to_google_slides(file_path=..., title=..., open_in_browser=True, lecture_spec_path=...)`.
-     * **Google Docs (Handouts / Rich Docs)**: `upload_docx_to_google_docs(file_path=..., title=..., open_in_browser=True, lecture_spec_path=...)`.
-     * **Microsoft PowerPoint / Word / LibreOffice Impress / LibreOffice Writer / OnlyOffice / WPS**: `launch_application(app_name=..., target=file_path)` (respecting the security whitelist).
-   - Capture a verification screenshot (`capture_screen_snapshot`) after opening the presentation or document before marking the final step `completed`.
+     * If either check reports errors/defects, fix the targeted slide/chart in `lecture_spec.json` and re-compile (max 2 repair cycles). Never upload unverified or broken artifacts to Google Workspace; if unresolved after 2 retries, keep locally and notify the user.
+   - NEVER write speculative `try: import <unlisted_module>` or `import inspect` probes in `execute_automation_script`: the AST security gatekeeper inspects all imports statically before execution.
+   - **Step D — Local-First Storage & Optional Cloud Delivery:**
+     * **LOCAL-FIRST BY DEFAULT (CRITICAL):** Unless the user explicitly asks to upload/sync to Google Drive, Google Slides, Google Docs, or Google Sheets in their prompt (e.g. "upload to my Drive", "put it in Google Slides"), **keep the verified files saved locally** in `data/{dossiers,docx,pptx,xlsx}/` — the user can review them immediately inside Aether's **DOCUMENTS** tab, request edits in place, and click **Sync to Drive** whenever ready!
+     * **ONLY when the user explicitly requests Google Workspace / Drive upload in the prompt:**
+       - **Google Slides**: `upload_pptx_to_google_slides(file_path=..., title=..., open_in_browser=True, lecture_spec_path=..., project_name=...)` (auto-organized under `Aether/pptx` or `Aether/projects/<Project Name>`).
+       - **Google Docs (Handouts / Rich Docs / Dossiers)**: `upload_docx_to_google_docs(file_path=..., title=..., open_in_browser=True, lecture_spec_path=..., project_name=...)` (auto-organized under `Aether/docs`, `Aether/dossiers`, or `Aether/projects/<Project Name>`).
+       - **Google Sheets**: `upload_xlsx_to_google_sheets(file_path=..., title=..., open_in_browser=True, project_name=...)` (auto-organized under `Aether/xlsx` or `Aether/projects/<Project Name>`).
+     * **Spreadsheets (`.xlsx`):** Build rich formatted `.xlsx` workbooks using `openpyxl` saved strictly to `data/xlsx/<Title>.xlsx` (with styled headers, formulas, column auto-widths, and number formatting) so they appear automatically in Aether's **DOCUMENTS → XLSX** tab.
+     * **Microsoft PowerPoint / Word / Excel / LibreOffice:** Only call `launch_application(app_name=..., target=file_path)` when the user asks to open it in that desktop app (respecting the security whitelist).
+   - Capture a verification screenshot (`capture_screen_snapshot`) only when an external app or browser URL was opened before marking the final step `completed`.
 4. VERIFY STATE & SCREEN VISUALLY (`capture_screen_snapshot`):
    - Do NOT assume `launch_application`, `navigate_browser`, or `paste_to_document` succeeded just because it launched a process.
    - Use `capture_screen_snapshot` after opening an app/URL to confirm it is actually in the foreground and ready for input (for example: handling a Word "Blank document" splash screen, checking whether Google Docs/Slides is loaded vs. on a sign-in prompt, or confirming Gmail Compose is visible).
@@ -269,15 +283,18 @@ class TaskOrchestrator:
         lines = [f"{icons.get(s['status'], '[ ]')} {s['step']}. {s['title']}" + (f" ({s['notes']})" if s["notes"] else "") for s in self.checklist]
         checklist_text = "\n".join(lines)
 
+        from core.model_discovery import resolve_tier_model
+        cfg = self.dispatcher.config_getter() if getattr(self.dispatcher, "config_getter", None) else {}
+        _, _, t2_label = resolve_tier_model(cfg, tier=2)
         action_label = summary or f"Plan progress ({done_cnt}/{total_cnt})"
         self.dispatcher.notify("status", {
             "state": "executing",
             "action": f"📋 {action_label}",
-            "message": f"Hydrogen Orchestrator ({done_cnt}/{total_cnt}): {action_label}",
+            "message": f"{t2_label} Orchestrator ({done_cnt}/{total_cnt}): {action_label}",
         })
         self.dispatcher.notify("chat_event", {
             "type": "tool",
-            "name": "Hydrogen Task Plan",
+            "name": f"Task Plan — {t2_label}",
             "content": f"📋 [PLAN {done_cnt}/{total_cnt}] {summary}\n{checklist_text}".strip(),
         })
         return {
@@ -309,10 +326,13 @@ class TaskOrchestrator:
             await asyncio.sleep(sec)
             return {"status": "success", "waited_seconds": sec, "reason": reason}, None, "image/jpeg"
 
+        from core.model_discovery import resolve_tier_model
+        cfg = self.dispatcher.config_getter() if getattr(self.dispatcher, "config_getter", None) else {}
+        _, _, t2_label = resolve_tier_model(cfg, tier=2)
         self.dispatcher.notify("status", {
             "state": "executing",
             "action": f"⚙️ {fn_name.replace('_', ' ').title()}...",
-            "message": f"Hydrogen executing {fn_name}...",
+            "message": f"{t2_label} executing {fn_name}...",
         })
         raw_res = await self.dispatcher.dispatch(fn_name, fn_args)
         result = dict(raw_res) if isinstance(raw_res, dict) else {"result": raw_res}
@@ -381,7 +401,23 @@ class TaskOrchestrator:
         orch_feature_tag = "document_builder" if is_doc_builder_task else "script_gen_optimizer"
         orch_start_ts = time.time()
 
-        for iteration in range(1, self.max_iterations + 1):
+        # Flexible step budget: default 15 for routine desktop tasks, auto-flex to 25 for multi-artifact document builds/revisions,
+        # and honor optional `max_orchestrator_steps` in config.json (clamped safely to 5..40).
+        cfg = self.dispatcher.config_getter() if getattr(self.dispatcher, "config_getter", None) else {}
+        cfg_steps = None
+        if isinstance(cfg, dict) and cfg.get("max_orchestrator_steps") is not None:
+            try:
+                cfg_steps = int(cfg.get("max_orchestrator_steps"))
+            except (TypeError, ValueError):
+                cfg_steps = None
+        if cfg_steps is not None:
+            effective_max_iterations = max(5, min(40, cfg_steps))
+        elif is_doc_builder_task and self.max_iterations == 15:
+            effective_max_iterations = 25
+        else:
+            effective_max_iterations = self.max_iterations
+
+        for iteration in range(1, effective_max_iterations + 1):
             def _run_orch_step(step_num: int = iteration):
                 with api_feature_context(orch_feature_tag, "orchestrator_step", loop_step=step_num):
                     return client.models.generate_content(
@@ -447,6 +483,16 @@ class TaskOrchestrator:
                 if jpeg_bytes:
                     tool_parts.append(types.Part.from_bytes(data=jpeg_bytes, mime_type=mime_type))
 
+            if iteration == effective_max_iterations - 3 and effective_max_iterations >= 6:
+                tool_parts.append(
+                    types.Part.from_text(
+                        text=(
+                            f"[ORCHESTRATOR BUDGET NOTICE] Only 3 steps remain out of {effective_max_iterations}. "
+                            "Stop inspecting files and immediately run your final compile/upload/verification tools or summarize current progress and any blocker clearly for the user."
+                        )
+                    )
+                )
+
             contents.append(types.Content(role="user", parts=tool_parts))
             _prune_stale_screenshots(contents)
 
@@ -465,8 +511,8 @@ class TaskOrchestrator:
         else:
             hit_max_iterations = True
             final_answer = (
-                f"Reached maximum orchestration steps ({self.max_iterations}) without final confirmation. "
-                "Please check the screen state."
+                f"Reached maximum orchestration steps ({effective_max_iterations}/{effective_max_iterations}) without completing the task. "
+                "No silent completion — please review progress and retry or simplify the step."
             )
 
         if not final_answer:
@@ -491,7 +537,7 @@ class TaskOrchestrator:
             except Exception as cost_err:
                 logger.debug("[ORCHESTRATOR] Cost receipt summary skipped: %s", cost_err)
 
-        return {
+        out_payload: Dict[str, Any] = {
             "status": status,
             "model": model,
             "thinking_level": thinking_level,
@@ -499,5 +545,10 @@ class TaskOrchestrator:
             "checklist": self.checklist,
             "steps_completed": completed_steps,
             "total_steps": len(self.checklist),
+            "steps_budget": effective_max_iterations,
             "tools_used": self.tools_used,
         }
+        if status != "success":
+            out_payload["error"] = final_answer
+            out_payload["message"] = final_answer
+        return out_payload

@@ -4221,9 +4221,28 @@ handleDesktopNotification: function(notif) {
   },
 
   // =========================================================================
-  // Dossier Viewer Methods (Word / Google Docs Style)
+  // Unified Documents Hub (Dossiers / DOCX / PPTX / XLSX)
   // =========================================================================
+  activeDocCategory: "dossiers",
+
   setupDossiersHandlers: function() {
+    const catTabs = document.querySelectorAll("#docCategoryTabs .doc-cat-tab");
+    catTabs.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const nextCat = btn.dataset.docCat || "dossiers";
+        this.switchDocumentCategory(nextCat);
+      });
+    });
+
+    const openFolderBtn = document.getElementById("openDocFolderBtn");
+    if (openFolderBtn) {
+      openFolderBtn.addEventListener("click", async () => {
+        if (window.pywebview?.api?.open_document_folder) {
+          await window.pywebview.api.open_document_folder(this.activeDocCategory || "dossiers");
+        }
+      });
+    }
+
     const searchInput = document.getElementById("dossiersSearch");
     if (searchInput) {
       let debounceTimer = null;
@@ -4268,6 +4287,36 @@ handleDesktopNotification: function(notif) {
       printBtn.addEventListener("click", () => this.printCurrentDossier());
     }
 
+    const syncBtn = document.getElementById("syncDocToDriveBtn");
+    if (syncBtn) {
+      syncBtn.addEventListener("click", () => this.syncDocumentToDrive());
+    }
+
+    const renameBtn = document.getElementById("renameDocBtn");
+    if (renameBtn) {
+      renameBtn.addEventListener("click", () => this.startInlineDocRename());
+    }
+    const saveRenameBtn = document.getElementById("docTitleSaveBtn");
+    if (saveRenameBtn) {
+      saveRenameBtn.addEventListener("click", () => this.commitInlineDocRename());
+    }
+    const cancelRenameBtn = document.getElementById("docTitleCancelBtn");
+    if (cancelRenameBtn) {
+      cancelRenameBtn.addEventListener("click", () => this.cancelInlineDocRename());
+    }
+    const renameInput = document.getElementById("docTitleEditInput");
+    if (renameInput) {
+      renameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this.commitInlineDocRename();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          this.cancelInlineDocRename();
+        }
+      });
+    }
+
     const delBtn = document.getElementById("deleteCurrentDossierBtn");
     if (delBtn) {
       delBtn.addEventListener("click", () => {
@@ -4293,21 +4342,47 @@ handleDesktopNotification: function(notif) {
     }
   },
 
+  switchDocumentCategory: function(category) {
+    const cleanCat = ["dossiers", "docx", "pptx", "xlsx"].includes(category) ? category : "dossiers";
+    this.activeDocCategory = cleanCat;
+    document.querySelectorAll("#docCategoryTabs .doc-cat-tab").forEach((btn) => {
+      const isAct = btn.dataset.docCat === cleanCat;
+      btn.classList.toggle("active", isAct);
+      btn.setAttribute("aria-selected", isAct ? "true" : "false");
+    });
+    this.resetDossierDetail();
+    const query = document.getElementById("dossiersSearch")?.value?.trim() || "";
+    this.loadDossiers(query);
+  },
+
   loadDossiers: async function(query = "") {
-    if (!window.pywebview || !window.pywebview.api || !window.pywebview.api.get_dossiers) {
-      return;
-    }
+    const cat = this.activeDocCategory || "dossiers";
+    const api = window.pywebview?.api;
+    if (!api) return;
     try {
-      const res = await window.pywebview.api.get_dossiers(query);
+      let res = null;
+      if (api.get_documents) {
+        res = await api.get_documents(cat, query);
+      } else if (cat === "dossiers" && api.get_dossiers) {
+        res = await api.get_dossiers(query);
+      }
       if (res && res.success) {
-        this.dossiers = res.dossiers || [];
+        const docs = res.documents || res.dossiers || [];
+        this.dossiers = docs;
         const countEl = document.getElementById("dossiersCount");
         if (countEl) {
-          countEl.innerText = `${this.dossiers.length} DOSSIER${this.dossiers.length === 1 ? "" : "S"}`;
+          const labels = {
+            dossiers: ["DOSSIER", "DOSSIERS"],
+            docx: ["DOCX", "DOCX"],
+            pptx: ["DECK", "DECKS"],
+            xlsx: ["SHEET", "SHEETS"],
+          };
+          const [sing, plur] = labels[cat] || ["FILE", "FILES"];
+          countEl.innerText = `${docs.length} ${docs.length === 1 ? sing : plur}`;
         }
-        this.renderDossiersList(this.dossiers);
+        this.renderDossiersList(docs, cat);
         if (this.selectedDossierFilename) {
-          const exists = this.dossiers.some(d => d.filename === this.selectedDossierFilename);
+          const exists = docs.some(d => d.filename === this.selectedDossierFilename);
           if (exists) {
             this.selectDossier(this.selectedDossierFilename);
           } else {
@@ -4316,38 +4391,40 @@ handleDesktopNotification: function(notif) {
         }
       }
     } catch (e) {
-      console.error("Error calling get_dossiers:", e);
+      console.error("Error loading documents:", e);
     }
   },
 
-  renderDossiersList: function(dossiers) {
+  renderDossiersList: function(dossiers, category = "dossiers") {
     const listEl = document.getElementById("dossiersList");
     if (!listEl) return;
 
     if (!dossiers || dossiers.length === 0) {
-      listEl.innerHTML = `<div class="stored-empty-state">No saved dossiers found in data/dossiers/.</div>`;
+      const folderHint = `data/${category}/`;
+      listEl.innerHTML = `<div class="stored-empty-state">No saved ${this.escapeHtml(category.toUpperCase())} files found in ${this.escapeHtml(folderHint)}.</div>`;
       return;
     }
 
     listEl.innerHTML = dossiers.map(d => {
       const isSelected = d.filename === this.selectedDossierFilename;
       const title = this.escapeHtml(d.title || d.filename);
-      const preview = this.escapeHtml(d.preview || "Markdown research dossier");
+      const preview = this.escapeHtml(d.preview || `${category.toUpperCase()} document`);
       const dateStr = this.escapeHtml(d.date || "");
       const timeStr = this.escapeHtml(d.time || "");
-      const category = this.escapeHtml((d.category || "general").toUpperCase());
-      const words = d.word_count || 0;
+      const metaSummary = this.escapeHtml(
+        d.meta_summary || `${d.word_count || 0} words · ${(d.category || "general").toUpperCase()}`
+      );
 
       return `
         <div class="session-card ${isSelected ? "selected" : ""}" data-dossier-file="${this.escapeHtml(d.filename)}">
           <div class="session-card-header">
             <span class="session-card-date">${dateStr} ${timeStr}</span>
-            <button type="button" class="session-card-del-btn" title="Delete dossier" data-del-dossier="${this.escapeHtml(d.filename)}">✕</button>
+            <button type="button" class="session-card-del-btn" title="Delete file" data-del-dossier="${this.escapeHtml(d.filename)}">✕</button>
           </div>
           <div class="session-card-preview" style="font-weight: 600; color: var(--text-main);">${title}</div>
           <div class="session-card-preview" style="opacity: 0.78; font-size: 11px;">${preview}</div>
           <div class="session-card-meta">
-            <span>${words} words</span> · <span>${category}</span>
+            <span>${metaSummary}</span>
           </div>
         </div>
       `;
@@ -4367,7 +4444,9 @@ handleDesktopNotification: function(notif) {
   },
 
   selectDossier: async function(filename) {
-    if (!filename || !window.pywebview?.api?.get_dossier_content) return;
+    const cat = this.activeDocCategory || "dossiers";
+    const api = window.pywebview?.api;
+    if (!filename || !api) return;
     this.selectedDossierFilename = filename;
 
     document.querySelectorAll("#dossiersList .session-card").forEach(c => {
@@ -4375,12 +4454,16 @@ handleDesktopNotification: function(notif) {
     });
 
     try {
-      const res = await window.pywebview.api.get_dossier_content(filename);
-      if (!res || !res.success || !res.dossier) {
-        return;
+      let res = null;
+      if (api.get_document_content) {
+        res = await api.get_document_content(cat, filename);
+      } else if (cat === "dossiers" && api.get_dossier_content) {
+        res = await api.get_dossier_content(filename);
       }
-      const d = res.dossier;
-      this.selectedDossierMarkdown = d.content_markdown || "";
+      const d = res && res.success ? (res.document || res.dossier) : null;
+      if (!d) return;
+
+      this.selectedDossierMarkdown = d.content_markdown || d.plain_text || "";
 
       const placeholder = document.getElementById("dossierDetailPlaceholder");
       const view = document.getElementById("dossierDetailView");
@@ -4389,16 +4472,29 @@ handleDesktopNotification: function(notif) {
 
       const titleEl = document.getElementById("dossierDetailTitle");
       if (titleEl) titleEl.innerText = d.title || d.filename;
+      this.cancelInlineDocRename();
 
       const metaEl = document.getElementById("dossierDetailMeta");
       if (metaEl) {
-        metaEl.innerText = `${d.date || ""} ${d.time || ""} · ${(d.category || "general").toUpperCase()} · ${d.word_count || 0} words`;
+        metaEl.innerText = d.meta_summary || `${d.date || ""} ${d.time || ""} · ${(d.category || cat).toUpperCase()}`;
+      }
+
+      // Context-aware toolbar copy labels
+      const copyRichBtn = document.getElementById("copyDossierRichBtn");
+      const copyMdBtn = document.getElementById("copyDossierMdBtn");
+      if (copyRichBtn) {
+        if (cat === "dossiers") copyRichBtn.innerText = "📋 COPY FOR WORD/DOCS";
+        else if (cat === "xlsx") copyRichBtn.innerText = "📋 COPY TABLE";
+        else copyRichBtn.innerText = "📋 COPY TEXT";
+      }
+      if (copyMdBtn) {
+        copyMdBtn.style.display = cat === "dossiers" ? "" : "none";
       }
 
       const pageEl = document.getElementById("dossierPaperPage");
       if (pageEl) {
         pageEl.innerHTML = d.rendered_html || "";
-        // Wrap tables so wide multi-column tables scroll cleanly inside the page bounds
+        // Wrap plain tables so wide multi-column tables scroll cleanly inside the page bounds
         pageEl.querySelectorAll("table").forEach(tbl => {
           if (!tbl.parentElement || !tbl.parentElement.classList.contains("dossier-table-wrap")) {
             const wrap = document.createElement("div");
@@ -4407,6 +4503,27 @@ handleDesktopNotification: function(notif) {
             wrap.appendChild(tbl);
           }
         });
+
+        // Wire interactive XLSX sheet tabs if present
+        pageEl.querySelectorAll(".doc-xlsx-tab-btn").forEach((tabBtn) => {
+          tabBtn.addEventListener("click", () => {
+            const idx = tabBtn.dataset.xlsxSheet;
+            pageEl.querySelectorAll(".doc-xlsx-tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.xlsxSheet === idx));
+            pageEl.querySelectorAll(".doc-xlsx-sheet").forEach((s) => s.classList.toggle("active", s.dataset.sheetIdx === idx));
+            this.syncDossierPrintMount();
+          });
+        });
+
+        // Wire PPTX Speaker Notes show/hide toggle if present
+        const notesChk = pageEl.querySelector("#togglePptxNotesChk");
+        if (notesChk) {
+          notesChk.addEventListener("change", () => {
+            const hide = !notesChk.checked;
+            pageEl.querySelectorAll(".doc-pptx-notes").forEach((n) => n.classList.toggle("hidden-notes", hide));
+            this.syncDossierPrintMount();
+          });
+        }
+
         pageEl.classList.toggle("dark-mode", Boolean(this.dossierDarkMode));
         this.applyDossierZoom();
         this.syncDossierPrintMount();
@@ -4417,7 +4534,7 @@ handleDesktopNotification: function(notif) {
         }
       }
     } catch (e) {
-      console.error("Error loading dossier content:", e);
+      console.error("Error loading document content:", e);
     }
   },
 
@@ -4428,16 +4545,23 @@ handleDesktopNotification: function(notif) {
     const view = document.getElementById("dossierDetailView");
     if (placeholder) placeholder.style.display = "flex";
     if (view) view.classList.add("hidden");
+    if (window.pywebview?.api?.clear_active_viewer_document) {
+      window.pywebview.api.clear_active_viewer_document().catch(() => {});
+    }
   },
 
   deleteDossier: async function(filename) {
     if (!filename) return;
-    if (!confirm(`Are you sure you want to permanently delete dossier "${filename}"?`)) {
+    const cat = this.activeDocCategory || "dossiers";
+    if (!confirm(`Are you sure you want to permanently delete "${filename}" from data/${cat}/?`)) {
       return;
     }
-    if (!window.pywebview?.api?.delete_dossier) return;
+    const api = window.pywebview?.api;
+    if (!api) return;
     try {
-      const res = await window.pywebview.api.delete_dossier(filename);
+      const res = api.delete_document
+        ? await api.delete_document(cat, filename)
+        : (api.delete_dossier ? await api.delete_dossier(filename) : null);
       if (res && res.success) {
         if (this.selectedDossierFilename === filename) {
           this.resetDossierDetail();
@@ -4445,25 +4569,29 @@ handleDesktopNotification: function(notif) {
         const query = document.getElementById("dossiersSearch")?.value?.trim() || "";
         await this.loadDossiers(query);
       } else {
-        alert(`Failed to delete dossier: ${res?.error || "Unknown error"}`);
+        alert(`Failed to delete document: ${res?.error || "Unknown error"}`);
       }
     } catch (e) {
-      console.error("Error deleting dossier:", e);
+      console.error("Error deleting document:", e);
     }
   },
 
   copyDossierFormatted: async function() {
-    if (!this.selectedDossierFilename || !window.pywebview?.api?.copy_dossier_rich_html) return;
+    const cat = this.activeDocCategory || "dossiers";
+    const api = window.pywebview?.api;
+    if (!this.selectedDossierFilename || !api) return;
     const btn = document.getElementById("copyDossierRichBtn");
     const orig = btn ? btn.innerText : "";
     try {
-      const res = await window.pywebview.api.copy_dossier_rich_html(this.selectedDossierFilename);
+      const res = api.copy_document_rich_html
+        ? await api.copy_document_rich_html(cat, this.selectedDossierFilename)
+        : (api.copy_dossier_rich_html ? await api.copy_dossier_rich_html(this.selectedDossierFilename) : null);
       if (res && res.success && btn) {
         btn.innerText = "✓ COPIED!";
         setTimeout(() => { btn.innerText = orig; }, 1600);
       }
     } catch (e) {
-      console.error("Copy rich HTML error:", e);
+      console.error("Copy document error:", e);
     }
   },
 
@@ -4502,8 +4630,105 @@ handleDesktopNotification: function(notif) {
   },
 
   openDossierExternal: async function() {
-    if (!this.selectedDossierFilename || !window.pywebview?.api?.open_dossier_file) return;
-    await window.pywebview.api.open_dossier_file(this.selectedDossierFilename);
+    const cat = this.activeDocCategory || "dossiers";
+    const api = window.pywebview?.api;
+    if (!this.selectedDossierFilename || !api) return;
+    if (api.open_document_file) {
+      await api.open_document_file(cat, this.selectedDossierFilename);
+    } else if (api.open_dossier_file) {
+      await api.open_dossier_file(this.selectedDossierFilename);
+    }
+  },
+
+  syncDocumentToDrive: async function() {
+    const cat = this.activeDocCategory || "dossiers";
+    const api = window.pywebview?.api;
+    if (!this.selectedDossierFilename || !api || !api.sync_document_to_drive) return;
+    const btn = document.getElementById("syncDocToDriveBtn");
+    const orig = btn ? btn.innerText : "☁️ SYNC TO DRIVE";
+    if (btn) {
+      btn.disabled = true;
+      btn.innerText = "☁️ SYNCING...";
+    }
+    try {
+      const res = await api.sync_document_to_drive(cat, this.selectedDossierFilename);
+      if (res && res.success) {
+        if (btn) btn.innerText = `✓ ${res.drive_folder || "SYNCED"}`;
+        this.log(`Synced '${this.selectedDossierFilename}' to Google Drive (${res.drive_folder || "Aether"}).`);
+        setTimeout(() => {
+          if (btn) {
+            btn.innerText = orig;
+            btn.disabled = false;
+          }
+        }, 2400);
+      } else {
+        if (btn) {
+          btn.innerText = orig;
+          btn.disabled = false;
+        }
+        alert(`Google Drive Sync failed:\n${res?.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      console.error("Sync to Drive error:", e);
+      if (btn) {
+        btn.innerText = orig;
+        btn.disabled = false;
+      }
+      alert(`Google Drive Sync error: ${e}`);
+    }
+  },
+
+  startInlineDocRename: function() {
+    if (!this.selectedDossierFilename) return;
+    const titleEl = document.getElementById("dossierDetailTitle");
+    const editBtn = document.getElementById("renameDocBtn");
+    const wrap = document.getElementById("docTitleEditWrap");
+    const input = document.getElementById("docTitleEditInput");
+    if (!titleEl || !wrap || !input) return;
+    input.value = titleEl.innerText.trim();
+    titleEl.style.display = "none";
+    if (editBtn) editBtn.style.display = "none";
+    wrap.classList.remove("hidden");
+    input.focus();
+    input.select();
+  },
+
+  cancelInlineDocRename: function() {
+    const titleEl = document.getElementById("dossierDetailTitle");
+    const editBtn = document.getElementById("renameDocBtn");
+    const wrap = document.getElementById("docTitleEditWrap");
+    if (titleEl) titleEl.style.display = "";
+    if (editBtn) editBtn.style.display = "";
+    if (wrap) wrap.classList.add("hidden");
+  },
+
+  commitInlineDocRename: async function() {
+    const cat = this.activeDocCategory || "dossiers";
+    const api = window.pywebview?.api;
+    const input = document.getElementById("docTitleEditInput");
+    const newTitle = (input?.value || "").trim();
+    if (!this.selectedDossierFilename || !api?.rename_document) {
+      this.cancelInlineDocRename();
+      return;
+    }
+    if (!newTitle) {
+      alert("Document title cannot be empty.");
+      return;
+    }
+    try {
+      const res = await api.rename_document(cat, this.selectedDossierFilename, newTitle);
+      if (res && res.success) {
+        this.selectedDossierFilename = res.new_filename || this.selectedDossierFilename;
+        this.cancelInlineDocRename();
+        const query = document.getElementById("dossiersSearch")?.value?.trim() || "";
+        await this.loadDossiers(query);
+      } else {
+        alert(`Rename failed: ${res?.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      console.error("Rename document error:", e);
+      alert(`Rename error: ${e}`);
+    }
   },
 
   syncDossierPrintMount: function() {

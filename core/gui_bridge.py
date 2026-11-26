@@ -4079,6 +4079,192 @@ class GuiBridge:
             logger.warning(f"[DOSSIER THEME SAVE ERROR] {e}")
             return {"success": False, "error": str(e)}
 
+    # --- UNIFIED DOCUMENTS HUB BRIDGES (Dossiers / DOCX / PPTX / XLSX) ---
+
+    def get_documents(self, category: str = "dossiers", query: Optional[str] = None) -> dict:
+        """Lists saved documents in data/dossiers/, data/docx/, data/pptx/, or data/xlsx/."""
+        try:
+            from core.document_viewer import list_documents, normalize_category
+            cat = normalize_category(category)
+            docs = list_documents(category=cat, query=query)
+            return {"success": True, "category": cat, "documents": docs, "total": len(docs)}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_documents({category}): {e}")
+            return {"success": False, "category": category, "error": str(e), "documents": []}
+
+    def get_document_content(self, category: str, filename: str) -> dict:
+        """Retrieves metadata, plain text, and print-ready rendered HTML for any document type."""
+        try:
+            from core.document_viewer import get_document_details, normalize_category, set_active_viewer_document
+            cat = normalize_category(category)
+            res = get_document_details(cat, filename)
+            if res.get("status") == "success":
+                doc = res["document"]
+                set_active_viewer_document(
+                    category=cat,
+                    filename=doc.get("filename") or filename,
+                    file_path=doc.get("file_path") or "",
+                    title=doc.get("title") or "",
+                )
+                return {"success": True, "category": cat, "document": doc}
+            return {"success": False, "error": res.get("message", "Document not found.")}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] get_document_content({category}, {filename}): {e}")
+            return {"success": False, "error": str(e)}
+
+    def clear_active_viewer_document(self) -> dict:
+        """Clears the active viewer document pointer when the user closes or leaves the document preview."""
+        try:
+            from core.document_viewer import clear_active_viewer_document as _clear_active
+            _clear_active()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_document(self, category: str, filename: str) -> dict:
+        """Deletes a saved document strictly inside data/<category>/."""
+        try:
+            from core.document_viewer import delete_document_file, normalize_category
+            cat = normalize_category(category)
+            res = delete_document_file(cat, filename)
+            if res.get("status") == "success":
+                return {"success": True, "category": cat, "result": res}
+            return {"success": False, "error": res.get("message", "Document not found.")}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] delete_document({category}, {filename}): {e}")
+            return {"success": False, "error": str(e)}
+
+    def rename_document(self, category: str, filename: str, new_title: str) -> dict:
+        """Renames a saved document and updates its display title (and H1 heading for dossiers)."""
+        try:
+            from core.document_viewer import rename_document_file, normalize_category
+            cat = normalize_category(category)
+            res = rename_document_file(cat, filename, new_title)
+            if res.get("status") == "success":
+                return {
+                    "success": True,
+                    "category": cat,
+                    "old_filename": res.get("old_filename"),
+                    "new_filename": res.get("new_filename"),
+                    "title": res.get("title"),
+                }
+            return {"success": False, "error": res.get("message", "Could not rename document.")}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] rename_document({category}, {filename}): {e}")
+            return {"success": False, "error": str(e)}
+
+    def open_document_file(self, category: str, filename: str) -> dict:
+        """Opens a document file in its native Windows application (Word, PowerPoint, Excel, etc.)."""
+        try:
+            from core.document_viewer import safe_document_path, normalize_category
+            cat = normalize_category(category)
+            if cat == "dossiers":
+                return self.open_dossier_file(filename)
+            fpath = safe_document_path(cat, filename)
+            if not fpath or not os.path.isfile(fpath):
+                return {"success": False, "error": "Document file not found."}
+            os.startfile(fpath)
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] open_document_file({category}, {filename}): {e}")
+            return {"success": False, "error": str(e)}
+
+    def open_document_folder(self, category: str = "dossiers") -> dict:
+        """Opens the local storage folder (data/dossiers, data/docx, data/pptx, or data/xlsx) in Explorer."""
+        try:
+            from core.document_viewer import get_category_dir
+            folder = get_category_dir(category, ensure_exists=True)
+            os.startfile(folder)
+            return {"success": True, "folder": folder}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] open_document_folder({category}): {e}")
+            return {"success": False, "error": str(e)}
+
+    def copy_document_rich_html(self, category: str, filename: str) -> dict:
+        """Copies a dossier as rich CF_HTML, or Office document plain/tabular text to the clipboard."""
+        try:
+            from core.document_viewer import normalize_category, get_document_details
+            cat = normalize_category(category)
+            if cat == "dossiers":
+                return self.copy_dossier_rich_html(filename)
+            from tools.clipboard import set_clipboard_text
+            res = get_document_details(cat, filename)
+            if res.get("status") != "success":
+                return {"success": False, "error": res.get("message", "Document not found.")}
+            txt = res["document"].get("plain_text") or ""
+            return {"success": bool(set_clipboard_text(txt))}
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] copy_document_rich_html({category}, {filename}): {e}")
+            return {"success": False, "error": str(e)}
+
+    def sync_document_to_drive(self, category: str, filename: str, project_name: Optional[str] = None) -> dict:
+        """
+        On-demand sync of a saved local document from data/{dossiers,docx,pptx,xlsx}/
+        into Google Drive under /Aether/{dossiers,docs,pptx,xlsx} (or /Aether/projects/<Project Name>).
+        """
+        try:
+            from core.document_viewer import normalize_category, safe_document_path, _clean_title_from_filename
+            from tools.email_tools import (
+                upload_docx_to_google_docs,
+                upload_pptx_to_google_slides,
+                upload_xlsx_to_google_sheets,
+            )
+
+            cat = normalize_category(category)
+            fpath = safe_document_path(cat, filename)
+            if not fpath or not os.path.isfile(fpath):
+                return {"success": False, "error": f"Document not found: {filename}"}
+
+            clean_title = _clean_title_from_filename(os.path.basename(fpath))
+            proj = str(project_name or "").strip()
+
+            if cat == "pptx":
+                res = upload_pptx_to_google_slides(
+                    file_path=fpath,
+                    title=clean_title,
+                    open_in_browser=True,
+                    project_name=proj,
+                )
+            elif cat == "xlsx":
+                res = upload_xlsx_to_google_sheets(
+                    file_path=fpath,
+                    title=clean_title,
+                    open_in_browser=True,
+                    project_name=proj,
+                )
+            elif cat == "dossiers":
+                res = upload_docx_to_google_docs(
+                    file_path=fpath,
+                    title=clean_title,
+                    open_in_browser=True,
+                    project_name=proj,
+                    folder_category="dossiers",
+                )
+            else:
+                res = upload_docx_to_google_docs(
+                    file_path=fpath,
+                    title=clean_title,
+                    open_in_browser=True,
+                    project_name=proj,
+                    folder_category="docs",
+                )
+
+            if res.get("success"):
+                return {
+                    "success": True,
+                    "drive_folder": res.get("drive_folder", ""),
+                    "url": res.get("web_view_link") or res.get("slides_url") or res.get("docs_url") or res.get("sheets_url") or "",
+                    "message": res.get("message", "Synced to Google Drive."),
+                }
+            return {
+                "success": False,
+                "error": res.get("error") or res.get("message") or "Google Drive sync failed.",
+                "needs_reauth": bool(res.get("needs_reauth", False)),
+            }
+        except Exception as e:
+            logger.error(f"[BRIDGE ERROR] sync_document_to_drive({category}, {filename}): {e}")
+            return {"success": False, "error": str(e)}
+
     # --- GAMES SUBSYSTEM BRIDGES ---
 
 

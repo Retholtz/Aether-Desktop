@@ -472,11 +472,13 @@ Conversation:
                 if not active_client:
                     continue
                 config = self._build_generate_config(response_mime_type="application/json")
-                response = active_client.models.generate_content(
-                    model=self.heavy_model,
-                    contents=prompt,
-                    config=config
-                )
+                from core.api_telemetry import api_feature_context
+                with api_feature_context("script_gen_optimizer", "reflexion_session_memory"):
+                    response = active_client.models.generate_content(
+                        model=self.heavy_model,
+                        contents=prompt,
+                        config=config
+                    )
                 # Always persist already-paid session indexing/facts before yielding to active speech
                 result = json.loads(response.text)
 
@@ -524,11 +526,13 @@ Conversation:
             if not active_client:
                 return False
             config = self._build_generate_config(response_mime_type="application/json")
-            response = active_client.models.generate_content(
-                model=self.heavy_model,
-                contents=prompt,
-                config=config
-            )
+            from core.api_telemetry import api_feature_context
+            with api_feature_context("script_gen_optimizer", "reflexion_memory_reconcile"):
+                response = active_client.models.generate_content(
+                    model=self.heavy_model,
+                    contents=prompt,
+                    config=config
+                )
             # Always commit already-paid reconciliation results (atomic local SQLite write <5ms)
             result = json.loads(response.text)
             cleaned_facts = result.get("reconciled_facts", []) if isinstance(result, dict) else (result if isinstance(result, list) else [])

@@ -9,7 +9,7 @@ import json
 import os
 import re
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.logger import get_logger
 from google import genai
@@ -1148,6 +1148,7 @@ try:
         create_contact,
         upload_pptx_to_google_slides,
         upload_docx_to_google_docs,
+        upload_xlsx_to_google_sheets,
     )
 
     _EMAIL_TOOL_SPECS = [
@@ -1314,6 +1315,7 @@ try:
                     "open_in_browser": {"type": "BOOLEAN", "description": "If true (default), opens the converted Google Slides URL in the browser."},
                     "browser_app": {"type": "STRING", "description": "Browser to open the deck in: 'chrome' (default) or 'edge'."},
                     "lecture_spec_path": {"type": "STRING", "description": "Optional path to lecture_spec.json to enforce deterministic validation gate prior to upload."},
+                    "project_name": {"type": "STRING", "description": "Optional Aether Project name to store the file under Google Drive Aether/projects/<Project Name> (otherwise saved under Aether/pptx)."},
                 },
                 "required": ["file_path"],
             },
@@ -1321,15 +1323,33 @@ try:
         (
             "upload_docx_to_google_docs",
             upload_docx_to_google_docs,
-            "Uploads a local document or handout (.docx, .doc, .odt, or .rtf — by default saved in data/docx/ or outputs/<job_id>/) to Google Drive via OAuth and converts it natively into a Google Docs document, optionally opening it directly in the browser. Use this after generating and validating a rich .docx handout/report when the user requests Google Docs.",
+            "Uploads a local document, handout, or dossier (.docx, .doc, .odt, .rtf, .md, or .txt) to Google Drive (organized under Aether/docs, Aether/dossiers, or Aether/projects/<Project Name>) via OAuth and converts it natively into a Google Docs document, optionally opening it directly in the browser.",
             {
                 "type": "OBJECT",
                 "properties": {
-                    "file_path": {"type": "STRING", "description": "Path (or filename inside data/docx/) to the local .docx, .doc, .odt, or .rtf file."},
+                    "file_path": {"type": "STRING", "description": "Path (or filename inside data/docx/ or data/dossiers/) to the local document file."},
                     "title": {"type": "STRING", "description": "Optional document title in Google Docs (defaults to filename)."},
                     "open_in_browser": {"type": "BOOLEAN", "description": "If true (default), opens the converted Google Docs URL in the browser."},
                     "browser_app": {"type": "STRING", "description": "Browser to open the document in: 'chrome' (default) or 'edge'."},
                     "lecture_spec_path": {"type": "STRING", "description": "Optional path to lecture_spec.json to enforce deterministic validation gate prior to upload."},
+                    "project_name": {"type": "STRING", "description": "Optional Aether Project name to store the file under Google Drive Aether/projects/<Project Name> (otherwise Aether/docs or Aether/dossiers)."},
+                    "folder_category": {"type": "STRING", "description": "Optional folder override: 'docs' or 'dossiers' (auto-detected for .md files in data/dossiers/)."},
+                },
+                "required": ["file_path"],
+            },
+        ),
+        (
+            "upload_xlsx_to_google_sheets",
+            upload_xlsx_to_google_sheets,
+            "Uploads a local spreadsheet (.xlsx, .xlsm, .xls, .ods, or .csv — by default saved in data/xlsx/) to Google Drive (organized under Aether/xlsx or Aether/projects/<Project Name>) via OAuth and converts it natively into a Google Sheets spreadsheet, optionally opening it directly in the browser.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "file_path": {"type": "STRING", "description": "Path (or filename inside data/xlsx/) to the local spreadsheet file."},
+                    "title": {"type": "STRING", "description": "Optional spreadsheet title in Google Sheets (defaults to filename)."},
+                    "open_in_browser": {"type": "BOOLEAN", "description": "If true (default), opens the converted Google Sheets URL in the browser."},
+                    "browser_app": {"type": "STRING", "description": "Browser to open the spreadsheet in: 'chrome' (default) or 'edge'."},
+                    "project_name": {"type": "STRING", "description": "Optional Aether Project name to store the file under Google Drive Aether/projects/<Project Name> (otherwise Aether/xlsx)."},
                 },
                 "required": ["file_path"],
             },
@@ -1356,8 +1376,9 @@ try:
         build_pptx: bool = True,
         build_docx: bool = True,
         dossier_path: str = "",
+        create_new_copy: bool = False,
     ) -> Dict[str, Any]:
-        """Deterministically compiles `lecture_spec.json` into 300-DPI charts, .pptx slides, and .docx handout under outputs/<job_id>/ and runs full validation."""
+        """Deterministically compiles `lecture_spec.json` into 300-DPI charts, .pptx slides, and .docx handout under outputs/<job_id>/ (updating in place by default unless create_new_copy=True) and runs full validation."""
         return _compile_bundle_fn(
             lecture_spec_path=lecture_spec_path,
             job_id=job_id,
@@ -1365,6 +1386,7 @@ try:
             build_docx=bool(build_docx),
             mirror_to_data_dirs=True,
             dossier_path=dossier_path or None,
+            create_new_copy=bool(create_new_copy),
         )
 
     def validate_document_artifacts(
@@ -1383,21 +1405,410 @@ try:
             dossier_path=dossier_path or None,
         )
 
+    def extract_lecture_spec_from_dossier(
+        dossier_path: str,
+        job_id: str = "",
+        target_slides: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Uses the configured Tier 2 model (from Settings) with structured JSON output to convert an
+        existing Markdown dossier on disk into a schema-validated `outputs/<job_id>/lecture_spec.json`
+        without invoking Tier 3 or generating a huge Python wrapper script.
+        """
+        from core.config_manager import load_config
+        from core.model_discovery import resolve_tier_model, build_thinking_config
+        from core.manifest_indexer import resolve_gemini_client
+        from core.doc_validator import format_lecture_spec_schema_prompt, validate_lecture_spec
+        from core.paths import get_outputs_dir
+        from core.api_telemetry import api_feature_context
+        from google.genai import types as _gtypes
+
+        clean_p = str(dossier_path or "").strip().strip("\"'`")
+        cand_paths = [clean_p]
+        if clean_p and not os.path.isabs(clean_p):
+            cand_paths.append(user_data_path(*re.split(r"[\\/]+", clean_p)))
+            cand_paths.append(os.path.abspath(clean_p))
+        resolved_dossier = next((p for p in cand_paths if p and os.path.isfile(p)), None)
+        if not resolved_dossier:
+            return {"status": "error", "passed": False, "message": f"Dossier file not found: {dossier_path}"}
+
+        with open(resolved_dossier, "r", encoding="utf-8", errors="replace") as df:
+            dossier_text = df.read()
+
+        cfg = load_config() or {}
+        t2_model, t2_level, t2_label = resolve_tier_model(cfg, tier=2)
+        client = resolve_gemini_client()
+        if not client:
+            return {"status": "error", "passed": False, "message": "GenAI client unavailable for Tier 2 lecture_spec extraction."}
+
+        slug_base = job_id.strip() or re.sub(r"[^A-Za-z0-9_-]+", "_", os.path.splitext(os.path.basename(resolved_dossier))[0]).strip("_")[:48] or f"job_{time.strftime('%Y%m%d_%H%M%S')}"
+        job_dir = get_outputs_dir(slug_base)
+        os.makedirs(job_dir, exist_ok=True)
+        spec_out_path = os.path.join(job_dir, "lecture_spec.json")
+
+        slide_hint = f"\nTarget total_slides: {int(target_slides)}\n" if int(target_slides or 0) > 0 else ""
+        extract_prompt = (
+            "You are Aether's Tier 2 Deterministic Document Extractor.\n"
+            "Convert the AUTHORITATIVE SOURCE DOSSIER below into a single strict JSON object matching the exact `lecture_spec.json` schema.\n"
+            "CRITICAL RULES:\n"
+            "- Return ONLY valid JSON (no Markdown fences, no prose outside JSON).\n"
+            "- Extract ALL clinical/factual thresholds, numbers, guideline years, tables, chart series, and case vignettes VERBATIM from the dossier below. NEVER substitute values from memory.\n"
+            "- Keep `bullets[]` concise (MAX 5 bullets per slide, <= 22 words each, complete sentences/phrases, NO raw Markdown/backticks, explicit leading zeros like `0.1 U/kg`). Put attending pearls/scripts into `speaker_notes`.\n"
+            "- Keep `canonical_facts` values concise (exact threshold strings like `'>= 200 mg/dL'`, `'< 3.5 mEq/L'`).\n"
+            "- **POPULATE `chart_spec` FOR QUANTITATIVE SLIDES:** Whenever the dossier includes a data comparison, trial outcome comparison (e.g. NICE-SUGAR, RABBIT-2), pharmacokinetic curve (e.g. insulin onset/peak/duration), or visual chart blueprint, populate `slide['chart_spec']` with `chart_type` (`'line'`, `'bar'`, or `'grouped_bar'`), `x_label`, `y_label`, `series: [{'name': ..., 'x': [...], 'y': [...]}]`, and `smooth_continuous: true` for PK/time curves (using smooth continuous numeric `y` arrays with no abrupt jumps) so 300-DPI matplotlib charts render automatically!\n"
+            f"{slide_hint}\n"
+            f"{format_lecture_spec_schema_prompt()}\n\n"
+            f"=== AUTHORITATIVE SOURCE DOSSIER ({os.path.basename(resolved_dossier)}) ===\n"
+            f"{dossier_text[:120000]}\n"
+            f"=== END AUTHORITATIVE SOURCE DOSSIER ===\n"
+        )
+
+        gen_cfg = _gtypes.GenerateContentConfig(
+            thinking_config=build_thinking_config(t2_model, thinking_level=t2_level),
+            response_mime_type="application/json",
+        )
+
+        def _parse_json_obj(raw_txt: str) -> Optional[Dict[str, Any]]:
+            txt = (raw_txt or "").strip()
+            fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt, re.IGNORECASE)
+            if fence:
+                txt = fence.group(1).strip()
+            try:
+                obj = json.loads(txt)
+                return obj if isinstance(obj, dict) else None
+            except Exception:
+                return None
+
+        with api_feature_context("document_builder", "extract_lecture_spec"):
+            resp = client.models.generate_content(model=t2_model, contents=extract_prompt, config=gen_cfg)
+        spec_obj = _parse_json_obj(getattr(resp, "text", "") or "")
+        if spec_obj is None:
+            return {
+                "status": "error",
+                "passed": False,
+                "message": f"{t2_label} returned invalid JSON while extracting lecture_spec.json.",
+            }
+
+        val = validate_lecture_spec(spec_obj)
+        # Up to 1 fast targeted Tier 2 repair pass if deterministic validation finds any schema/lint errors
+        if not val.get("passed"):
+            err_lines = "\n".join(
+                f"- [{e.get('code')}] {e.get('location')}: {e.get('message')}"
+                for e in (val.get("errors") or [])[:40]
+            )
+            repair_prompt = (
+                "Fix ONLY the validation errors listed below in this `lecture_spec.json` object while preserving ALL facts, numbers, tables, charts, and speaker_notes verbatim.\n"
+                "Return ONLY the corrected valid JSON object.\n\n"
+                f"VALIDATION ERRORS TO FIX:\n{err_lines}\n\n"
+                f"CURRENT lecture_spec.json:\n{json.dumps(spec_obj, ensure_ascii=False)}"
+            )
+            with api_feature_context("document_builder", "repair_lecture_spec"):
+                rep_resp = client.models.generate_content(model=t2_model, contents=repair_prompt, config=gen_cfg)
+            repaired_obj = _parse_json_obj(getattr(rep_resp, "text", "") or "")
+            if repaired_obj is not None:
+                spec_obj = repaired_obj
+                val = validate_lecture_spec(spec_obj)
+
+        with open(spec_out_path, "w", encoding="utf-8") as sf:
+            json.dump(spec_obj, sf, indent=2, ensure_ascii=False)
+
+        logger.info(f"[DOC_EXTRACTOR] {t2_label} saved {spec_out_path} (passed={val.get('passed')}, errors={len(val.get('errors') or [])})")
+        return {
+            "status": "success" if val.get("passed") else "validation_failed",
+            "passed": bool(val.get("passed")),
+            "job_id": slug_base,
+            "job_dir": job_dir,
+            "lecture_spec_path": spec_out_path,
+            "dossier_path": resolved_dossier,
+            "model_used": t2_model,
+            "validation": val,
+        }
+
+    def revise_lecture_spec(
+        lecture_spec_path: str,
+        revision_instructions: str,
+        job_id: str = "",
+        dossier_path: str = "",
+        target_slides: Optional[List[int]] = None,
+        update_handout: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Revises an existing `lecture_spec.json` in a SINGLE Tier 2 structured JSON call (no multi-step file-reading loops!).
+        - **Surgical Patch Mode (90% cheaper/faster):** When `target_slides` is provided (or auto-detected for 1–4 specific
+          slides like "fix slide 25" or "fix overlapping labels on slide 6 and slide 7"), sends ONLY those slide(s) +
+          compact metadata/canonical_facts to Tier 2 and deterministically merges the patched slide(s) back into the deck.
+        - **Full Revision Mode:** When revising the entire deck or handout (e.g. Version 2 overhaul), updates the full spec.
+        Validates deterministically and runs up to 1 fast repair pass if needed.
+        """
+        from core.config_manager import load_config
+        from core.model_discovery import resolve_tier_model, build_thinking_config
+        from core.manifest_indexer import resolve_gemini_client
+        from core.doc_validator import format_lecture_spec_schema_prompt, validate_lecture_spec
+        from core.paths import get_outputs_dir
+        from core.api_telemetry import api_feature_context
+        from google.genai import types as _gtypes
+
+        def _resolve_existing(p_str: str) -> Optional[str]:
+            cp = str(p_str or "").strip().strip("\"'`")
+            if not cp:
+                return None
+            cands = [cp]
+            if not os.path.isabs(cp):
+                cands.append(user_data_path(*re.split(r"[\\/]+", cp)))
+                cands.append(os.path.abspath(cp))
+            return next((c for c in cands if c and os.path.isfile(c)), None)
+
+        resolved_spec = _resolve_existing(lecture_spec_path)
+        if not resolved_spec:
+            from core.document_viewer import get_active_viewer_document, find_matching_lecture_spec
+            active_doc = get_active_viewer_document()
+            if active_doc and active_doc.get("lecture_spec_path") and os.path.isfile(active_doc["lecture_spec_path"]):
+                resolved_spec = active_doc["lecture_spec_path"]
+                logger.info(f"[DOC_REVISER] Auto-resolved lecture_spec.json from active viewer document: {resolved_spec}")
+            else:
+                latest_live = find_matching_lecture_spec()
+                if latest_live and os.path.isfile(latest_live):
+                    resolved_spec = latest_live
+                    logger.info(f"[DOC_REVISER] Auto-resolved latest live lecture_spec.json: {resolved_spec}")
+        if not resolved_spec:
+            return {"status": "error", "passed": False, "message": f"lecture_spec.json not found: {lecture_spec_path}"}
+
+        with open(resolved_spec, "r", encoding="utf-8") as f:
+            current_spec = json.load(f)
+
+        dossier_excerpt = ""
+        resolved_dossier = _resolve_existing(dossier_path)
+        if resolved_dossier:
+            with open(resolved_dossier, "r", encoding="utf-8", errors="replace") as df:
+                dossier_excerpt = df.read()[:90000]
+
+        cfg = load_config() or {}
+        t2_model, t2_level, t2_label = resolve_tier_model(cfg, tier=2)
+        client = resolve_gemini_client()
+        if not client:
+            return {"status": "error", "passed": False, "message": "GenAI client unavailable for Tier 2 lecture_spec revision."}
+
+        if job_id.strip():
+            slug_base = re.sub(r"[^A-Za-z0-9_-]+", "_", job_id.strip()).strip("_")[:48] or "revised_job"
+            job_dir = get_outputs_dir(slug_base)
+            os.makedirs(job_dir, exist_ok=True)
+            spec_out_path = os.path.join(job_dir, "lecture_spec.json")
+        else:
+            job_dir = os.path.dirname(os.path.abspath(resolved_spec))
+            slug_base = os.path.basename(job_dir) or "revised_job"
+            spec_out_path = resolved_spec
+
+        # Determine whether to run Surgical Patch Mode (1..6 targeted slides) vs Full Revision Mode
+        all_slides = current_spec.get("slides") or []
+        valid_slide_nums = {
+            int(s.get("slide_number"))
+            for s in all_slides
+            if isinstance(s, dict) and str(s.get("slide_number") or "").isdigit()
+        }
+        explicit_targets: List[int] = []
+        if target_slides:
+            for item in target_slides:
+                try:
+                    n = int(item)
+                    if n in valid_slide_nums and n not in explicit_targets:
+                        explicit_targets.append(n)
+                except (TypeError, ValueError):
+                    pass
+        else:
+            # Auto-detect narrow slide-specific edits when caller didn't pass target_slides
+            low_instr = str(revision_instructions or "").lower()
+            is_broad = any(
+                kw in low_instr
+                for kw in ("version 2", "v2", "entire deck", "all slides", "whole presentation", "handout", "every slide", "full revision")
+            )
+            if not is_broad and not update_handout:
+                found_nums = [int(m) for m in re.findall(r"\bslides?\s*#?(\d+)\b", low_instr)]
+                # Also match "slides 6 and 7" / "slides 6, 7"
+                for grp in re.findall(r"\bslides?\s*(\d+(?:\s*(?:,|and|&)\s*\d+)+)\b", low_instr):
+                    found_nums.extend(int(x) for x in re.findall(r"\d+", grp))
+                deduped = []
+                for n in found_nums:
+                    if n in valid_slide_nums and n not in deduped:
+                        deduped.append(n)
+                if 1 <= len(deduped) <= 6:
+                    explicit_targets = deduped
+
+        use_patch_mode = bool(explicit_targets) and not update_handout
+
+        gen_cfg = _gtypes.GenerateContentConfig(
+            thinking_config=build_thinking_config(t2_model, thinking_level=t2_level),
+            response_mime_type="application/json",
+        )
+
+        def _parse_json_obj(raw_txt: str) -> Optional[Dict[str, Any]]:
+            txt = (raw_txt or "").strip()
+            fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", txt, re.IGNORECASE)
+            if fence:
+                txt = fence.group(1).strip()
+            try:
+                obj = json.loads(txt)
+                return obj if isinstance(obj, dict) else None
+            except Exception:
+                return None
+
+        if use_patch_mode:
+            target_set = set(explicit_targets)
+            target_slide_objs = [
+                sl for sl in all_slides
+                if isinstance(sl, dict) and int(sl.get("slide_number") or 0) in target_set
+            ]
+            patch_prompt = (
+                "You are Aether's Tier 2 Surgical Slide Patcher.\n"
+                f"Apply the REVISION INSTRUCTIONS below ONLY to the targeted slide(s) {explicit_targets}.\n"
+                "CRITICAL RULES:\n"
+                "- Return ONLY a compact JSON object of the exact form: `{\"slides\": [<updated slide object(s)>]}`.\n"
+                "- Keep each slide's `slide_number` and `module_id` unchanged.\n"
+                "- Keep `bullets[]` concise (MAX 5 bullets, <= 22 words each, ZERO Markdown/backticks, explicit leading zeros like `0.1 U/kg`).\n"
+                "- For `case_cards` slides, keep each card title short and concise (<= 45 chars) and each card's `items[]` crisp (<= 4 items, <= 14 words each) so text never clips.\n"
+                "- For `chart_spec`, use `chart_type` (`'line'`|`'bar'`|`'grouped_bar'`), short clean x-axis labels (so tick labels never overlap), and smooth continuous `y` arrays when `smooth_continuous: true`.\n"
+                "- Preserve all accurate thresholds from `canonical_facts`.\n\n"
+                f"REVISION INSTRUCTIONS:\n{revision_instructions.strip()}\n\n"
+                f"METADATA & CANONICAL FACTS:\n{json.dumps({'metadata': current_spec.get('metadata'), 'canonical_facts': current_spec.get('canonical_facts')}, ensure_ascii=False)}\n\n"
+                f"TARGET SLIDES TO PATCH:\n{json.dumps(target_slide_objs, ensure_ascii=False)}\n"
+            )
+            with api_feature_context("document_builder", "patch_lecture_slides"):
+                resp = client.models.generate_content(model=t2_model, contents=patch_prompt, config=gen_cfg)
+            patch_obj = _parse_json_obj(getattr(resp, "text", "") or "")
+            patched_slides = (patch_obj.get("slides") if isinstance(patch_obj, dict) else None) or []
+            if not isinstance(patched_slides, list) or not patched_slides:
+                return {
+                    "status": "error",
+                    "passed": False,
+                    "message": f"{t2_label} returned invalid slide patch JSON for slides {explicit_targets}.",
+                }
+            patch_by_num = {
+                int(sl.get("slide_number")): sl
+                for sl in patched_slides
+                if isinstance(sl, dict) and str(sl.get("slide_number") or "").isdigit()
+            }
+            revised_obj = json.loads(json.dumps(current_spec))
+            revised_obj["slides"] = [
+                patch_by_num.get(int(sl.get("slide_number") or 0), sl)
+                for sl in (revised_obj.get("slides") or [])
+            ]
+        else:
+            revise_prompt = (
+                "You are Aether's Tier 2 Deterministic Presentation & Handout Revision Engine.\n"
+                "Apply the user's REVISION INSTRUCTIONS below to the existing `lecture_spec.json` and return ONLY the complete, updated valid JSON object.\n"
+                "CRITICAL RULES:\n"
+                "- Preserve ALL accurate clinical/factual thresholds, `canonical_facts`, and slide speaker notes from the existing spec (and authoritative dossier if provided). NEVER introduce outdated guidelines.\n"
+                "- When adding charts, populate `slide['chart_spec']` using exact compiler schema: "
+                "`{\"title\": str, \"chart_type\": \"line\"|\"bar\"|\"grouped_bar\", \"x_label\": str, \"y_label\": str, "
+                "\"series\": [{\"name\": str, \"x\": [...], \"y\": [...]}], \"annotations\": [{\"x\": num, \"y\": num, \"text\": str}], \"smooth_continuous\": bool}` "
+                "(for `smooth_continuous: true`, ensure `y` arrays are smooth continuous curves with >= 15 points and no abrupt step jumps; keep x-axis tick labels concise so they never overlap; set `layout_type: \"bullets_plus_chart\"`).\n"
+                "- Keep `bullets[]` concise (MAX 5 bullets per slide, <= 22 words each, ZERO raw Markdown/backticks, explicit leading zeros like `0.1 U/kg`).\n"
+                "- Keep `handout_sections[]` structured with `title`, optional `summary`, `rules` (list of strings), and `tables` (list of `{title, headers, rows}`), matching `canonical_facts` verbatim.\n"
+                "- Return ONLY valid JSON (no Markdown fences or extra prose).\n\n"
+                f"REVISION INSTRUCTIONS:\n{revision_instructions.strip()}\n\n"
+                f"{format_lecture_spec_schema_prompt()}\n\n"
+                f"=== EXISTING lecture_spec.json ===\n{json.dumps(current_spec, ensure_ascii=False)}\n=== END EXISTING lecture_spec.json ===\n"
+            )
+            if dossier_excerpt:
+                revise_prompt += (
+                    f"\n=== AUTHORITATIVE SOURCE DOSSIER ({os.path.basename(resolved_dossier)}) ===\n"
+                    f"{dossier_excerpt}\n=== END AUTHORITATIVE SOURCE DOSSIER ===\n"
+                )
+            with api_feature_context("document_builder", "revise_lecture_spec"):
+                resp = client.models.generate_content(model=t2_model, contents=revise_prompt, config=gen_cfg)
+            revised_obj = _parse_json_obj(getattr(resp, "text", "") or "")
+            if revised_obj is None:
+                return {
+                    "status": "error",
+                    "passed": False,
+                    "message": f"{t2_label} returned invalid JSON while revising lecture_spec.json.",
+                }
+
+        val = validate_lecture_spec(revised_obj)
+        if not val.get("passed"):
+            err_lines = "\n".join(
+                f"- [{e.get('code')}] {e.get('location')}: {e.get('message')}"
+                for e in (val.get("errors") or [])[:40]
+            )
+            if use_patch_mode:
+                patched_subset = [
+                    sl for sl in (revised_obj.get("slides") or [])
+                    if isinstance(sl, dict) and int(sl.get("slide_number") or 0) in set(explicit_targets)
+                ]
+                repair_prompt = (
+                    "Fix ONLY the validation errors listed below in these patched slide(s) and return `{\"slides\": [...]}`.\n\n"
+                    f"VALIDATION ERRORS:\n{err_lines}\n\n"
+                    f"CURRENT PATCHED SLIDES:\n{json.dumps(patched_subset, ensure_ascii=False)}"
+                )
+                with api_feature_context("document_builder", "repair_lecture_spec"):
+                    rep_resp = client.models.generate_content(model=t2_model, contents=repair_prompt, config=gen_cfg)
+                rep_obj = _parse_json_obj(getattr(rep_resp, "text", "") or "")
+                rep_slides = (rep_obj.get("slides") if isinstance(rep_obj, dict) else None) or []
+                if isinstance(rep_slides, list) and rep_slides:
+                    rep_map = {
+                        int(sl.get("slide_number")): sl
+                        for sl in rep_slides
+                        if isinstance(sl, dict) and str(sl.get("slide_number") or "").isdigit()
+                    }
+                    revised_obj["slides"] = [
+                        rep_map.get(int(sl.get("slide_number") or 0), sl)
+                        for sl in (revised_obj.get("slides") or [])
+                    ]
+                    val = validate_lecture_spec(revised_obj)
+            else:
+                repair_prompt = (
+                    "Fix ONLY the validation errors listed below in this revised `lecture_spec.json` while keeping ALL requested revisions, charts, tables, and facts intact.\n"
+                    "Return ONLY the corrected valid JSON object.\n\n"
+                    f"VALIDATION ERRORS TO FIX:\n{err_lines}\n\n"
+                    f"CURRENT lecture_spec.json:\n{json.dumps(revised_obj, ensure_ascii=False)}"
+                )
+                with api_feature_context("document_builder", "repair_lecture_spec"):
+                    rep_resp = client.models.generate_content(model=t2_model, contents=repair_prompt, config=gen_cfg)
+                repaired_obj = _parse_json_obj(getattr(rep_resp, "text", "") or "")
+                if repaired_obj is not None:
+                    revised_obj = repaired_obj
+                    val = validate_lecture_spec(revised_obj)
+
+        with open(spec_out_path, "w", encoding="utf-8") as sf:
+            json.dump(revised_obj, sf, indent=2, ensure_ascii=False)
+
+        chart_count = sum(1 for sl in (revised_obj.get("slides") or []) if isinstance(sl, dict) and sl.get("chart_spec"))
+        mode_tag = f"patch_slides={explicit_targets}" if use_patch_mode else "full_spec"
+        logger.info(
+            f"[DOC_REVISER] {t2_label} saved {spec_out_path} ({mode_tag}, passed={val.get('passed')}, charts={chart_count}, errors={len(val.get('errors') or [])})"
+        )
+        return {
+            "status": "success" if val.get("passed") else "validation_failed",
+            "passed": bool(val.get("passed")),
+            "patch_mode": use_patch_mode,
+            "patched_slides": explicit_targets if use_patch_mode else [],
+            "job_id": slug_base,
+            "job_dir": job_dir,
+            "lecture_spec_path": spec_out_path,
+            "dossier_path": resolved_dossier or "",
+            "chart_count": chart_count,
+            "model_used": t2_model,
+            "validation": val,
+        }
+
     def run_visual_qa_check(
         pptx_path: str = "",
         chart_pngs: Optional[List[str]] = None,
         job_id: str = "",
     ) -> Dict[str, Any]:
-        """Runs low-cost MEDIA_RESOLUTION_LOW Hydrogen Visual QA on chart PNGs and 4-up slide contact sheets before upload."""
+        """Runs low-cost MEDIA_RESOLUTION_LOW Tier 2 Visual QA on chart PNGs and 4-up slide contact sheets before upload."""
+        from core.config_manager import load_config
+        from core.model_discovery import resolve_tier_model
         from core.visual_qa import run_visual_qa_gate
         from core.manifest_indexer import resolve_gemini_client
         from core.paths import get_outputs_dir
 
+        cfg = load_config() or {}
+        t2_model, _, _ = resolve_tier_model(cfg, tier=2)
         qa_dir = os.path.join(get_outputs_dir(job_id), "visual_qa") if job_id else None
         client = resolve_gemini_client()
         return run_visual_qa_gate(
             client=client,
-            model="gemini-4-hydrogen",
+            model=t2_model,
             chart_pngs=chart_pngs or [],
             pptx_path=pptx_path or None,
             qa_dir=qa_dir,
@@ -1405,17 +1816,49 @@ try:
 
     _DOC_PIPELINE_TOOL_SPECS = [
         (
-            "compile_presentation_bundle",
-            compile_presentation_bundle,
-            "Deterministically compiles a Neon-authored `lecture_spec.json` into 300-DPI matplotlib charts, a 16:9 `.pptx` deck (programmatic Slide 1 roadmap, slide-bound tables/charts, structured case cards, Speaker Notes), and a synchronized `.docx` audience handout under `outputs/<job_id>/` (mirrored to `data/pptx/` and `data/docx/`), automatically running zero-token validation.",
+            "extract_lecture_spec_from_dossier",
+            extract_lecture_spec_from_dossier,
+            "Converts an existing Markdown dossier on disk (`data/dossiers/*.md`) into a schema-validated `outputs/<job_id>/lecture_spec.json` directly using Tier 2 structured JSON extraction (fast, low-cost, zero parametric drift, populates `chart_spec` for quantitative slides). ALWAYS call this instead of `delegate_heavy_task` when a dossier already exists and you need `lecture_spec.json` for `compile_presentation_bundle`.",
             {
                 "type": "OBJECT",
                 "properties": {
-                    "lecture_spec_path": {"type": "STRING", "description": "Path to `lecture_spec.json` generated by Neon."},
+                    "dossier_path": {"type": "STRING", "description": "Path to the existing Markdown dossier file (e.g. 'data/dossiers/...md')."},
+                    "job_id": {"type": "STRING", "description": "Optional job identifier for outputs/<job_id>/ (e.g. 'inpatient_diabetes')."},
+                    "target_slides": {"type": "INTEGER", "description": "Optional expected slide count (e.g. 26) if specified in the dossier or request."},
+                },
+                "required": ["dossier_path"],
+            },
+        ),
+        (
+            "revise_lecture_spec",
+            revise_lecture_spec,
+            "Revises an existing `lecture_spec.json` in a SINGLE Tier 2 call and deterministically validates the updated spec. ALWAYS pass `target_slides=[...]` when fixing 1–6 specific slides (e.g. Slide 25 case cards or Visual QA chart fixes on Slides 6 & 7) — this enables Surgical Patch Mode (~90% faster & cheaper, patching only those slide(s) and preserving all other slides verbatim). Omit `target_slides` for full-deck/handout Version 2 overhauls.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "lecture_spec_path": {"type": "STRING", "description": "Path to the existing `lecture_spec.json` (e.g. 'outputs/inpatient_diabetes/lecture_spec.json')."},
+                    "revision_instructions": {"type": "STRING", "description": "Detailed revision requirements."},
+                    "job_id": {"type": "STRING", "description": "Optional new job_id folder under outputs/<job_id>/ (e.g. 'inpatient_diabetes_v2') to preserve V1 untouched. Omit to update in place."},
+                    "dossier_path": {"type": "STRING", "description": "Optional authoritative dossier `.md` path for grounding new charts/data verbatim."},
+                    "target_slides": {"type": "ARRAY", "items": {"type": "INTEGER"}, "description": "Optional list of specific 1-based slide numbers to patch surgically (e.g. [25] or [6, 7]) without rewriting all 26 slides."},
+                    "update_handout": {"type": "BOOLEAN", "description": "Set True only if handout_sections[] must also be revised (default False)."},
+                },
+                "required": ["lecture_spec_path", "revision_instructions"],
+            },
+        ),
+        (
+            "compile_presentation_bundle",
+            compile_presentation_bundle,
+            "Deterministically compiles a validated `lecture_spec.json` into 300-DPI matplotlib charts, a 16:9 `.pptx` deck (programmatic Slide 1 roadmap, slide-bound tables/charts, structured case cards, Speaker Notes), and a synchronized `.docx` audience handout under `outputs/<job_id>/` (mirrored to `data/pptx/` and `data/docx/`), automatically running zero-token validation.",
+            {
+                "type": "OBJECT",
+                "properties": {
+                    "lecture_spec_path": {"type": "STRING", "description": "Path to `lecture_spec.json`."},
                     "job_id": {"type": "STRING", "description": "Optional job identifier for outputs/<job_id>/."},
                     "build_pptx": {"type": "BOOLEAN", "description": "Whether to compile the .pptx deck (default True)."},
                     "build_docx": {"type": "BOOLEAN", "description": "Whether to compile the .docx handout (default True)."},
                     "dossier_path": {"type": "STRING", "description": "Optional dossier .md path for cross-artifact fact checking."},
+                    "create_new_copy": {"type": "BOOLEAN", "description": "Set True ONLY when the user explicitly asks to make a new copy / preserve the previous file; leave False (default) to overwrite in place during fixes or Visual QA repairs."},
                 },
                 "required": ["lecture_spec_path"],
             },
@@ -2763,7 +3206,9 @@ class ToolDispatcher:
                 )
 
                 if needs_enrichment:
-                    logger.info(f"[DISPATCHER] Shallow dossier stub detected ({len(content_markdown)} chars) for '{title}'. Automatically enriching via Tier 2 Heavy Reasoning (Argon)...")
+                    from core.model_discovery import resolve_tier_model
+                    _, _, t3_label = resolve_tier_model(self.config_getter() if self.config_getter else {}, tier=3)
+                    logger.info(f"[DISPATCHER] Shallow dossier stub detected ({len(content_markdown)} chars) for '{title}'. Automatically enriching via {t3_label}...")
                     result = await self.execute_heavy_task(
                         task_type="research_dossier",
                         title=title,
@@ -2773,8 +3218,8 @@ class ToolDispatcher:
                     )
                     self.notify("chat_event", {
                         "type": "tool",
-                        "name": "Research Dossier (Argon Enriched)",
-                        "content": f"📁 [DOSSIER] Synthesized full report '{title}' via Tier 2 Argon ({result.get('char_count', 0)} chars)"
+                        "name": f"Research Dossier ({t3_label})",
+                        "content": f"📁 [DOSSIER] Synthesized full report '{title}' via {t3_label} ({result.get('char_count', 0)} chars)"
                     })
                     return result
 
@@ -2796,6 +3241,13 @@ class ToolDispatcher:
                 title = str(args.get("title", "Moderate_Task")).strip() or "Moderate_Task"
                 instructions = str(args.get("instructions", "")).strip()
                 context_data = str(args.get("context_data", "")).strip()
+                try:
+                    from core.document_viewer import format_active_viewer_context
+                    viewer_ctx = format_active_viewer_context()
+                    if viewer_ctx and viewer_ctx not in context_data:
+                        context_data = f"{viewer_ctx}\n\n{context_data}".strip()
+                except Exception:
+                    pass
                 use_google_search = bool(args.get("use_google_search", False))
                 enable_tools = bool(args.get("enable_tools", False))
                 result = await self.execute_moderate_task(
@@ -2806,11 +3258,22 @@ class ToolDispatcher:
                     use_google_search=use_google_search,
                     enable_tools=enable_tools,
                 )
-                self.notify("chat_event", {
-                    "type": "tool",
-                    "name": "Moderate Reasoning / Orchestrator (Hydrogen)",
-                    "content": f"🧠 [TIER 2] Completed {task_type.replace('_', ' ').title()}: '{title}'"
-                })
+                from core.model_discovery import resolve_tier_model
+                _, _, t2_label = resolve_tier_model(self.config_getter() if self.config_getter else {}, tier=2)
+                res_status = str(result.get("status") or "").lower()
+                if res_status == "success":
+                    self.notify("chat_event", {
+                        "type": "tool",
+                        "name": f"Orchestrator — {t2_label}",
+                        "content": f"🧠 [TIER 2] Completed {task_type.replace('_', ' ').title()}: '{title}'"
+                    })
+                else:
+                    fail_reason = str(result.get("error") or result.get("message") or result.get("answer") or f"status={res_status or 'error'}").strip()
+                    self.notify("chat_event", {
+                        "type": "error",
+                        "name": f"Orchestrator — {t2_label}",
+                        "content": f"⚠️ [TIER 2] {task_type.replace('_', ' ').title()} did not complete ('{title}'): {fail_reason}"
+                    })
                 return result
 
             elif fn_name == "delegate_heavy_task":
@@ -2841,11 +3304,22 @@ class ToolDispatcher:
                     paste_to_active_doc=paste_to_active_doc,
                     target_app=target_app
                 )
-                self.notify("chat_event", {
-                    "type": "tool",
-                    "name": "Heavy Reasoning Task (Argon)",
-                    "content": f"🧠 [TIER 3] Completed {task_type.replace('_', ' ').title()}: '{title}'"
-                })
+                from core.model_discovery import resolve_tier_model
+                _, _, t3_label = resolve_tier_model(self.config_getter() if self.config_getter else {}, tier=3)
+                res_status = str(result.get("status") or "").lower()
+                if res_status == "success":
+                    self.notify("chat_event", {
+                        "type": "tool",
+                        "name": f"Heavy Reasoning — {t3_label}",
+                        "content": f"🧠 [TIER 3] Completed {task_type.replace('_', ' ').title()}: '{title}'"
+                    })
+                else:
+                    fail_reason = str(result.get("error") or result.get("message") or result.get("directive") or f"status={res_status or 'error'}").strip()
+                    self.notify("chat_event", {
+                        "type": "error",
+                        "name": f"Heavy Reasoning — {t3_label}",
+                        "content": f"⚠️ [TIER 3] {task_type.replace('_', ' ').title()} did not complete ('{title}'): {fail_reason}"
+                    })
                 return result
 
             elif fn_name == "paste_to_document":
@@ -3023,20 +3497,9 @@ class ToolDispatcher:
         if not client:
             return {"status": "error", "message": "GenAI API Client is not configured or available for Tier 2 delegation."}
 
-        from core.model_discovery import resolve_model_profile, build_thinking_config
+        from core.model_discovery import resolve_tier_model, build_thinking_config
         cfg = self.config_getter() if self.config_getter else {}
-        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
-        raw_mod = (
-            cfg.get("tier2_moderate_model")
-            or api_cfg.get("moderate_model_id")
-            or "gemini-4-hydrogen:medium"
-        )
-        mod_model, mod_level = resolve_model_profile(
-            raw_mod,
-            default_model="gemini-4-hydrogen",
-            default_level="medium",
-        )
-        mod_level = mod_level or "medium"
+        mod_model, mod_level, t2_label = resolve_tier_model(cfg, tier=2)
 
         is_orchestration = enable_tools or str(task_type or "").lower() in (
             "workflow_orchestration",
@@ -3047,12 +3510,12 @@ class ToolDispatcher:
         action_verb = "Orchestrating" if is_orchestration else "Reasoning on"
         self.notify("status", {
             "state": "thinking",
-            "action": f"🧠 Hydrogen: {title}...",
-            "message": f"Gemini 4.0 Hydrogen ({mod_level}) is {action_verb.lower()} '{title}'..."
+            "action": f"🧠 {t2_label}: {title}...",
+            "message": f"{t2_label} ({mod_model}, {mod_level}) is {action_verb.lower()} '{title}'..."
         })
         self.notify("chat_event", {
             "type": "tool",
-            "name": "Gemini 4.0 Hydrogen",
+            "name": t2_label,
             "content": f"🧠 [TIER 2] {action_verb} '{title}' via {mod_model} (level: {mod_level})..."
         })
 
@@ -3234,31 +3697,40 @@ class ToolDispatcher:
                 "message": "GenAI API Client is not configured or available for Tier 3 delegation."
             }
 
-        from core.model_discovery import resolve_model_profile, build_thinking_config
+        from core.model_discovery import resolve_tier_model, build_thinking_config
         cfg = self.config_getter() if self.config_getter else {}
 
-        # Cost Guardrail 1: Hard-lock Game Mode out of Tier 3 (Neon)
+        # Cost Guardrail 1: Hard-lock Game Mode out of Tier 3
         if getattr(self, "game_engine", None) and hasattr(self.game_engine, "manager"):
             try:
                 if self.game_engine.manager.is_game_mode_active():
                     return {
                         "status": "blocked_in_game_mode",
-                        "message": "Tier 3 (Neon) is disabled during Game Mode to prevent runaway costs. Use Tier 2 (Hydrogen) or exit Game Mode.",
+                        "message": "Tier 3 is disabled during Game Mode to prevent runaway costs. Use Tier 2 or exit Game Mode.",
                     }
             except Exception:
                 pass
 
-        # Cost Guardrail 2: Deduplicate rapid retries & cap hourly Tier 3 calls
+        # Cost Guardrail 2: Deduplicate rapid retries (normalizing 'v2'/'retry' suffixes) & cap hourly Tier 3 calls
         now_ts = time.time()
         if not hasattr(self, "_tier3_call_timestamps"):
             self._tier3_call_timestamps = []
         if not hasattr(self, "_tier3_last_signature"):
-            self._tier3_last_signature = ("", 0.0)
-        sig = f"{task_type}:{str(title or '').strip().lower()}:{str(instructions or '')[:120].strip().lower()}"
-        if sig == self._tier3_last_signature[0] and (now_ts - self._tier3_last_signature[1]) < 30.0:
+            self._tier3_last_signature = ("", 0.0, "")
+        norm_title_sig = re.sub(r"\b(?:v\d+|retry\s*\d*|attempt\s*\d*|fixed|fix)\b", "", str(title or "").lower()).strip()
+        norm_title_sig = re.sub(r"\s+", " ", norm_title_sig)
+        sig = f"{task_type}:{norm_title_sig}"
+        prev_sig, prev_ts, prev_script = (
+            self._tier3_last_signature if len(self._tier3_last_signature) == 3
+            else (self._tier3_last_signature[0], self._tier3_last_signature[1], "")
+        )
+        dedup_window = 120.0 if task_type == "python_automation" else 30.0
+        if sig == prev_sig and (now_ts - prev_ts) < dedup_window:
+            hint = f" Revise/patch the existing script at '{prev_script}' in Tier 2 instead of regenerating from scratch." if prev_script else ""
             return {
                 "status": "deduplicated",
-                "message": "Skipped duplicate Tier 3 call within 30 seconds to prevent retry burn.",
+                "script_path": prev_script,
+                "message": f"Skipped duplicate Tier 3 call within {int(dedup_window)}s to prevent retry burn.{hint}",
             }
         self._tier3_call_timestamps = [t for t in self._tier3_call_timestamps if (now_ts - t) < 3600.0]
         max_per_hour = max(1, int((cfg or {}).get("max_tier3_calls_per_hour", 12) or 12))
@@ -3268,25 +3740,12 @@ class ToolDispatcher:
                 "message": f"Tier 3 hourly safety cap ({max_per_hour} calls/hr) reached to prevent runaway costs.",
             }
         self._tier3_call_timestamps.append(now_ts)
-        self._tier3_last_signature = (sig, now_ts)
+        self._tier3_last_signature = (sig, now_ts, "")
 
-        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
-        raw_heavy = cfg.get("tier3_heavy_model") or cfg.get("tier2_heavy_model") or api_cfg.get("pro_model_id") or "gemini-4-neon:high"
-        default_heavy_lvl = cfg.get("tier3_thinking_level") or cfg.get("tier2_thinking_level") or "high"
-        heavy_model, thinking_level = resolve_model_profile(
-            raw_heavy,
-            default_model="gemini-4-neon",
-            default_level=default_heavy_lvl,
-        )
-        thinking_level = thinking_level or "high"
+        heavy_model, thinking_level, tier3_full = resolve_tier_model(cfg, tier=3)
+        tier3_short = tier3_full
         hm_low = str(heavy_model).lower()
-        is_gemini4 = any(k in hm_low for k in ("neon", "argon", "hydrogen", "carbon", "gemini-4"))
-        if "carbon" in hm_low:
-            tier3_short, tier3_full = "Carbon", "Gemini 4.0 Carbon"
-        elif "argon" in hm_low:
-            tier3_short, tier3_full = "Argon", "Gemini 4.0 Argon"
-        else:
-            tier3_short, tier3_full = "Neon", "Gemini 4.0 Neon"
+        is_gemini4 = any(k in hm_low for k in ("neon", "argon", "hydrogen", "carbon", "gemini-4")) or thinking_level in ("low", "medium", "high", "xhigh")
 
         # Visual HUD & Audio working indicator
         self.notify("status", {
@@ -3518,22 +3977,68 @@ class ToolDispatcher:
                 logger.error(f"[HEAVY_TASK] Research dossier synthesis failed: {e}")
                 return {"status": "error", "message": str(e)}
 
-        elif task_type == "python_automation":
+        def _auto_attach_referenced_dossiers(raw_instructions: str, raw_context: str) -> str:
+            """If instructions/context mention a local dossier .md path without pasting its contents, inject it so Neon never relies on parametric memory."""
+            combined = f"{raw_instructions}\n{raw_context}"
+            matches = re.findall(r"(?:[A-Za-z]:[\\/])?[\w./\\-]*data[\\/]dossiers[\\/][\w.-]+\.md", combined, flags=re.IGNORECASE)
+            if not matches:
+                return raw_context
+            enriched = raw_context or ""
+            seen_paths = set()
+            for raw_p in matches:
+                clean_p = raw_p.strip().strip("\"'`")
+                cand_paths = [clean_p]
+                if not os.path.isabs(clean_p):
+                    cand_paths.append(user_data_path(*re.split(r"[\\/]+", clean_p)))
+                    cand_paths.append(os.path.abspath(clean_p))
+                resolved = next((p for p in cand_paths if os.path.isfile(p)), None)
+                if not resolved or resolved in seen_paths:
+                    continue
+                seen_paths.add(resolved)
+                try:
+                    with open(resolved, "r", encoding="utf-8", errors="replace") as df:
+                        dossier_body = df.read()
+                    # Skip if substantial dossier content is already embedded in context_data
+                    sample_head = dossier_body[:240].strip()
+                    if sample_head and sample_head in enriched:
+                        continue
+                    max_chars = 120_000
+                    if len(dossier_body) > max_chars:
+                        dossier_body = dossier_body[:max_chars] + "\n... [dossier truncated at 120,000 chars]"
+                    enriched = (
+                        f"{enriched}\n\n"
+                        f"=== AUTHORITATIVE SOURCE DOSSIER ({os.path.basename(resolved)}) ===\n"
+                        f"CRITICAL: Extract ALL clinical/factual thresholds, numbers, tables, and rules VERBATIM from this dossier below. "
+                        f"NEVER substitute older guidelines or values from parametric memory.\n\n"
+                        f"{dossier_body}\n"
+                        f"=== END AUTHORITATIVE SOURCE DOSSIER ===\n"
+                    ).strip()
+                    logger.info(f"[HEAVY_TASK] Auto-attached referenced dossier '{os.path.basename(resolved)}' ({len(dossier_body):,} chars) into Neon prompt.")
+                except Exception as read_err:
+                    logger.warning(f"[HEAVY_TASK] Failed reading referenced dossier '{resolved}': {read_err}")
+            return enriched
+
+        if task_type == "python_automation":
+            effective_context = _auto_attach_referenced_dossiers(instructions, context_data)
             prompt = (
                 f"You are Aether's Tier 2 Software Engineering Engine. Write a robust, production-grade Python script for:\n"
                 f"Task: {title}\n"
                 f"Requirements: {instructions}\n\n"
             )
-            if context_data:
-                prompt += f"Context & Environment Data:\n{context_data}\n\n"
+            if effective_context:
+                prompt += f"Context & Environment Data:\n{effective_context}\n\n"
             prompt += (
                 "Engineering Constraints:\n"
                 "- Self-contained, executable Windows automation script.\n"
+                "- Use standard `os` and `os.path` for file/path operations (NEVER import `pathlib`, `shutil`, `inspect`, or `traceback`).\n"
                 "- Complete error handling (try/finally to cleanly release handles, COM objects, or processes).\n"
                 "- No busy-wait or infinite sleep loops.\n"
                 f"{format_bundled_runtime_prompt_guardrail()}\n"
                 "- Return ONLY valid Python code in a ```python ... ``` block.\n"
             )
+            if "lecture_spec" in f"{title} {instructions}".lower():
+                from core.doc_validator import format_lecture_spec_schema_prompt
+                prompt += "\n" + format_lecture_spec_schema_prompt()
 
             try:
                 loop = asyncio.get_running_loop()
@@ -3576,6 +4081,9 @@ class ToolDispatcher:
                 else:
                     code_preview = clean_code
 
+                if saved_script_path:
+                    self._tier3_last_signature = (sig, time.time(), saved_script_path)
+
                 if execute_if_code and clean_code:
                     exec_result = await asyncio.to_thread(
                         self.script_runner.execute_script,
@@ -3586,20 +4094,86 @@ class ToolDispatcher:
                     )
                     exec_status = str(exec_result.get("status") or "error").lower()
                     actual_script_path = exec_result.get("file") or saved_script_path
+                    repair_attempts = 0
+
+                    # Auto-patch in-place with Tier 2 (max 2 bounded attempts) instead of throwing away a Tier 3 script!
+                    while exec_status in ("blocked", "error", "failed") and repair_attempts < 2:
+                        repair_attempts += 1
+                        err_detail = exec_result.get("error") or exec_result.get("stderr") or exec_result.get("message") or f"status={exec_status}"
+                        t2_model, t2_level, t2_label = resolve_tier_model(cfg, tier=2)
+                        logger.info(f"[HEAVY_TASK] Tier 3 script failed ({exec_status}); patching in-place via {t2_label} (attempt {repair_attempts}/2)...")
+                        self.notify("chat_event", {
+                            "type": "tool",
+                            "name": f"In-Place Code Repair — {t2_label}",
+                            "content": f"🔧 [TIER 2 REPAIR {repair_attempts}/2] Patching saved script instead of re-running Tier 3: {str(err_detail)[:180]}",
+                        })
+                        repair_prompt = (
+                            "You are Aether's Tier 2 Surgical Code Repair Engine.\n"
+                            "The Python script below was ALREADY authored by Tier 3 and failed validation/execution ONLY because of the error shown below.\n"
+                            "RULES:\n"
+                            "- Patch ONLY the broken/prohibited lines (e.g., replace `pathlib.Path` with `os.path`, fix syntax/runtime errors).\n"
+                            "- Preserve ALL data structures, numbers, clinical/factual strings, tables, and logic VERBATIM.\n"
+                            "- Use ONLY allowlisted stdlib/bundled modules (`os`, `os.path`, `json`, `re`, `math`, `pptx`, `docx`, `matplotlib`, `numpy`, `PIL`, `core.doc_validator`, `core.document_compiler`). NEVER import `pathlib`, `shutil`, `inspect`, `traceback`, or call `getattr()`/`eval()`/`exec()`/`compile()`.\n"
+                            "- Return ONLY the complete patched Python script inside a single ```python ... ``` block.\n\n"
+                            f"EXACT ERROR TO FIX:\n{err_detail}\n\n"
+                            f"EXISTING SCRIPT ({saved_script_path}):\n```python\n{clean_code}\n```\n"
+                        )
+                        try:
+                            from google.genai import types as _rtypes
+                            rep_cfg = _rtypes.GenerateContentConfig(
+                                thinking_config=build_thinking_config(t2_model, thinking_level=t2_level)
+                            )
+                            def _run_t2_repair():
+                                with api_feature_context("script_gen_optimizer", "tier2_script_repair"):
+                                    return client.models.generate_content(
+                                        model=t2_model,
+                                        contents=repair_prompt,
+                                        config=rep_cfg,
+                                    )
+                            rep_resp = await loop.run_in_executor(None, _run_t2_repair)
+                            rep_raw = getattr(rep_resp, "text", "") or ""
+                            rep_m = re.search(r"```(?:python)?\s*([\s\S]*?)\s*```", rep_raw)
+                            patched_code = rep_m.group(1).strip() if rep_m else rep_raw.strip()
+                            if not patched_code or patched_code == clean_code:
+                                break
+                            clean_code = patched_code
+                            if saved_script_path:
+                                try:
+                                    with open(saved_script_path, "w", encoding="utf-8") as sf:
+                                        sf.write(clean_code)
+                                except Exception:
+                                    pass
+                            exec_result = await asyncio.to_thread(
+                                self.script_runner.execute_script,
+                                script_code=clean_code,
+                                script_type="python",
+                                description=f"Tier 2 Repaired ({repair_attempts}/2): {title}",
+                                timeout=90,
+                            )
+                            exec_status = str(exec_result.get("status") or "error").lower()
+                            actual_script_path = exec_result.get("file") or saved_script_path
+                        except Exception as rep_err:
+                            logger.warning(f"[HEAVY_TASK] Tier 2 in-place script repair error: {rep_err}")
+                            break
+
                     if exec_status == "success":
+                        repaired_note = f" (auto-repaired in-place by Tier 2 in {repair_attempts} pass(es))" if repair_attempts else ""
                         directive = (
-                            f"Script synthesized and executed successfully (saved to '{actual_script_path}'). "
+                            f"Script synthesized and executed successfully{repaired_note} (saved to '{actual_script_path}'). "
                             "Verify any requested files or follow-up upload steps before claiming final completion."
                         )
                     else:
                         err_detail = exec_result.get("error") or exec_result.get("message") or f"status={exec_status}"
                         directive = (
-                            f"Script execution FAILED (status={exec_status}): {err_detail}. "
-                            "Do NOT claim the task succeeded or that files were created/uploaded. Report the exact error or fix and retry."
+                            f"Script execution FAILED (status={exec_status}) after {repair_attempts} Tier 2 in-place patch attempt(s): {err_detail}. "
+                            f"The script is saved on disk at '{actual_script_path}'. "
+                            "DO NOT call delegate_heavy_task (Tier 3) again to regenerate this script from scratch — patch '{actual_script_path}' directly or report the exact blocker."
                         )
                     return {
                         "status": "success" if exec_status == "success" else exec_status,
                         "executed": True,
+                        "repaired_by_tier2": repair_attempts > 0 and exec_status == "success",
+                        "repair_attempts": repair_attempts,
                         "task_type": "python_automation",
                         "script_path": actual_script_path,
                         "code_chars": len(clean_code),
@@ -3626,13 +4200,17 @@ class ToolDispatcher:
                 return {"status": "error", "message": str(e)}
 
         elif task_type == "deep_analysis":
+            effective_context = _auto_attach_referenced_dossiers(instructions, context_data)
             prompt = (
                 f"You are Aether's Tier 2 Frontier Reasoning Engine. Conduct an in-depth analysis on:\n"
                 f"Subject: {title}\n"
                 f"Instructions: {instructions}\n\n"
             )
-            if context_data:
-                prompt += f"Context / Input Data:\n{context_data}\n\n"
+            if effective_context:
+                prompt += f"Context / Input Data:\n{effective_context}\n\n"
+            if "lecture_spec" in f"{title} {instructions}".lower():
+                from core.doc_validator import format_lecture_spec_schema_prompt
+                prompt += "\n" + format_lecture_spec_schema_prompt()
 
             try:
                 loop = asyncio.get_running_loop()

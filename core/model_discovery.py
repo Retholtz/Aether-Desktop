@@ -181,6 +181,74 @@ def resolve_model_profile(
     return base_model, level
 
 
+def format_model_display_name(model_id: str) -> str:
+    """Dynamically converts any endpoint model ID (e.g. 'gemini-4-neon', 'gemini-5-nova') into a clean UI label."""
+    raw = str(model_id or "").strip()
+    if raw.startswith("models/"):
+        raw = raw[len("models/"):]
+    if ":" in raw:
+        raw = raw.split(":", 1)[0].strip()
+    if not raw:
+        return "Configured Model"
+    parts = [p for p in re.split(r"[-_]+", raw) if p]
+    formatted: List[str] = []
+    for p in parts:
+        low = p.lower()
+        if low in ("tts", "stt", "api", "pro", "ai"):
+            formatted.append(p.upper() if low != "pro" else "Pro")
+        elif any(ch.isdigit() for ch in p):
+            formatted.append(p)
+        else:
+            formatted.append(p.capitalize())
+    return " ".join(formatted)
+
+
+def resolve_tier_model(
+    cfg: Optional[Dict[str, Any]],
+    tier: int,
+) -> Tuple[str, str, str]:
+    """
+    Single source of truth for Tier 1 / Tier 2 / Tier 3 endpoint resolution from Settings (`config.json`).
+    Returns `(base_model_id, thinking_level, ui_display_label)` where `ui_display_label` dynamically
+    reflects the configured endpoint (e.g. 'Tier 2 (Gemini 4 Hydrogen)', 'Tier 3 (Gemini 4 Neon)')
+    so future endpoint updates only require changing Settings.
+    """
+    cfg_dict = cfg if isinstance(cfg, dict) else {}
+    api_cfg = cfg_dict.get("api", {}) if isinstance(cfg_dict.get("api"), dict) else {}
+
+    if tier == 1:
+        raw = (
+            api_cfg.get("live_model_id")
+            or api_cfg.get("primary_model_id")
+            or cfg_dict.get("primary_model")
+            or "gemini-3.8-live"
+        )
+        base_model, lvl = resolve_model_profile(raw, default_model="gemini-3.8-live", default_level="")
+        lvl = lvl or ""
+    elif tier == 2:
+        raw = (
+            cfg_dict.get("tier2_moderate_model")
+            or api_cfg.get("moderate_model_id")
+            or "gemini-4-hydrogen:medium"
+        )
+        default_lvl = cfg_dict.get("tier2_thinking_level") or "medium"
+        base_model, lvl = resolve_model_profile(raw, default_model="gemini-4-hydrogen", default_level=default_lvl)
+        lvl = lvl or "medium"
+    else:
+        raw = (
+            cfg_dict.get("tier3_heavy_model")
+            or cfg_dict.get("tier2_heavy_model")
+            or api_cfg.get("pro_model_id")
+            or "gemini-4-neon:high"
+        )
+        default_lvl = cfg_dict.get("tier3_thinking_level") or cfg_dict.get("tier2_thinking_level") or "high"
+        base_model, lvl = resolve_model_profile(raw, default_model="gemini-4-neon", default_level=default_lvl)
+        lvl = lvl or "high"
+
+    pretty = format_model_display_name(base_model)
+    return base_model, lvl, f"Tier {tier} ({pretty})"
+
+
 def build_thinking_config(
     model_or_profile: Optional[str],
     thinking_level: Optional[str] = None,

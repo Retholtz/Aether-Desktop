@@ -3994,15 +3994,15 @@ select option,
   box-sizing: border-box;
 }
 
-.dossier-paper-page table {
+.dossier-paper-page table:not(.doc-pptx-canvas-table) {
   width: 100% !important;
   border-collapse: collapse !important;
   margin: 0 !important;
   font-size: 10pt !important;
 }
 
-.dossier-paper-page th,
-.dossier-paper-page td {
+.dossier-paper-page table:not(.doc-pptx-canvas-table) th,
+.dossier-paper-page table:not(.doc-pptx-canvas-table) td {
   border: 1px solid #d1d5db !important;
   padding: 7px 10px !important;
   text-align: left;
@@ -4011,13 +4011,13 @@ select option,
   overflow-wrap: break-word;
 }
 
-.dossier-paper-page th {
+.dossier-paper-page table:not(.doc-pptx-canvas-table) th {
   background: #f3f4f6 !important;
   color: #1e293b !important;
   font-weight: 600;
 }
 
-.dossier-paper-page tr:nth-child(even) td {
+.dossier-paper-page table:not(.doc-pptx-canvas-table) tr:nth-child(even) td {
   background: #f9fafb;
 }
 
@@ -4098,6 +4098,359 @@ select option,
 
 .dossier-print-mount {
   display: none;
+}
+
+/* ===================================================================== */
+/* UNIFIED DOCUMENTS HUB: 4-TAB BAR, DOCX, 16:9 PPTX SLIDES & XLSX GRID  */
+/* ===================================================================== */
+.doc-category-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.doc-cat-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.doc-cat-tab:hover {
+  color: var(--text-main);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.doc-cat-tab.active {
+  background: var(--accent, #2563eb);
+  color: #ffffff;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.35);
+}
+
+.dossier-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.doc-title-edit-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.72;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.doc-title-edit-btn:hover {
+  opacity: 1;
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.doc-title-edit-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.doc-title-edit-wrap.hidden {
+  display: none !important;
+}
+
+.doc-title-edit-input {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--accent, #3b82f6);
+  border-radius: 6px;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 3px 8px;
+  min-width: 200px;
+  max-width: 380px;
+  width: 100%;
+  outline: none;
+}
+
+.doc-img-wrap {
+  margin: 12px 0;
+  text-align: center;
+}
+
+.doc-img-wrap img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
+/* PPTX True 16:9 Visual Slide Canvas */
+.doc-pptx-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #1e293b;
+}
+
+.doc-notes-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.doc-pptx-slide-frame {
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 24px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.doc-pptx-frame-bar {
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.doc-pptx-canvas {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  container-type: inline-size;
+  font-family: Calibri, "Segoe UI", Arial, sans-serif;
+  box-sizing: border-box;
+}
+
+.doc-pptx-layer {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.doc-pptx-layer-box {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.doc-pptx-layer-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.doc-pptx-layer-tbl {
+  overflow: auto;
+}
+
+.doc-pptx-canvas-table {
+  width: 100% !important;
+  height: 100% !important;
+  border-collapse: collapse !important;
+  table-layout: fixed;
+  margin: 0 !important;
+}
+
+.doc-pptx-canvas-table th,
+.doc-pptx-canvas-table td {
+  border: 1px solid #cbd5e1 !important;
+  padding: 0.35cqw 0.5cqw !important;
+  vertical-align: middle !important;
+  overflow-wrap: break-word;
+}
+
+.doc-pptx-notes {
+  border-top: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  padding: 10px 18px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.doc-pptx-notes.hidden-notes {
+  display: none !important;
+}
+
+.doc-pptx-notes-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0f766e;
+  margin-bottom: 4px;
+}
+
+/* XLSX Interactive Multi-Sheet Grid */
+.doc-xlsx-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #cbd5e1;
+  padding-bottom: 8px;
+}
+
+.doc-xlsx-tab-btn {
+  appearance: none;
+  border: 1px solid #cbd5e1;
+  background: #f1f5f9;
+  color: #334155;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doc-xlsx-tab-btn.active {
+  background: #0b2545;
+  color: #ffffff;
+  border-color: #0b2545;
+}
+
+.doc-xlsx-sheet {
+  display: none;
+}
+
+.doc-xlsx-sheet.active {
+  display: block;
+}
+
+.doc-xlsx-sheet-print-title {
+  display: none;
+  font-size: 13pt;
+  font-weight: 700;
+  margin: 10px 0 6px 0;
+  color: #0b2545;
+}
+
+.doc-xlsx-grid {
+  font-size: 12px !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-xlsx-rowhdr,
+.doc-xlsx-colhdr {
+  background: #e2e8f0 !important;
+  color: #475569 !important;
+  font-weight: 700 !important;
+  text-align: center !important;
+  min-width: 34px;
+}
+
+.doc-xlsx-trunc-note {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: #64748b;
+  font-style: italic;
+}
+
+/* Dark Mode overrides for PPTX / XLSX inside #dossierPaperPage.dark-mode */
+.dossier-paper-page.dark-mode .doc-pptx-controls,
+.dossier-paper-page.dark-mode .doc-pptx-notes {
+  background: #0f172a;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+.dossier-paper-page.dark-mode .doc-pptx-slide-frame {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.dossier-paper-page.dark-mode .doc-pptx-frame-bar {
+  background: #1e293b;
+  color: #94a3b8;
+  border-bottom-color: #334155;
+}
+
+/* Preserve native PowerPoint slide colors inside the 16:9 canvas even in Dark Mode */
+.dossier-paper-page.dark-mode .doc-pptx-canvas table,
+.dossier-paper-page.dark-mode .doc-pptx-canvas tr,
+.dossier-paper-page.dark-mode .doc-pptx-canvas th,
+.dossier-paper-page.dark-mode .doc-pptx-canvas td {
+  background-color: revert !important;
+  color: revert !important;
+}
+
+.dossier-paper-page.dark-mode .doc-xlsx-tab-btn {
+  background: #1e293b;
+  color: #cbd5e1;
+  border-color: #334155;
+}
+
+.dossier-paper-page.dark-mode .doc-xlsx-tab-btn.active {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  #dossierPrintMount .doc-xlsx-sheet {
+    display: block !important;
+    page-break-after: always;
+    break-after: page;
+  }
+  #dossierPrintMount .doc-xlsx-sheet:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  #dossierPrintMount .doc-xlsx-sheet-print-title {
+    display: block !important;
+  }
+  #dossierPrintMount .doc-pptx-slide-frame {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    box-shadow: none !important;
+    border: 1px solid #94a3b8 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #dossierPrintMount .doc-pptx-canvas,
+  #dossierPrintMount .doc-pptx-layer {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }
 
 @media print {

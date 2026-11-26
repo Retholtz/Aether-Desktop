@@ -160,6 +160,7 @@ def upload_pptx_to_google_slides(
     open_in_browser: bool = True,
     browser_app: str = "chrome",
     lecture_spec_path: str = "",
+    project_name: str = "",
 ) -> Dict[str, Any]:
     """
     Uploads a local .pptx/.ppt/.odp presentation to Google Drive and converts it natively
@@ -189,6 +190,7 @@ def upload_pptx_to_google_slides(
     res = mgr.upload_pptx_to_google_slides(
         file_path=file_path,
         title=title or None,
+        project_name=project_name or None,
     )
     if res.get("success") and open_in_browser and res.get("slides_url"):
         try:
@@ -207,6 +209,8 @@ def upload_docx_to_google_docs(
     open_in_browser: bool = True,
     browser_app: str = "chrome",
     lecture_spec_path: str = "",
+    project_name: str = "",
+    folder_category: str = "",
 ) -> Dict[str, Any]:
     """
     Uploads a local .docx/.doc/.odt/.rtf document or handout to Google Drive and converts it
@@ -236,11 +240,42 @@ def upload_docx_to_google_docs(
     res = mgr.upload_docx_to_google_docs(
         file_path=file_path,
         title=title or None,
+        project_name=project_name or None,
+        folder_category=folder_category or None,
     )
     if res.get("success") and open_in_browser and res.get("docs_url"):
         try:
             from tools.os_controls import navigate_browser
             nav_res = navigate_browser(res["docs_url"], app_name=browser_app or "chrome")
+            res["browser_opened"] = bool(isinstance(nav_res, dict) and nav_res.get("status") == "success")
+        except Exception as e:
+            res["browser_opened"] = False
+            res["browser_warning"] = str(e)
+    return res
+
+
+def upload_xlsx_to_google_sheets(
+    file_path: str,
+    title: str = "",
+    open_in_browser: bool = True,
+    browser_app: str = "chrome",
+    project_name: str = "",
+) -> Dict[str, Any]:
+    """
+    Uploads a local spreadsheet (.xlsx, .xlsm, .xls, .ods, .csv — by default saved in data/xlsx/)
+    to Google Drive (organized under Aether/xlsx or Aether/projects/<Project Name>) and converts
+    it natively into Google Sheets, optionally opening it in the browser.
+    """
+    mgr = get_oauth_manager()
+    res = mgr.upload_xlsx_to_google_sheets(
+        file_path=file_path,
+        title=title or None,
+        project_name=project_name or None,
+    )
+    if res.get("success") and open_in_browser and res.get("sheets_url"):
+        try:
+            from tools.os_controls import navigate_browser
+            nav_res = navigate_browser(res["sheets_url"], app_name=browser_app or "chrome")
             res["browser_opened"] = bool(isinstance(nav_res, dict) and nav_res.get("status") == "success")
         except Exception as e:
             res["browser_opened"] = False

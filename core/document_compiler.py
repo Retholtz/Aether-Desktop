@@ -436,31 +436,50 @@ def compile_pptx_from_spec(
         for idx, card in enumerate(cards_slice):
             cx = margin_x + idx * (card_w + gap)
             _add_rect(slide, cx, top, card_w, height, WHITE, BORDER, 1.0)
-            _add_rect(slide, cx, top, card_w, 0.45, BLUE)
-            tb_h = slide.shapes.add_textbox(Inches(cx + 0.15), Inches(top + 0.08), Inches(card_w - 0.3), Inches(0.32))
-            ph = tb_h.text_frame.paragraphs[0]
-            ph.text = str(card.get("title") or f"Card {idx + 1}")
+            card_title_txt = str(card.get("title") or f"Card {idx + 1}").strip()
+            hdr_h = 0.56 if len(card_title_txt) > 30 else 0.46
+            _add_rect(slide, cx, top, card_w, hdr_h, BLUE)
+            tb_h = slide.shapes.add_textbox(Inches(cx + 0.14), Inches(top + 0.05), Inches(card_w - 0.28), Inches(hdr_h - 0.08))
+            tf_h = tb_h.text_frame
+            tf_h.word_wrap = True
+            tf_h.margin_left = 0
+            tf_h.margin_right = 0
+            tf_h.margin_top = 0
+            tf_h.margin_bottom = 0
+            ph = tf_h.paragraphs[0]
+            ph.text = card_title_txt
             ph.font.name = "Calibri"
-            ph.font.size = Pt(13.5)
+            ph.font.size = Pt(12.0 if len(card_title_txt) > 32 else 13.0)
             ph.font.bold = True
             ph.font.color.rgb = WHITE
 
-            tb_b = slide.shapes.add_textbox(Inches(cx + 0.16), Inches(top + 0.56), Inches(card_w - 0.32), Inches(height - 0.68))
+            tb_b = slide.shapes.add_textbox(Inches(cx + 0.15), Inches(top + hdr_h + 0.08), Inches(card_w - 0.30), Inches(height - hdr_h - 0.16))
             tf_b = tb_b.text_frame
             tf_b.word_wrap = True
             tf_b.margin_left = 0
+            tf_b.margin_right = 0
             tf_b.margin_top = 0
+            tf_b.margin_bottom = 0
 
-            card_items = list(card.get("items") or [])
+            card_items = [str(it).strip() for it in (card.get("items") or []) if str(it).strip()]
             if card.get("body"):
-                card_items.insert(0, str(card["body"]))
+                card_items.insert(0, str(card["body"]).strip())
 
-            c_font = 12.0 if len(card_items) <= 5 else 11.0
+            total_chars = sum(len(t) for t in card_items)
+            if height < 4.4:
+                c_font = 10.5 if total_chars <= 220 else (9.5 if total_chars <= 360 else 8.8)
+                sp_after = 3.5 if total_chars > 220 else 4.5
+                ln_space = 1.08
+            else:
+                c_font = 11.5 if (len(card_items) <= 5 and total_chars <= 320) else (10.5 if total_chars <= 460 else 9.5)
+                sp_after = 4.5 if total_chars > 320 else 5.5
+                ln_space = 1.12
+
             for i_idx, item_txt in enumerate(card_items):
                 p = tf_b.paragraphs[0] if i_idx == 0 else tf_b.add_paragraph()
-                p.space_after = Pt(6)
-                p.line_spacing = 1.14
-                p.text = f"▪  {str(item_txt).strip()}"
+                p.space_after = Pt(sp_after)
+                p.line_spacing = ln_space
+                p.text = f"▪  {item_txt}"
                 p.font.name = "Calibri"
                 p.font.size = Pt(c_font)
                 p.font.color.rgb = SLATE_DARK
@@ -691,14 +710,25 @@ def compile_docx_handout_from_spec(
             p_s = doc.add_paragraph(str(sec["summary"]).strip())
             p_s.paragraph_format.space_after = Pt(3)
 
-        for rule in (sec.get("rules") or []):
+        section_rules = sec.get("rules") or sec.get("bullets") or sec.get("items") or []
+        for rule in section_rules:
             pr = doc.add_paragraph(style="List Bullet")
             pr.paragraph_format.space_before = Pt(0)
             pr.paragraph_format.space_after = Pt(2)
             rr = pr.add_run(str(rule).strip())
             rr.font.size = Pt(9.2)
 
-        for tbl_obj in (sec.get("tables") or []):
+        section_tables: List[Dict[str, Any]] = []
+        raw_tables = sec.get("tables")
+        if isinstance(raw_tables, list):
+            section_tables.extend([t for t in raw_tables if isinstance(t, dict)])
+        elif isinstance(raw_tables, dict):
+            section_tables.append(raw_tables)
+        single_tbl = sec.get("table")
+        if isinstance(single_tbl, dict):
+            section_tables.append(single_tbl)
+
+        for tbl_obj in section_tables:
             if isinstance(tbl_obj, dict) and tbl_obj.get("headers") and tbl_obj.get("rows"):
                 if tbl_obj.get("title"):
                     pt = doc.add_paragraph()
@@ -734,10 +764,14 @@ def compile_presentation_bundle(
     build_docx: bool = True,
     mirror_to_data_dirs: bool = True,
     dossier_path: Optional[str] = None,
+    create_new_copy: bool = False,
 ) -> Dict[str, Any]:
     """
     End-to-end deterministic compilation + zero-token validation from `lecture_spec.json`.
     Writes all artifacts under `get_outputs_dir(job_id)` and validates before returning.
+    - By default (`create_new_copy=False`), updates the existing `.pptx`/`.docx` for this job/title
+      **in place** (avoiding duplicate timestamped drafts during Visual QA repairs or single-slide fixes).
+    - When `create_new_copy=True`, writes a fresh timestamped copy so the original file stays untouched.
     """
     if not lecture_spec_path or not os.path.isfile(lecture_spec_path):
         return {
@@ -762,10 +796,15 @@ def compile_presentation_bundle(
     meta = spec.get("metadata") or {}
     slug = _slugify(meta.get("title") or "presentation")
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    resolved_job_id = job_id.strip() or f"{ts}_{slug[:28]}"
+    resolved_job_id = job_id.strip() or slug[:36]
     job_dir = get_outputs_dir(resolved_job_id)
     charts_dir = os.path.join(job_dir, "charts")
     os.makedirs(charts_dir, exist_ok=True)
+
+    # Preserve version tag (e.g. '_v2', '_v3') from job_id if not already part of the slug
+    ver_m = re.search(r"(_v\d+)$", resolved_job_id.lower())
+    ver_suffix = ver_m.group(1) if (ver_m and not slug.lower().endswith(ver_m.group(1))) else ""
+    stable_base = f"{slug}{ver_suffix}"
 
     # Ensure a copy of lecture_spec.json lives inside outputs/<job_id>/
     canonical_spec_path = os.path.join(job_dir, "lecture_spec.json")
@@ -778,12 +817,18 @@ def compile_presentation_bundle(
     compile_issues: List[Dict[str, Any]] = []
 
     if build_pptx:
-        target_pptx = os.path.join(job_dir, f"{ts}_{slug}.pptx")
+        if create_new_copy:
+            target_pptx = os.path.join(job_dir, f"{ts}_{stable_base}.pptx")
+        else:
+            target_pptx = os.path.join(job_dir, f"{stable_base}.pptx")
         pptx_path, chart_pngs, chart_iss = compile_pptx_from_spec(spec, target_pptx, charts_dir)
         compile_issues.extend(chart_iss)
 
     if build_docx and (spec.get("handout_sections") or spec.get("canonical_facts")):
-        target_docx = os.path.join(job_dir, f"{ts}_{slug}_Handout.docx")
+        if create_new_copy:
+            target_docx = os.path.join(job_dir, f"{ts}_{stable_base}_Handout.docx")
+        else:
+            target_docx = os.path.join(job_dir, f"{stable_base}_Handout.docx")
         docx_path = compile_docx_handout_from_spec(spec, target_docx)
 
     post_val = validate_compiled_artifacts(

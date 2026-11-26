@@ -116,7 +116,8 @@ def format_lecture_spec_schema_prompt() -> str:
         "- Every bullet in `bullets[]` MUST be a complete, standalone audience-facing phrase (MAX 5 bullets/slide, <= 22 words each, NO backticks, NO `**`, NO `...` truncation, ALWAYS include leading zero on decimals like `0.1 U/kg`).\n"
         "- Multi-case slides (e.g. PGY-1/2/3 vignettes) MUST use `layout_type: 'case_cards'` with structured `cards[]` items so nothing overflows or drops.\n"
         "- Every `chart_spec` with `smooth_continuous: true` MUST have smooth numeric `y` arrays with no abrupt piecewise jumps.\n"
-        "- `handout_sections[]` MUST use the EXACT same thresholds/numbers as `canonical_facts` and `slides[]` (never outdated guidelines).\n"
+        "- `canonical_facts` values MUST be concise, exact threshold/rule strings (e.g. `'>= 200 mg/dL'`, `'< 3.5 mEq/L'`, `'140–180 mg/dL'`) — NOT long multi-clause prose sentences.\n"
+        "- `handout_sections[]` MUST use `rules` (list of strings) and `tables` (list of `{title, headers, rows}`), using the EXACT same thresholds/numbers as `canonical_facts` and `slides[]` (never outdated guidelines).\n"
     )
 
 
@@ -751,13 +752,19 @@ def check_cross_artifact_consistency(
         # Extract core numeric/comparison core (e.g. ">= 200", "< 3.5", "< 250", "> 300", "< 7.0%")
         num_core_m = re.search(r"(?:>=|<=|>|<)?\s*\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*%?", norm_val)
         core_token = normalize_for_comparison(num_core_m.group(0)) if num_core_m else norm_val
+        core_token_tight = re.sub(r"(>=|<=|>|<)\s+", r"\1", core_token)
+        core_token_spaced = re.sub(r"(>=|<=|>|<)\s*", r"\1 ", core_token).strip()
 
         def _present(haystack: str) -> bool:
             if not haystack:
                 return True
             if norm_val in haystack:
                 return True
-            if core_token and core_token in haystack:
+            if core_token and (
+                core_token in haystack
+                or core_token_tight in haystack
+                or core_token_spaced in haystack
+            ):
                 return True
             return False
 

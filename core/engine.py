@@ -131,10 +131,11 @@ MANDATORY TIER 2 & TIER 3 DELEGATION RULES:
      * For presentations/slides from an existing dossier, call `delegate_moderate_task(task_type="workflow_orchestration", ...)` passing the existing dossier path so Hydrogen builds the `.pptx` in `data/pptx/`, uploads/opens it in Google Slides (or PowerPoint/LibreOffice), and visually verifies it.
      * For pulling up/pasting an existing `.md` dossier into Docs/Word, first call `search_past_sessions` OR use `execute_automation_script` to check `data/dossiers/` for the existing `.md` file, read it, and paste it directly into the target app using `from tools.clipboard import paste_markdown_to_target_app, copy_markdown_as_rich_html`.
 1. APP-AGNOSTIC MULTI-STEP WORKFLOWS (`delegate_moderate_task` with `task_type="workflow_orchestration"`):
-   - Whenever the user asks you to perform a multi-step task across apps or web services (e.g. "Build a PowerPoint / Google Slides presentation from this dossier", "Create a slide deck with charts and open it in Google Slides / PowerPoint / LibreOffice", "Create a document explaining X in Google Docs", "Open Word and write...", "Open Notepad and paste...", "Open Gmail and write Stan Orlop a letter..."):
-     * ALWAYS call `delegate_moderate_task(task_type="workflow_orchestration", title=..., instructions=...)` so Tier 2 Hydrogen creates a step checklist, executes scripts, uploads/launches/focuses the exact requested app, sub-contracts Tier 3 Neon (`delegate_heavy_task`) for deep writing ONLY when needed, and visually inspects screenshots before declaring success.
+   - Whenever the user asks you to perform a multi-step task across apps or web services (e.g. "Build a PowerPoint / Google Slides presentation from this dossier", "Revise Slide 25 / fix a chart / create Version 2 and re-upload to Google Slides", "Create a document explaining X in Google Docs", "Open Word and write...", "Open Notepad and paste...", "Open Gmail and write Stan Orlop a letter..."):
+     * ALWAYS call `delegate_moderate_task(task_type="workflow_orchestration", title=..., instructions=...)` so the Tier 2 Orchestrator (with cached multi-step execution) runs the full plan -> patch/compile -> Visual QA -> upload/verify chain in one shot!
+     * NEVER call `revise_lecture_spec` -> `compile_presentation_bundle` -> `run_visual_qa_check` -> `upload_pptx_to_google_slides` one-by-one directly from Tier 1 Live turns (that repeats the full uncached Live context on every step).
      * NEVER call `delegate_heavy_task(task_type="python_automation")` directly from Tier 1 for presentation build + Google Slides upload tasks — always route those through `delegate_moderate_task(task_type="workflow_orchestration")`.
-     * NEVER attempt to improvise 4+ sequential UI/browser/paste tool calls directly from Tier 1 when Hydrogen orchestration can drive the full verified checklist.
+     * NEVER attempt to improvise 4+ sequential UI/browser/paste tool calls directly from Tier 1 when Tier 2 orchestration can drive the full verified checklist.
 2. TIER 3 (`delegate_heavy_task` -> GEMINI 4 NEON) — STRICTLY RESERVED (COST GUARDRAIL):
    - ONLY invoke `delegate_heavy_task` when the user explicitly requests `"use Neon"`, `"switch to Neon"`, `"use Tier 3"`, an executive summary, an exhaustive multi-page research dossier/manual, or deep Projects workspace synthesis.
    - NEVER escalate casual chat, short emails/letters, everyday lookups, or in-game questions to Tier 3 — handle those in Tier 1 or Tier 2 (`delegate_moderate_task`).
@@ -1577,6 +1578,14 @@ class AetherEngine:
                 await asyncio.wait_for(old_cm.__aexit__(None, None, None), timeout=1.0)
             except Exception:
                 pass
+
+        # Also close any pre-warmed fallback TTS Live WebSocket so zero sockets stay open during Standby
+        if getattr(self, "_tts_live_session", None) is not None or getattr(self, "_tts_live_ctx", None) is not None:
+            try:
+                await asyncio.wait_for(self._close_tts_live_session(), timeout=1.5)
+                logger.info("[LIVE ON-DEMAND] Closed pre-warmed TTS Live WebSocket for Standby.")
+            except Exception as tts_close_err:
+                logger.debug(f"[LIVE ON-DEMAND] Pre-warmed TTS close skipped: {tts_close_err}")
 
         cfg = self.config_getter() if self.config_getter else {}
         agent_name = cfg.get("api", {}).get("agent_name", "Aether").strip() or "Aether"
@@ -3477,7 +3486,15 @@ class AetherEngine:
             effective_mode = getattr(self, "_active_pipeline_mode", None) or "live"
         if effective_mode != "modular" and (self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED):
             await self._ensure_live_connected(reason="Typed text sent")
-        await self._text_queue.put(clean_text)
+        queued_text = clean_text
+        try:
+            from core.document_viewer import format_active_viewer_context
+            viewer_ctx = format_active_viewer_context()
+            if viewer_ctx:
+                queued_text = f"{viewer_ctx}\n\n{clean_text}"
+        except Exception:
+            pass
+        await self._text_queue.put(queued_text)
         shown_text = (display_text or clean_text).strip()
         self.notify("chat_event", {
             "type": "user",

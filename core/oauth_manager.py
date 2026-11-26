@@ -2884,10 +2884,111 @@ class OAuthManager:
     # Google Drive API v3 -> Native Google Slides Presentation Import
     # =========================================================================
 
+    def _ensure_drive_folder_path(
+        self,
+        path_parts: List[str],
+        headers: Dict[str, str],
+    ) -> Optional[str]:
+        """
+        Finds or creates a nested Google Drive folder hierarchy (e.g. ['Aether', 'pptx'] or
+        ['Aether', 'projects', 'My Project']) using the existing `drive.file` OAuth scope.
+        Caches resolved folder IDs in memory; returns the leaf folder ID (or None on error).
+        """
+        if not path_parts or not headers:
+            return None
+        if not hasattr(self, "_drive_folder_cache"):
+            self._drive_folder_cache: Dict[tuple, str] = {}
+
+        parent_id = "root"
+        for raw_part in path_parts:
+            folder_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", str(raw_part or "")).strip()[:100]
+            if not folder_name:
+                continue
+            cache_key = (parent_id, folder_name.lower())
+            cached_id = self._drive_folder_cache.get(cache_key)
+            if cached_id:
+                parent_id = cached_id
+                continue
+
+            # Query existing non-trashed folder created by Aether under `parent_id`
+            escaped_name = folder_name.replace("\\", "\\\\").replace("'", "\\'")
+            q = (
+                f"name = '{escaped_name}' and "
+                f"mimeType = 'application/vnd.google-apps.folder' and "
+                f"'{parent_id}' in parents and trashed = false"
+            )
+            found_id: Optional[str] = None
+            try:
+                r_list = requests.get(
+                    "https://www.googleapis.com/drive/v3/files",
+                    headers=headers,
+                    params={"q": q, "fields": "files(id,name)", "pageSize": 5},
+                    timeout=15,
+                )
+                if r_list.ok and r_list.content:
+                    files = (r_list.json() or {}).get("files") or []
+                    if files and files[0].get("id"):
+                        found_id = str(files[0]["id"])
+            except Exception as list_err:
+                logger.debug(f"[OAUTH] Drive folder lookup skipped for '{folder_name}': {list_err}")
+
+            if not found_id:
+                try:
+                    meta: Dict[str, Any] = {
+                        "name": folder_name,
+                        "mimeType": "application/vnd.google-apps.folder",
+                    }
+                    if parent_id != "root":
+                        meta["parents"] = [parent_id]
+                    r_create = requests.post(
+                        "https://www.googleapis.com/drive/v3/files",
+                        headers={**headers, "Content-Type": "application/json; charset=UTF-8"},
+                        params={"fields": "id,name"},
+                        json=meta,
+                        timeout=15,
+                    )
+                    if r_create.ok and r_create.content:
+                        found_id = str((r_create.json() or {}).get("id") or "").strip() or None
+                        if found_id:
+                            logger.info(f"[OAUTH] Created Google Drive folder '{folder_name}' (id={found_id})")
+                except Exception as create_err:
+                    logger.warning(f"[OAUTH] Drive folder creation failed for '{folder_name}': {create_err}")
+                    return None
+
+            if not found_id:
+                return None
+            self._drive_folder_cache[cache_key] = found_id
+            parent_id = found_id
+
+        return None if parent_id == "root" else parent_id
+
+    def _resolve_aether_drive_folder(
+        self,
+        default_subfolder: str,
+        headers: Dict[str, str],
+        project_name: Optional[str] = None,
+    ) -> tuple:
+        """
+        Resolves the target Drive folder ID and human-readable path under `/Aether`:
+          - Project-scoped: `Aether/projects/<Project Name>`
+          - Standard:       `Aether/docs`, `Aether/dossiers`, `Aether/pptx`, or `Aether/xlsx`
+        """
+        clean_proj = str(project_name or "").strip()
+        if clean_proj:
+            parts = ["Aether", "projects", clean_proj]
+        else:
+            sub = str(default_subfolder or "docs").strip().lower()
+            if sub not in ("docs", "dossiers", "pptx", "xlsx"):
+                sub = "docs"
+            parts = ["Aether", sub]
+        folder_id = self._ensure_drive_folder_path(parts, headers)
+        return folder_id, "/".join(parts)
+
     def upload_pptx_to_google_slides(
         self,
         file_path: str,
         title: Optional[str] = None,
+        project_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Uploads a local presentation file (.pptx, .ppt, or .odp) to Google Drive via
@@ -2973,10 +3074,13 @@ class OAuthManager:
             }
 
         presentation_title = (title or "").strip() or os.path.splitext(os.path.basename(abs_path))[0]
-        metadata = {
+        folder_id, drive_folder_path = self._resolve_aether_drive_folder("pptx", headers, project_name=project_name)
+        metadata: Dict[str, Any] = {
             "name": presentation_title,
             "mimeType": "application/vnd.google-apps.presentation",
         }
+        if folder_id:
+            metadata["parents"] = [folder_id]
         boundary = f"aether_pptx_{secrets.token_hex(16)}"
         meta_json = json.dumps(metadata, ensure_ascii=False).encode("utf-8")
 
@@ -3043,18 +3147,19 @@ class OAuthManager:
                 slides_url = f"https://docs.google.com/presentation/d/{file_id}/edit"
             resolved_name = str(payload.get("name") or presentation_title).strip()
 
-            logger.info(f"[OAUTH] Uploaded '{resolved_name}' to Google Slides (id={file_id})")
+            logger.info(f"[OAUTH] Uploaded '{resolved_name}' to Google Slides in '{drive_folder_path}' (id={file_id})")
             return {
                 "status": "success",
                 "success": True,
                 "provider": "google",
                 "file_id": file_id,
                 "title": resolved_name,
+                "drive_folder": drive_folder_path,
                 "slides_url": slides_url,
                 "web_view_link": slides_url,
                 "local_file_path": abs_path,
                 "message": (
-                    f"Uploaded '{resolved_name}' to Google Drive and converted it to Google Slides: {slides_url}"
+                    f"Uploaded '{resolved_name}' to Google Drive ({drive_folder_path}) and converted it to Google Slides: {slides_url}"
                 ),
             }
         except Exception as e:
@@ -3070,6 +3175,8 @@ class OAuthManager:
         self,
         file_path: str,
         title: Optional[str] = None,
+        project_name: Optional[str] = None,
+        folder_category: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Uploads a local document/handout file (.docx, .doc, .odt, .rtf) to Google Drive via
@@ -3105,6 +3212,8 @@ class OAuthManager:
             ".doc": "application/msword",
             ".odt": "application/vnd.oasis.opendocument.text",
             ".rtf": "application/rtf",
+            ".md": "text/markdown",
+            ".txt": "text/plain",
         }
         source_mime = mime_map.get(ext)
         if not source_mime:
@@ -3112,7 +3221,7 @@ class OAuthManager:
                 "status": "error",
                 "success": False,
                 "local_file_path": abs_path,
-                "error": f"Unsupported document format '{ext}'. Expected .docx, .doc, .odt, or .rtf.",
+                "error": f"Unsupported document format '{ext}'. Expected .docx, .doc, .odt, .rtf, .md, or .txt.",
             }
 
         try:
@@ -3156,10 +3265,19 @@ class OAuthManager:
             }
 
         doc_title = (title or "").strip() or os.path.splitext(os.path.basename(abs_path))[0]
-        metadata = {
+        is_dossier = (
+            str(folder_category or "").strip().lower() == "dossiers"
+            or ext == ".md"
+            or "dossiers" in abs_path.lower().replace("\\", "/")
+        )
+        default_sub = "dossiers" if is_dossier else "docs"
+        folder_id, drive_folder_path = self._resolve_aether_drive_folder(default_sub, headers, project_name=project_name)
+        metadata: Dict[str, Any] = {
             "name": doc_title,
             "mimeType": "application/vnd.google-apps.document",
         }
+        if folder_id:
+            metadata["parents"] = [folder_id]
         boundary = f"aether_docx_{secrets.token_hex(16)}"
         meta_json = json.dumps(metadata, ensure_ascii=False).encode("utf-8")
 
@@ -3226,18 +3344,19 @@ class OAuthManager:
                 docs_url = f"https://docs.google.com/document/d/{file_id}/edit"
             resolved_name = str(payload.get("name") or doc_title).strip()
 
-            logger.info(f"[OAUTH] Uploaded '{resolved_name}' to Google Docs (id={file_id})")
+            logger.info(f"[OAUTH] Uploaded '{resolved_name}' to Google Docs in '{drive_folder_path}' (id={file_id})")
             return {
                 "status": "success",
                 "success": True,
                 "provider": "google",
                 "file_id": file_id,
                 "title": resolved_name,
+                "drive_folder": drive_folder_path,
                 "docs_url": docs_url,
                 "web_view_link": docs_url,
                 "local_file_path": abs_path,
                 "message": (
-                    f"Uploaded '{resolved_name}' to Google Drive and converted it to Google Docs: {docs_url}"
+                    f"Uploaded '{resolved_name}' to Google Drive ({drive_folder_path}) and converted it to Google Docs: {docs_url}"
                 ),
             }
         except Exception as e:
@@ -3248,6 +3367,138 @@ class OAuthManager:
                 "local_file_path": abs_path,
                 "error": f"Google Docs upload failed: {e}",
             }
+
+    def upload_xlsx_to_google_sheets(
+        self,
+        file_path: str,
+        title: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Uploads a local spreadsheet (.xlsx, .xlsm, .xls, .ods, .csv — by default under data/xlsx/)
+        to Google Drive via multipart/related upload and converts it natively into a
+        Google Sheets spreadsheet (application/vnd.google-apps.spreadsheet).
+        Reuses the already-granted `drive.file` scope.
+        """
+        raw_path = str(file_path or "").strip()
+        if not raw_path:
+            return {"status": "error", "success": False, "error": "Spreadsheet file_path is required."}
+
+        abs_path = os.path.abspath(os.path.expanduser(raw_path))
+        if not os.path.isfile(abs_path):
+            try:
+                from core.paths import user_data_path
+                xlsx_candidate = os.path.abspath(user_data_path("data", "xlsx", os.path.basename(raw_path)))
+                if os.path.isfile(xlsx_candidate):
+                    abs_path = xlsx_candidate
+            except Exception:
+                pass
+        if not os.path.isfile(abs_path):
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Spreadsheet file not found: {abs_path}",
+            }
+
+        ext = os.path.splitext(abs_path)[1].lower()
+        mime_map = {
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+            ".xls": "application/vnd.ms-excel",
+            ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+            ".csv": "text/csv",
+        }
+        source_mime = mime_map.get(ext)
+        if not source_mime:
+            return {
+                "status": "error",
+                "success": False,
+                "local_file_path": abs_path,
+                "error": f"Unsupported spreadsheet format '{ext}'. Expected .xlsx, .xlsm, .xls, .ods, or .csv.",
+            }
+
+        try:
+            file_size = os.path.getsize(abs_path)
+            if file_size <= 0 or file_size > 50 * 1024 * 1024:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "local_file_path": abs_path,
+                    "error": f"Invalid spreadsheet file size ({file_size} bytes): {abs_path}",
+                }
+            with open(abs_path, "rb") as f:
+                file_bytes = f.read()
+        except Exception as e:
+            return {"status": "error", "success": False, "local_file_path": abs_path, "error": f"Failed reading spreadsheet: {e}"}
+
+        headers = self._google_headers()
+        if not headers:
+            return {
+                "status": "error",
+                "success": False,
+                "needs_reauth": True,
+                "local_file_path": abs_path,
+                "error": (
+                    "Google account is not connected or access token expired. "
+                    "Connect Google in Settings -> Integrations for Google Sheets import, "
+                    "or open the saved local spreadsheet in Excel / LibreOffice Calc."
+                ),
+            }
+
+        sheet_title = (title or "").strip() or os.path.splitext(os.path.basename(abs_path))[0]
+        folder_id, drive_folder_path = self._resolve_aether_drive_folder("xlsx", headers, project_name=project_name)
+        metadata: Dict[str, Any] = {"name": sheet_title, "mimeType": "application/vnd.google-apps.spreadsheet"}
+        if folder_id:
+            metadata["parents"] = [folder_id]
+        boundary = f"aether_xlsx_{secrets.token_hex(16)}"
+        meta_json = json.dumps(metadata, ensure_ascii=False).encode("utf-8")
+        body_bytes = (
+            f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"
+        ).encode("utf-8") + meta_json + (
+            f"\r\n--{boundary}\r\nContent-Type: {source_mime}\r\n\r\n"
+        ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        req_headers = dict(headers)
+        req_headers["Content-Type"] = f"multipart/related; boundary={boundary}"
+        try:
+            r = requests.post(
+                "https://www.googleapis.com/upload/drive/v3/files",
+                headers=req_headers,
+                params={"uploadType": "multipart", "fields": "id,name,webViewLink,mimeType"},
+                data=body_bytes,
+                timeout=60,
+            )
+            if not r.ok:
+                return {
+                    "status": "error",
+                    "success": False,
+                    "http_status": r.status_code,
+                    "local_file_path": abs_path,
+                    "error": f"Google Drive Sheets upload failed ({r.status_code}): {r.text[:350]}",
+                }
+            payload = r.json() if r.content else {}
+            file_id = str(payload.get("id") or "").strip()
+            sheets_url = str(payload.get("webViewLink") or "").strip()
+            if not sheets_url and file_id:
+                sheets_url = f"https://docs.google.com/spreadsheets/d/{file_id}/edit"
+            resolved_name = str(payload.get("name") or sheet_title).strip()
+            logger.info(f"[OAUTH] Uploaded '{resolved_name}' to Google Sheets in '{drive_folder_path}' (id={file_id})")
+            return {
+                "status": "success",
+                "success": True,
+                "provider": "google",
+                "file_id": file_id,
+                "title": resolved_name,
+                "drive_folder": drive_folder_path,
+                "sheets_url": sheets_url,
+                "web_view_link": sheets_url,
+                "local_file_path": abs_path,
+                "message": f"Uploaded '{resolved_name}' to Google Drive ({drive_folder_path}) and converted it to Google Sheets: {sheets_url}",
+            }
+        except Exception as e:
+            logger.error(f"[OAUTH] Google Sheets Drive upload failed: {e}")
+            return {"status": "error", "success": False, "local_file_path": abs_path, "error": f"Google Sheets upload failed: {e}"}
 
 
 # Singleton accessor for engine, tools, and GUI bridge
