@@ -52,3 +52,4 @@ pynvml>=13.0.0
 pypdf>=5.0.0
 python-pptx>=1.0.2
 matplotlib>=3.9.0
+openvr>=2.12.1401

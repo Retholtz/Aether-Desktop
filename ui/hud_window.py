@@ -426,6 +426,7 @@ class HUDBridge:
         self._dot_bitmap = None
         self._dot_visible = False
         self._dot_last_phys_rect = None
+        self._vr_manager = None
 
     @property
     def _mini_size(self) -> tuple[int, int]:
@@ -463,6 +464,26 @@ class HUDBridge:
             "dot_size": ui_cfg.get("dot_size", 22),
             "dot_position": ui_cfg.get("dot_position", "top_right"),
             "dot_monitor": ui_cfg.get("dot_monitor", "auto"),
+            "vr_dot_enabled": bool(ui_cfg.get("vr_dot_enabled", True)),
+            "vr_dot_anchor": ui_cfg.get("vr_dot_anchor", "hmd"),
+            "vr_dot_inset": ui_cfg.get("vr_dot_inset", 0.62),
+            "vr_dot_x": ui_cfg.get("vr_dot_x", 0.25),
+            "vr_dot_y": ui_cfg.get("vr_dot_y", 0.18),
+            "vr_dot_depth": ui_cfg.get("vr_dot_depth", 1.20),
+            "vr_dot_scale": ui_cfg.get("vr_dot_scale", 1.00),
+            "vr_hud_enabled": bool(ui_cfg.get("vr_hud_enabled", True)),
+            "vr_hud_anchor": ui_cfg.get("vr_hud_anchor", "cockpit"),
+            "vr_hud_depth": ui_cfg.get("vr_hud_depth", 1.35),
+            "vr_hud_scale": ui_cfg.get("vr_hud_scale", 1.00),
+            "vr_hud_offset_x": ui_cfg.get("vr_hud_offset_x", 0.0),
+            "vr_hud_offset_y": ui_cfg.get("vr_hud_offset_y", -0.12),
+            "vr_hud_curvature": ui_cfg.get("vr_hud_curvature", 0.12),
+            "vr_hud_yaw": ui_cfg.get("vr_hud_yaw", 0.0),
+            "vr_hud_pitch": ui_cfg.get("vr_hud_pitch", 0.0),
+            "vr_hud_roll": ui_cfg.get("vr_hud_roll", 0.0),
+            "vr_wrist_auto_hide": bool(ui_cfg.get("vr_wrist_auto_hide", True)),
+            "vr_wrist_smoothing": ui_cfg.get("vr_wrist_smoothing", 0.60),
+            "vr_runtime": ui_cfg.get("vr_runtime", "auto"),
             "is_running": is_running,
             "state": "listening" if is_running else "standby",
         }
@@ -679,9 +700,129 @@ class HUDBridge:
         self._dot_last_phys_rect = (int(px), int(py), dim)
         self._run_on_ui_thread(_apply)
 
+    def _get_vr_manager(self):
+        """Lazily creates the unified VR Overlay Manager (Dot + Mini/Normal/Max HUD)."""
+        if self._vr_manager is None:
+            from ui.vr_overlay_manager import VROverlayManager, capture_hwnd_rgba
+            ui_cfg = self._bridge.get_raw_config().get("ui", {}) or {}
+            mgr = VROverlayManager(
+                hud_capture_fn=lambda: capture_hwnd_rgba(_get_overlay_hwnd(self._window)),
+                vr_runtime=ui_cfg.get("vr_runtime", "auto"),
+            )
+            mgr.configure_dot(
+                enabled=bool(ui_cfg.get("vr_dot_enabled", True)),
+                size=ui_cfg.get("dot_size", 22),
+                position=ui_cfg.get("dot_position", "top_right"),
+                anchor=ui_cfg.get("vr_dot_anchor", "hmd"),
+                inset=ui_cfg.get("vr_dot_inset", 0.62),
+                offset_x=ui_cfg.get("vr_dot_x", 0.25),
+                offset_y=ui_cfg.get("vr_dot_y", 0.18),
+                depth_m=ui_cfg.get("vr_dot_depth", 1.20),
+                scale=ui_cfg.get("vr_dot_scale", 1.00),
+                colors=ui_cfg.get("hud_colors"),
+            )
+            mgr.configure_hud(
+                enabled=bool(ui_cfg.get("vr_hud_enabled", True)),
+                mode=ui_cfg.get("hud_mode", "normal"),
+                anchor=ui_cfg.get("vr_hud_anchor", "cockpit"),
+                depth_m=ui_cfg.get("vr_hud_depth", 1.25),
+                scale=ui_cfg.get("vr_hud_scale", 1.00),
+                offset_x=ui_cfg.get("vr_hud_offset_x", 0.0),
+                offset_y=ui_cfg.get("vr_hud_offset_y", -0.12),
+                curvature=ui_cfg.get("vr_hud_curvature", 0.12),
+                yaw_deg=ui_cfg.get("vr_hud_yaw", 0.0),
+                pitch_deg=ui_cfg.get("vr_hud_pitch", 0.0),
+                roll_deg=ui_cfg.get("vr_hud_roll", 0.0),
+                wrist_auto_hide=bool(ui_cfg.get("vr_wrist_auto_hide", True)),
+                wrist_smoothing=ui_cfg.get("vr_wrist_smoothing", 0.60),
+            )
+            mgr.set_dot_state(self._dot_state)
+            self._vr_manager = mgr
+        return self._vr_manager
+
+    def get_vr_status(self) -> dict:
+        """Returns VR backend availability, HMD presence, and Dot/HUD overlay states."""
+        mgr = self._get_vr_manager()
+        return {"success": True, **mgr.get_status()}
+
+    def get_vr_dot_status(self) -> dict:
+        """Backwards-compatible alias for get_vr_status()."""
+        return self.get_vr_status()
+
+    def recenter_vr_hud(self) -> dict:
+        """Recenters the cockpit-anchored VR HUD & Dot to the user's current HMD gaze."""
+        mgr = self._get_vr_manager()
+        return mgr.recenter_hud()
+
+    def reset_vr_settings(self) -> dict:
+        """Resets all VR overlay settings (Dot + Mini/Normal/Max) to safe defaults and recenters."""
+        mgr = self._get_vr_manager()
+        return mgr.reset_defaults()
+
+    def apply_vr_hud_layout(
+        self,
+        mode: Optional[str] = None,
+        vr_hud_enabled: Optional[bool] = None,
+        vr_hud_anchor: Optional[str] = None,
+        vr_hud_depth: Optional[float] = None,
+        vr_hud_scale: Optional[float] = None,
+        vr_hud_offset_x: Optional[float] = None,
+        vr_hud_offset_y: Optional[float] = None,
+        vr_hud_curvature: Optional[float] = None,
+        vr_hud_yaw: Optional[float] = None,
+        vr_hud_pitch: Optional[float] = None,
+        vr_hud_roll: Optional[float] = None,
+        vr_wrist_auto_hide: Optional[bool] = None,
+        vr_wrist_smoothing: Optional[float] = None,
+        vr_runtime: Optional[str] = None,
+        show: bool = True,
+    ) -> dict:
+        """Syncs VR HUD panel settings and shows/hides the 3D HUD quad in VR."""
+        ui_cfg = self._bridge.get_raw_config().get("ui", {}) or {}
+        eff_mode = str(mode or getattr(self, "_last_applied_mode", None) or ui_cfg.get("hud_mode", "normal")).lower()
+        enabled = bool(vr_hud_enabled if vr_hud_enabled is not None else ui_cfg.get("vr_hud_enabled", True))
+        try:
+            mgr = self._get_vr_manager()
+            mgr.configure_hud(
+                enabled=enabled,
+                mode=eff_mode if eff_mode in ("mini", "normal", "max") else None,
+                anchor=vr_hud_anchor if vr_hud_anchor is not None else ui_cfg.get("vr_hud_anchor", "cockpit"),
+                depth_m=vr_hud_depth if vr_hud_depth is not None else ui_cfg.get("vr_hud_depth", 1.25),
+                scale=vr_hud_scale if vr_hud_scale is not None else ui_cfg.get("vr_hud_scale", 1.00),
+                offset_x=vr_hud_offset_x if vr_hud_offset_x is not None else ui_cfg.get("vr_hud_offset_x", 0.0),
+                offset_y=vr_hud_offset_y if vr_hud_offset_y is not None else ui_cfg.get("vr_hud_offset_y", -0.12),
+                curvature=vr_hud_curvature if vr_hud_curvature is not None else ui_cfg.get("vr_hud_curvature", 0.12),
+                yaw_deg=vr_hud_yaw if vr_hud_yaw is not None else ui_cfg.get("vr_hud_yaw", 0.0),
+                pitch_deg=vr_hud_pitch if vr_hud_pitch is not None else ui_cfg.get("vr_hud_pitch", 0.0),
+                roll_deg=vr_hud_roll if vr_hud_roll is not None else ui_cfg.get("vr_hud_roll", 0.0),
+                wrist_auto_hide=bool(vr_wrist_auto_hide if vr_wrist_auto_hide is not None else ui_cfg.get("vr_wrist_auto_hide", True)),
+                wrist_smoothing=vr_wrist_smoothing if vr_wrist_smoothing is not None else ui_cfg.get("vr_wrist_smoothing", 0.60),
+                vr_runtime=vr_runtime if vr_runtime is not None else ui_cfg.get("vr_runtime", "auto"),
+            )
+            if show and enabled and eff_mode in ("mini", "normal", "max"):
+                mgr.show_hud(mode=eff_mode)
+            else:
+                mgr.hide_hud()
+        except Exception:
+            pass
+        return {"success": True, "mode": eff_mode, "enabled": enabled}
+
+    def hide_vr_hud(self) -> None:
+        """Hides the 3D VR HUD overlay without affecting the desktop window."""
+        if self._vr_manager is not None:
+            try:
+                self._vr_manager.hide_hud()
+            except Exception:
+                pass
+
     def hide_dot(self) -> None:
-        """Hides the circular Dot Form without affecting the WebView2 overlay window."""
+        """Hides the circular Dot Form (and VR Dot overlay if active) without affecting the WebView2 overlay window."""
         self._dot_visible = False
+        if self._vr_manager is not None:
+            try:
+                self._vr_manager.hide_dot()
+            except Exception:
+                pass
         if sys.platform != "win32":
             return
         try:
@@ -699,8 +840,14 @@ class HUDBridge:
         self._run_on_ui_thread(_hide)
 
     def destroy_dot(self) -> None:
-        """Disposes the circular Dot Form and its Bitmap cleanly during shutdown."""
+        """Disposes the circular Dot Form, its Bitmap, and the VR Overlay Manager cleanly during shutdown."""
         self._dot_visible = False
+        if self._vr_manager is not None:
+            try:
+                self._vr_manager.destroy()
+            except Exception:
+                pass
+            self._vr_manager = None
 
         def _dispose():
             form = self._dot_form
@@ -724,12 +871,20 @@ class HUDBridge:
         self._run_on_ui_thread(_dispose)
 
     def set_dot_status(self, state: Optional[str] = None, colors: Optional[dict] = None) -> None:
-        """Updates active status state and/or custom color palette for the circular Dot Form."""
+        """Updates active status state and/or custom color palette for the circular Dot Form and VR Dot."""
         if state is not None:
             self._dot_state = str(state or "standby").lower().strip()
         if isinstance(colors, dict):
             from ui.dot_overlay import sanitize_hud_colors
             self._dot_colors = sanitize_hud_colors(colors)
+        if self._vr_manager is not None:
+            try:
+                if state is not None:
+                    self._vr_manager.set_dot_state(self._dot_state)
+                if self._dot_colors is not None:
+                    self._vr_manager.configure_dot(colors=self._dot_colors)
+            except Exception:
+                pass
         if not self._dot_visible or getattr(self, "_last_applied_mode", None) != "dot":
             return
         if self._dot_last_phys_rect is not None:
@@ -742,18 +897,64 @@ class HUDBridge:
         dot_position: Optional[str] = None,
         dot_monitor: Optional[str] = None,
         active_game_process: Optional[str] = None,
+        vr_dot_enabled: Optional[bool] = None,
+        vr_dot_anchor: Optional[str] = None,
+        vr_dot_inset: Optional[float] = None,
+        vr_dot_x: Optional[float] = None,
+        vr_dot_y: Optional[float] = None,
+        vr_dot_depth: Optional[float] = None,
+        vr_dot_scale: Optional[float] = None,
     ) -> dict:
-        """Positions, sizes, and displays the circular WinForms Dot indicator for the configured corner/monitor."""
+        """Positions, sizes, and displays the circular WinForms Dot indicator and mirrors it to OpenVR when active."""
         from ui.dot_overlay import (
             normalize_dot_position,
             normalize_dot_size,
             resolve_dot_position,
+        )
+        from ui.vr_dot_overlay import (
+            normalize_vr_dot_anchor,
+            normalize_vr_dot_depth,
+            normalize_vr_dot_inset,
+            normalize_vr_dot_scale,
+            normalize_vr_dot_x,
+            normalize_vr_dot_y,
         )
 
         ui_cfg = self._bridge.get_raw_config().get("ui", {}) or {}
         d_size = normalize_dot_size(dot_size if dot_size is not None else ui_cfg.get("dot_size", 22))
         d_pos = normalize_dot_position(dot_position if dot_position is not None else ui_cfg.get("dot_position", "top_right"))
         d_mon = str(dot_monitor if dot_monitor is not None else ui_cfg.get("dot_monitor", "auto"))
+
+        v_enabled = bool(vr_dot_enabled if vr_dot_enabled is not None else ui_cfg.get("vr_dot_enabled", True))
+        v_anchor = normalize_vr_dot_anchor(vr_dot_anchor if vr_dot_anchor is not None else ui_cfg.get("vr_dot_anchor", "hmd"))
+        v_inset = normalize_vr_dot_inset(vr_dot_inset if vr_dot_inset is not None else ui_cfg.get("vr_dot_inset", 0.62))
+        v_x = normalize_vr_dot_x(vr_dot_x if vr_dot_x is not None else ui_cfg.get("vr_dot_x", 0.25))
+        v_y = normalize_vr_dot_y(vr_dot_y if vr_dot_y is not None else ui_cfg.get("vr_dot_y", 0.18))
+        v_depth = normalize_vr_dot_depth(vr_dot_depth if vr_dot_depth is not None else ui_cfg.get("vr_dot_depth", 1.20))
+        v_scale = normalize_vr_dot_scale(vr_dot_scale if vr_dot_scale is not None else ui_cfg.get("vr_dot_scale", 1.00))
+
+        try:
+            mgr = self._get_vr_manager()
+            mgr.configure_dot(
+                enabled=v_enabled,
+                size=d_size,
+                position=d_pos,
+                anchor=v_anchor,
+                inset=v_inset,
+                offset_x=v_x,
+                offset_y=v_y,
+                depth_m=v_depth,
+                scale=v_scale,
+                colors=self._dot_colors if isinstance(self._dot_colors, dict) else ui_cfg.get("hud_colors"),
+            )
+            mgr.set_dot_state(self._dot_state)
+            mgr.hide_hud()
+            if v_enabled:
+                mgr.show_dot()
+            else:
+                mgr.hide_dot()
+        except Exception:
+            pass
 
         game_rect = None
         if d_mon.lower() == "auto" and active_game_process and sys.platform == "win32":
@@ -818,6 +1019,7 @@ class HUDBridge:
 
                     self._window.resize(w, h)
                     apply_hud_window_shape(self._window, mode)
+                    self.apply_vr_hud_layout(mode=mode, show=True)
 
                     # Ensure overlay JavaScript switches CSS classes and DOM layout immediately (only if loaded/shown)
                     events = getattr(self._window, "events", None)
@@ -1347,6 +1549,18 @@ class HudWindow:
                             pass
                 time.sleep(0.25)
             self.bridge.show_overlay()
+        elif bool(cfg.get("vr_hud_enabled", True)) or bool(cfg.get("vr_dot_enabled", True)):
+            # Even when desktop overlay is set to "on_minimize", allow VR overlay to
+            # auto-connect and show the configured tier as soon as SteamVR boots.
+            cur_mode = str(cfg.get("hud_mode", "normal") or "normal").lower()
+            try:
+                mgr = self.hud_bridge._get_vr_manager()
+                if cur_mode == "dot":
+                    mgr.show_dot()
+                elif cur_mode in ("mini", "normal", "max"):
+                    mgr.show_hud(mode=cur_mode)
+            except Exception:
+                pass
 
         # Hook Windows session/shutdown events so minimize_to_tray never blocks OS shutdown/logoff
         if sys.platform == "win32":

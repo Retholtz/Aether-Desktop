@@ -191,10 +191,51 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         normalize_dot_size,
         sanitize_hud_colors,
     )
+    from ui.vr_dot_overlay import (
+        normalize_vr_dot_anchor,
+        normalize_vr_dot_depth,
+        normalize_vr_dot_inset,
+        normalize_vr_dot_scale,
+        normalize_vr_dot_x,
+        normalize_vr_dot_y,
+    )
+    from ui.vr_overlay_manager import (
+        normalize_vr_hud_anchor,
+        normalize_vr_hud_curvature,
+        normalize_vr_hud_depth,
+        normalize_vr_hud_offset_x,
+        normalize_vr_hud_offset_y,
+        normalize_vr_hud_scale,
+        normalize_vr_pitch,
+        normalize_vr_roll,
+        normalize_vr_wrist_smoothing,
+        normalize_vr_yaw,
+    )
     ui_cfg["dot_size"] = normalize_dot_size(ui_cfg.get("dot_size", 22))
     ui_cfg["dot_position"] = normalize_dot_position(ui_cfg.get("dot_position", "top_right"))
     ui_cfg["dot_monitor"] = str(ui_cfg.get("dot_monitor") or "auto")
     ui_cfg["hud_colors"] = sanitize_hud_colors(ui_cfg.get("hud_colors") or DEFAULT_HUD_STATUS_COLORS)
+    ui_cfg["vr_dot_enabled"] = bool(ui_cfg.get("vr_dot_enabled", True))
+    ui_cfg["vr_dot_anchor"] = normalize_vr_dot_anchor(ui_cfg.get("vr_dot_anchor", "cockpit"))
+    ui_cfg["vr_dot_inset"] = normalize_vr_dot_inset(ui_cfg.get("vr_dot_inset", 0.62))
+    ui_cfg["vr_dot_x"] = normalize_vr_dot_x(ui_cfg.get("vr_dot_x", 0.0))
+    ui_cfg["vr_dot_y"] = normalize_vr_dot_y(ui_cfg.get("vr_dot_y", -0.12))
+    ui_cfg["vr_dot_depth"] = normalize_vr_dot_depth(ui_cfg.get("vr_dot_depth", 1.25))
+    ui_cfg["vr_dot_scale"] = normalize_vr_dot_scale(ui_cfg.get("vr_dot_scale", 1.00))
+    ui_cfg["vr_hud_enabled"] = bool(ui_cfg.get("vr_hud_enabled", True))
+    ui_cfg["vr_hud_anchor"] = normalize_vr_hud_anchor(ui_cfg.get("vr_hud_anchor", "cockpit"))
+    ui_cfg["vr_hud_depth"] = normalize_vr_hud_depth(ui_cfg.get("vr_hud_depth", 1.25))
+    ui_cfg["vr_hud_scale"] = normalize_vr_hud_scale(ui_cfg.get("vr_hud_scale", 1.00))
+    ui_cfg["vr_hud_offset_x"] = normalize_vr_hud_offset_x(ui_cfg.get("vr_hud_offset_x", 0.0))
+    ui_cfg["vr_hud_offset_y"] = normalize_vr_hud_offset_y(ui_cfg.get("vr_hud_offset_y", -0.12))
+    ui_cfg["vr_hud_curvature"] = normalize_vr_hud_curvature(ui_cfg.get("vr_hud_curvature", 0.12))
+    ui_cfg["vr_hud_yaw"] = normalize_vr_yaw(ui_cfg.get("vr_hud_yaw", 0.0))
+    ui_cfg["vr_hud_pitch"] = normalize_vr_pitch(ui_cfg.get("vr_hud_pitch", 0.0))
+    from ui.openxr_overlay_backend import normalize_vr_runtime
+    ui_cfg["vr_hud_roll"] = normalize_vr_roll(ui_cfg.get("vr_hud_roll", 0.0))
+    ui_cfg["vr_wrist_auto_hide"] = bool(ui_cfg.get("vr_wrist_auto_hide", True))
+    ui_cfg["vr_wrist_smoothing"] = normalize_vr_wrist_smoothing(ui_cfg.get("vr_wrist_smoothing", 0.60))
+    ui_cfg["vr_runtime"] = normalize_vr_runtime(ui_cfg.get("vr_runtime", "auto"))
 
     hud_mode_hotkey = ui_cfg.get("hud_mode_hotkey") or cfg.get("hud_mode_hotkey") or "Ctrl+Space"
     ui_cfg["hud_mode_hotkey"] = hud_mode_hotkey

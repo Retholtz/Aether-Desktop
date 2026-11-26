@@ -35,12 +35,16 @@ if os.path.isfile("models/wespeaker_en_voxceleb_CAM++.onnx"):
 if os.path.isdir("assets/game_modules"):
     datas.append(("assets/game_modules", "assets/game_modules"))
 
+if os.path.isfile("assets/openxr/XR_APILAYER_AETHER_overlay.json"):
+    datas.append(("assets/openxr/XR_APILAYER_AETHER_overlay.json", "assets/openxr"))
+
 binaries = []
-for bin_path in (
-    "assets/bin/PresentMon.exe",
+for bin_path, bin_dest in (
+    ("assets/bin/PresentMon.exe", "assets/bin"),
+    ("assets/openxr/aether_openxr_layer.dll", "assets/openxr"),
 ):
     if os.path.isfile(bin_path):
-        binaries.append((bin_path, "assets/bin"))
+        binaries.append((bin_path, bin_dest))
 
 hiddenimports = [
     "pystray._win32",
@@ -101,8 +105,8 @@ for _pres_pkg in ("pptx", "matplotlib"):
     except Exception:
         pass
 
-# Collect native/runtime assets for WebView2, Python.NET, ViGEm, sounddevice, and sherpa-onnx
-for pkg in ("webview", "pythonnet", "clr_loader", "vgamepad", "sounddevice", "sherpa_onnx"):
+# Collect native/runtime assets for WebView2, Python.NET, ViGEm, sounddevice, sherpa-onnx, and OpenVR
+for pkg in ("webview", "pythonnet", "clr_loader", "vgamepad", "sounddevice", "sherpa_onnx", "openvr"):
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
         datas += pkg_datas

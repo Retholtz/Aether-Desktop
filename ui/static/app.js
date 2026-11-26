@@ -1892,6 +1892,108 @@ window.aetherUI = {
         if (dotSlider) dotSlider.value = String(dotSizeVal);
         if (dotSliderDisp) dotSliderDisp.innerText = `${dotSizeVal} px`;
 
+        // Unified VR Overlay (OpenVR / SteamVR: Dot, Mini, Normal, Max) controls
+        const fmtSignedM = (v) => `${v > 0 ? "+" : ""}${Number(v).toFixed(2)} m`;
+        const vrHudEnabledChk = document.getElementById("vrHudEnabledCheck");
+        if (vrHudEnabledChk) vrHudEnabledChk.checked = (cfg.ui.vr_hud_enabled !== false);
+
+        const vrRuntimeSel = document.getElementById("vrRuntimeSelect");
+        if (vrRuntimeSel) vrRuntimeSel.value = cfg.ui.vr_runtime || "auto";
+
+        const vrHudAnchorSel = document.getElementById("vrHudAnchorSelect");
+        if (vrHudAnchorSel) vrHudAnchorSel.value = cfg.ui.vr_hud_anchor || "cockpit";
+
+        const vrHudDepthNum = Number(cfg.ui.vr_hud_depth ?? 1.25);
+        const vrHudDepthSlider = document.getElementById("vrHudDepthSlider");
+        const vrHudDepthDisp = document.getElementById("vrHudDepthVal");
+        if (vrHudDepthSlider) vrHudDepthSlider.value = vrHudDepthNum.toFixed(2);
+        if (vrHudDepthDisp) vrHudDepthDisp.innerText = `${vrHudDepthNum.toFixed(2)} m`;
+
+        const vrHudScaleNum = Number(cfg.ui.vr_hud_scale ?? 1.0);
+        const vrHudScaleSlider = document.getElementById("vrHudScaleSlider");
+        const vrHudScaleDisp = document.getElementById("vrHudScaleVal");
+        if (vrHudScaleSlider) vrHudScaleSlider.value = vrHudScaleNum.toFixed(1);
+        if (vrHudScaleDisp) vrHudScaleDisp.innerText = `${vrHudScaleNum.toFixed(1)}x`;
+
+        const vrHudOffsetXNum = Number(cfg.ui.vr_hud_offset_x ?? 0.0);
+        const vrHudOffsetXSlider = document.getElementById("vrHudOffsetXSlider");
+        const vrHudOffsetXDisp = document.getElementById("vrHudOffsetXVal");
+        if (vrHudOffsetXSlider) vrHudOffsetXSlider.value = vrHudOffsetXNum.toFixed(2);
+        if (vrHudOffsetXDisp) vrHudOffsetXDisp.innerText = fmtSignedM(vrHudOffsetXNum);
+
+        const vrHudOffsetYNum = Number(cfg.ui.vr_hud_offset_y ?? -0.12);
+        const vrHudOffsetYSlider = document.getElementById("vrHudOffsetYSlider");
+        const vrHudOffsetYDisp = document.getElementById("vrHudOffsetYVal");
+        if (vrHudOffsetYSlider) vrHudOffsetYSlider.value = vrHudOffsetYNum.toFixed(2);
+        if (vrHudOffsetYDisp) vrHudOffsetYDisp.innerText = fmtSignedM(vrHudOffsetYNum);
+
+        const vrHudCurvPct = Math.round(Number(cfg.ui.vr_hud_curvature ?? 0.12) * 100);
+        const vrHudCurvSlider = document.getElementById("vrHudCurvatureSlider");
+        const vrHudCurvDisp = document.getElementById("vrHudCurvatureVal");
+        if (vrHudCurvSlider) vrHudCurvSlider.value = String(vrHudCurvPct);
+        if (vrHudCurvDisp) vrHudCurvDisp.innerText = `${vrHudCurvPct}%`;
+
+        const fmtDeg = (v) => `${v > 0 ? "+" : ""}${Math.round(Number(v))}°`;
+        const vrHudRollNum = Math.round(Number(cfg.ui.vr_hud_roll ?? 0));
+        const vrHudRollSlider = document.getElementById("vrHudRollSlider");
+        const vrHudRollDisp = document.getElementById("vrHudRollVal");
+        if (vrHudRollSlider) vrHudRollSlider.value = String(vrHudRollNum);
+        if (vrHudRollDisp) vrHudRollDisp.innerText = fmtDeg(vrHudRollNum);
+
+        const vrHudYawNum = Math.round(Number(cfg.ui.vr_hud_yaw ?? 0));
+        const vrHudYawSlider = document.getElementById("vrHudYawSlider");
+        const vrHudYawDisp = document.getElementById("vrHudYawVal");
+        if (vrHudYawSlider) vrHudYawSlider.value = String(vrHudYawNum);
+        if (vrHudYawDisp) vrHudYawDisp.innerText = fmtDeg(vrHudYawNum);
+
+        const vrHudPitchNum = Math.round(Number(cfg.ui.vr_hud_pitch ?? 0));
+        const vrHudPitchSlider = document.getElementById("vrHudPitchSlider");
+        const vrHudPitchDisp = document.getElementById("vrHudPitchVal");
+        if (vrHudPitchSlider) vrHudPitchSlider.value = String(vrHudPitchNum);
+        if (vrHudPitchDisp) vrHudPitchDisp.innerText = fmtDeg(vrHudPitchNum);
+
+        const vrWristAutoHideChk = document.getElementById("vrWristAutoHideCheck");
+        if (vrWristAutoHideChk) vrWristAutoHideChk.checked = (cfg.ui.vr_wrist_auto_hide !== false);
+
+        const vrWristSmoothPct = Math.round(Number(cfg.ui.vr_wrist_smoothing ?? 0.60) * 100);
+        const vrWristSmoothSlider = document.getElementById("vrWristSmoothingSlider");
+        const vrWristSmoothDisp = document.getElementById("vrWristSmoothingVal");
+        if (vrWristSmoothSlider) vrWristSmoothSlider.value = String(vrWristSmoothPct);
+        if (vrWristSmoothDisp) vrWristSmoothDisp.innerText = `${vrWristSmoothPct}%`;
+
+        const vrStatusHint = document.getElementById("vrDotStatusHint");
+        const btnToggleXrLayer = document.getElementById("btnToggleOpenXrLayer");
+        const refreshVrStatusUi = () => {
+          const statusFn = window.pywebview?.api?.get_vr_status || window.pywebview?.api?.get_vr_dot_status;
+          if (!statusFn) return;
+          statusFn().then((st) => {
+            if (!st || !st.success) return;
+            const xrTag = st.openxr_runtime_name && st.openxr_runtime_name !== "None"
+              ? ` • System OpenXR: ${st.openxr_runtime_name}`
+              : "";
+            const layerTag = st.openxr_layer_installed
+              ? (st.openxr_layer_registered ? " • OpenXR Layer: Enabled" : " • OpenXR Layer: Ready (Not Enabled)")
+              : "";
+            if (btnToggleXrLayer) {
+              btnToggleXrLayer.dataset.registered = st.openxr_layer_registered ? "1" : "0";
+              btnToggleXrLayer.innerText = st.openxr_layer_registered ? "DISABLE OPENXR LAYER" : "ENABLE OPENXR LAYER";
+            }
+            if (vrStatusHint) {
+              if (st.connected) {
+                const label = st.active_backend === "openxr" ? "OpenXR API Layer" : "OpenVR (SteamVR)";
+                vrStatusHint.innerText = `Connected via ${label}${xrTag}${layerTag}`;
+              } else if (!st.openvr_installed && !st.openxr_layer_installed) {
+                vrStatusHint.innerText = `Install 'openvr' (SteamVR) or build OpenXR layer to enable VR overlays${xrTag}`;
+              } else if (st.hmd_present) {
+                vrStatusHint.innerText = `VR headset detected (ready)${xrTag}${layerTag}`;
+              } else {
+                vrStatusHint.innerText = `VR ready (auto-activates when SteamVR or an OpenXR game runs)${xrTag}${layerTag}`;
+              }
+            }
+          }).catch(() => {});
+        };
+        refreshVrStatusUi();
+
         const defaultHudColors = {
           standby: "#8e9bb0",
           listening: "#00d2ff",
@@ -1927,10 +2029,42 @@ window.aetherUI = {
             hudPreviewTimer = setTimeout(() => {
               hudPreviewTimer = null;
               if (window.pywebview?.api?.preview_hud_settings) {
+                const vrEnabled = document.getElementById("vrHudEnabledCheck") ? document.getElementById("vrHudEnabledCheck").checked : true;
+                const vrAnchor = document.getElementById("vrHudAnchorSelect")?.value || "cockpit";
+                const vrX = parseFloat(document.getElementById("vrHudOffsetXSlider")?.value || "0.0");
+                const vrY = parseFloat(document.getElementById("vrHudOffsetYSlider")?.value || "-0.12");
+                const vrDepth = parseFloat(document.getElementById("vrHudDepthSlider")?.value || "1.25");
+                const vrScale = parseFloat(document.getElementById("vrHudScaleSlider")?.value || "1.0");
+                const vrCurv = parseInt(document.getElementById("vrHudCurvatureSlider")?.value || "12", 10) / 100.0;
+                const vrYaw = parseFloat(document.getElementById("vrHudYawSlider")?.value || "0");
+                const vrPitch = parseFloat(document.getElementById("vrHudPitchSlider")?.value || "0");
+                const vrRoll = parseFloat(document.getElementById("vrHudRollSlider")?.value || "0");
+                const vrWristAutoHide = document.getElementById("vrWristAutoHideCheck") ? document.getElementById("vrWristAutoHideCheck").checked : true;
+                const vrWristSmoothing = parseInt(document.getElementById("vrWristSmoothingSlider")?.value || "60", 10) / 100.0;
+                const vrRuntime = document.getElementById("vrRuntimeSelect")?.value || "auto";
                 window.pywebview.api.preview_hud_settings({
                   dot_size: parseInt(document.getElementById("dotSizeSlider")?.value || "22", 10),
                   dot_position: document.getElementById("dotPositionSelect")?.value || "top_right",
                   dot_monitor: document.getElementById("dotMonitorSelect")?.value || "auto",
+                  vr_dot_enabled: vrEnabled,
+                  vr_dot_anchor: vrAnchor,
+                  vr_dot_x: vrX,
+                  vr_dot_y: vrY,
+                  vr_dot_depth: vrDepth,
+                  vr_dot_scale: vrScale,
+                  vr_hud_enabled: vrEnabled,
+                  vr_hud_anchor: vrAnchor,
+                  vr_hud_depth: vrDepth,
+                  vr_hud_scale: vrScale,
+                  vr_hud_offset_x: vrX,
+                  vr_hud_offset_y: vrY,
+                  vr_hud_curvature: vrCurv,
+                  vr_hud_yaw: vrYaw,
+                  vr_hud_pitch: vrPitch,
+                  vr_hud_roll: vrRoll,
+                  vr_wrist_auto_hide: vrWristAutoHide,
+                  vr_wrist_smoothing: vrWristSmoothing,
+                  vr_runtime: vrRuntime,
                   hud_colors: collectHudColors()
                 });
               }
@@ -1942,6 +2076,88 @@ window.aetherUI = {
           });
           dotPosSel?.addEventListener("change", pushHudPreview);
           dotMonSel?.addEventListener("change", pushHudPreview);
+          vrHudEnabledChk?.addEventListener("change", pushHudPreview);
+          vrRuntimeSel?.addEventListener("change", pushHudPreview);
+          vrHudAnchorSel?.addEventListener("change", pushHudPreview);
+          vrHudDepthSlider?.addEventListener("input", () => {
+            if (vrHudDepthDisp) vrHudDepthDisp.innerText = `${parseFloat(vrHudDepthSlider.value).toFixed(2)} m`;
+            pushHudPreview();
+          });
+          vrHudScaleSlider?.addEventListener("input", () => {
+            if (vrHudScaleDisp) vrHudScaleDisp.innerText = `${parseFloat(vrHudScaleSlider.value).toFixed(1)}x`;
+            pushHudPreview();
+          });
+          vrHudOffsetXSlider?.addEventListener("input", () => {
+            if (vrHudOffsetXDisp) vrHudOffsetXDisp.innerText = fmtSignedM(parseFloat(vrHudOffsetXSlider.value));
+            pushHudPreview();
+          });
+          vrHudOffsetYSlider?.addEventListener("input", () => {
+            if (vrHudOffsetYDisp) vrHudOffsetYDisp.innerText = fmtSignedM(parseFloat(vrHudOffsetYSlider.value));
+            pushHudPreview();
+          });
+          vrHudCurvSlider?.addEventListener("input", () => {
+            if (vrHudCurvDisp) vrHudCurvDisp.innerText = `${vrHudCurvSlider.value}%`;
+            pushHudPreview();
+          });
+          vrHudRollSlider?.addEventListener("input", () => {
+            if (vrHudRollDisp) vrHudRollDisp.innerText = fmtDeg(parseFloat(vrHudRollSlider.value));
+            pushHudPreview();
+          });
+          vrHudYawSlider?.addEventListener("input", () => {
+            if (vrHudYawDisp) vrHudYawDisp.innerText = fmtDeg(parseFloat(vrHudYawSlider.value));
+            pushHudPreview();
+          });
+          vrHudPitchSlider?.addEventListener("input", () => {
+            if (vrHudPitchDisp) vrHudPitchDisp.innerText = fmtDeg(parseFloat(vrHudPitchSlider.value));
+            pushHudPreview();
+          });
+          vrWristAutoHideChk?.addEventListener("change", pushHudPreview);
+          vrWristSmoothSlider?.addEventListener("input", () => {
+            if (vrWristSmoothDisp) vrWristSmoothDisp.innerText = `${vrWristSmoothSlider.value}%`;
+            pushHudPreview();
+          });
+          document.getElementById("btnToggleOpenXrLayer")?.addEventListener("click", () => {
+            const btn = document.getElementById("btnToggleOpenXrLayer");
+            const currentlyEnabled = btn?.dataset?.registered === "1";
+            if (window.pywebview?.api?.set_openxr_layer_registered) {
+              window.pywebview.api.set_openxr_layer_registered(!currentlyEnabled).then(() => {
+                refreshVrStatusUi();
+              }).catch(() => {});
+            }
+          });
+          document.getElementById("btnRecenterVrHud")?.addEventListener("click", () => {
+            if (window.pywebview?.api?.recenter_vr_hud) {
+              window.pywebview.api.recenter_vr_hud().catch(() => {});
+            }
+          });
+          document.getElementById("btnResetVrSettings")?.addEventListener("click", () => {
+            if (vrHudEnabledChk) vrHudEnabledChk.checked = true;
+            if (vrHudAnchorSel) vrHudAnchorSel.value = "cockpit";
+            if (vrHudOffsetXSlider) vrHudOffsetXSlider.value = "0.00";
+            if (vrHudOffsetXDisp) vrHudOffsetXDisp.innerText = "0.00 m";
+            if (vrHudOffsetYSlider) vrHudOffsetYSlider.value = "-0.12";
+            if (vrHudOffsetYDisp) vrHudOffsetYDisp.innerText = "-0.12 m";
+            if (vrHudDepthSlider) vrHudDepthSlider.value = "1.25";
+            if (vrHudDepthDisp) vrHudDepthDisp.innerText = "1.25 m";
+            if (vrHudScaleSlider) vrHudScaleSlider.value = "1.0";
+            if (vrHudScaleDisp) vrHudScaleDisp.innerText = "1.0x";
+            if (vrHudCurvSlider) vrHudCurvSlider.value = "12";
+            if (vrHudCurvDisp) vrHudCurvDisp.innerText = "12%";
+            if (vrHudRollSlider) vrHudRollSlider.value = "0";
+            if (vrHudRollDisp) vrHudRollDisp.innerText = "0°";
+            if (vrHudYawSlider) vrHudYawSlider.value = "0";
+            if (vrHudYawDisp) vrHudYawDisp.innerText = "0°";
+            if (vrHudPitchSlider) vrHudPitchSlider.value = "0";
+            if (vrHudPitchDisp) vrHudPitchDisp.innerText = "0°";
+            if (vrWristAutoHideChk) vrWristAutoHideChk.checked = true;
+            if (vrWristSmoothSlider) vrWristSmoothSlider.value = "60";
+            if (vrWristSmoothDisp) vrWristSmoothDisp.innerText = "60%";
+            if (vrRuntimeSel) vrRuntimeSel.value = "auto";
+            if (window.pywebview?.api?.reset_vr_settings) {
+              window.pywebview.api.reset_vr_settings().catch(() => {});
+            }
+            pushHudPreview();
+          });
           Object.values(colorFieldMap).forEach(elId => {
             document.getElementById(elId)?.addEventListener("input", pushHudPreview);
           });
@@ -2277,6 +2493,25 @@ window.aetherUI = {
           dot_size: document.getElementById("dotSizeSlider") ? parseInt(document.getElementById("dotSizeSlider").value, 10) : (this.currentConfig?.ui?.dot_size ?? 22),
           dot_position: document.getElementById("dotPositionSelect")?.value || this.currentConfig?.ui?.dot_position || "top_right",
           dot_monitor: document.getElementById("dotMonitorSelect")?.value || this.currentConfig?.ui?.dot_monitor || "auto",
+          vr_dot_enabled: document.getElementById("vrHudEnabledCheck") ? document.getElementById("vrHudEnabledCheck").checked : (this.currentConfig?.ui?.vr_hud_enabled ?? true),
+          vr_dot_anchor: document.getElementById("vrHudAnchorSelect")?.value || this.currentConfig?.ui?.vr_hud_anchor || "cockpit",
+          vr_dot_x: document.getElementById("vrHudOffsetXSlider") ? parseFloat(document.getElementById("vrHudOffsetXSlider").value) : (this.currentConfig?.ui?.vr_hud_offset_x ?? 0.0),
+          vr_dot_y: document.getElementById("vrHudOffsetYSlider") ? parseFloat(document.getElementById("vrHudOffsetYSlider").value) : (this.currentConfig?.ui?.vr_hud_offset_y ?? -0.12),
+          vr_dot_depth: document.getElementById("vrHudDepthSlider") ? parseFloat(document.getElementById("vrHudDepthSlider").value) : (this.currentConfig?.ui?.vr_hud_depth ?? 1.25),
+          vr_dot_scale: document.getElementById("vrHudScaleSlider") ? parseFloat(document.getElementById("vrHudScaleSlider").value) : (this.currentConfig?.ui?.vr_hud_scale ?? 1.0),
+          vr_hud_enabled: document.getElementById("vrHudEnabledCheck") ? document.getElementById("vrHudEnabledCheck").checked : (this.currentConfig?.ui?.vr_hud_enabled ?? true),
+          vr_hud_anchor: document.getElementById("vrHudAnchorSelect")?.value || this.currentConfig?.ui?.vr_hud_anchor || "cockpit",
+          vr_hud_depth: document.getElementById("vrHudDepthSlider") ? parseFloat(document.getElementById("vrHudDepthSlider").value) : (this.currentConfig?.ui?.vr_hud_depth ?? 1.25),
+          vr_hud_scale: document.getElementById("vrHudScaleSlider") ? parseFloat(document.getElementById("vrHudScaleSlider").value) : (this.currentConfig?.ui?.vr_hud_scale ?? 1.0),
+          vr_hud_offset_x: document.getElementById("vrHudOffsetXSlider") ? parseFloat(document.getElementById("vrHudOffsetXSlider").value) : (this.currentConfig?.ui?.vr_hud_offset_x ?? 0.0),
+          vr_hud_offset_y: document.getElementById("vrHudOffsetYSlider") ? parseFloat(document.getElementById("vrHudOffsetYSlider").value) : (this.currentConfig?.ui?.vr_hud_offset_y ?? -0.12),
+          vr_hud_curvature: document.getElementById("vrHudCurvatureSlider") ? (parseInt(document.getElementById("vrHudCurvatureSlider").value, 10) / 100.0) : (this.currentConfig?.ui?.vr_hud_curvature ?? 0.12),
+          vr_hud_yaw: document.getElementById("vrHudYawSlider") ? parseFloat(document.getElementById("vrHudYawSlider").value) : (this.currentConfig?.ui?.vr_hud_yaw ?? 0.0),
+          vr_hud_pitch: document.getElementById("vrHudPitchSlider") ? parseFloat(document.getElementById("vrHudPitchSlider").value) : (this.currentConfig?.ui?.vr_hud_pitch ?? 0.0),
+          vr_hud_roll: document.getElementById("vrHudRollSlider") ? parseFloat(document.getElementById("vrHudRollSlider").value) : (this.currentConfig?.ui?.vr_hud_roll ?? 0.0),
+          vr_wrist_auto_hide: document.getElementById("vrWristAutoHideCheck") ? document.getElementById("vrWristAutoHideCheck").checked : (this.currentConfig?.ui?.vr_wrist_auto_hide ?? true),
+          vr_wrist_smoothing: document.getElementById("vrWristSmoothingSlider") ? (parseInt(document.getElementById("vrWristSmoothingSlider").value, 10) / 100.0) : (this.currentConfig?.ui?.vr_wrist_smoothing ?? 0.60),
+          vr_runtime: document.getElementById("vrRuntimeSelect")?.value || this.currentConfig?.ui?.vr_runtime || "auto",
           hud_colors: {
             standby: document.getElementById("hudColorStandby")?.value || this.currentConfig?.ui?.hud_colors?.standby || "#8e9bb0",
             listening: document.getElementById("hudColorListening")?.value || this.currentConfig?.ui?.hud_colors?.listening || "#00d2ff",

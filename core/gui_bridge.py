@@ -1954,6 +1954,26 @@ class GuiBridge:
                     normalize_dot_size,
                     sanitize_hud_colors,
                 )
+                from ui.vr_dot_overlay import (
+                    normalize_vr_dot_anchor,
+                    normalize_vr_dot_depth,
+                    normalize_vr_dot_inset,
+                    normalize_vr_dot_scale,
+                    normalize_vr_dot_x,
+                    normalize_vr_dot_y,
+                )
+                from ui.vr_overlay_manager import (
+                    normalize_vr_hud_anchor,
+                    normalize_vr_hud_curvature,
+                    normalize_vr_hud_depth,
+                    normalize_vr_hud_offset_x,
+                    normalize_vr_hud_offset_y,
+                    normalize_vr_hud_scale,
+                    normalize_vr_pitch,
+                    normalize_vr_roll,
+                    normalize_vr_wrist_smoothing,
+                    normalize_vr_yaw,
+                )
                 if "dot_size" in ui_in:
                     ui_in["dot_size"] = normalize_dot_size(ui_in["dot_size"])
                 if "dot_position" in ui_in:
@@ -1962,6 +1982,47 @@ class GuiBridge:
                     ui_in["dot_monitor"] = str(ui_in["dot_monitor"] or "auto")
                 if "hud_colors" in ui_in:
                     ui_in["hud_colors"] = sanitize_hud_colors(ui_in["hud_colors"])
+                if "vr_dot_enabled" in ui_in:
+                    ui_in["vr_dot_enabled"] = bool(ui_in["vr_dot_enabled"])
+                if "vr_dot_anchor" in ui_in:
+                    ui_in["vr_dot_anchor"] = normalize_vr_dot_anchor(ui_in["vr_dot_anchor"])
+                if "vr_dot_inset" in ui_in:
+                    ui_in["vr_dot_inset"] = normalize_vr_dot_inset(ui_in["vr_dot_inset"])
+                if "vr_dot_x" in ui_in:
+                    ui_in["vr_dot_x"] = normalize_vr_dot_x(ui_in["vr_dot_x"])
+                if "vr_dot_y" in ui_in:
+                    ui_in["vr_dot_y"] = normalize_vr_dot_y(ui_in["vr_dot_y"])
+                if "vr_dot_depth" in ui_in:
+                    ui_in["vr_dot_depth"] = normalize_vr_dot_depth(ui_in["vr_dot_depth"])
+                if "vr_dot_scale" in ui_in:
+                    ui_in["vr_dot_scale"] = normalize_vr_dot_scale(ui_in["vr_dot_scale"])
+                if "vr_hud_enabled" in ui_in:
+                    ui_in["vr_hud_enabled"] = bool(ui_in["vr_hud_enabled"])
+                if "vr_hud_anchor" in ui_in:
+                    ui_in["vr_hud_anchor"] = normalize_vr_hud_anchor(ui_in["vr_hud_anchor"])
+                if "vr_hud_depth" in ui_in:
+                    ui_in["vr_hud_depth"] = normalize_vr_hud_depth(ui_in["vr_hud_depth"])
+                if "vr_hud_scale" in ui_in:
+                    ui_in["vr_hud_scale"] = normalize_vr_hud_scale(ui_in["vr_hud_scale"])
+                if "vr_hud_offset_x" in ui_in:
+                    ui_in["vr_hud_offset_x"] = normalize_vr_hud_offset_x(ui_in["vr_hud_offset_x"])
+                if "vr_hud_offset_y" in ui_in:
+                    ui_in["vr_hud_offset_y"] = normalize_vr_hud_offset_y(ui_in["vr_hud_offset_y"])
+                if "vr_hud_curvature" in ui_in:
+                    ui_in["vr_hud_curvature"] = normalize_vr_hud_curvature(ui_in["vr_hud_curvature"])
+                if "vr_hud_yaw" in ui_in:
+                    ui_in["vr_hud_yaw"] = normalize_vr_yaw(ui_in["vr_hud_yaw"])
+                if "vr_hud_pitch" in ui_in:
+                    ui_in["vr_hud_pitch"] = normalize_vr_pitch(ui_in["vr_hud_pitch"])
+                if "vr_hud_roll" in ui_in:
+                    ui_in["vr_hud_roll"] = normalize_vr_roll(ui_in["vr_hud_roll"])
+                from ui.openxr_overlay_backend import normalize_vr_runtime
+                if "vr_wrist_auto_hide" in ui_in:
+                    ui_in["vr_wrist_auto_hide"] = bool(ui_in["vr_wrist_auto_hide"])
+                if "vr_wrist_smoothing" in ui_in:
+                    ui_in["vr_wrist_smoothing"] = normalize_vr_wrist_smoothing(ui_in["vr_wrist_smoothing"])
+                if "vr_runtime" in ui_in:
+                    ui_in["vr_runtime"] = normalize_vr_runtime(ui_in["vr_runtime"])
 
                 self._config.setdefault("ui", {}).update(ui_in)
 
@@ -2995,14 +3056,138 @@ class GuiBridge:
                     hud_b.apply_dot_layout(active_game_process=self._active_game_process_for_dot)
                 except Exception:
                     pass
+        elif getattr(self, "_current_hud_mode", "normal") in ("mini", "normal", "max") and getattr(self, "_overlay_visible", False):
+            if hud_b is not None and hasattr(hud_b, "apply_vr_hud_layout"):
+                try:
+                    hud_b.apply_vr_hud_layout(mode=getattr(self, "_current_hud_mode", "normal"), show=True)
+                except Exception:
+                    pass
+
+    def get_vr_status(self) -> dict:
+        """Returns VR backend availability and live VR Dot & HUD overlay status."""
+        hud_b = getattr(self, "_hud_bridge", None)
+        if hud_b is not None and hasattr(hud_b, "get_vr_status"):
+            try:
+                return hud_b.get_vr_status()
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        from ui.vr_dot_overlay import is_openvr_available
+        from ui.openxr_overlay_backend import detect_openxr_runtime, is_openxr_available
+        ui_cfg = self.get_raw_config().get("ui", {}) or {}
+        xr_info = detect_openxr_runtime()
+        return {
+            "success": True,
+            "openvr_installed": is_openvr_available(),
+            "openxr_installed": is_openxr_available(),
+            "openxr_runtime_configured": xr_info["configured"],
+            "openxr_runtime_name": xr_info["name"],
+            "openxr_extx_overlay": False,
+            "vr_runtime_pref": ui_cfg.get("vr_runtime", "auto"),
+            "active_backend": "none",
+            "enabled": bool(ui_cfg.get("vr_dot_enabled", True)),
+            "connected": False,
+            "hmd_present": False,
+            "visible": False,
+            "anchor": ui_cfg.get("vr_dot_anchor", "hmd"),
+            "position": ui_cfg.get("dot_position", "top_right"),
+            "inset": ui_cfg.get("vr_dot_inset", 0.62),
+            "depth_m": ui_cfg.get("vr_dot_depth", 1.20),
+            "scale": ui_cfg.get("vr_dot_scale", 1.00),
+            "hud_enabled": bool(ui_cfg.get("vr_hud_enabled", True)),
+            "hud_visible": False,
+            "hud_anchor": ui_cfg.get("vr_hud_anchor", "cockpit"),
+            "hud_depth_m": ui_cfg.get("vr_hud_depth", 1.35),
+            "hud_scale": ui_cfg.get("vr_hud_scale", 1.00),
+            "hud_offset_x": ui_cfg.get("vr_hud_offset_x", 0.0),
+            "hud_offset_y": ui_cfg.get("vr_hud_offset_y", -0.18),
+            "hud_curvature": ui_cfg.get("vr_hud_curvature", 0.12),
+        }
+
+    def get_vr_dot_status(self) -> dict:
+        """Backwards-compatible alias for get_vr_status()."""
+        return self.get_vr_status()
+
+    def recenter_vr_hud(self) -> dict:
+        """Recenters the cockpit-anchored VR HUD & Dot to the user's current HMD gaze direction."""
+        hud_b = getattr(self, "_hud_bridge", None)
+        if hud_b is not None and hasattr(hud_b, "recenter_vr_hud"):
+            try:
+                return hud_b.recenter_vr_hud()
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        return {"success": False, "error": "HUD bridge not initialized"}
+
+    def set_openxr_layer_registered(self, enable: bool = True) -> dict:
+        """Registers or unregisters Aether's native C++ OpenXR Implicit API Layer in HKCU."""
+        try:
+            from ui.openxr_overlay_backend import register_openxr_layer
+            return register_openxr_layer(enable=bool(enable))
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def reset_vr_settings(self) -> dict:
+        """Resets unified VR Overlay settings to safe defaults, persists to config, and recenters."""
+        try:
+            from ui.vr_overlay_manager import DEFAULT_VR_SETTINGS
+            d = DEFAULT_VR_SETTINGS
+            with self._config_lock:
+                ui_cfg = self._config.setdefault("ui", {})
+                ui_cfg["vr_dot_enabled"] = d["vr_enabled"]
+                ui_cfg["vr_dot_anchor"] = d["vr_anchor"]
+                ui_cfg["vr_dot_x"] = d["vr_x"]
+                ui_cfg["vr_dot_y"] = d["vr_y"]
+                ui_cfg["vr_dot_depth"] = d["vr_depth"]
+                ui_cfg["vr_dot_scale"] = d["vr_scale"]
+                ui_cfg["vr_hud_enabled"] = d["vr_enabled"]
+                ui_cfg["vr_hud_anchor"] = d["vr_anchor"]
+                ui_cfg["vr_hud_offset_x"] = d["vr_x"]
+                ui_cfg["vr_hud_offset_y"] = d["vr_y"]
+                ui_cfg["vr_hud_depth"] = d["vr_depth"]
+                ui_cfg["vr_hud_scale"] = d["vr_scale"]
+                ui_cfg["vr_hud_curvature"] = d["vr_curvature"]
+                ui_cfg["vr_hud_yaw"] = d["vr_yaw"]
+                ui_cfg["vr_hud_pitch"] = d["vr_pitch"]
+                ui_cfg["vr_hud_roll"] = d["vr_roll"]
+                ui_cfg["vr_wrist_auto_hide"] = d["vr_wrist_auto_hide"]
+                ui_cfg["vr_wrist_smoothing"] = d["vr_wrist_smoothing"]
+                ui_cfg["vr_runtime"] = d["vr_runtime"]
+                if getattr(self, "_config_path", None):
+                    sync_config_schema(self._config)
+                    save_config_atomic(self._config, self._config_path)
+            hud_b = getattr(self, "_hud_bridge", None)
+            if hud_b is not None and hasattr(hud_b, "reset_vr_settings"):
+                hud_b.reset_vr_settings()
+            return {"success": True, "defaults": dict(d)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     def preview_hud_settings(self, ui_updates: dict) -> dict:
-        """Live-previews Dot size/position/monitor and custom HUD status colors across all HUD tiers."""
+        """Live-previews Dot size/position/monitor, VR Dot & VR HUD settings, and custom HUD status colors."""
         try:
             from ui.dot_overlay import (
                 normalize_dot_position,
                 normalize_dot_size,
                 sanitize_hud_colors,
+            )
+            from ui.vr_dot_overlay import (
+                normalize_vr_dot_anchor,
+                normalize_vr_dot_depth,
+                normalize_vr_dot_inset,
+                normalize_vr_dot_scale,
+                normalize_vr_dot_x,
+                normalize_vr_dot_y,
+            )
+            from ui.vr_overlay_manager import (
+                normalize_vr_hud_anchor,
+                normalize_vr_hud_curvature,
+                normalize_vr_hud_depth,
+                normalize_vr_hud_offset_x,
+                normalize_vr_hud_offset_y,
+                normalize_vr_hud_scale,
+                normalize_vr_pitch,
+                normalize_vr_roll,
+                normalize_vr_wrist_smoothing,
+                normalize_vr_yaw,
             )
             updates = ui_updates if isinstance(ui_updates, dict) else {}
             hud_b = getattr(self, "_hud_bridge", None)
@@ -3011,13 +3196,39 @@ class GuiBridge:
                 if hud_b is not None and hasattr(hud_b, "set_dot_status"):
                     hud_b.set_dot_status(colors=clean_colors)
                 self._on_engine_event("hud_colors_preview", {"hud_colors": clean_colors})
-            if getattr(self, "_current_hud_mode", "normal") == "dot" and getattr(self, "_overlay_visible", False):
-                if hud_b is not None and hasattr(hud_b, "apply_dot_layout"):
+            cur_mode = getattr(self, "_current_hud_mode", "normal")
+            if getattr(self, "_overlay_visible", False) and hud_b is not None:
+                if cur_mode == "dot" and hasattr(hud_b, "apply_dot_layout"):
                     hud_b.apply_dot_layout(
                         dot_size=normalize_dot_size(updates["dot_size"]) if "dot_size" in updates else None,
                         dot_position=normalize_dot_position(updates["dot_position"]) if "dot_position" in updates else None,
                         dot_monitor=str(updates["dot_monitor"]) if "dot_monitor" in updates else None,
                         active_game_process=getattr(self, "_active_game_process_for_dot", ""),
+                        vr_dot_enabled=bool(updates["vr_dot_enabled"]) if "vr_dot_enabled" in updates else None,
+                        vr_dot_anchor=normalize_vr_dot_anchor(updates["vr_dot_anchor"]) if "vr_dot_anchor" in updates else None,
+                        vr_dot_inset=normalize_vr_dot_inset(updates["vr_dot_inset"]) if "vr_dot_inset" in updates else None,
+                        vr_dot_x=normalize_vr_dot_x(updates["vr_dot_x"]) if "vr_dot_x" in updates else None,
+                        vr_dot_y=normalize_vr_dot_y(updates["vr_dot_y"]) if "vr_dot_y" in updates else None,
+                        vr_dot_depth=normalize_vr_dot_depth(updates["vr_dot_depth"]) if "vr_dot_depth" in updates else None,
+                        vr_dot_scale=normalize_vr_dot_scale(updates["vr_dot_scale"]) if "vr_dot_scale" in updates else None,
+                    )
+                if hasattr(hud_b, "apply_vr_hud_layout"):
+                    hud_b.apply_vr_hud_layout(
+                        mode=cur_mode if cur_mode in ("mini", "normal", "max") else None,
+                        vr_hud_enabled=bool(updates["vr_hud_enabled"]) if "vr_hud_enabled" in updates else None,
+                        vr_hud_anchor=normalize_vr_hud_anchor(updates["vr_hud_anchor"]) if "vr_hud_anchor" in updates else None,
+                        vr_hud_depth=normalize_vr_hud_depth(updates["vr_hud_depth"]) if "vr_hud_depth" in updates else None,
+                        vr_hud_scale=normalize_vr_hud_scale(updates["vr_hud_scale"]) if "vr_hud_scale" in updates else None,
+                        vr_hud_offset_x=normalize_vr_hud_offset_x(updates["vr_hud_offset_x"]) if "vr_hud_offset_x" in updates else None,
+                        vr_hud_offset_y=normalize_vr_hud_offset_y(updates["vr_hud_offset_y"]) if "vr_hud_offset_y" in updates else None,
+                        vr_hud_curvature=normalize_vr_hud_curvature(updates["vr_hud_curvature"]) if "vr_hud_curvature" in updates else None,
+                        vr_hud_yaw=normalize_vr_yaw(updates["vr_hud_yaw"]) if "vr_hud_yaw" in updates else None,
+                        vr_hud_pitch=normalize_vr_pitch(updates["vr_hud_pitch"]) if "vr_hud_pitch" in updates else None,
+                        vr_hud_roll=normalize_vr_roll(updates["vr_hud_roll"]) if "vr_hud_roll" in updates else None,
+                        vr_wrist_auto_hide=bool(updates["vr_wrist_auto_hide"]) if "vr_wrist_auto_hide" in updates else None,
+                        vr_wrist_smoothing=normalize_vr_wrist_smoothing(updates["vr_wrist_smoothing"]) if "vr_wrist_smoothing" in updates else None,
+                        vr_runtime=str(updates["vr_runtime"]) if "vr_runtime" in updates else None,
+                        show=(cur_mode in ("mini", "normal", "max")),
                     )
             return {"success": True}
         except Exception as e:
@@ -3196,6 +3407,11 @@ class GuiBridge:
             if hud_b is not None and hasattr(hud_b, "hide_dot"):
                 try:
                     hud_b.hide_dot()
+                except Exception:
+                    pass
+            if hud_b is not None and hasattr(hud_b, "hide_vr_hud"):
+                try:
+                    hud_b.hide_vr_hud()
                 except Exception:
                     pass
 

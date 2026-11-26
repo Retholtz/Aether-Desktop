@@ -1,0 +1,11 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_AETHER_overlay",
+    "library_path": ".\\aether_openxr_layer.dll",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "Aether Desktop lightweight OpenXR HUD and Status Dot overlay layer",
+    "disable_environment": "DISABLE_AETHER_OPENXR_LAYER"
+  }
+}

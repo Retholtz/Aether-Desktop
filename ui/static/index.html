@@ -1949,6 +1949,132 @@
                   <span class="input-hint">Adjusts the floating dot diameter in Dot Mode without changing Mini, Normal, or Max.</span>
                 </div>
 
+                <!-- Unified VR Overlay Settings (OpenVR / SteamVR: Dot, Mini, Normal, Max) -->
+                <div class="form-group full" style="margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border-subtle, rgba(255,255,255,0.08));">
+                  <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <label for="vrHudEnabledCheck" style="margin: 0; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                      <input type="checkbox" id="vrHudEnabledCheck" checked>
+                      <span>Mirror HUD &amp; Dot in VR (OpenVR / SteamVR)</span>
+                    </label>
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                      <button type="button" id="btnToggleOpenXrLayer" class="hud-btn-ghost sm" title="Register or unregister Aether's lightweight C++ OpenXR Implicit API Layer (works with Meta Link, VDXR, SteamVR OpenXR, WMR)">ENABLE OPENXR LAYER</button>
+                      <button type="button" id="btnRecenterVrHud" class="hud-btn-ghost sm" title="Snap the cockpit VR overlay directly in front of your current gaze">RECENTER VR VIEW</button>
+                      <button type="button" id="btnResetVrSettings" class="hud-btn-ghost sm" title="Restore VR overlay position, depth, scale, and curvature to defaults and recenter">RESET VR DEFAULTS</button>
+                    </div>
+                  </div>
+                  <span id="vrDotStatusHint" class="input-hint" style="display: block; margin-top: 4px;">Auto-activates when SteamVR or an OpenXR game is running. Applies unified 3D placement to Dot, Mini, Normal, and Max modes.</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="vrRuntimeSelect">VR Runtime Backend</label>
+                  <select id="vrRuntimeSelect" class="hud-select">
+                    <option value="auto" selected>Auto (SteamVR / OpenXR)</option>
+                    <option value="openvr">SteamVR (OpenVR Native D3D11)</option>
+                    <option value="openxr">OpenXR (Native API Layer)</option>
+                  </select>
+                  <span class="input-hint">Auto uses SteamVR when active and automatically attaches to native OpenXR games (Meta Link, VDXR, WMR) via Aether's API Layer.</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="vrHudAnchorSelect">VR Anchor Space</label>
+                  <select id="vrHudAnchorSelect" class="hud-select">
+                    <option value="cockpit" selected>Cockpit / Seated Space (Recommended)</option>
+                    <option value="hmd">HMD-Locked (Follows Head)</option>
+                    <option value="wrist_left">Left Wrist / Forearm</option>
+                    <option value="wrist_right">Right Wrist / Forearm</option>
+                  </select>
+                  <span class="input-hint">Cockpit locks Aether in front of your seated view; click Recenter VR View to snap to your current gaze.</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudScaleSlider">VR Scale</label>
+                    <span id="vrHudScaleVal" class="slider-val">1.0x</span>
+                  </div>
+                  <input type="range" id="vrHudScaleSlider" class="hud-slider" min="0.4" max="2.5" step="0.1" value="1.0">
+                  <span class="input-hint">Scales the physical size of the Dot, Mini, Normal, and Max overlays inside VR.</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudOffsetXSlider">VR X Axis (Left / Right)</label>
+                    <span id="vrHudOffsetXVal" class="slider-val">0.00 m</span>
+                  </div>
+                  <input type="range" id="vrHudOffsetXSlider" class="hud-slider" min="-1.5" max="1.5" step="0.02" value="0.0">
+                  <span class="input-hint">Moves the VR overlay left (negative) or right (positive); 0.00 m is dead center.</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudOffsetYSlider">VR Y Axis (Down / Up)</label>
+                    <span id="vrHudOffsetYVal" class="slider-val">-0.12 m</span>
+                  </div>
+                  <input type="range" id="vrHudOffsetYSlider" class="hud-slider" min="-1.0" max="1.0" step="0.02" value="-0.12">
+                  <span class="input-hint">Moves the VR overlay down (negative) or up (positive); 0.00 m is eye level.</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudDepthSlider">VR Z Axis (Distance)</label>
+                    <span id="vrHudDepthVal" class="slider-val">1.25 m</span>
+                  </div>
+                  <input type="range" id="vrHudDepthSlider" class="hud-slider" min="0.5" max="3.0" step="0.05" value="1.25">
+                  <span class="input-hint">Focal distance in meters from your eyes (1.1–1.5 m is most comfortable).</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudCurvatureSlider">VR Curvature (Normal &amp; Max)</label>
+                    <span id="vrHudCurvatureVal" class="slider-val">12%</span>
+                  </div>
+                  <input type="range" id="vrHudCurvatureSlider" class="hud-slider" min="0" max="50" step="1" value="12">
+                  <span class="input-hint">Adds a subtle cockpit wrap-around curve to wide Normal/Max HUD panels.</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudRollSlider">VR Roll / Level (Bank Left / Right)</label>
+                    <span id="vrHudRollVal" class="slider-val">0°</span>
+                  </div>
+                  <input type="range" id="vrHudRollSlider" class="hud-slider" min="-45" max="45" step="1" value="0">
+                  <span class="input-hint">Levels the HUD if it appears tilted or listing to the left/right in your cockpit view.</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudYawSlider">VR Yaw (Turn Left / Right)</label>
+                    <span id="vrHudYawVal" class="slider-val">0°</span>
+                  </div>
+                  <input type="range" id="vrHudYawSlider" class="hud-slider" min="-60" max="60" step="1" value="0">
+                  <span class="input-hint">Angles the panel left or right around its vertical axis (great for side cockpit MFDs).</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrHudPitchSlider">VR Pitch (Tilt Down / Up)</label>
+                    <span id="vrHudPitchVal" class="slider-val">0°</span>
+                  </div>
+                  <input type="range" id="vrHudPitchSlider" class="hud-slider" min="-45" max="45" step="1" value="0">
+                  <span class="input-hint">Tilts the panel forward or backward to match your cockpit dash or wrist angle.</span>
+                </div>
+
+                <div class="form-group">
+                  <label for="vrWristAutoHideCheck" style="margin: 0; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="vrWristAutoHideCheck" checked>
+                    <span>Wrist Auto-Hide (Palm Up Only)</span>
+                  </label>
+                  <span class="input-hint">Hides the wrist HUD while your arm is down and reveals it when you turn your palm up.</span>
+                </div>
+
+                <div class="form-group">
+                  <div class="slider-header">
+                    <label for="vrWristSmoothingSlider">VR Wrist Stabilization</label>
+                    <span id="vrWristSmoothingVal" class="slider-val">60%</span>
+                  </div>
+                  <input type="range" id="vrWristSmoothingSlider" class="hud-slider" min="0" max="95" step="5" value="60">
+                  <span class="input-hint">Smooths out minor hand/controller tremor when anchored to the wrist (0% = raw tracking, 60–85% = steady reading).</span>
+                </div>
+
                 <!-- Custom HUD Status Colors (Applies to Dot, Mini, Normal, and Max) -->
                 <div class="form-group full" style="margin-top: 4px;">
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
