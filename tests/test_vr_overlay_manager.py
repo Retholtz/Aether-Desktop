@@ -473,6 +473,260 @@ class TestVRHudConfigAndBridge(unittest.TestCase):
         self.assertEqual(rgba_count, 3)
         mgr.destroy()
 
+    def test_d3d11_uploader_pins_explicit_dxgi_adapter_and_fallback_hud_never_black(self):
+        import sys
+        import numpy as np
+        from ui.vr_overlay_manager import _D3D11TextureUploader, render_vr_hud_fallback_rgba
+
+        for mode in ("mini", "normal", "max"):
+            raw, w, h = render_vr_hud_fallback_rgba(
+                mode=mode,
+                agent_name="Aether",
+                state="listening",
+                caption_lines=["You: Status report", "Aether: All systems nominal."],
+            )
+            self.assertEqual(len(raw), w * h * 4)
+            arr = np.frombuffer(raw, dtype=np.uint8).reshape((h, w, 4))
+            # Must contain visible bright text/LED pixels (never a solid black box!)
+            self.assertGreater(int(arr[:, :, :3].max()), 200)
+            # Outer rounded corners must be fully transparent (alpha == 0)
+            self.assertEqual(int(arr[0, 0, 3]), 0)
+            self.assertEqual(int(arr[0, w - 1, 3]), 0)
+            self.assertEqual(int(arr[h - 1, 0, 3]), 0)
+            self.assertEqual(int(arr[h - 1, w - 1, 3]), 0)
+            # Center interior must be opaque
+            self.assertGreater(int(arr[h // 2, w // 2, 3]), 200)
+
+        from ui.vr_overlay_manager import _get_rounded_rect_alpha_mask
+        mask = _get_rounded_rect_alpha_mask(440, 180, 14)
+        self.assertEqual(int(mask[0, 0]), 0)
+        self.assertEqual(int(mask[0, 439]), 0)
+        self.assertEqual(int(mask[179, 0]), 0)
+        self.assertEqual(int(mask[179, 439]), 0)
+        self.assertEqual(int(mask[90, 220]), 255)
+
+        if sys.platform == "win32":
+            # Verify DXGI Factory1 + EnumAdapters1(0) + D3D11CreateDevice(adapter, UNKNOWN) works live
+            uploader = _D3D11TextureUploader(adapter_index=0)
+            try:
+                ptr = uploader.upload_rgba("hud_pinned", raw, w, h)
+                self.assertIsNotNone(ptr)
+                self.assertGreater(ptr, 0)
+            finally:
+                uploader.release_all()
+
+    def test_hud_normal_and_max_sizes_persist_across_sessions(self):
+        import json
+        import tempfile
+        from core.gui_bridge import GuiBridge
+        from ui.hud_window import HUDBridge
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = os.path.join(tmpdir, "config.json")
+            bridge = GuiBridge.__new__(GuiBridge)
+            bridge._config_lock = threading.Lock()
+            bridge._config = sync_config_schema({"ui": {"hud_mode": "normal"}})
+            bridge._config_path = cfg_path
+            bridge.get_raw_config = lambda: bridge._config
+
+            hud_b = HUDBridge(window=None, bridge=bridge)
+            self.assertEqual(hud_b._normal_size, (440, 180))
+            self.assertEqual(hud_b._max_size, (560, 480))
+
+            hud_b.save_hud_size("normal", 620, 260)
+            hud_b.save_hud_size("max", 740, 610)
+            self.assertEqual(bridge._config["ui"]["hud_normal_size"], [620, 260])
+            self.assertEqual(bridge._config["ui"]["hud_max_size"], [740, 610])
+
+            # Verify written atomically to disk and loaded back cleanly on restart
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                disk_cfg = sync_config_schema(json.load(f))
+            bridge2 = GuiBridge.__new__(GuiBridge)
+            bridge2._config_lock = threading.Lock()
+            bridge2._config = disk_cfg
+            bridge2._config_path = cfg_path
+            bridge2.get_raw_config = lambda: bridge2._config
+
+            hud_b2 = HUDBridge(window=None, bridge=bridge2)
+            self.assertEqual(hud_b2._normal_size, (620, 260))
+            self.assertEqual(hud_b2._max_size, (740, 610))
+
+    def test_hud_per_mode_positions_persist_across_cycle_and_sessions(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        from core.gui_bridge import GuiBridge
+        from ui.hud_window import HUDBridge
+
+        class _FakeOverlayWindow:
+            def __init__(self):
+                self.x = 0
+                self.y = 0
+                self.width = 176
+                self.height = 56
+                self.native = None
+                self.events = None
+                self.ops = []
+
+            def resize(self, w, h):
+                self.width = int(w)
+                self.height = int(h)
+                self.ops.append(("resize", self.width, self.height))
+
+            def move(self, x, y):
+                self.x = int(x)
+                self.y = int(y)
+                self.ops.append(("move", self.x, self.y))
+
+            def show(self):
+                pass
+
+            def hide(self):
+                pass
+
+            def evaluate_js(self, _):
+                pass
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("ui.hud_window._get_dpi_scale_for_window", return_value=1.0),
+            patch("ui.hud_window._get_overlay_hwnd", return_value=None),
+        ):
+            cfg_path = os.path.join(tmpdir, "config.json")
+            win = _FakeOverlayWindow()
+            bridge = GuiBridge.__new__(GuiBridge)
+            bridge._config_lock = threading.Lock()
+            bridge._config = sync_config_schema({"ui": {"hud_mode": "mini"}})
+            bridge._config_path = cfg_path
+            bridge._current_hud_mode = "mini"
+            bridge._overlay_window = win
+            bridge._overlay_visible = True
+            bridge.get_raw_config = lambda: bridge._config
+            bridge._safe_hide_overlay_window = lambda: None
+            bridge.on_hud_mode_changed = lambda _m: None
+
+            hud_b = HUDBridge(window=win, bridge=bridge)
+            bridge._hud_bridge = hud_b
+            # Avoid creating real WinForms Dot or VR session during unit test
+            hud_b.apply_dot_layout = lambda *a, **kw: {"success": True}
+            hud_b.hide_dot = lambda: None
+            hud_b.apply_vr_hud_layout = lambda *a, **kw: {"success": True}
+
+            # User places Mini in upper-left, Normal mid-left, Max right-ish
+            bridge.save_overlay_position(24, 24, mode="mini")
+            bridge.save_overlay_position(280, 120, mode="normal")
+            bridge.save_overlay_position(640, 160, mode="max")
+
+            # Cycle Mini -> Normal -> Max -> Dot -> Mini
+            for mode, exp_pos in (
+                ("mini", (24, 24)),
+                ("normal", (280, 120)),
+                ("max", (640, 160)),
+            ):
+                win.ops.clear()
+                hud_b.set_mode(mode)
+                # Ensure resize happens BEFORE move so WinForms resize cannot snap back
+                self.assertEqual(win.ops[0][0], "resize")
+                self.assertEqual(win.ops[1][0], "move")
+                self.assertEqual((win.x, win.y), exp_pos)
+
+            # Cycle into Dot and back into Mini -> Mini MUST return to upper-left (24, 24)
+            hud_b.set_mode("dot")
+            hud_b.set_mode("mini")
+            self.assertEqual((win.x, win.y), (24, 24))
+            self.assertEqual((win.width, win.height), (176, 56))
+
+            # Verify persisted on disk across restart
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                disk_cfg = sync_config_schema(json.load(f))
+            self.assertEqual(disk_cfg["ui"]["hud_positions"]["mini"], [24, 24])
+            self.assertEqual(disk_cfg["ui"]["hud_positions"]["normal"], [280, 120])
+            self.assertEqual(disk_cfg["ui"]["hud_positions"]["max"], [640, 160])
+
+            # Legacy single overlay_x/overlay_y migration into active mode only
+            migrated = sync_config_schema({"ui": {"hud_mode": "normal", "overlay_x": 111, "overlay_y": 222}})
+            self.assertEqual(migrated["ui"]["hud_positions"]["normal"], [111, 222])
+            self.assertIsNone(migrated["ui"]["hud_positions"]["mini"])
+            self.assertIsNone(migrated["ui"]["hud_positions"]["max"])
+
+            # Reset clears all saved card positions cleanly
+            bridge.show_overlay = lambda: {"success": True}
+            bridge.reset_overlay_position()
+            self.assertEqual(bridge._config["ui"]["hud_positions"], {"mini": None, "normal": None, "max": None})
+
+            # Verify Dot -> Mini pre-positions hidden window BEFORE show() (no 1-frame Max flash)
+            bridge.save_overlay_position(24, 24, mode="mini")
+            call_order = []
+            orig_prepare = hud_b.prepare_overlay_bounds_before_show
+            hud_b.prepare_overlay_bounds_before_show = lambda m: (call_order.append(("prepare", m)), orig_prepare(m))
+            win.show = lambda: call_order.append(("show", win.x, win.y))
+            bridge._on_engine_event = lambda *a, **kw: None
+            bridge.set_mode("dot", persist=False)
+            call_order.clear()
+            bridge.set_mode("mini", persist=False)
+            self.assertEqual(call_order[0], ("prepare", "mini"))
+            self.assertEqual(call_order[1], ("show", 24, 24))
+
+    def test_hmd_locked_stabilization_damps_head_tremor_and_supports_raw_zero(self):
+        os.environ["AETHER_TESTING"] = "1"
+        backend = _FakeVRBackend()
+        # Start with upright HMD looking along -Z at origin
+        backend.hmd_pose = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 1.2],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+        mgr = VROverlayManager(backend=backend)
+        mgr.configure_hud(enabled=True, anchor="hmd", hmd_smoothing=0.75, depth_m=1.25, offset_x=0.0, offset_y=0.0)
+        mgr.show_hud("normal")
+
+        # Tick 1: initializes smoothed HMD pose -> submits world-space ("cockpit") at 60Hz
+        sleep_s = mgr.step_once(now=1.0)
+        self.assertAlmostEqual(sleep_s, 0.016, places=3)
+        anc1, mat1, _, _ = backend.transforms[VROverlayManager.HUD_KEY]
+        self.assertEqual(anc1, "cockpit")
+
+        # Tick 2: introduce 0.8 deg head tremor + 1.5mm translation jitter
+        ang = math.radians(0.8)
+        ca, sa = math.cos(ang), math.sin(ang)
+        backend.hmd_pose = [
+            [ca, 0.0, sa, 0.0015],
+            [0.0, 1.0, 0.0, 1.2010],
+            [-sa, 0.0, ca, 0.0],
+        ]
+        mgr.step_once(now=1.016)
+        anc2, mat2, _, _ = backend.transforms[VROverlayManager.HUD_KEY]
+        self.assertEqual(anc2, "cockpit")
+        # Raw unsmoothed shift at 1.25m depth for 0.8 deg would be ~17.5mm; damped shift must be tiny
+        shift_x = abs(mat2[0][3] - mat1[0][3])
+        self.assertLess(shift_x, 0.003)
+
+        # Setting hmd_smoothing = 0.0 switches back to raw hardware-locked "hmd" tracking
+        mgr.configure_hud(hmd_smoothing=0.0)
+        mgr.step_once(now=1.032)
+        anc3, _, _, _ = backend.transforms[VROverlayManager.HUD_KEY]
+        self.assertEqual(anc3, "hmd")
+
+        # Reset defaults restores vr_hmd_smoothing = 0.60
+        res = mgr.reset_defaults()
+        self.assertEqual(res["defaults"]["vr_hmd_smoothing"], 0.60)
+        self.assertEqual(mgr.get_status()["hmd_smoothing"], 0.60)
+        mgr.destroy()
+
+    def test_engine_stop_preserves_global_hotkey_hook_for_hud_cycle(self):
+        from core.hotkey_manager import HotkeyManager
+
+        hk = HotkeyManager()
+        hk._running = True
+        hk._is_key_down = True
+        hk._is_hud_key_down = True
+        hk._is_game_mode_key_down = True
+        hk.reset_key_states()
+        self.assertTrue(hk._running)
+        self.assertFalse(hk._is_key_down)
+        self.assertFalse(hk._is_hud_key_down)
+        self.assertFalse(hk._is_game_mode_key_down)
+
     def test_dot_direct_xyz_and_cockpit_auto_center(self):
         os.environ["AETHER_TESTING"] = "1"
         backend = _FakeVRBackend()

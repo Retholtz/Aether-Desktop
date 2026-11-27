@@ -1142,6 +1142,17 @@ class GuiBridge:
                     except Exception:
                         pass
 
+            if event_type in ("transcript", "ai_response", "user_speech", "assistant_response", "caption") and isinstance(data, dict):
+                hud_b = getattr(self, "_hud_bridge", None)
+                if hud_b is not None and hasattr(hud_b, "append_vr_caption"):
+                    txt = data.get("text") or data.get("message") or data.get("transcript") or ""
+                    if txt:
+                        role = str(data.get("role") or data.get("speaker") or ("You" if event_type == "user_speech" else "")).strip()
+                        try:
+                            hud_b.append_vr_caption(role, str(txt))
+                        except Exception:
+                            pass
+
             if event_type == "mic_status" and isinstance(data, dict):
                 hud_b = getattr(self, "_hud_bridge", None)
                 if hud_b is not None and hasattr(hud_b, "set_dot_status"):
@@ -1963,6 +1974,7 @@ class GuiBridge:
                     normalize_vr_dot_y,
                 )
                 from ui.vr_overlay_manager import (
+                    normalize_vr_hmd_smoothing,
                     normalize_vr_hud_anchor,
                     normalize_vr_hud_curvature,
                     normalize_vr_hud_depth,
@@ -2021,6 +2033,8 @@ class GuiBridge:
                     ui_in["vr_wrist_auto_hide"] = bool(ui_in["vr_wrist_auto_hide"])
                 if "vr_wrist_smoothing" in ui_in:
                     ui_in["vr_wrist_smoothing"] = normalize_vr_wrist_smoothing(ui_in["vr_wrist_smoothing"])
+                if "vr_hmd_smoothing" in ui_in:
+                    ui_in["vr_hmd_smoothing"] = normalize_vr_hmd_smoothing(ui_in["vr_hmd_smoothing"])
                 if "vr_runtime" in ui_in:
                     ui_in["vr_runtime"] = normalize_vr_runtime(ui_in["vr_runtime"])
 
@@ -2998,7 +3012,7 @@ class GuiBridge:
 
     def reset_overlay_position(self) -> dict:
 
-        """Snaps the floating overlay window back to the top-right of the primary display."""
+        """Resets saved HUD positions for Mini, Normal, and Max back to top-right of the primary display."""
 
         try:
 
@@ -3009,20 +3023,26 @@ class GuiBridge:
             )
 
             cur_mode = getattr(self, "_current_hud_mode", "normal")
-
-            w, h = (180, 56) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+            w, h = self.get_hud_size(cur_mode if cur_mode in ("mini", "normal", "max") else "normal")
 
             overlay_win = getattr(self, "_overlay_window", None)
             scale = _get_dpi_scale_for_window(overlay_win)
             cx, cy = clamp_window_position(None, None, width=int(round(w * scale)), height=int(round(h * scale)))
 
-            if overlay_win:
+            with self._config_lock:
+                ui_cfg = self._config.setdefault("ui", {})
+                ui_cfg["hud_positions"] = {"mini": None, "normal": None, "max": None}
+                ui_cfg.pop("overlay_x", None)
+                ui_cfg.pop("overlay_y", None)
+                if getattr(self, "_config_path", None):
+                    save_config_atomic(self._config, self._config_path)
 
+            if overlay_win and cur_mode != "dot":
+                hud_b = getattr(self, "_hud_bridge", None)
+                if hud_b is not None and hasattr(hud_b, "_suppress_move_save_until"):
+                    hud_b._suppress_move_save_until = time.monotonic() + 0.75
                 move_overlay_physical(overlay_win, cx, cy)
-
                 self.show_overlay()
-
-            self.save_overlay_position(cx, cy)
 
             return {"success": True, "x": cx, "y": cy}
 
@@ -3150,6 +3170,7 @@ class GuiBridge:
                 ui_cfg["vr_hud_roll"] = d["vr_roll"]
                 ui_cfg["vr_wrist_auto_hide"] = d["vr_wrist_auto_hide"]
                 ui_cfg["vr_wrist_smoothing"] = d["vr_wrist_smoothing"]
+                ui_cfg["vr_hmd_smoothing"] = d["vr_hmd_smoothing"]
                 ui_cfg["vr_runtime"] = d["vr_runtime"]
                 if getattr(self, "_config_path", None):
                     sync_config_schema(self._config)
@@ -3178,6 +3199,7 @@ class GuiBridge:
                 normalize_vr_dot_y,
             )
             from ui.vr_overlay_manager import (
+                normalize_vr_hmd_smoothing,
                 normalize_vr_hud_anchor,
                 normalize_vr_hud_curvature,
                 normalize_vr_hud_depth,
@@ -3227,6 +3249,7 @@ class GuiBridge:
                         vr_hud_roll=normalize_vr_roll(updates["vr_hud_roll"]) if "vr_hud_roll" in updates else None,
                         vr_wrist_auto_hide=bool(updates["vr_wrist_auto_hide"]) if "vr_wrist_auto_hide" in updates else None,
                         vr_wrist_smoothing=normalize_vr_wrist_smoothing(updates["vr_wrist_smoothing"]) if "vr_wrist_smoothing" in updates else None,
+                        vr_hmd_smoothing=normalize_vr_hmd_smoothing(updates["vr_hmd_smoothing"]) if "vr_hmd_smoothing" in updates else None,
                         vr_runtime=str(updates["vr_runtime"]) if "vr_runtime" in updates else None,
                         show=(cur_mode in ("mini", "normal", "max")),
                     )
@@ -3356,29 +3379,29 @@ class GuiBridge:
 
             if overlay_win:
 
-                from ui.hud_window import (
-                    clamp_window_position,
-                    move_overlay_physical,
-                    _get_overlay_physical_rect,
-                    _get_dpi_scale_for_window,
-                )
-
-                w, h = (180, 56) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
-                rect = _get_overlay_physical_rect(overlay_win)
-                if rect:
-                    cur_x, cur_y, cur_w, cur_h = rect
-                    cx, cy = clamp_window_position(cur_x, cur_y, width=cur_w, height=cur_h)
-                    if cx != cur_x or cy != cur_y:
-                        move_overlay_physical(overlay_win, cx, cy)
+                if hud_b is not None and hasattr(hud_b, "prepare_overlay_bounds_before_show"):
+                    try:
+                        hud_b.prepare_overlay_bounds_before_show(cur_mode)
+                    except Exception:
+                        pass
                 else:
-                    ui_cfg = self.get_raw_config().get("ui", {})
+                    from ui.hud_window import (
+                        clamp_window_position,
+                        move_overlay_physical,
+                        _get_dpi_scale_for_window,
+                    )
+
+                    w, h = self.get_hud_size(cur_mode)
+                    saved_x, saved_y = self.get_overlay_position(cur_mode)
                     scale = _get_dpi_scale_for_window(overlay_win)
                     cx, cy = clamp_window_position(
-                        ui_cfg.get("overlay_x"),
-                        ui_cfg.get("overlay_y"),
+                        saved_x,
+                        saved_y,
                         width=int(round(w * scale)),
                         height=int(round(h * scale)),
                     )
+                    if hud_b is not None and hasattr(hud_b, "_suppress_move_save_until"):
+                        hud_b._suppress_move_save_until = time.monotonic() + 0.75
                     move_overlay_physical(overlay_win, cx, cy)
 
                 overlay_win.show()
@@ -3451,17 +3474,70 @@ class GuiBridge:
 
 
 
-    def save_overlay_position(self, x: int, y: int) -> dict:
+    def get_hud_size(self, mode: Optional[str] = None) -> tuple[int, int]:
+        """Returns the logical (width, height) dimensions for the given HUD card mode."""
+        norm_mode = str(mode or getattr(self, "_current_hud_mode", "normal") or "normal").strip().lower()
+        ui_cur = (self.get_raw_config().get("ui", {}) if hasattr(self, "get_raw_config") else {}) or {}
+        if norm_mode == "mini":
+            hud_b = getattr(self, "_hud_bridge", None)
+            if hud_b is not None and getattr(hud_b, "_mini_fps_visible", False):
+                return tuple(getattr(hud_b, "_mini_wide_size", (245, 56)))
+            return (176, 56)
+        if norm_mode == "max":
+            sz = ui_cur.get("hud_max_size") or [560, 480]
+            return (int(sz[0]), int(sz[1]))
+        sz = ui_cur.get("hud_normal_size") or [440, 180]
+        return (int(sz[0]), int(sz[1]))
 
-        """Persists the floating overlay window physical coordinates to config."""
+    def get_overlay_position(self, mode: Optional[str] = None) -> tuple[Optional[int], Optional[int]]:
+        """Returns the saved physical (x, y) anchor for the requested HUD card mode, or (None, None)."""
+        norm_mode = str(mode or getattr(self, "_current_hud_mode", "normal") or "normal").strip().lower()
+        if norm_mode not in ("mini", "normal", "max"):
+            return (None, None)
+        ui_cur = (self.get_raw_config().get("ui", {}) if hasattr(self, "get_raw_config") else {}) or {}
+        positions = ui_cur.get("hud_positions")
+        if isinstance(positions, dict):
+            pos = positions.get(norm_mode)
+            if isinstance(pos, (list, tuple)) and len(pos) == 2:
+                try:
+                    return (int(round(float(pos[0]))), int(round(float(pos[1]))))
+                except (TypeError, ValueError):
+                    pass
+        return (None, None)
+
+    def save_hud_size(self, mode: str, width: int, height: int) -> dict:
+        """Persists user-resized Normal or Max HUD dimensions to config.json across sessions."""
+        try:
+            norm_mode = str(mode or "normal").strip().lower()
+            if norm_mode not in ("normal", "max"):
+                return {"success": True, "mode": norm_mode}
+            w = max(200, min(1920, int(round(float(width)))))
+            h = max(80, min(1200, int(round(float(height)))))
+            key = "hud_normal_size" if norm_mode == "normal" else "hud_max_size"
+            with self._config_lock:
+                ui_cfg = self._config.setdefault("ui", {})
+                if ui_cfg.get(key) == [w, h]:
+                    return {"success": True, "mode": norm_mode, "width": w, "height": h}
+                ui_cfg[key] = [w, h]
+                if getattr(self, "_config_path", None):
+                    save_config_atomic(self._config, self._config_path)
+            return {"success": True, "mode": norm_mode, "width": w, "height": h}
+        except Exception as e:
+            logger.warning(f"[HUD SIZE SAVE ERROR] {e}")
+            return {"success": False, "error": str(e)}
+
+    def save_overlay_position(self, x: int, y: int, mode: Optional[str] = None) -> dict:
+
+        """Persists the floating overlay window physical coordinates independently per HUD card mode."""
 
         try:
 
             from ui.hud_window import clamp_window_position, _get_dpi_scale_for_window
 
-            cur_mode = getattr(self, "_current_hud_mode", "normal")
-
-            w, h = (180, 56) if cur_mode == "mini" else ((560, 480) if cur_mode == "max" else (440, 180))
+            cur_mode = str(mode or getattr(self, "_current_hud_mode", "normal") or "normal").strip().lower()
+            if cur_mode not in ("mini", "normal", "max"):
+                return {"success": True, "mode": cur_mode}
+            w, h = self.get_hud_size(cur_mode)
             scale = _get_dpi_scale_for_window(getattr(self, "_overlay_window", None))
 
             cx, cy = clamp_window_position(x, y, width=int(round(w * scale)), height=int(round(h * scale)))
@@ -3469,18 +3545,26 @@ class GuiBridge:
             with self._config_lock:
 
                 ui_cfg = self._config.setdefault("ui", {})
+                positions = ui_cfg.get("hud_positions")
+                if not isinstance(positions, dict):
+                    positions = {"mini": None, "normal": None, "max": None}
+                    ui_cfg["hud_positions"] = positions
+                else:
+                    for m in ("mini", "normal", "max"):
+                        positions.setdefault(m, None)
 
-                if ui_cfg.get("overlay_x") == cx and ui_cfg.get("overlay_y") == cy:
+                if positions.get(cur_mode) == [cx, cy] and ui_cfg.get("overlay_x") == cx and ui_cfg.get("overlay_y") == cy:
 
-                    return {"success": True, "x": cx, "y": cy}
+                    return {"success": True, "mode": cur_mode, "x": cx, "y": cy}
 
+                positions[cur_mode] = [cx, cy]
                 ui_cfg["overlay_x"] = cx
-
                 ui_cfg["overlay_y"] = cy
 
-                save_config_atomic(self._config, self._config_path)
+                if getattr(self, "_config_path", None):
+                    save_config_atomic(self._config, self._config_path)
 
-            return {"success": True, "x": cx, "y": cy}
+            return {"success": True, "mode": cur_mode, "x": cx, "y": cy}
 
 
 
@@ -3567,6 +3651,11 @@ class GuiBridge:
                 pass
 
         if is_vis and overlay_win:
+            if self._hud_bridge and hasattr(self._hud_bridge, "prepare_overlay_bounds_before_show"):
+                try:
+                    self._hud_bridge.prepare_overlay_bounds_before_show(mode)
+                except Exception:
+                    pass
             try:
                 overlay_win.show()
             except Exception:

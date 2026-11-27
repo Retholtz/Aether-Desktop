@@ -2059,11 +2059,12 @@
                 </div>
 
                 <div class="form-group">
-                  <label for="vrWristAutoHideCheck" style="margin: 0; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                    <input type="checkbox" id="vrWristAutoHideCheck" checked>
-                    <span>Wrist Auto-Hide (Palm Up Only)</span>
-                  </label>
-                  <span class="input-hint">Hides the wrist HUD while your arm is down and reveals it when you turn your palm up.</span>
+                  <div class="slider-header">
+                    <label for="vrHmdSmoothingSlider">VR HMD-Locked Stabilization</label>
+                    <span id="vrHmdSmoothingVal" class="slider-val">60%</span>
+                  </div>
+                  <input type="range" id="vrHmdSmoothingSlider" class="hud-slider" min="0" max="95" step="5" value="60">
+                  <span class="input-hint">Smooths out minor head tremor when anchored to HMD-Locked (0% = raw tracking, 60–85% = steady reading).</span>
                 </div>
 
                 <div class="form-group">
@@ -2073,6 +2074,13 @@
                   </div>
                   <input type="range" id="vrWristSmoothingSlider" class="hud-slider" min="0" max="95" step="5" value="60">
                   <span class="input-hint">Smooths out minor hand/controller tremor when anchored to the wrist (0% = raw tracking, 60–85% = steady reading).</span>
+                  <div style="margin-top: 12px;">
+                    <label for="vrWristAutoHideCheck" style="margin: 0; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                      <input type="checkbox" id="vrWristAutoHideCheck" checked>
+                      <span>Wrist Auto-Hide (Palm Up Only)</span>
+                    </label>
+                    <span class="input-hint">Hides the wrist HUD while your arm is down and reveals it when you turn your palm up.</span>
+                  </div>
                 </div>
 
                 <!-- Custom HUD Status Colors (Applies to Dot, Mini, Normal, and Max) -->

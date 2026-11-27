@@ -222,6 +222,44 @@ def move_overlay_physical(window: Optional[webview.Window], phys_x: int, phys_y:
         return False
 
 
+def set_overlay_bounds_physical(
+    window: Optional[webview.Window],
+    phys_x: int,
+    phys_y: int,
+    phys_w: int,
+    phys_h: int,
+) -> bool:
+    """
+    Sets the HUD overlay's exact physical position AND size atomically via Win32 SetWindowPos.
+    Works even while the window is hidden (unlike pywebview's @_shown_call resize()), preventing
+    any 1-frame flash of stale bounds when revealing the overlay (e.g. Dot -> Mini).
+    """
+    if window is None:
+        return False
+    w = max(1, int(phys_w))
+    h = max(1, int(phys_h))
+    if sys.platform == "win32":
+        hwnd = _get_overlay_hwnd(window)
+        if hwnd:
+            try:
+                import ctypes
+                SWP_NOZORDER = 0x0004
+                SWP_NOACTIVATE = 0x0010
+                ctypes.windll.user32.SetWindowPos(
+                    int(hwnd),
+                    0,
+                    int(phys_x),
+                    int(phys_y),
+                    w,
+                    h,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                )
+                return True
+            except Exception:
+                pass
+    return move_overlay_physical(window, phys_x, phys_y)
+
+
 def apply_hud_window_shape(window: Optional[webview.Window], mode: str):
     """
     Applies OS-level window styling for the HUD overlay.
@@ -418,8 +456,20 @@ class HUDBridge:
         self._mode_lock = threading.Lock()
         self._drag_lock = threading.Lock()
         self._is_native_dragging = False
-        self._normal_size = (440, 180)
-        self._max_size = (560, 480)
+        self._suppress_move_save_until = 0.0
+        ui_cfg = (bridge.get_raw_config().get("ui", {}) if (bridge and hasattr(bridge, "get_raw_config")) else {}) or {}
+        norm_raw = ui_cfg.get("hud_normal_size")
+        max_raw = ui_cfg.get("hud_max_size")
+        self._normal_size = (
+            (max(200, int(norm_raw[0])), max(80, int(norm_raw[1])))
+            if isinstance(norm_raw, (list, tuple)) and len(norm_raw) == 2
+            else (440, 180)
+        )
+        self._max_size = (
+            (max(200, int(max_raw[0])), max(80, int(max_raw[1])))
+            if isinstance(max_raw, (list, tuple)) and len(max_raw) == 2
+            else (560, 480)
+        )
         self._dot_state = "standby"
         self._dot_colors = None
         self._dot_form = None
@@ -427,6 +477,7 @@ class HUDBridge:
         self._dot_visible = False
         self._dot_last_phys_rect = None
         self._vr_manager = None
+        self._vr_hud_captions = []
 
     @property
     def _mini_size(self) -> tuple[int, int]:
@@ -483,14 +534,48 @@ class HUDBridge:
             "vr_hud_roll": ui_cfg.get("vr_hud_roll", 0.0),
             "vr_wrist_auto_hide": bool(ui_cfg.get("vr_wrist_auto_hide", True)),
             "vr_wrist_smoothing": ui_cfg.get("vr_wrist_smoothing", 0.60),
+            "vr_hmd_smoothing": ui_cfg.get("vr_hmd_smoothing", 0.60),
             "vr_runtime": ui_cfg.get("vr_runtime", "auto"),
             "is_running": is_running,
             "state": "listening" if is_running else "standby",
         }
 
-    def save_hud_position(self, x: Optional[int] = None, y: Optional[int] = None) -> dict:
-        """Saves current HUD overlay window position (physical screen coordinates) to config and disk."""
+    def _save_bridge_overlay_pos(self, x: int, y: int, mode: Optional[str] = None) -> dict:
+        """Helper to call bridge.save_overlay_position with explicit mode (fallback for legacy mocks)."""
         try:
+            return self._bridge.save_overlay_position(int(x), int(y), mode=mode)
+        except TypeError:
+            return self._bridge.save_overlay_position(int(x), int(y))
+
+    def _get_saved_mode_position(self, mode: str) -> tuple[Optional[int], Optional[int]]:
+        """Reads the saved physical (x, y) position for a specific card mode ('mini', 'normal', 'max')."""
+        norm_mode = str(mode or "normal").strip().lower()
+        if norm_mode not in ("mini", "normal", "max"):
+            return (None, None)
+        if hasattr(self._bridge, "get_overlay_position"):
+            try:
+                return self._bridge.get_overlay_position(norm_mode)
+            except Exception:
+                pass
+        try:
+            ui_cfg = (self._bridge.get_raw_config().get("ui", {}) if hasattr(self._bridge, "get_raw_config") else {}) or {}
+            positions = ui_cfg.get("hud_positions")
+            if isinstance(positions, dict):
+                pos = positions.get(norm_mode)
+                if isinstance(pos, (list, tuple)) and len(pos) == 2:
+                    return (int(round(float(pos[0]))), int(round(float(pos[1]))))
+        except Exception:
+            pass
+        return (None, None)
+
+    def save_hud_position(self, x: Optional[int] = None, y: Optional[int] = None, mode: Optional[str] = None) -> dict:
+        """Saves current HUD overlay window position (physical screen coordinates) for the active mode."""
+        try:
+            target_mode = str(
+                mode or getattr(self, "_last_applied_mode", None) or self.get_hud_mode().get("mode", "normal")
+            ).strip().lower()
+            if target_mode not in ("mini", "normal", "max"):
+                return {"success": True, "mode": target_mode}
             if x is None or y is None:
                 rect = _get_overlay_physical_rect(self._window)
                 if rect:
@@ -499,7 +584,7 @@ class HUDBridge:
                     x = getattr(self._window, "x", None)
                     y = getattr(self._window, "y", None)
             if x is not None and y is not None:
-                return self._bridge.save_overlay_position(int(x), int(y))
+                return self._save_bridge_overlay_pos(int(x), int(y), mode=target_mode)
         except Exception as e:
             return {"success": False, "error": str(e)}
         return {"success": False, "error": "Invalid coordinates"}
@@ -700,13 +785,52 @@ class HUDBridge:
         self._dot_last_phys_rect = (int(px), int(py), dim)
         self._run_on_ui_thread(_apply)
 
+    def append_vr_caption(self, speaker: str, text: str) -> None:
+        """Records recent speech/response lines for the native PIL VR HUD fallback renderer."""
+        clean = str(text or "").strip()
+        if not clean:
+            return
+        prefix = f"{speaker}: " if speaker else ""
+        line = f"{prefix}{clean}"
+        if not self._vr_hud_captions or self._vr_hud_captions[-1] != line:
+            self._vr_hud_captions.append(line)
+            if len(self._vr_hud_captions) > 12:
+                self._vr_hud_captions = self._vr_hud_captions[-12:]
+
+    def _capture_vr_hud_frame(self):
+        """
+        Captures the live WebView2 HUD overlay window; automatically falls back to
+        Aether's native Pillow HUD renderer if the desktop window is hidden, occluded
+        behind an Exclusive Fullscreen game, or returns an all-black PrintWindow buffer.
+        """
+        from ui.vr_overlay_manager import capture_hwnd_rgba, render_vr_hud_fallback_rgba
+
+        frame = capture_hwnd_rgba(_get_overlay_hwnd(self._window))
+        if frame is not None:
+            return frame
+
+        cfg = self._bridge.get_raw_config() or {}
+        ui_cfg = cfg.get("ui", {}) or {}
+        agent_name = cfg.get("api", {}).get("agent_name", "Aether")
+        mode = getattr(self, "_last_applied_mode", None) or ui_cfg.get("hud_mode", "normal")
+        if mode not in ("mini", "normal", "max"):
+            mode = "normal"
+        colors = self._dot_colors if isinstance(self._dot_colors, dict) else ui_cfg.get("hud_colors")
+        return render_vr_hud_fallback_rgba(
+            mode=mode,
+            agent_name=agent_name,
+            state=self._dot_state,
+            colors=colors,
+            caption_lines=list(self._vr_hud_captions),
+        )
+
     def _get_vr_manager(self):
         """Lazily creates the unified VR Overlay Manager (Dot + Mini/Normal/Max HUD)."""
         if self._vr_manager is None:
-            from ui.vr_overlay_manager import VROverlayManager, capture_hwnd_rgba
+            from ui.vr_overlay_manager import VROverlayManager
             ui_cfg = self._bridge.get_raw_config().get("ui", {}) or {}
             mgr = VROverlayManager(
-                hud_capture_fn=lambda: capture_hwnd_rgba(_get_overlay_hwnd(self._window)),
+                hud_capture_fn=self._capture_vr_hud_frame,
                 vr_runtime=ui_cfg.get("vr_runtime", "auto"),
             )
             mgr.configure_dot(
@@ -735,6 +859,7 @@ class HUDBridge:
                 roll_deg=ui_cfg.get("vr_hud_roll", 0.0),
                 wrist_auto_hide=bool(ui_cfg.get("vr_wrist_auto_hide", True)),
                 wrist_smoothing=ui_cfg.get("vr_wrist_smoothing", 0.60),
+                hmd_smoothing=ui_cfg.get("vr_hmd_smoothing", 0.60),
             )
             mgr.set_dot_state(self._dot_state)
             self._vr_manager = mgr
@@ -774,6 +899,7 @@ class HUDBridge:
         vr_hud_roll: Optional[float] = None,
         vr_wrist_auto_hide: Optional[bool] = None,
         vr_wrist_smoothing: Optional[float] = None,
+        vr_hmd_smoothing: Optional[float] = None,
         vr_runtime: Optional[str] = None,
         show: bool = True,
     ) -> dict:
@@ -797,6 +923,7 @@ class HUDBridge:
                 roll_deg=vr_hud_roll if vr_hud_roll is not None else ui_cfg.get("vr_hud_roll", 0.0),
                 wrist_auto_hide=bool(vr_wrist_auto_hide if vr_wrist_auto_hide is not None else ui_cfg.get("vr_wrist_auto_hide", True)),
                 wrist_smoothing=vr_wrist_smoothing if vr_wrist_smoothing is not None else ui_cfg.get("vr_wrist_smoothing", 0.60),
+                hmd_smoothing=vr_hmd_smoothing if vr_hmd_smoothing is not None else ui_cfg.get("vr_hmd_smoothing", 0.60),
                 vr_runtime=vr_runtime if vr_runtime is not None else ui_cfg.get("vr_runtime", "auto"),
             )
             if show and enabled and eff_mode in ("mini", "normal", "max"):
@@ -982,6 +1109,41 @@ class HUDBridge:
         self._update_dot_form_on_ui(px, py, phys_d, show=True)
         return {"success": True, "mode": "dot", "size": d_size, "x": px, "y": py}
 
+    def prepare_overlay_bounds_before_show(self, mode: str) -> None:
+        """
+        Pre-sizes and pre-positions the hidden overlay HWND (and switches DOM CSS class)
+        before overlay_win.show() so transitioning Dot -> Mini (or unhiding) never flashes
+        1 frame of the previous mode's outline.
+        """
+        norm_mode = str(mode or "normal").strip().lower()
+        if norm_mode not in ("mini", "normal", "max") or not self._window:
+            return
+        with self._mode_lock:
+            self._suppress_move_save_until = time.monotonic() + 0.75
+            w, h = self._mini_wide_size if self._mini_fps_visible else self._mini_narrow_size
+            if norm_mode == "normal":
+                w, h = self._normal_size[0], self._normal_size[1]
+            elif norm_mode == "max":
+                w, h = self._max_size[0], self._max_size[1]
+
+            scale = _get_dpi_scale_for_window(self._window)
+            phys_w = int(round(w * scale))
+            phys_h = int(round(h * scale))
+            saved_x, saved_y = self._get_saved_mode_position(norm_mode)
+            cx, cy = clamp_window_position(saved_x, saved_y, width=phys_w, height=phys_h)
+
+            set_overlay_bounds_physical(self._window, cx, cy, phys_w, phys_h)
+            apply_hud_window_shape(self._window, norm_mode)
+            events = getattr(self._window, "events", None)
+            loaded_ok = (events is None or not hasattr(events, "loaded") or not hasattr(events.loaded, "is_set") or events.loaded.is_set())
+            if loaded_ok:
+                try:
+                    self._window.evaluate_js(
+                        f"if (window.aetherOverlay && window.aetherOverlay.setMode) {{ window.aetherOverlay.setMode('{norm_mode}'); }}"
+                    )
+                except Exception:
+                    pass
+
     def set_mode(self, mode: str) -> dict:
         """Resizes the HUD overlay window according to requested tier (dot, mini, normal, max)."""
         mode = mode.lower() if mode else "normal"
@@ -990,6 +1152,7 @@ class HUDBridge:
         if self._window:
             with self._mode_lock:
                 self._last_applied_mode = mode
+                self._suppress_move_save_until = time.monotonic() + 0.75
                 if mode == "dot":
                     if hasattr(self._bridge, "_safe_hide_overlay_window"):
                         try:
@@ -1009,15 +1172,15 @@ class HUDBridge:
                     phys_w = int(round(w * scale))
                     phys_h = int(round(h * scale))
 
-                    rect = _get_overlay_physical_rect(self._window)
-                    if rect:
-                        cur_x, cur_y = rect[0], rect[1]
-                        cx, cy = clamp_window_position(cur_x, cur_y, width=phys_w, height=phys_h)
-                        if cx != cur_x or cy != cur_y:
-                            move_overlay_physical(self._window, cx, cy)
-                            self._bridge.save_overlay_position(cx, cy)
+                    # Restore this mode's own independent saved anchor (or default top-right if never placed)
+                    saved_x, saved_y = self._get_saved_mode_position(mode)
+                    cx, cy = clamp_window_position(saved_x, saved_y, width=phys_w, height=phys_h)
 
+                    # Resize FIRST, then move to exact physical (cx, cy) so WinForms BrowserForm.resize()
+                    # cannot overwrite our target position with its stale Location.X/Y.
                     self._window.resize(w, h)
+                    move_overlay_physical(self._window, cx, cy)
+                    self._suppress_move_save_until = time.monotonic() + 0.75
                     apply_hud_window_shape(self._window, mode)
                     self.apply_vr_hud_layout(mode=mode, show=True)
 
@@ -1047,9 +1210,11 @@ class HUDBridge:
             cur_mode = self.get_hud_mode().get("mode", "normal")
             if cur_mode == "mini" and self._window:
                 with self._mode_lock:
+                    self._suppress_move_save_until = time.monotonic() + 0.75
                     w, h = self._mini_wide_size if new_vis else self._mini_narrow_size
                     scale = _get_dpi_scale_for_window(self._window)
                     rect = _get_overlay_physical_rect(self._window)
+                    target_pos = None
                     if rect:
                         cur_x, cur_y = rect[0], rect[1]
                         cx, cy = clamp_window_position(
@@ -1057,9 +1222,11 @@ class HUDBridge:
                             width=int(round(w * scale)),
                             height=int(round(h * scale)),
                         )
-                        if cx != cur_x or cy != cur_y:
-                            move_overlay_physical(self._window, cx, cy)
+                        target_pos = (cx, cy)
                     self._window.resize(w, h)
+                    if target_pos is not None:
+                        move_overlay_physical(self._window, target_pos[0], target_pos[1])
+                    self._suppress_move_save_until = time.monotonic() + 0.75
         except Exception as e:
             return {"success": False, "error": str(e)}
         return {"success": True, "visible": new_vis}
@@ -1068,9 +1235,11 @@ class HUDBridge:
         """Dynamically resizes (and optionally repositions in logical px) the HUD overlay window."""
         try:
             if self._window:
+                self._suppress_move_save_until = time.monotonic() + 0.75
                 w = max(100, int(width))
                 h = max(40, int(height))
                 scale = _get_dpi_scale_for_window(self._window)
+                cur_mode = getattr(self, "_last_applied_mode", None) or self.get_hud_mode().get("mode", "normal")
                 self._window.resize(w, h)
                 if x is not None and y is not None:
                     phys_x = int(round(int(x) * scale))
@@ -1081,23 +1250,26 @@ class HUDBridge:
                         height=int(round(h * scale)),
                     )
                     move_overlay_physical(self._window, cx, cy)
-                    self._bridge.save_overlay_position(cx, cy)
-                cur_mode = self.get_hud_mode().get("mode", "normal")
+                    self._save_bridge_overlay_pos(cx, cy, mode=cur_mode)
                 apply_hud_window_shape(self._window, cur_mode)
+                self._suppress_move_save_until = time.monotonic() + 0.75
                 return {"success": True, "width": w, "height": h}
         except Exception as e:
             return {"success": False, "error": str(e)}
         return {"success": False, "error": "Window not initialized"}
 
     def save_hud_size(self, mode: str, width: int, height: int) -> dict:
-        """Saves user-customized dimensions for Normal or Max mode."""
+        """Saves user-customized dimensions (and current location) for Normal or Max mode across sessions."""
         mode = mode.lower() if mode else "normal"
         try:
-            w, h = max(100, int(width)), max(40, int(height))
+            w, h = max(200, min(1920, int(width))), max(80, min(1200, int(height)))
             if mode == "normal":
                 self._normal_size = (w, h)
             elif mode == "max":
                 self._max_size = (w, h)
+            if mode in ("normal", "max") and hasattr(self._bridge, "save_hud_size"):
+                self._bridge.save_hud_size(mode, w, h)
+            self.save_hud_position(mode=mode)
             apply_hud_window_shape(self._window, mode)
             return {"success": True, "mode": mode, "width": w, "height": h}
         except Exception as e:
@@ -1185,10 +1357,12 @@ class HUDBridge:
                 except Exception:
                     pass
 
+                drag_mode = getattr(self, "_last_applied_mode", None) or self.get_hud_mode().get("mode", "normal")
                 cx, cy = clamp_window_position(last_x, last_y, width=win_w, height=win_h)
                 if cx != last_x or cy != last_y:
                     user32.SetWindowPos(int(hwnd), 0, cx, cy, 0, 0, SWP_FLAGS)
-                self._bridge.save_overlay_position(cx, cy)
+                self._suppress_move_save_until = time.monotonic() + 0.6
+                self._save_bridge_overlay_pos(cx, cy, mode=drag_mode)
             except Exception as e:
                 print(f"[HUD DRAG ERROR] {e}")
             finally:
@@ -1347,14 +1521,14 @@ class HudWindow:
         self.hud_bridge = HUDBridge(window=None, bridge=self.bridge)
         cfg_ui = self.bridge.get_raw_config().get("ui", {})
         cfg_mode = cfg_ui.get("hud_mode", "normal")
+        init_pos_mode = cfg_mode if cfg_mode in ("mini", "normal", "max") else "normal"
         init_scale = _get_dpi_scale_for_window(None)
-        init_x = cfg_ui.get("overlay_x")
-        init_y = cfg_ui.get("overlay_y")
-        init_w, init_h = (440, 180)
+        init_x, init_y = self.hud_bridge._get_saved_mode_position(init_pos_mode)
+        init_w, init_h = self.hud_bridge._normal_size
         if cfg_mode == "mini":
             init_w, init_h = (176, 56)
         elif cfg_mode == "max":
-            init_w, init_h = (560, 480)
+            init_w, init_h = self.hud_bridge._max_size
         phys_w = int(round(init_w * init_scale))
         phys_h = int(round(init_h * init_scale))
         cx, cy = clamp_window_position(init_x, init_y, width=phys_w, height=phys_h)
@@ -1387,9 +1561,9 @@ class HudWindow:
         self.bridge.set_hud_bridge(self.hud_bridge)
         self.dot_overlay = None
 
-        # If clamped position differed from config (for draggable modes only), persist clamped physical coordinates
-        if cfg_mode != "dot" and (init_x != cx or init_y != cy):
-            self.bridge.save_overlay_position(cx, cy)
+        # Only re-persist on startup if a saved position had to be rescued from an off-screen monitor
+        if cfg_mode != "dot" and init_x is not None and init_y is not None and (init_x != cx or init_y != cy):
+            self.hud_bridge._save_bridge_overlay_pos(cx, cy, mode=init_pos_mode)
 
         # Wire window moved event for debounced position persistence (physical pixels, never mid-drag)
         self._pos_save_timer = None
@@ -1398,7 +1572,11 @@ class HudWindow:
         def _save_debounced_pos():
             if getattr(self.hud_bridge, "_is_native_dragging", False):
                 return
-            if getattr(self.hud_bridge, "_last_applied_mode", None) == "dot":
+            if time.monotonic() < getattr(self.hud_bridge, "_suppress_move_save_until", 0.0):
+                self._last_moved_pos = None
+                return
+            cur_mode = getattr(self.hud_bridge, "_last_applied_mode", None)
+            if cur_mode not in ("mini", "normal", "max"):
                 return
             if sys.platform == "win32":
                 try:
@@ -1409,16 +1587,22 @@ class HudWindow:
                 except Exception:
                     pass
             if self._last_moved_pos and self.overlay_window:
-                mx, my = self._last_moved_pos
+                mx, my, m_mode = self._last_moved_pos
+                self._last_moved_pos = None
+                if m_mode != cur_mode:
+                    return
                 rect = _get_overlay_physical_rect(self.overlay_window)
                 if rect and (rect[0] != mx or rect[1] != my):
                     move_overlay_physical(self.overlay_window, mx, my)
-                self.bridge.save_overlay_position(mx, my)
+                self.hud_bridge._save_bridge_overlay_pos(mx, my, mode=m_mode)
 
         def _on_overlay_moved(x, y):
             if getattr(self.hud_bridge, "_is_native_dragging", False):
                 return
-            if getattr(self.hud_bridge, "_last_applied_mode", None) == "dot":
+            if time.monotonic() < getattr(self.hud_bridge, "_suppress_move_save_until", 0.0):
+                return
+            cur_mode = getattr(self.hud_bridge, "_last_applied_mode", None)
+            if cur_mode not in ("mini", "normal", "max"):
                 return
             try:
                 rect = _get_overlay_physical_rect(self.overlay_window)
@@ -1431,7 +1615,7 @@ class HudWindow:
                     pw = int(round((getattr(self.overlay_window, "width", None) or 440) * scale))
                     ph = int(round((getattr(self.overlay_window, "height", None) or 180) * scale))
                 cx, cy = clamp_window_position(px, py, width=pw, height=ph)
-                self._last_moved_pos = (cx, cy)
+                self._last_moved_pos = (cx, cy, cur_mode)
                 if self._pos_save_timer:
                     self._pos_save_timer.cancel()
                 self._pos_save_timer = threading.Timer(0.5, _save_debounced_pos)
@@ -1632,8 +1816,13 @@ class HudWindow:
                 pass
         if hasattr(self, "_last_moved_pos") and self._last_moved_pos:
             try:
-                mx, my = self._last_moved_pos
-                self.bridge.save_overlay_position(mx, my)
+                if len(self._last_moved_pos) == 3:
+                    mx, my, m_mode = self._last_moved_pos
+                    self.hud_bridge._save_bridge_overlay_pos(mx, my, mode=m_mode)
+                else:
+                    mx, my = self._last_moved_pos
+                    self.bridge.save_overlay_position(mx, my)
+                self._last_moved_pos = None
             except Exception:
                 pass
         try:

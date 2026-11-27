@@ -813,6 +813,12 @@ class HotkeyManager:
         if self.enabled and self.target_vk in MOUSE_PTT_VKS:
             self._ensure_mouse_poll_thread()
 
+    def reset_key_states(self):
+        """Clears transient pressed-key states (e.g. when the voice assistant enters Standby) without removing the global hook."""
+        self._is_key_down = False
+        self._is_hud_key_down = False
+        self._is_game_mode_key_down = False
+
     def stop(self):
         """Stops the global keyboard listener and cleanly tears down the Windows hook."""
         if not self._running:

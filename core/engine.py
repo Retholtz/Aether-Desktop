@@ -8367,10 +8367,15 @@ class AetherEngine:
             except Exception as e:
                 logger.warning(f"[STOP] Startup runner stop warning: {e}")
 
-        try:
-            self.hotkey_manager.stop()
-        except Exception as e:
-            logger.warning(f"[STOP] Hotkey manager stop warning: {e}")
+        # Keep the global keyboard hook active while the app stays open in Standby so
+        # system-wide hotkeys (HUD Cycle Ctrl+Space, Game Mode, PTT auto-start) keep working
+        # in desktop and VR. Full hook teardown happens on app exit in main.py.
+        if hasattr(self, "hotkey_manager") and self.hotkey_manager:
+            try:
+                if hasattr(self.hotkey_manager, "reset_key_states"):
+                    self.hotkey_manager.reset_key_states()
+            except Exception as e:
+                logger.warning(f"[STOP] Hotkey manager state reset warning: {e}")
 
         if audio_ref:
             try:

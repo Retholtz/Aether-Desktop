@@ -63,6 +63,7 @@ DEFAULT_VR_SETTINGS: Dict[str, Any] = {
     "vr_roll": 0.0,
     "vr_wrist_auto_hide": True,
     "vr_wrist_smoothing": 0.60,
+    "vr_hmd_smoothing": 0.60,
     "vr_runtime": "auto",
 }
 
@@ -155,6 +156,15 @@ def normalize_vr_roll(deg: Any) -> float:
 
 def normalize_vr_wrist_smoothing(val: Any) -> float:
     """Clamps VR wrist tremor stabilization factor to [0.00, 0.95] (default 0.60)."""
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        v = 0.60
+    return round(max(0.0, min(0.95, v)), 2)
+
+
+def normalize_vr_hmd_smoothing(val: Any) -> float:
+    """Clamps VR HMD-locked head tremor stabilization factor to [0.00, 0.95] (default 0.60)."""
     try:
         v = float(val)
     except (TypeError, ValueError):
@@ -461,7 +471,45 @@ def resolve_vr_hud_transform(
     return mat, max(0.15, min(2.50, width_m))
 
 
-def capture_hwnd_rgba(hwnd: Optional[int]) -> Optional[Tuple[bytes, int, int]]:
+_ROUNDED_MASK_CACHE: Dict[Tuple[int, int, int], Any] = {}
+
+
+def _get_rounded_rect_alpha_mask(width: int, height: int, radius_px: int):
+    """
+    Returns a cached 2D uint8 anti-aliased alpha mask (shape: height x width)
+    that clips the 4 sharp corner triangles outside a rounded rectangle to alpha=0.
+    """
+    import numpy as np
+
+    w, h = max(1, int(width)), max(1, int(height))
+    r = max(0, min(int(radius_px), w // 2, h // 2))
+    key = (w, h, r)
+    cached = _ROUNDED_MASK_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    mask = np.full((h, w), 255, dtype=np.uint8)
+    if r >= 2:
+        # Compute exact anti-aliased corner SDF for a single r x r quadrant and mirror to all 4 corners
+        yy, xx = np.mgrid[0:r, 0:r].astype(np.float32)
+        # Distance from inner corner center (r - 0.5, r - 0.5)
+        cx = float(r) - 0.5
+        dist = np.sqrt((cx - xx) ** 2 + (cx - yy) ** 2)
+        cov = np.clip(float(r) - dist + 0.5, 0.0, 1.0)
+        corner_u8 = np.round(cov * 255.0).astype(np.uint8)
+
+        mask[0:r, 0:r] = corner_u8
+        mask[0:r, w - r : w] = corner_u8[:, ::-1]
+        mask[h - r : h, 0:r] = corner_u8[::-1, :]
+        mask[h - r : h, w - r : w] = corner_u8[::-1, ::-1]
+
+    if len(_ROUNDED_MASK_CACHE) > 24:
+        _ROUNDED_MASK_CACHE.clear()
+    _ROUNDED_MASK_CACHE[key] = mask
+    return mask
+
+
+def capture_hwnd_rgba(hwnd: Optional[int], corner_radius_logical: int = 14) -> Optional[Tuple[bytes, int, int]]:
     """
     Captures a live Win32/WebView2 window into a straight 32-bit RGBA byte buffer
     using `PrintWindow(..., PW_RENDERFULLCONTENT)` with GIL-releasing ctypes calls.
@@ -500,6 +548,10 @@ def capture_hwnd_rgba(hwnd: Optional[int]) -> Optional[Tuple[bytes, int, int]]:
 
         user32.IsWindow.argtypes = [wintypes.HWND]
         user32.IsWindow.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
         user32.GetWindowRect.restype = wintypes.BOOL
         user32.GetDC.argtypes = [wintypes.HWND]
@@ -528,7 +580,7 @@ def capture_hwnd_rgba(hwnd: Optional[int]) -> Optional[Tuple[bytes, int, int]]:
         gdi32.DeleteObject.restype = wintypes.BOOL
 
         h = int(hwnd)
-        if not user32.IsWindow(h):
+        if not user32.IsWindow(h) or not user32.IsWindowVisible(h) or user32.IsIconic(h):
             return None
 
         rect = wintypes.RECT()
@@ -568,12 +620,29 @@ def capture_hwnd_rgba(hwnd: Optional[int]) -> Optional[Tuple[bytes, int, int]]:
             buf_size = w * h_px * 4
             raw = ctypes.string_at(bits_ptr.value, buf_size)
             bgra = np.frombuffer(raw, dtype=np.uint8).reshape((h_px, w, 4))
-            # Convert BGRA -> RGBA and force opaque alpha for WebView2 surface
+            # Convert BGRA -> RGBA and apply anti-aliased rounded-corner alpha mask
+            # matching overlay.html's 14px CSS border-radius (scaled by window DPI)
+            # so the 4 sharp corner triangles outside the border stay 100% transparent in VR.
             rgba = np.empty_like(bgra)
             rgba[:, :, 0] = bgra[:, :, 2]
             rgba[:, :, 1] = bgra[:, :, 1]
             rgba[:, :, 2] = bgra[:, :, 0]
-            rgba[:, :, 3] = 255
+            dpi_scale = 1.0
+            try:
+                user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+                user32.GetDpiForWindow.restype = wintypes.UINT
+                dpi_val = int(user32.GetDpiForWindow(h) or 96)
+                if dpi_val >= 96:
+                    dpi_scale = dpi_val / 96.0
+            except Exception:
+                pass
+            rad_px = max(0, int(round(corner_radius_logical * dpi_scale)))
+            rgba[:, :, 3] = _get_rounded_rect_alpha_mask(w, h_px, rad_px)
+            # Reject all-black PrintWindow captures (e.g. occluded/unpainted WebView2 behind
+            # Exclusive Fullscreen games or GPU DirectComposition mismatch) so VR never shows
+            # a solid black rectangle and can seamlessly use the native fallback renderer.
+            if int(rgba[:, :, :3].max()) <= 3:
+                return None
             return (rgba.tobytes(), w, h_px)
         finally:
             try:
@@ -585,6 +654,119 @@ def capture_hwnd_rgba(hwnd: Optional[int]) -> Optional[Tuple[bytes, int, int]]:
             user32.ReleaseDC(None, hdc_screen)
     except Exception:
         return None
+
+
+def render_vr_hud_fallback_rgba(
+    mode: str = "normal",
+    agent_name: str = "Aether",
+    state: str = "standby",
+    colors: Optional[Dict[str, str]] = None,
+    caption_lines: Optional[List[str]] = None,
+) -> Tuple[bytes, int, int]:
+    """
+    Renders a crisp, high-contrast native Pillow RGBA HUD card when live WebView2
+    window capture (`PrintWindow`) is unavailable (e.g. desktop HUD hidden via
+    `on_minimize`, occluded behind Exclusive Fullscreen, or GPU driver quirk).
+    Guarantees VR headsets never display a solid black rectangle.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    from ui.dot_overlay import hex_to_rgb
+
+    m = str(mode or "normal").strip().lower()
+    if m == "mini":
+        w, h = 360, 112
+    elif m == "max":
+        w, h = 720, 540
+    else:
+        w, h = 640, 260
+
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    bucket = resolve_status_bucket(state)
+    hex_col = resolve_status_color(state, colors)
+    r, g, b = hex_to_rgb(hex_col)
+    accent = (r, g, b, 255)
+    border_col = (r, g, b, 175)
+
+    # Outer sleek rounded card frame
+    draw.rounded_rectangle([2, 2, w - 3, h - 3], radius=18, fill=(14, 20, 32, 245), outline=border_col, width=3)
+
+    def _load_font(size_px: int, bold: bool = False):
+        candidates = (
+            ("C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\arialbd.ttf")
+            if bold
+            else ("C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\arial.ttf")
+        )
+        for fp in candidates:
+            if os.path.isfile(fp):
+                try:
+                    return ImageFont.truetype(fp, size_px)
+                except Exception:
+                    pass
+        return ImageFont.load_default()
+
+    font_title = _load_font(26 if m == "mini" else 28, bold=True)
+    font_badge = _load_font(20 if m == "mini" else 22, bold=True)
+    font_body = _load_font(22 if m == "normal" else 21, bold=False)
+
+    # Glowing status LED dot
+    led_r = 12 if m == "mini" else 13
+    led_cx = 34
+    led_cy = (h // 2) if m == "mini" else 42
+    draw.ellipse([led_cx - led_r - 4, led_cy - led_r - 4, led_cx + led_r + 4, led_cy + led_r + 4], fill=(r, g, b, 70))
+    draw.ellipse([led_cx - led_r, led_cy - led_r, led_cx + led_r, led_cy + led_r], fill=accent)
+
+    name_clean = str(agent_name or "Aether").strip()[:22]
+    status_label = bucket.upper()
+
+    if m == "mini":
+        draw.text((62, led_cy - 28), name_clean, fill=(238, 244, 255, 255), font=font_title)
+        draw.text((62, led_cy + 4), status_label, fill=accent, font=font_badge)
+    else:
+        # Header bar
+        draw.text((62, 24), name_clean, fill=(238, 244, 255, 255), font=font_title)
+        # Right-aligned status badge
+        try:
+            bbox = draw.textbbox((0, 0), status_label, font=font_badge)
+            tw = bbox[2] - bbox[0]
+        except Exception:
+            tw = len(status_label) * 12
+        draw.text((w - tw - 26, 28), status_label, fill=accent, font=font_badge)
+        draw.line([(20, 74), (w - 20, 74)], fill=(255, 255, 255, 35), width=2)
+
+        # Body lines (latest transcripts / captions or ready hint)
+        lines = [str(ln).strip() for ln in (caption_lines or []) if str(ln).strip()]
+        if not lines:
+            lines = [f"{name_clean} VR HUD active — status: {status_label.lower()}."]
+
+        # Simple word-wrap into available card area
+        max_chars = 46 if m == "normal" else 54
+        wrapped: List[str] = []
+        for raw_ln in lines[-8:]:
+            words = raw_ln.split()
+            cur = ""
+            for wd in words:
+                cand = f"{cur} {wd}".strip() if cur else wd
+                if len(cand) <= max_chars:
+                    cur = cand
+                else:
+                    if cur:
+                        wrapped.append(cur)
+                    cur = wd[:max_chars]
+            if cur:
+                wrapped.append(cur)
+
+        max_rows = 5 if m == "normal" else 14
+        y_cursor = 92
+        line_h = 30
+        for row_txt in wrapped[-max_rows:]:
+            if y_cursor + line_h > h - 16:
+                break
+            draw.text((24, y_cursor), row_txt, fill=(215, 226, 242, 255), font=font_body)
+            y_cursor += line_h
+
+    return (img.tobytes(), w, h)
 
 
 class VROverlayBackend:
@@ -654,11 +836,20 @@ class _D3D11TextureUploader:
       - ID3D11DeviceContext::Flush = 111
     """
 
-    def __init__(self):
+    def __init__(self, adapter_index: int = -1):
         self._device = None
         self._context = None
+        self._adapter_index = int(adapter_index)
         self._textures: Dict[str, Tuple[Any, int, int]] = {}  # key -> (c_void_p, w, h)
         self._init_failed = False
+
+    def set_adapter_index(self, adapter_index: int) -> None:
+        idx = int(adapter_index)
+        if idx != self._adapter_index:
+            self._adapter_index = idx
+            if self._device is not None:
+                self.release_all()
+            self._init_failed = False
 
     @staticmethod
     def _com_call(ptr, slot: int, restype, argtypes, *args):
@@ -667,11 +858,70 @@ class _D3D11TextureUploader:
         fn = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)(vtable[slot])
         return fn(ptr, *args)
 
+    def _resolve_dxgi_adapter(self, adapter_index: int):
+        """Resolves IDXGIAdapter1* for SteamVR's active DXGI adapter index (from getDXGIOutputInfo)."""
+        if adapter_index < 0 or sys.platform != "win32":
+            return None
+        factory = None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [
+                    ("Data1", wintypes.DWORD),
+                    ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD),
+                    ("Data4", ctypes.c_ubyte * 8),
+                ]
+
+            # IID_IDXGIFactory1 = {770aae78-f26f-4dba-a829-253c83d1b387} (verified in dxgi.h)
+            iid_factory1 = GUID(
+                0x770AAE78,
+                0xF26F,
+                0x4DBA,
+                (ctypes.c_ubyte * 8)(0xA8, 0x29, 0x25, 0x3C, 0x83, 0xD1, 0xB3, 0x87),
+            )
+            dxgi = ctypes.WinDLL("dxgi")
+            dxgi.CreateDXGIFactory1.argtypes = [ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)]
+            dxgi.CreateDXGIFactory1.restype = ctypes.c_long
+
+            fac_ptr = ctypes.c_void_p()
+            hr = dxgi.CreateDXGIFactory1(ctypes.byref(iid_factory1), ctypes.byref(fac_ptr))
+            if hr != 0 or not fac_ptr.value:
+                return None
+            factory = fac_ptr
+
+            # IDXGIFactory1::EnumAdapters1 is vtable slot 12 (verified in dxgi.h)
+            adapter_ptr = ctypes.c_void_p()
+            hr2 = self._com_call(
+                factory,
+                12,
+                ctypes.c_long,
+                [wintypes.UINT, ctypes.POINTER(ctypes.c_void_p)],
+                int(adapter_index),
+                ctypes.byref(adapter_ptr),
+            )
+            if hr2 != 0 or not adapter_ptr.value:
+                return None
+            return adapter_ptr
+        except Exception as exc:
+            logger.debug("DXGI adapter %s lookup failed (%r); using default adapter.", adapter_index, exc)
+            return None
+        finally:
+            if factory is not None:
+                try:
+                    from ctypes import wintypes
+                    self._com_call(factory, 2, wintypes.ULONG, [])
+                except Exception:
+                    pass
+
     def _ensure_device(self) -> bool:
         if self._device is not None and self._context is not None:
             return True
         if self._init_failed or sys.platform != "win32":
             return False
+        adapter_ptr = None
         try:
             import ctypes
             from ctypes import wintypes
@@ -680,32 +930,65 @@ class _D3D11TextureUploader:
             dev = ctypes.c_void_p()
             ctx = ctypes.c_void_p()
             fl = wintypes.UINT()
+            D3D_DRIVER_TYPE_UNKNOWN = 0
             D3D_DRIVER_TYPE_HARDWARE = 1
             D3D11_SDK_VERSION = 7
-            hr = d3d11.D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
-                None,
-                0,
-                None,
-                0,
-                D3D11_SDK_VERSION,
-                ctypes.byref(dev),
-                ctypes.byref(fl),
-                ctypes.byref(ctx),
-            )
+
+            # Pin D3D11 device to SteamVR's active DXGI adapter so Direct Mode wired
+            # headsets (e.g. HP Reverb G2 / Oasis on dGPU) never get an iGPU texture!
+            if self._adapter_index >= 0:
+                adapter_ptr = self._resolve_dxgi_adapter(self._adapter_index)
+
+            if adapter_ptr is not None:
+                hr = d3d11.D3D11CreateDevice(
+                    adapter_ptr,
+                    D3D_DRIVER_TYPE_UNKNOWN,
+                    None,
+                    0,
+                    None,
+                    0,
+                    D3D11_SDK_VERSION,
+                    ctypes.byref(dev),
+                    ctypes.byref(fl),
+                    ctypes.byref(ctx),
+                )
+            else:
+                hr = d3d11.D3D11CreateDevice(
+                    None,
+                    D3D_DRIVER_TYPE_HARDWARE,
+                    None,
+                    0,
+                    None,
+                    0,
+                    D3D11_SDK_VERSION,
+                    ctypes.byref(dev),
+                    ctypes.byref(fl),
+                    ctypes.byref(ctx),
+                )
             if hr != 0 or not dev.value or not ctx.value:
                 self._init_failed = True
-                logger.warning("D3D11CreateDevice failed (hr=0x%08x); falling back to SetOverlayRaw.", hr & 0xFFFFFFFF)
+                logger.warning("D3D11CreateDevice failed (adapter=%s, hr=0x%08x); falling back to SetOverlayRaw.", self._adapter_index, hr & 0xFFFFFFFF)
                 return False
             self._device = dev
             self._context = ctx
-            logger.info("Initialized native D3D11 GPU texture uploader for OpenVR (feature_level=0x%x).", fl.value)
+            logger.info(
+                "Initialized native D3D11 GPU texture uploader for OpenVR (adapter=%s, pinned=%s, feature_level=0x%x).",
+                self._adapter_index,
+                adapter_ptr is not None,
+                fl.value,
+            )
             return True
         except Exception as exc:
             self._init_failed = True
             logger.warning("D3D11 uploader unavailable (%r); falling back to SetOverlayRaw.", exc)
             return False
+        finally:
+            if adapter_ptr is not None:
+                try:
+                    from ctypes import wintypes
+                    self._com_call(adapter_ptr, 2, wintypes.ULONG, [])
+                except Exception:
+                    pass
 
     def upload_rgba(self, key: str, rgba_bytes: bytes, width: int, height: int) -> Optional[int]:
         """Uploads straight 32-bit RGBA bytes into a GPU `ID3D11Texture2D` and returns its pointer."""
@@ -860,6 +1143,11 @@ class OpenVROverlayBackend(VROverlayBackend):
 
     def is_runtime_active(self) -> bool:
         if not self.is_available():
+            self._log_once(
+                "no_openvr_pkg",
+                "OpenVR/SteamVR backend unavailable: 'openvr' package is not installed in %s.",
+                sys.executable,
+            )
             return False
         try:
             import openvr
@@ -873,6 +1161,12 @@ class OpenVROverlayBackend(VROverlayBackend):
             self._openvr = openvr
             self._vr_sys = openvr.init(openvr.VRApplication_Overlay)
             self._vr_overlay = openvr.IVROverlay()
+            if self._d3d11 is not None and hasattr(self._vr_sys, "getDXGIOutputInfo"):
+                try:
+                    adapter_idx = int(self._vr_sys.getDXGIOutputInfo())
+                    self._d3d11.set_adapter_index(adapter_idx)
+                except Exception:
+                    pass
             try:
                 l_proj = self._vr_sys.getProjectionRaw(openvr.Eye_Left)
                 r_proj = self._vr_sys.getProjectionRaw(openvr.Eye_Right)
@@ -1162,6 +1456,7 @@ class VROverlayManager:
         self._hud_roll = DEFAULT_VR_SETTINGS["vr_roll"]
         self._wrist_auto_hide = DEFAULT_VR_SETTINGS["vr_wrist_auto_hide"]
         self._wrist_smoothing = DEFAULT_VR_SETTINGS["vr_wrist_smoothing"]
+        self._hmd_smoothing = DEFAULT_VR_SETTINGS["vr_hmd_smoothing"]
         self._hud_pose_dirty = True
         self._hud_recenter_requested = False
         self._hud_recenter_pose: Optional[List[List[float]]] = None
@@ -1171,6 +1466,7 @@ class VROverlayManager:
         self._last_hud_width_m: float = 0.62
         self._smoothed_dot_world_mat: Optional[List[List[float]]] = None
         self._smoothed_hud_world_mat: Optional[List[List[float]]] = None
+        self._smoothed_hmd_pose: Optional[List[List[float]]] = None
         self._last_step_t: Optional[float] = None
         self._dot_refresh_ticks: int = 0
 
@@ -1234,6 +1530,7 @@ class VROverlayManager:
                 "hud_roll": self._hud_roll,
                 "wrist_auto_hide": self._wrist_auto_hide,
                 "wrist_smoothing": self._wrist_smoothing,
+                "hmd_smoothing": self._hmd_smoothing,
             }
 
     def configure_dot(
@@ -1302,6 +1599,7 @@ class VROverlayManager:
         roll_deg: Optional[float] = None,
         wrist_auto_hide: Optional[bool] = None,
         wrist_smoothing: Optional[float] = None,
+        hmd_smoothing: Optional[float] = None,
         vr_runtime: Optional[str] = None,
     ) -> None:
         should_start = False
@@ -1350,6 +1648,12 @@ class VROverlayManager:
                 self._wrist_auto_hide = bool(wrist_auto_hide)
             if wrist_smoothing is not None:
                 self._wrist_smoothing = normalize_vr_wrist_smoothing(wrist_smoothing)
+                self._hud_pose_dirty = True
+                self._dot_pose_dirty = True
+            if hmd_smoothing is not None:
+                self._hmd_smoothing = normalize_vr_hmd_smoothing(hmd_smoothing)
+                if self._hmd_smoothing <= 0.0:
+                    self._smoothed_hmd_pose = None
                 self._hud_pose_dirty = True
                 self._dot_pose_dirty = True
             if vr_runtime is not None and hasattr(self._backend, "set_preference"):
@@ -1438,8 +1742,10 @@ class VROverlayManager:
             self._hud_roll = d["vr_roll"]
             self._wrist_auto_hide = d["vr_wrist_auto_hide"]
             self._wrist_smoothing = d["vr_wrist_smoothing"]
+            self._hmd_smoothing = d["vr_hmd_smoothing"]
             self._smoothed_dot_world_mat = None
             self._smoothed_hud_world_mat = None
+            self._smoothed_hmd_pose = None
             self._hud_pose_dirty = True
             self._hud_recenter_requested = True
             connected = self._connected
@@ -1466,6 +1772,10 @@ class VROverlayManager:
 
     def _ensure_thread_started(self) -> None:
         if not self._backend.is_available():
+            logger.warning(
+                "VR overlay disabled: neither 'openvr' nor Aether OpenXR layer is available in this Python environment (%s).",
+                sys.executable,
+            )
             return
         if self._thread is not None and self._thread.is_alive():
             return
@@ -1514,6 +1824,7 @@ class VROverlayManager:
             hud_roll = self._hud_roll
             wrist_auto_hide = self._wrist_auto_hide
             wrist_smoothing = self._wrist_smoothing
+            hmd_smoothing = self._hmd_smoothing
             hud_pose_dirty = self._hud_pose_dirty
             recenter_req = self._hud_recenter_requested
             recenter_pose = self._hud_recenter_pose
@@ -1533,6 +1844,7 @@ class VROverlayManager:
                 if self._hud_shown_in_vr:
                     self._backend.hide_overlay(self.HUD_KEY)
                     self._hud_shown_in_vr = False
+            self._smoothed_hmd_pose = None
             return 0.25
 
         if not self._connected:
@@ -1560,6 +1872,19 @@ class VROverlayManager:
         dt = 0.016 if self._last_step_t is None else max(0.004, min(0.15, now_t - self._last_step_t))
         self._last_step_t = now_t
 
+        # Compute smoothed HMD world pose once per tick when HMD-locked stabilization is active
+        hmd_smoothed_needed = hmd_smoothing > 0.0 and (
+            (want_dot and dot_anchor == "hmd") or (want_hud and hud_anchor == "hmd")
+        )
+        if hmd_smoothed_needed:
+            raw_hmd_p = self._backend.get_hmd_pose()
+            if raw_hmd_p is not None:
+                self._smoothed_hmd_pose = smooth_matrix34(
+                    self._smoothed_hmd_pose, raw_hmd_p, smoothing=hmd_smoothing, dt=dt
+                )
+        else:
+            self._smoothed_hmd_pose = None
+
         # --- 1. Status Dot Overlay ---
         if want_dot:
             if self._backend.ensure_overlay(self.DOT_KEY, self.DOT_NAME, sort_order=100):
@@ -1574,6 +1899,7 @@ class VROverlayManager:
                             self._hud_recenter_pose = pose
                         dot_pose_dirty = True
 
+                dot_uses_smoothed_hmd = (dot_anchor == "hmd" and hmd_smoothing > 0.0 and self._smoothed_hmd_pose is not None)
                 if dot_pose_dirty or self._last_dot_local_mat is None:
                     fov = self._backend.get_fov_tangents()
                     mat, width_m = resolve_vr_dot_transform(
@@ -1591,7 +1917,7 @@ class VROverlayManager:
                     mat = apply_local_euler_deg(mat, yaw_deg=hud_yaw, pitch_deg=hud_pitch, roll_deg=hud_roll)
                     self._last_dot_local_mat = mat
                     self._last_dot_width_m = width_m
-                    if not (dot_anchor in ("wrist_left", "wrist_right") and wrist_smoothing > 0.0):
+                    if not (dot_anchor in ("wrist_left", "wrist_right") and wrist_smoothing > 0.0) and not dot_uses_smoothed_hmd:
                         self._smoothed_dot_world_mat = None
                         self._backend.set_overlay_transform(self.DOT_KEY, dot_anchor, mat, width_m, curvature=0.0)
 
@@ -1616,6 +1942,11 @@ class VROverlayManager:
                         )
                         self._backend.set_overlay_transform(
                             self.DOT_KEY, "cockpit", self._smoothed_dot_world_mat, self._last_dot_width_m, curvature=0.0
+                        )
+                    elif dot_uses_smoothed_hmd and self._last_dot_local_mat is not None:
+                        dot_world = _mat34_mul(self._smoothed_hmd_pose, self._last_dot_local_mat)
+                        self._backend.set_overlay_transform(
+                            self.DOT_KEY, "cockpit", dot_world, self._last_dot_width_m, curvature=0.0
                         )
 
                     bucket = resolve_status_bucket(dot_state)
@@ -1671,6 +2002,7 @@ class VROverlayManager:
                         hud_pose_dirty = True
 
                 eff_curv = hud_curv if hud_mode in ("normal", "max") else 0.0
+                hud_uses_smoothed_hmd = (hud_anchor == "hmd" and hmd_smoothing > 0.0 and self._smoothed_hmd_pose is not None)
                 if hud_pose_dirty or self._last_hud_local_mat is None:
                     mat, width_m = resolve_vr_hud_transform(
                         anchor=hud_anchor,
@@ -1686,7 +2018,7 @@ class VROverlayManager:
                     )
                     self._last_hud_local_mat = mat
                     self._last_hud_width_m = width_m
-                    if not (hud_anchor in ("wrist_left", "wrist_right") and wrist_smoothing > 0.0):
+                    if not (hud_anchor in ("wrist_left", "wrist_right") and wrist_smoothing > 0.0) and not hud_uses_smoothed_hmd:
                         self._smoothed_hud_world_mat = None
                         self._backend.set_overlay_transform(self.HUD_KEY, hud_anchor, mat, width_m, curvature=eff_curv)
 
@@ -1711,6 +2043,11 @@ class VROverlayManager:
                         )
                         self._backend.set_overlay_transform(
                             self.HUD_KEY, "cockpit", self._smoothed_hud_world_mat, self._last_hud_width_m, curvature=eff_curv
+                        )
+                    elif hud_uses_smoothed_hmd and self._last_hud_local_mat is not None:
+                        hud_world = _mat34_mul(self._smoothed_hmd_pose, self._last_hud_local_mat)
+                        self._backend.set_overlay_transform(
+                            self.HUD_KEY, "cockpit", hud_world, self._last_hud_width_m, curvature=eff_curv
                         )
 
                     need_initial_hud_show = not self._hud_shown_in_vr
@@ -1740,8 +2077,15 @@ class VROverlayManager:
                 or (self._hud_shown_in_vr and hud_anchor in ("wrist_left", "wrist_right"))
             )
         )
-        if wrist_smoothed_active:
-            return 0.016  # ~60 Hz buttery-smooth wrist stabilization
+        hmd_smoothed_active = (
+            hmd_smoothing > 0.0
+            and (
+                (self._dot_shown_in_vr and dot_anchor == "hmd")
+                or (self._hud_shown_in_vr and hud_anchor == "hmd")
+            )
+        )
+        if wrist_smoothed_active or hmd_smoothed_active:
+            return 0.016  # ~60 Hz buttery-smooth wrist / HMD-locked stabilization
         wrist_active = (
             (want_dot and dot_anchor in ("wrist_left", "wrist_right") and wrist_auto_hide)
             or (want_hud and hud_anchor in ("wrist_left", "wrist_right") and wrist_auto_hide)

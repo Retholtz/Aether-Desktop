@@ -257,7 +257,12 @@ def main():
                     if not a.endswith("main.py"):
                         target_args.append(f'"{a}"' if " " in a else a)
             params = " ".join(target_args)
-            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, base_dir, 1)
+            elevate_exe = sys.executable
+            if not is_frozen():
+                venv_py = os.path.join(base_dir, ".venv", "Scripts", "python.exe")
+                if os.path.isfile(venv_py):
+                    elevate_exe = venv_py
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", elevate_exe, params, base_dir, 1)
             if ret > 32:
                 sys.exit(0)
             else:

@@ -1961,6 +1961,12 @@ window.aetherUI = {
         if (vrWristSmoothSlider) vrWristSmoothSlider.value = String(vrWristSmoothPct);
         if (vrWristSmoothDisp) vrWristSmoothDisp.innerText = `${vrWristSmoothPct}%`;
 
+        const vrHmdSmoothPct = Math.round(Number(cfg.ui.vr_hmd_smoothing ?? 0.60) * 100);
+        const vrHmdSmoothSlider = document.getElementById("vrHmdSmoothingSlider");
+        const vrHmdSmoothDisp = document.getElementById("vrHmdSmoothingVal");
+        if (vrHmdSmoothSlider) vrHmdSmoothSlider.value = String(vrHmdSmoothPct);
+        if (vrHmdSmoothDisp) vrHmdSmoothDisp.innerText = `${vrHmdSmoothPct}%`;
+
         const vrStatusHint = document.getElementById("vrDotStatusHint");
         const btnToggleXrLayer = document.getElementById("btnToggleOpenXrLayer");
         const refreshVrStatusUi = () => {
@@ -2041,6 +2047,7 @@ window.aetherUI = {
                 const vrRoll = parseFloat(document.getElementById("vrHudRollSlider")?.value || "0");
                 const vrWristAutoHide = document.getElementById("vrWristAutoHideCheck") ? document.getElementById("vrWristAutoHideCheck").checked : true;
                 const vrWristSmoothing = parseInt(document.getElementById("vrWristSmoothingSlider")?.value || "60", 10) / 100.0;
+                const vrHmdSmoothing = parseInt(document.getElementById("vrHmdSmoothingSlider")?.value || "60", 10) / 100.0;
                 const vrRuntime = document.getElementById("vrRuntimeSelect")?.value || "auto";
                 window.pywebview.api.preview_hud_settings({
                   dot_size: parseInt(document.getElementById("dotSizeSlider")?.value || "22", 10),
@@ -2064,6 +2071,7 @@ window.aetherUI = {
                   vr_hud_roll: vrRoll,
                   vr_wrist_auto_hide: vrWristAutoHide,
                   vr_wrist_smoothing: vrWristSmoothing,
+                  vr_hmd_smoothing: vrHmdSmoothing,
                   vr_runtime: vrRuntime,
                   hud_colors: collectHudColors()
                 });
@@ -2116,6 +2124,10 @@ window.aetherUI = {
             if (vrWristSmoothDisp) vrWristSmoothDisp.innerText = `${vrWristSmoothSlider.value}%`;
             pushHudPreview();
           });
+          vrHmdSmoothSlider?.addEventListener("input", () => {
+            if (vrHmdSmoothDisp) vrHmdSmoothDisp.innerText = `${vrHmdSmoothSlider.value}%`;
+            pushHudPreview();
+          });
           document.getElementById("btnToggleOpenXrLayer")?.addEventListener("click", () => {
             const btn = document.getElementById("btnToggleOpenXrLayer");
             const currentlyEnabled = btn?.dataset?.registered === "1";
@@ -2152,6 +2164,8 @@ window.aetherUI = {
             if (vrWristAutoHideChk) vrWristAutoHideChk.checked = true;
             if (vrWristSmoothSlider) vrWristSmoothSlider.value = "60";
             if (vrWristSmoothDisp) vrWristSmoothDisp.innerText = "60%";
+            if (vrHmdSmoothSlider) vrHmdSmoothSlider.value = "60";
+            if (vrHmdSmoothDisp) vrHmdSmoothDisp.innerText = "60%";
             if (vrRuntimeSel) vrRuntimeSel.value = "auto";
             if (window.pywebview?.api?.reset_vr_settings) {
               window.pywebview.api.reset_vr_settings().catch(() => {});
@@ -2511,6 +2525,7 @@ window.aetherUI = {
           vr_hud_roll: document.getElementById("vrHudRollSlider") ? parseFloat(document.getElementById("vrHudRollSlider").value) : (this.currentConfig?.ui?.vr_hud_roll ?? 0.0),
           vr_wrist_auto_hide: document.getElementById("vrWristAutoHideCheck") ? document.getElementById("vrWristAutoHideCheck").checked : (this.currentConfig?.ui?.vr_wrist_auto_hide ?? true),
           vr_wrist_smoothing: document.getElementById("vrWristSmoothingSlider") ? (parseInt(document.getElementById("vrWristSmoothingSlider").value, 10) / 100.0) : (this.currentConfig?.ui?.vr_wrist_smoothing ?? 0.60),
+          vr_hmd_smoothing: document.getElementById("vrHmdSmoothingSlider") ? (parseInt(document.getElementById("vrHmdSmoothingSlider").value, 10) / 100.0) : (this.currentConfig?.ui?.vr_hmd_smoothing ?? 0.60),
           vr_runtime: document.getElementById("vrRuntimeSelect")?.value || this.currentConfig?.ui?.vr_runtime || "auto",
           hud_colors: {
             standby: document.getElementById("hudColorStandby")?.value || this.currentConfig?.ui?.hud_colors?.standby || "#8e9bb0",

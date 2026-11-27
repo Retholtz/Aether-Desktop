@@ -184,6 +184,41 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     ui_cfg["hud_mode"] = hud_mode
     cfg["hud_mode"] = hud_mode
 
+    def _norm_hud_dims(raw_dims, default_dims):
+        try:
+            if isinstance(raw_dims, (list, tuple)) and len(raw_dims) == 2:
+                w = max(200, min(1920, int(round(float(raw_dims[0])))))
+                h = max(80, min(1200, int(round(float(raw_dims[1])))))
+                return [w, h]
+        except (TypeError, ValueError):
+            pass
+        return list(default_dims)
+
+    ui_cfg["hud_normal_size"] = _norm_hud_dims(ui_cfg.get("hud_normal_size"), (440, 180))
+    ui_cfg["hud_max_size"] = _norm_hud_dims(ui_cfg.get("hud_max_size"), (560, 480))
+
+    raw_positions = ui_cfg.get("hud_positions")
+    had_positions_dict = isinstance(raw_positions, dict)
+    hud_positions = {}
+    for m in ("mini", "normal", "max"):
+        pos = raw_positions.get(m) if had_positions_dict else None
+        if isinstance(pos, (list, tuple)) and len(pos) == 2:
+            try:
+                hud_positions[m] = [int(round(float(pos[0]))), int(round(float(pos[1])))]
+            except (TypeError, ValueError):
+                hud_positions[m] = None
+        else:
+            hud_positions[m] = None
+    if not had_positions_dict and hud_mode in ("mini", "normal", "max"):
+        leg_x = ui_cfg.get("overlay_x")
+        leg_y = ui_cfg.get("overlay_y")
+        if leg_x is not None and leg_y is not None:
+            try:
+                hud_positions[hud_mode] = [int(round(float(leg_x))), int(round(float(leg_y)))]
+            except (TypeError, ValueError):
+                pass
+    ui_cfg["hud_positions"] = hud_positions
+
     # Dot Mode & Custom HUD Status Colors
     from ui.dot_overlay import (
         DEFAULT_HUD_STATUS_COLORS,
@@ -200,6 +235,7 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
         normalize_vr_dot_y,
     )
     from ui.vr_overlay_manager import (
+        normalize_vr_hmd_smoothing,
         normalize_vr_hud_anchor,
         normalize_vr_hud_curvature,
         normalize_vr_hud_depth,
@@ -235,6 +271,7 @@ def sync_config_schema(cfg: Dict[str, Any]) -> Dict[str, Any]:
     ui_cfg["vr_hud_roll"] = normalize_vr_roll(ui_cfg.get("vr_hud_roll", 0.0))
     ui_cfg["vr_wrist_auto_hide"] = bool(ui_cfg.get("vr_wrist_auto_hide", True))
     ui_cfg["vr_wrist_smoothing"] = normalize_vr_wrist_smoothing(ui_cfg.get("vr_wrist_smoothing", 0.60))
+    ui_cfg["vr_hmd_smoothing"] = normalize_vr_hmd_smoothing(ui_cfg.get("vr_hmd_smoothing", 0.60))
     ui_cfg["vr_runtime"] = normalize_vr_runtime(ui_cfg.get("vr_runtime", "auto"))
 
     hud_mode_hotkey = ui_cfg.get("hud_mode_hotkey") or cfg.get("hud_mode_hotkey") or "Ctrl+Space"
