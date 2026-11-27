@@ -190,6 +190,9 @@
                 <button type="button" class="game-subtab-btn" data-game-subtab="controls" role="tab" aria-selected="false">
                   ⚡ Controls &amp; Extensions
                 </button>
+                <button type="button" class="game-subtab-btn" data-game-subtab="memory" role="tab" aria-selected="false">
+                  🧠 Memory
+                </button>
               </div>
 
               <!-- ========================================================= -->
@@ -207,6 +210,10 @@
                       <label class="game-multi-char-label" for="chk-game-multiple-characters" title="When ON, Aether uses screen vision to match the active protagonist from your semicolon-separated callsigns instead of picking randomly.">
                         <input type="checkbox" id="chk-game-multiple-characters" />
                         <span>Multiple Main Characters</span>
+                      </label>
+                      <label class="game-multi-char-label" for="chk-game-economy-mode" title="Toggles between a live open WebSocket (lowest latency) and a cost-effective cached pipeline that significantly reduces API usage at the cost of a small amount of response latency.">
+                        <input type="checkbox" id="chk-game-economy-mode" />
+                        <span>Economy Mode</span>
                       </label>
                       <label for="input-game-callsign" title="Optional in-game callsign(s) separated by ';' (e.g. Michael; Captain; Ace). Leave blank for no callsign.">Callsign:</label>
                       <input type="text" id="input-game-callsign" class="hud-select game-callsign-input" placeholder="Blank (none) or e.g. Michael; Captain" title="Optional in-game callsign(s) separated by ';' (e.g. Michael; Captain; Ace). Leave blank for no callsign." />
@@ -385,11 +392,15 @@
               <div id="game-subtab-intel" class="game-subtab-pane hidden">
                 <!-- 1. Player Goals & Checklists (Full-Width, Expanded Vertical Space) -->
                 <section class="game-card" id="card-game-goals">
-                  <div class="game-card-header">
+                  <div class="game-card-header" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
                     <h3>📝 PLAYER GOALS &amp; CHECKLISTS</h3>
-                    <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span class="field-hint" id="scratchpad-save-status">All changes saved locally</span>
+                      <button type="button" id="btn-edit-game-scratchpad" class="btn-secondary-sm" style="padding: 3px 10px; font-size: 0.76rem;" title="Focus Player Goals to manually edit or clean up notes">✏️ Edit</button>
+                      <button type="button" id="btn-save-game-scratchpad" class="btn-primary-sm" style="padding: 3px 10px; font-size: 0.76rem;" title="Save Player Goals immediately">💾 Save</button>
+                    </div>
                   </div>
-                  <p class="field-hint">Your personal notes, shopping lists, and auto-updated live project trackers. Say <em>"Aether, note down..."</em> or edit directly.</p>
+                  <p class="field-hint">Your personal notes, shopping lists, and auto-updated live project trackers. Say <em>"Aether, note down..."</em> or click <strong>Edit</strong> to modify directly.</p>
                   <textarea id="game-scratchpad-input" class="game-scratchpad-textarea" placeholder="Note active quests, crafting materials required, market trade prices, or system waypoints..."></textarea>
                 </section>
 
@@ -441,6 +452,14 @@
               <!-- SUB-TAB 3: TRIGGERS, MACROS, KEYBINDS & PYTHON EXTENSIONS -->
               <!-- ========================================================= -->
               <div id="game-subtab-controls" class="game-subtab-pane hidden">
+                <!-- Dynamic Game Module Options (e.g. Autodock Enabled) -->
+                <section class="game-card hidden" id="card-game-module-toggles" style="padding: 12px 16px;">
+                  <div class="game-card-header" style="margin-bottom: 8px;">
+                    <h3 style="margin: 0;">🎛️ GAME AUTOMATION OPTIONS</h3>
+                  </div>
+                  <div id="game-module-profile-toggles" class="game-settings-row" style="gap: 14px; flex-wrap: wrap; margin: 0;"></div>
+                </section>
+
                 <!-- Event Triggers (When / If -> Then) Card -->
                 <section class="game-card" id="card-game-triggers">
                   <div class="game-card-header card-header-flex">
@@ -552,6 +571,44 @@
                   </div>
 
                   <div id="game-extensions-list" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                    <!-- Dynamically populated -->
+                  </div>
+                </section>
+              </div>
+
+              <!-- ========================================================= -->
+              <!-- SUB-TAB 4: PER-GAME CROSS-SESSION MEMORY                  -->
+              <!-- ========================================================= -->
+              <div id="game-subtab-memory" class="game-subtab-pane hidden">
+                <section class="game-card">
+                  <div class="game-card-header" style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <h3>🧠 GAME MEMORY &amp; PLAYER PREFERENCES</h3>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                      <label class="game-multi-char-label" for="chk-game-memory-enabled" title="Allows persistence of game-specific memory (allegiances, NPCs, crew, preferences) between sessions and loads it as Aether's baseline at the start of each session. Uncheck for games that do not need cross-session memory (saves tokens).">
+                        <input type="checkbox" id="chk-game-memory-enabled" checked />
+                        <span>Enable Game Memory</span>
+                      </label>
+                      <button type="button" id="btn-clear-game-memories" class="btn-danger-sm" style="padding: 4px 10px; font-size: 0.76rem;">Clear All</button>
+                    </div>
+                  </div>
+                  <p style="color: var(--text-muted); font-size: 0.82rem; margin: 0 0 12px 0;">
+                    Cross-session facts specific to this game (faction allegiances, NPCs / hired crew, rivalries, playstyle preferences, ship/character notes). Aether loads these at the start of every session for this game and automatically archives new ones when sessions end.
+                  </p>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;">
+                    <select id="select-game-memory-category" class="hud-select" style="width: 145px;">
+                      <option value="allegiance">Allegiance</option>
+                      <option value="npc">NPC / Crew</option>
+                      <option value="preference" selected>Preference</option>
+                      <option value="playstyle">Playstyle</option>
+                      <option value="rivalry">Rivalry</option>
+                      <option value="lore">Lore / Stance</option>
+                      <option value="asset">Ship / Asset</option>
+                      <option value="general">General</option>
+                    </select>
+                    <input type="text" id="input-game-memory-fact" class="hud-select" style="flex: 1; min-width: 220px;" placeholder="e.g. Hired SLF pilot is named Stark, or Aligned with the Empire" />
+                    <button type="button" id="btn-add-game-memory" class="btn-primary-sm" style="padding: 6px 14px;">+ Add Memory</button>
+                  </div>
+                  <div id="game-memories-list" style="display: flex; flex-direction: column; gap: 8px;">
                     <!-- Dynamically populated -->
                   </div>
                 </section>
@@ -2000,7 +2057,7 @@
                     <label for="vrHudOffsetXSlider">VR X Axis (Left / Right)</label>
                     <span id="vrHudOffsetXVal" class="slider-val">0.00 m</span>
                   </div>
-                  <input type="range" id="vrHudOffsetXSlider" class="hud-slider" min="-1.5" max="1.5" step="0.02" value="0.0">
+                  <input type="range" id="vrHudOffsetXSlider" class="hud-slider" min="-3.5" max="3.5" step="0.02" value="0.0">
                   <span class="input-hint">Moves the VR overlay left (negative) or right (positive); 0.00 m is dead center.</span>
                 </div>
 
@@ -2009,7 +2066,7 @@
                     <label for="vrHudOffsetYSlider">VR Y Axis (Down / Up)</label>
                     <span id="vrHudOffsetYVal" class="slider-val">-0.12 m</span>
                   </div>
-                  <input type="range" id="vrHudOffsetYSlider" class="hud-slider" min="-1.0" max="1.0" step="0.02" value="-0.12">
+                  <input type="range" id="vrHudOffsetYSlider" class="hud-slider" min="-2.5" max="2.5" step="0.02" value="-0.12">
                   <span class="input-hint">Moves the VR overlay down (negative) or up (positive); 0.00 m is eye level.</span>
                 </div>
 
@@ -2018,7 +2075,7 @@
                     <label for="vrHudDepthSlider">VR Z Axis (Distance)</label>
                     <span id="vrHudDepthVal" class="slider-val">1.25 m</span>
                   </div>
-                  <input type="range" id="vrHudDepthSlider" class="hud-slider" min="0.5" max="3.0" step="0.05" value="1.25">
+                  <input type="range" id="vrHudDepthSlider" class="hud-slider" min="0.3" max="5.0" step="0.05" value="1.25">
                   <span class="input-hint">Focal distance in meters from your eyes (1.1–1.5 m is most comfortable).</span>
                 </div>
 

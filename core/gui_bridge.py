@@ -3212,6 +3212,67 @@ class GuiBridge:
                 normalize_vr_yaw,
             )
             updates = ui_updates if isinstance(ui_updates, dict) else {}
+            # Persist live VR overlay slider adjustments immediately into config so Game Mode
+            # toggles, HUD mode cycles, and restarts always restore the user's last VR position.
+            vr_norm_updates = {}
+            if "vr_dot_enabled" in updates:
+                vr_norm_updates["vr_dot_enabled"] = bool(updates["vr_dot_enabled"])
+            if "vr_dot_anchor" in updates:
+                vr_norm_updates["vr_dot_anchor"] = normalize_vr_dot_anchor(updates["vr_dot_anchor"])
+            if "vr_dot_inset" in updates:
+                vr_norm_updates["vr_dot_inset"] = normalize_vr_dot_inset(updates["vr_dot_inset"])
+            if "vr_dot_x" in updates:
+                vr_norm_updates["vr_dot_x"] = normalize_vr_dot_x(updates["vr_dot_x"])
+            if "vr_dot_y" in updates:
+                vr_norm_updates["vr_dot_y"] = normalize_vr_dot_y(updates["vr_dot_y"])
+            if "vr_dot_depth" in updates:
+                vr_norm_updates["vr_dot_depth"] = normalize_vr_dot_depth(updates["vr_dot_depth"])
+            if "vr_dot_scale" in updates:
+                vr_norm_updates["vr_dot_scale"] = normalize_vr_dot_scale(updates["vr_dot_scale"])
+            if "vr_hud_enabled" in updates:
+                vr_norm_updates["vr_hud_enabled"] = bool(updates["vr_hud_enabled"])
+            if "vr_hud_anchor" in updates:
+                vr_norm_updates["vr_hud_anchor"] = normalize_vr_hud_anchor(updates["vr_hud_anchor"])
+            if "vr_hud_depth" in updates:
+                vr_norm_updates["vr_hud_depth"] = normalize_vr_hud_depth(updates["vr_hud_depth"])
+            if "vr_hud_scale" in updates:
+                vr_norm_updates["vr_hud_scale"] = normalize_vr_hud_scale(updates["vr_hud_scale"])
+            if "vr_hud_offset_x" in updates:
+                vr_norm_updates["vr_hud_offset_x"] = normalize_vr_hud_offset_x(updates["vr_hud_offset_x"])
+            if "vr_hud_offset_y" in updates:
+                vr_norm_updates["vr_hud_offset_y"] = normalize_vr_hud_offset_y(updates["vr_hud_offset_y"])
+            if "vr_hud_curvature" in updates:
+                vr_norm_updates["vr_hud_curvature"] = normalize_vr_hud_curvature(updates["vr_hud_curvature"])
+            if "vr_hud_yaw" in updates:
+                vr_norm_updates["vr_hud_yaw"] = normalize_vr_yaw(updates["vr_hud_yaw"])
+            if "vr_hud_pitch" in updates:
+                vr_norm_updates["vr_hud_pitch"] = normalize_vr_pitch(updates["vr_hud_pitch"])
+            if "vr_hud_roll" in updates:
+                vr_norm_updates["vr_hud_roll"] = normalize_vr_roll(updates["vr_hud_roll"])
+            if "vr_wrist_auto_hide" in updates:
+                vr_norm_updates["vr_wrist_auto_hide"] = bool(updates["vr_wrist_auto_hide"])
+            if "vr_wrist_smoothing" in updates:
+                vr_norm_updates["vr_wrist_smoothing"] = normalize_vr_wrist_smoothing(updates["vr_wrist_smoothing"])
+            if "vr_hmd_smoothing" in updates:
+                vr_norm_updates["vr_hmd_smoothing"] = normalize_vr_hmd_smoothing(updates["vr_hmd_smoothing"])
+            if "vr_runtime" in updates:
+                from ui.openxr_overlay_backend import normalize_vr_runtime
+                vr_norm_updates["vr_runtime"] = normalize_vr_runtime(updates["vr_runtime"])
+
+            if vr_norm_updates and isinstance(getattr(self, "_config", None), dict):
+                lock = getattr(self, "_config_lock", None)
+                if lock is not None:
+                    with lock:
+                        ui_cfg = self._config.setdefault("ui", {})
+                        changed = any(ui_cfg.get(k) != v for k, v in vr_norm_updates.items())
+                        if changed:
+                            ui_cfg.update(vr_norm_updates)
+                            if getattr(self, "_config_path", None):
+                                save_config_atomic(self._config, self._config_path)
+                else:
+                    ui_cfg = self._config.setdefault("ui", {})
+                    ui_cfg.update(vr_norm_updates)
+
             hud_b = getattr(self, "_hud_bridge", None)
             if "hud_colors" in updates:
                 clean_colors = sanitize_hud_colors(updates["hud_colors"])
@@ -3283,10 +3344,11 @@ class GuiBridge:
                 self._game_hud_override_game_id = None
                 prev_mode = saved.get("mode", "normal")
                 prev_vis = bool(saved.get("visible", False))
-                self.set_mode(prev_mode, persist=False)
+                self._current_hud_mode = prev_mode
                 if prev_vis:
                     self.show_overlay()
                 else:
+                    self.set_mode(prev_mode, persist=False)
                     self.hide_overlay()
             return
 
@@ -4423,6 +4485,67 @@ class GuiBridge:
             from core.document_viewer import clear_active_viewer_document as _clear_active
             _clear_active()
             return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_game_memories(self, game_id: str) -> dict:
+        """Returns persisted per-game cross-session memories and toggle state for `game_id`."""
+        try:
+            mems = self.game_mgr.get_game_memories(game_id)
+            enabled = self.game_mgr.get_game_memory_enabled(game_id)
+            return {"success": True, "memories": mems, "game_memory_enabled": enabled}
+        except Exception as e:
+            return {"success": False, "error": str(e), "memories": [], "game_memory_enabled": True}
+
+    def set_game_memory_enabled(self, game_id: str, enabled: bool) -> dict:
+        """Enables or disables per-game cross-session memory persistence & injection."""
+        try:
+            return self.game_mgr.set_game_memory_enabled(game_id, bool(enabled))
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_game_profile_toggles(self, game_id: str) -> dict:
+        """Returns declarative per-game module toggles (e.g. Autodock Enabled) and their current states."""
+        try:
+            return {"success": True, "toggles": self.game_mgr.get_module_profile_toggles(game_id)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "toggles": []}
+
+    def set_game_profile_flag(self, game_id: str, flag_key: str, enabled: bool) -> dict:
+        """Persists a declarative per-game boolean toggle on the game profile."""
+        try:
+            return self.game_mgr.set_game_profile_flag(game_id, flag_key, bool(enabled))
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def set_game_economy_mode(self, game_id: str, enabled: bool) -> dict:
+        """Enables or disables per-game Economy Mode (cached Modular Flash PTT vs Live WebSocket)."""
+        try:
+            res = self.game_mgr.set_economy_mode(game_id, bool(enabled))
+            if res.get("success") and getattr(self, "engine", None) and hasattr(self.engine, "request_pipeline_sync"):
+                self.engine.request_pipeline_sync(reason=f"Economy Mode {'ON' if enabled else 'OFF'}")
+            return res
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def add_game_memory(self, game_id: str, fact: str, category: str = "preference") -> dict:
+        """Adds a manual per-game cross-session memory fact for `game_id`."""
+        try:
+            return self.game_mgr.add_game_memory(game_id, fact, category=category, source="user")
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_game_memory(self, game_id: str, memory_id: str) -> dict:
+        """Deletes a single per-game memory entry by id."""
+        try:
+            return self.game_mgr.delete_game_memory(game_id, memory_id)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def clear_game_memories(self, game_id: str) -> dict:
+        """Clears all per-game memory entries for `game_id`."""
+        try:
+            return self.game_mgr.clear_game_memories(game_id)
         except Exception as e:
             return {"success": False, "error": str(e)}
 

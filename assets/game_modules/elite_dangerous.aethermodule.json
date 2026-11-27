@@ -68,6 +68,8 @@
     "Interdicted",
     "EscapeInterdiction",
     "UnderAttack",
+    "HullDamage",
+    "RepairAll",
     "Bounty",
     "HeatWarning",
     "JetConeBoost",
@@ -86,6 +88,13 @@
     "CarrierJumpRequest",
     "CarrierJump",
     "Disembark"
+  ],
+  "profile_toggles": [
+    {
+      "key": "autodock_enabled",
+      "label": "Autodock Enabled (Zero Throttle After Request Docking)",
+      "tooltip": "When checked, the Request Docking macro automatically triggers All Stop (0% throttle) after requesting docking clearance so your Docking Computer takes over immediately."
+    }
   ],
   "trigger_events": [
     { "category": "Navigation & Travel", "event": "StartJump", "label": "Charging Jump (StartJump)", "description": "Fires when initiating a hyperspace or supercruise jump." },
@@ -185,9 +194,9 @@
       "condition": "",
       "action_type": "ui_task",
       "action_label": "Refuel, Repair & Restock (Single Pass)",
-      "description": "In one fast pass after docking, moves to the Refuel icon and activates Refuel, Repair, and Restock in sequence using your synced UI keys (yields immediately if you move your mouse).",
-      "goal": "On the station main menu, activate Refuel, Repair, and Restock in a single fast pass (move to Refuel once, then batch Select, UI Right, Select, UI Right, Select using synced UI keys; skip any that are already disabled/0 CR and stop immediately without closing the station menu)",
-      "delay_ms": 3200,
+      "description": "In one fast pass after docking, verifies cursor highlight, moves UP to the Refuel icon, and activates Refuel, Repair, and Restock in sequence using your synced UI keys (yields immediately if you move your mouse).",
+      "goal": "On the station or construction main menu, FIRST verify which button is currently highlighted (it normally starts on Starport/Construction Services — NEVER press Space while Starport/Construction Services is highlighted!). Press Up Arrow first to move highlight onto the top-left Refuel icon, then activate Refuel, UI Right, Repair, UI Right, Restock using synced UI keys; skip any disabled/0 CR buttons and stop immediately without closing the station menu",
+      "delay_ms": 5200,
       "cooldown_sec": 20,
       "enabled": false
     },
@@ -810,6 +819,62 @@
           "abort_if_not_found": true
         }
       ]
+    },
+    "engage supercruise assist": {
+      "description": "Engage Supercruise Assist on the currently locked destination via the Left Navigation panel (requires Supercruise + locked destination)",
+      "condition": "state.supercruise and state.destination_name",
+      "condition_skip_ack": "I'm afraid I can't do that, Dave — lock in a destination target while in supercruise first.",
+      "ack": "Engaging Supercruise Assist on your locked target.",
+      "aliases": ["supercruise assist", "engage super cruise assist", "activate supercruise assist", "turn on supercruise assist"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "ui_task",
+          "goal": "Open the Left Navigation panel (the currently locked target is highlighted automatically), select the locked target, move to the Supercruise Assist icon, activate it, and close the panel",
+          "preferred_input": "keyboard",
+          "max_steps": 5,
+          "abort_if_not_found": true
+        }
+      ]
+    },
+    "request docking": {
+      "description": "Open the Left Panel, switch to Contacts, select the station/carrier, and request docking clearance (automatically zeros throttle at the end if Autodock Enabled is checked)",
+      "condition": "!state.docked and !state.supercruise",
+      "condition_skip_ack": "We need to be in normal space near a station or carrier (not docked or in supercruise) to request docking.",
+      "ack": "Transmitting docking request now, Commander.",
+      "aliases": ["docking request", "ask for docking", "request landing clearance", "request docking clearance"],
+      "sync": true,
+      "steps": [
+        {
+          "action": "ui_task",
+          "goal": "Request Docking",
+          "preferred_input": "keyboard",
+          "max_steps": 5,
+          "abort_if_not_found": true
+        },
+        {
+          "action": "wait",
+          "ms": 400,
+          "if_profile_flag": "autodock_enabled"
+        },
+        {
+          "action": "trigger_bind",
+          "phrase": "all stop",
+          "if_profile_flag": "autodock_enabled",
+          "delay_ms": 150
+        }
+      ]
+    }
+  },
+  "chat_channels": {
+    "open_bind": "comms panel",
+    "close_key": "escape",
+    "prefixes": {
+      "local": "/l ",
+      "system": "/sy ",
+      "squadron": "/s ",
+      "wing": "/w ",
+      "direct": "/d "
     }
   },
   "companion_resources": {
@@ -1160,7 +1225,8 @@
       "max_jump_range": null,
       "legal_status": "Clean",
       "pips": [2.0, 2.0, 2.0],
-      "gui_focus": 0
+      "gui_focus": 0,
+      "destination_name": null
     },
     "initial_flags": {
       "docked": false,
@@ -1186,7 +1252,8 @@
     "status_fields": {
       "fuel_main": "Fuel.FuelMain",
       "pips": { "path": "Pips", "list_scale": 0.5 },
-      "gui_focus": "GuiFocus"
+      "gui_focus": "GuiFocus",
+      "destination_name": { "path": "Destination.Name", "allow_none": true }
     },
     "computed_ratios": {
       "fuel_pct": { "numerator": "fuel_main", "denominator": "fuel_capacity", "scale": 100.0 }

@@ -15,7 +15,7 @@ let callsignDebounceTimer = null;
 let suppressAlertsDebounceTimer = null;
 
 function switchGameSubtab(tabKey) {
-    const valid = ['settings', 'intel', 'controls'];
+    const valid = ['settings', 'intel', 'controls', 'memory'];
     const target = valid.includes(tabKey) ? tabKey : 'settings';
     activeGameSubtab = target;
     document.querySelectorAll('.game-subtab-btn').forEach(btn => {
@@ -27,8 +27,198 @@ function switchGameSubtab(tabKey) {
         const pane = document.getElementById(`game-subtab-${k}`);
         if (pane) pane.classList.toggle('hidden', k !== target);
     });
+    if (target === 'memory' && activeGameId) {
+        refreshGameMemories(activeGameId);
+    }
 }
 window.switchGameSubtab = switchGameSubtab;
+
+let _gameMemoryControlsWired = false;
+
+async function refreshModuleProfileToggles(gameId) {
+    const card = document.getElementById('card-game-module-toggles');
+    const container = document.getElementById('game-module-profile-toggles');
+    if (!container) return;
+    if (!gameId || !window.pywebview?.api?.get_game_profile_toggles) {
+        if (card) card.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+    }
+    try {
+        const res = await window.pywebview.api.get_game_profile_toggles(gameId);
+        const toggles = (res && res.success && Array.isArray(res.toggles)) ? res.toggles : [];
+        if (!toggles.length || activeGameId !== gameId) {
+            if (card) card.classList.add('hidden');
+            container.innerHTML = '';
+            return;
+        }
+        container.innerHTML = '';
+        toggles.forEach(t => {
+            const lbl = document.createElement('label');
+            lbl.className = 'game-multi-char-label';
+            lbl.title = t.tooltip || '';
+            const chk = document.createElement('input');
+            chk.type = 'checkbox';
+            chk.checked = Boolean(t.enabled);
+            chk.addEventListener('change', async () => {
+                if (!window.pywebview?.api?.set_game_profile_flag) return;
+                const r = await window.pywebview.api.set_game_profile_flag(gameId, t.key, Boolean(chk.checked));
+                if (r && r.success && currentGamesData?.profiles?.[gameId]) {
+                    currentGamesData.profiles[gameId][t.key] = Boolean(chk.checked);
+                }
+            });
+            const span = document.createElement('span');
+            span.textContent = t.label || t.key;
+            lbl.appendChild(chk);
+            lbl.appendChild(span);
+            container.appendChild(lbl);
+        });
+        if (card) card.classList.remove('hidden');
+    } catch (e) {
+        console.error('Failed loading module profile toggles:', e);
+    }
+}
+
+async function refreshGameMemories(gameId) {
+    if (!gameId || !window.pywebview?.api?.get_game_memories) return;
+    try {
+        const res = await window.pywebview.api.get_game_memories(gameId);
+        if (res && res.success) {
+            const mems = Array.isArray(res.memories) ? res.memories : [];
+            const enabled = res.game_memory_enabled !== false;
+            if (currentGamesData?.profiles?.[gameId]) {
+                currentGamesData.profiles[gameId].game_memories = mems;
+                currentGamesData.profiles[gameId].game_memory_enabled = enabled;
+            }
+            if (activeGameId === gameId) {
+                const chk = document.getElementById('chk-game-memory-enabled');
+                if (chk) chk.checked = enabled;
+                renderGameMemoriesList(mems);
+            }
+        }
+    } catch (e) {
+        console.error('Failed loading game memories:', e);
+    }
+}
+
+function renderGameMemoriesList(memories) {
+    const listEl = document.getElementById('game-memories-list');
+    if (!listEl) return;
+    const items = Array.isArray(memories) ? memories : [];
+    if (!items.length) {
+        listEl.innerHTML = `<div style="color: var(--text-muted); font-size: 0.84rem; padding: 12px; border: 1px dashed rgba(255,255,255,0.12); border-radius: 6px; text-align: center;">No game-specific memories saved yet. Add allegiances or preferences above, or let Aether archive them automatically at the end of game sessions.</div>`;
+        return;
+    }
+    listEl.innerHTML = '';
+    items.slice().reverse().forEach(m => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;';
+        const cat = String(m.category || 'preference').toUpperCase();
+        const srcBadge = m.source === 'reflexion' ? 'AUTO' : 'MANUAL';
+        const left = document.createElement('div');
+        left.style.cssText = 'display:flex; align-items:center; gap:8px; flex:1; min-width:0; flex-wrap:wrap;';
+        left.innerHTML = `
+            <span class="badge-status badge-info" style="font-size:0.68rem; padding:2px 6px;">${escapeGameHtml(cat)}</span>
+            <span style="font-size:0.66rem; opacity:0.6; letter-spacing:0.04em;">${srcBadge}</span>
+            <span style="font-size:0.85rem; color:var(--text-primary); word-break:break-word;">${escapeGameHtml(m.fact || '')}</span>
+        `;
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'btn-danger-sm';
+        delBtn.style.cssText = 'padding:2px 8px; font-size:0.74rem; flex-shrink:0;';
+        delBtn.textContent = '✕';
+        delBtn.title = 'Delete memory';
+        delBtn.onclick = async () => {
+            if (!activeGameId || !window.pywebview?.api?.delete_game_memory) return;
+            await window.pywebview.api.delete_game_memory(activeGameId, m.id);
+            await refreshGameMemories(activeGameId);
+        };
+        row.appendChild(left);
+        row.appendChild(delBtn);
+        listEl.appendChild(row);
+    });
+}
+
+function wireGameMemoriesControls() {
+    if (_gameMemoryControlsWired) return;
+    _gameMemoryControlsWired = true;
+    const addBtn = document.getElementById('btn-add-game-memory');
+    const factInput = document.getElementById('input-game-memory-fact');
+    const catSelect = document.getElementById('select-game-memory-category');
+    const clearBtn = document.getElementById('btn-clear-game-memories');
+    const enabledChk = document.getElementById('chk-game-memory-enabled');
+
+    // Wire explicit Edit & Save buttons on Player Goals & Checklists
+    const spEditBtn = document.getElementById('btn-edit-game-scratchpad');
+    const spSaveBtn = document.getElementById('btn-save-game-scratchpad');
+    const spInput = document.getElementById('game-scratchpad-input');
+    const spStatus = document.getElementById('scratchpad-save-status');
+    if (spEditBtn && spInput) {
+        spEditBtn.addEventListener('click', () => {
+            spInput.readOnly = false;
+            spInput.focus();
+            spInput.setSelectionRange(spInput.value.length, spInput.value.length);
+            if (spStatus) spStatus.textContent = 'Editing...';
+        });
+    }
+    if (spSaveBtn && spInput) {
+        spSaveBtn.addEventListener('click', async () => {
+            if (!activeGameId || !window.pywebview?.api?.save_game_scratchpad) return;
+            try {
+                if (spStatus) spStatus.textContent = 'Saving...';
+                const res = await window.pywebview.api.save_game_scratchpad(activeGameId, spInput.value);
+                if (res && res.success) {
+                    if (currentGamesData?.profiles?.[activeGameId]) {
+                        currentGamesData.profiles[activeGameId].scratchpad_raw = spInput.value;
+                    }
+                    if (spStatus) spStatus.textContent = 'Saved ✓';
+                }
+            } catch (err) {
+                console.error('Failed saving scratchpad:', err);
+                if (spStatus) spStatus.textContent = 'Save failed';
+            }
+        });
+    }
+
+    if (enabledChk) {
+        enabledChk.addEventListener('change', async () => {
+            if (!activeGameId || !window.pywebview?.api?.set_game_memory_enabled) return;
+            const enabled = Boolean(enabledChk.checked);
+            const res = await window.pywebview.api.set_game_memory_enabled(activeGameId, enabled);
+            if (res && res.success && currentGamesData?.profiles?.[activeGameId]) {
+                currentGamesData.profiles[activeGameId].game_memory_enabled = enabled;
+            }
+        });
+    }
+
+    const doAdd = async () => {
+        if (!activeGameId || !factInput || !window.pywebview?.api?.add_game_memory) return;
+        const fact = (factInput.value || '').trim();
+        if (!fact) return;
+        const cat = catSelect ? catSelect.value : 'preference';
+        const res = await window.pywebview.api.add_game_memory(activeGameId, fact, cat);
+        if (res && res.success) {
+            factInput.value = '';
+            await refreshGameMemories(activeGameId);
+        }
+    };
+    if (addBtn) addBtn.addEventListener('click', doAdd);
+    if (factInput) {
+        factInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                doAdd();
+            }
+        });
+    }
+    if (clearBtn) {
+        clearBtn.addEventListener('click', async () => {
+            if (!activeGameId || !window.pywebview?.api?.clear_game_memories) return;
+            await window.pywebview.api.clear_game_memories(activeGameId);
+            await refreshGameMemories(activeGameId);
+        });
+    }
+}
 
 function openRenameGameInline() {
     if (!activeGameId || !currentGamesData?.profiles?.[activeGameId]) return;
@@ -344,6 +534,23 @@ function renderActiveGameDetail() {
         multiCharChk.checked = Boolean(profile.multiple_main_characters);
     }
 
+    const econChk = document.getElementById('chk-game-economy-mode');
+    if (econChk) {
+        econChk.checked = Boolean(profile.economy_mode);
+        econChk.onchange = async () => {
+            if (!activeGameId || !window.pywebview?.api?.set_game_economy_mode) return;
+            const enabled = Boolean(econChk.checked);
+            try {
+                const res = await window.pywebview.api.set_game_economy_mode(activeGameId, enabled);
+                if (res && res.success) {
+                    profile.economy_mode = enabled;
+                }
+            } catch (err) {
+                console.error("Failed setting game Economy Mode:", err);
+            }
+        };
+    }
+
     const callsignInput = document.getElementById('input-game-callsign');
     if (callsignInput) {
         const defaultCallsign = (profile.callsign !== undefined && profile.callsign !== null)
@@ -467,6 +674,15 @@ function renderActiveGameDetail() {
 
     // Tier 2 Community Python Extensions (SHA-256 Opt-In)
     refreshGameExtensions();
+
+    // Per-Game Cross-Session Memory (Sub-Tab 4)
+    const memEnabledChk = document.getElementById('chk-game-memory-enabled');
+    if (memEnabledChk) {
+        memEnabledChk.checked = profile.game_memory_enabled !== false;
+    }
+    renderGameMemoriesList(Array.isArray(profile.game_memories) ? profile.game_memories : []);
+    wireGameMemoriesControls();
+    refreshModuleProfileToggles(activeGameId);
 
     // Keybinds Table (with live filter + count badge)
     renderKeybindsTable(profile);

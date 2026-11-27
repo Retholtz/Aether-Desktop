@@ -38,8 +38,8 @@ class TestVRDotMathAndNormalization(unittest.TestCase):
         self.assertEqual(normalize_vr_dot_inset(1.5), 0.90)
         self.assertEqual(normalize_vr_dot_inset(0.62), 0.62)
 
-        self.assertEqual(normalize_vr_dot_depth(0.1), 0.50)
-        self.assertEqual(normalize_vr_dot_depth(10.0), 3.00)
+        self.assertEqual(normalize_vr_dot_depth(0.1), 0.30)
+        self.assertEqual(normalize_vr_dot_depth(10.0), 5.00)
         self.assertEqual(normalize_vr_dot_depth(1.4), 1.40)
 
         self.assertEqual(normalize_vr_dot_scale(0.1), 0.50)
@@ -147,7 +147,7 @@ class TestVRDotConfigAndBridgeWiring(unittest.TestCase):
         self.assertFalse(ui["vr_dot_enabled"])
         self.assertEqual(ui["vr_dot_anchor"], "cockpit")
         self.assertEqual(ui["vr_dot_inset"], 0.90)
-        self.assertEqual(ui["vr_dot_depth"], 0.50)
+        self.assertEqual(ui["vr_dot_depth"], 0.30)
         self.assertEqual(ui["vr_dot_scale"], 2.50)
 
     def test_vr_dot_overlay_state_and_bridge_preview(self):

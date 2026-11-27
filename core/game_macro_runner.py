@@ -225,7 +225,22 @@ class MacroRunner:
         Evaluates preconditions using telemetry state flags when available.
         """
         clean_phrase = str(phrase or "").lower().strip().strip(".,!?;:\"'")
-        state_flags = telemetry_adapter.get_state_flags() if telemetry_adapter else {}
+        # Merge live telemetry state (e.g. destination_name, fuel_pct) with boolean state_flags
+        # so conditions like `state.supercruise and state.destination_name` evaluate accurately!
+        state_flags: Dict[str, Any] = {}
+        if telemetry_adapter:
+            try:
+                live_st = telemetry_adapter.get_live_state() if hasattr(telemetry_adapter, "get_live_state") else {}
+                if isinstance(live_st, dict):
+                    state_flags.update(live_st)
+            except Exception:
+                pass
+            try:
+                fl = telemetry_adapter.get_state_flags() if hasattr(telemetry_adapter, "get_state_flags") else {}
+                if isinstance(fl, dict):
+                    state_flags.update(fl)
+            except Exception:
+                pass
 
         # Merge module default sequences with user profile sequences (profile wins; respect disabled defaults)
         disabled_seqs = {str(x).lower().strip() for x in (profile.get("disabled_module_sequences") or [])}
@@ -562,6 +577,9 @@ class MacroRunner:
                 if self._abort_event.is_set():
                     return {"status": "aborted", "action": name, "message": f"Sequence '{name}' aborted."}
                 if not isinstance(step, dict):
+                    continue
+                req_flag = step.get("if_profile_flag")
+                if req_flag and not bool(profile.get(str(req_flag))):
                     continue
                 err = self._execute_single_step(
                     step, profile, vision_client=vision_client, model_endpoint=model_endpoint

@@ -1674,8 +1674,10 @@ class AetherEngine:
         """Returns True if Aether is currently operating in Tabletop Role Play (Live DM) mode."""
         return bool(getattr(self, "_ttrpg_session_active", False))
 
-    def _get_tier1_fast_model(self) -> str:
-        """Returns the resolved non-live REST model ID from Settings (Tier 2 Moderate when Tier 1 is Live)."""
+    def _get_tier1_fast_model(self, prefer_fast: bool = False) -> str:
+        """Returns the resolved non-live REST model ID from Settings (or fast Flash when prefer_fast=True)."""
+        if prefer_fast:
+            return "gemini-3.8-flash"
         try:
             from core.model_discovery import resolve_model_profile, get_configured_tier2_model
             cfg = self.config_getter() if callable(self.config_getter) else {}
@@ -1687,10 +1689,61 @@ class AetherEngine:
             return get_configured_tier2_model(cfg)[0]
         except Exception:
             pass
-        return "gemini-4-hydrogen"
+        return "gemini-3.8-flash"
+
+    def is_game_economy_mode_active(self) -> bool:
+        """
+        Returns True when Game Mode is active AND the active game has Economy Mode enabled.
+        Economy Mode routes in-game voice through the cached Modular Flash pipeline (~$0.15-$0.25/hr,
+        90% context caching + $0 fast-path macros + tiny Data Pops) instead of uncached Live WebSocket.
+        """
+        gm_active = bool(
+            (getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active())
+            or (getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
+        )
+        if not gm_active:
+            return False
+        mgr = getattr(self, "game_mgr", None) or getattr(getattr(self, "game_engine", None), "manager", None)
+        if mgr is not None and hasattr(mgr, "get_economy_mode"):
+            try:
+                return bool(mgr.get_economy_mode())
+            except Exception:
+                return False
+        return False
+
+    def _desired_pipeline_mode(self) -> str:
+        """Resolves whether the engine should run 'modular' or 'live' given config, TTRPG, and Game Economy Mode."""
+        cfg = self.config_getter() if callable(self.config_getter) else {}
+        api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
+        raw_mode = str(api_cfg.get("pipeline_mode") or cfg.get("pipeline_mode") or "live").strip().lower()
+        if raw_mode == "modular" or self.is_ttrpg_session_active() or self.is_game_economy_mode_active():
+            return "modular"
+        return "live"
+
+    def request_pipeline_sync(self, reason: str = "") -> bool:
+        """
+        Hot-switches between Live WebSocket and Modular Flash pipelines without restarting audio
+        whenever Economy Mode or Game Mode transitions change `_desired_pipeline_mode()`.
+        """
+        if not getattr(self, "is_running", False):
+            return False
+        desired = self._desired_pipeline_mode()
+        current = getattr(self, "_active_pipeline_mode", None)
+        if not current or desired == current:
+            return False
+        logger.info(f"[PIPELINE SYNC] Hot-switching pipeline {current} -> {desired} ({reason or 'mode changed'})")
+        self._pipeline_switch_requested = True
+        # Wake modular wait loop if sleeping on queues
+        loop = getattr(self, "_loop", None)
+        if loop is not None and loop.is_running() and hasattr(self, "_text_queue") and self._text_queue is not None:
+            try:
+                loop.call_soon_threadsafe(self._text_queue.put_nowait, "")
+            except Exception:
+                pass
+        return True
 
     def _get_active_cortex_profile(self) -> str:
-        """Returns the active Cortex model/thinking profile (TTRPG profile when Adventure is active, else Primary)."""
+        """Returns the active Cortex model/thinking profile (TTRPG, Game Economy Flash, or Primary)."""
         cfg = self.config_getter() if callable(self.config_getter) else {}
         api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
         if self.is_ttrpg_session_active():
@@ -1699,6 +1752,8 @@ class AetherEngine:
                 or api_cfg.get("ttrpg_model_id")
                 or "gemini-4-hydrogen:medium"
             )
+        if self.is_game_economy_mode_active():
+            return "gemini-3.8-flash:instant"
         prof = (
             cfg.get("primary_model_endpoint")
             or api_cfg.get("model_id")
@@ -1706,7 +1761,7 @@ class AetherEngine:
             or "gemini-4-hydrogen:instant"
         )
         if "live" in str(prof).lower():
-            return "gemini-4-hydrogen:instant"
+            return "gemini-3.8-flash:instant"
         return prof
 
     def set_ttrpg_session_active(self, active: bool) -> None:
@@ -2638,8 +2693,17 @@ class AetherEngine:
         Public entrypoint for background monitors and Reflexion to alert the user.
         Gated by active conversation state.
         """
-        # If the user is currently speaking or TTS is actively playing, defer chime to avoid audio overlap
-        suppress_chime = getattr(self, "is_speaking", False) or getattr(self, "is_audio_streaming", False)
+        # Suppress Windows MessageBeep ding when speaking, streaming, or in Game Mode / Co-Pilot callouts
+        in_game_mode = bool(
+            (getattr(self, "game_engine", None) and self.game_engine.is_game_mode_active())
+            or (getattr(self, "game_mgr", None) and self.game_mgr.is_game_mode_active())
+        )
+        suppress_chime = (
+            getattr(self, "is_speaking", False)
+            or getattr(self, "is_audio_streaming", False)
+            or in_game_mode
+            or str(source or "").lower() in ("co-pilot", "copilot", "game", "telemetry")
+        )
 
         title = f"Aether Alert • {source}"
         print(f"[PROACTIVE] Dispatching notification from {source}: {alert_text}")
@@ -2957,8 +3021,9 @@ class AetherEngine:
 
     async def inject_tactical_alert(self, prompt: str) -> None:
         """
-        Injects a concise co-pilot telemetry directive into the active Flash Live
-        session, falling back to concise TTS feedback when Live is unavailable.
+        Delivers a concise co-pilot telemetry alert / Chit-Chat remark via a lightweight
+        stateless Flash call (`thinking_budget=0`) + local TTS instead of injecting into
+        the heavy 20k-token Gemini Live WebSocket (saves ~98% tokens per proactive callout).
         """
         clean_prompt = (prompt or "").strip()
         if not clean_prompt or not getattr(self, "is_running", False):
@@ -2968,54 +3033,66 @@ class AetherEngine:
             logger.debug("[TELEMETRY] Deferred tactical alert while assistant is speaking.")
             return
 
-        active_session = getattr(self, "session", None) or getattr(self, "live_session", None)
-        if active_session is not None and hasattr(active_session, "send_client_content"):
-            try:
-                content = types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=clean_prompt)]
-                )
-                await active_session.send_client_content(turns=[content], turn_complete=True)
-                logger.info(f"[TELEMETRY] Injected tactical directive into Flash Live: {clean_prompt}")
-                return
-            except Exception as live_err:
-                logger.warning(f"[TELEMETRY] Live tactical injection failed, falling back to TTS: {live_err}")
-
-        # Fallback when Live session is not connected (e.g., modular pipeline or standby)
         callout_text = clean_prompt
-        if callout_text.startswith("Co-pilot alert:"):
+        needs_llm = any(
+            marker in clean_prompt
+            for marker in (
+                "[COMPANION CHIT-CHAT]",
+                "[IN-GAME CHAT RELAY",
+                "[AUTO-TRIGGER CALLOUT]",
+                "Warn the ",
+                "Notify the ",
+                "Mention briefly",
+                "Announce ",
+                "Briefly ",
+            )
+        )
+        if callout_text.startswith("[AUTO-TRIGGER CALLOUT]"):
+            # Extract clean literal message as safe fallback if LLM call ever fails
+            if "right now:" in callout_text:
+                callout_text = callout_text.split("right now:", 1)[1].strip()
+        elif not needs_llm and callout_text.startswith("Co-pilot alert:"):
             callout_text = callout_text[len("Co-pilot alert:"):].strip()
-        for suffix in (
-            "Warn the player in 8 words or less.",
-            "Give a brief 6-word tactical warning.",
-            "Warn the pilot immediately in 6 words.",
-            "Warn the player in 6 words.",
-            "Notify the pilot briefly.",
-            "Mention briefly.",
-        ):
-            callout_text = callout_text.replace(suffix, "").strip()
 
         cli = getattr(self, "client", None) or getattr(self, "genai_client", None)
-        if cli is not None:
+        if needs_llm and cli is not None:
             try:
-                fast_model = self._get_tier1_fast_model()
-                resp = await asyncio.to_thread(
-                    cli.models.generate_content,
-                    model=fast_model,
-                    contents=clean_prompt
-                )
+                from core.api_telemetry import api_feature_context
+                fast_model = self._get_tier1_fast_model(prefer_fast=True)
+                cfg_kwargs: Dict[str, Any] = {
+                    "temperature": 0.7,
+                    "max_output_tokens": 250,
+                }
+                if hasattr(types, "ThinkingConfig"):
+                    try:
+                        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                    except Exception:
+                        pass
+
+                def _gen_callout():
+                    with api_feature_context("game_ptt_copilot", "proactive_callout"):
+                        return cli.models.generate_content(
+                            model=fast_model,
+                            contents=clean_prompt,
+                            config=types.GenerateContentConfig(**cfg_kwargs),
+                        )
+
+                resp = await asyncio.to_thread(_gen_callout)
                 generated = (getattr(resp, "text", None) or "").strip()
                 if generated:
                     callout_text = generated
             except Exception as gen_err:
-                logger.debug(f"[TELEMETRY] Flash callout generation fallback: {gen_err}")
+                logger.warning(f"[TELEMETRY] Flash callout generation error: {gen_err}")
+                # Never speak raw internal prompt directives if Flash failed
+                if callout_text.startswith("[COMPANION CHIT-CHAT]") or callout_text.startswith("[IN-GAME CHAT RELAY"):
+                    return
 
         if callout_text:
             try:
                 self.post_proactive_event(alert_text=callout_text, source="Co-Pilot")
                 await self._speak_feedback(callout_text)
             except Exception as fb_err:
-                logger.warning(f"[TELEMETRY] Tactical fallback speech error: {fb_err}")
+                logger.warning(f"[TELEMETRY] Tactical speech error: {fb_err}")
 
     def set_desktop_notifications_config(
         self,
@@ -3477,13 +3554,7 @@ class AetherEngine:
         self.conn_mgr.record_activity()
         if hasattr(self, "audio_ducking_service") and self.audio_ducking_service:
             self._dispatch_state_change("thinking")
-        cfg_now = self.config_getter() if callable(self.config_getter) else {}
-        api_now = cfg_now.get("api", {}) if isinstance(cfg_now, dict) else {}
-        pipeline_mode = str(api_now.get("pipeline_mode") or cfg_now.get("pipeline_mode") or "live").strip().lower()
-        if pipeline_mode == "modular" or self.is_ttrpg_session_active():
-            effective_mode = "modular"
-        else:
-            effective_mode = getattr(self, "_active_pipeline_mode", None) or "live"
+        effective_mode = self._desired_pipeline_mode()
         if effective_mode != "modular" and (self.session is None or self.conn_mgr.state != ConnectionState.CONNECTED):
             await self._ensure_live_connected(reason="Typed text sent")
         queued_text = clean_text
@@ -4169,6 +4240,28 @@ class AetherEngine:
                                         "name": "Game Macro",
                                         "content": intercept.user_message
                                     })
+                                elif intercept.action_type == "game_telemetry_pop":
+                                    details = intercept.details or {}
+                                    pop_model = self._get_tier1_fast_model(prefer_fast=True)
+                                    pop_res = await asyncio.to_thread(
+                                        self.game_engine.answer_telemetry_data_pop,
+                                        details.get("query") or clean_user_speech,
+                                        details.get("pop_scope") or "status",
+                                        getattr(self, "client", None) or getattr(self, "genai_client", None),
+                                        pop_model,
+                                    )
+                                    if pop_res and pop_res.get("answer"):
+                                        self._macro_fired_in_current_turn = True
+                                        self._macro_suppressed_turn = True
+                                        self._suppress_live_turn_audio = True
+                                        self.kill_audio()
+                                        ans = pop_res["answer"]
+                                        self.notify("chat_event", {
+                                            "type": "assistant",
+                                            "content": ans,
+                                            "source": "telemetry_pop"
+                                        })
+                                        await self._speak_feedback(ans)
                                 elif intercept.action_type.startswith("ttrpg_") and hasattr(self, "ttrpg_service"):
                                     if intercept.action_type == "ttrpg_roll_dice":
                                         details = intercept.details or {}
@@ -4676,13 +4769,7 @@ class AetherEngine:
         in_name = audio_cfg.get("input_device_name", "")
         out_name = audio_cfg.get("output_device_name", "")
 
-        pipeline_mode = (
-            api_cfg.get("pipeline_mode")
-            or config.get("pipeline_mode")
-            or self.config_getter().get("pipeline_mode")
-            or "live"
-        ).lower()
-        effective_mode = "modular" if (pipeline_mode == "modular" or self.is_ttrpg_session_active()) else "live"
+        effective_mode = self._desired_pipeline_mode()
         self._active_pipeline_mode = effective_mode
 
         # Validate and resolve to available devices in case configured device was unplugged or invalid
@@ -4754,35 +4841,37 @@ class AetherEngine:
         if kill_phrase:
             system_instruction_text += f"\nImportant: If the user says '{kill_phrase}' or 'stop', halt speaking immediately."
 
-        # Re-evaluate in case TTRPG mode was toggled while audio devices opened
-        effective_mode = "modular" if (pipeline_mode == "modular" or self.is_ttrpg_session_active()) else "live"
-        self._active_pipeline_mode = effective_mode
-
-        active_instruction = apply_accent_directive(system_instruction_text, voice_accent)
-
+        # Re-evaluate in case TTRPG or Game Economy Mode changed while audio devices opened
         try:
-            if effective_mode == "modular":
-                await self._run_modular_pipeline(
-                    api_key=api_key,
-                    agent_name=agent_name,
-                    kill_phrase=kill_phrase,
-                    api_cfg=api_cfg,
-                    system_instruction_text=active_instruction,
-                    voice_name=voice_name,
-                    voice_accent=voice_accent,
-                    temperature=temperature
-                )
-            else:
-                await self._run_live_pipeline(
-                    api_key=api_key,
-                    agent_name=agent_name,
-                    kill_phrase=kill_phrase,
-                    api_cfg=api_cfg,
-                    system_instruction_text=active_instruction,
-                    voice_name=voice_name,
-                    voice_accent=voice_accent,
-                    temperature=temperature
-                )
+            while self.is_running:
+                self._pipeline_switch_requested = False
+                effective_mode = self._desired_pipeline_mode()
+                self._active_pipeline_mode = effective_mode
+                active_instruction = apply_accent_directive(self._build_system_instruction() or system_instruction_text, voice_accent)
+                if effective_mode == "modular":
+                    await self._run_modular_pipeline(
+                        api_key=api_key,
+                        agent_name=agent_name,
+                        kill_phrase=kill_phrase,
+                        api_cfg=api_cfg,
+                        system_instruction_text=active_instruction,
+                        voice_name=voice_name,
+                        voice_accent=voice_accent,
+                        temperature=temperature
+                    )
+                else:
+                    await self._run_live_pipeline(
+                        api_key=api_key,
+                        agent_name=agent_name,
+                        kill_phrase=kill_phrase,
+                        api_cfg=api_cfg,
+                        system_instruction_text=active_instruction,
+                        voice_name=voice_name,
+                        voice_accent=voice_accent,
+                        temperature=temperature
+                    )
+                if not getattr(self, "_pipeline_switch_requested", False):
+                    break
         except Exception as e:
             logger.error(f"[ENGINE PIPELINE ERROR] {e}", exc_info=True)
             self.notify("status", {"state": "error", "message": f"Pipeline error: {e}"})
@@ -4955,8 +5044,8 @@ class AetherEngine:
             )
         asyncio.create_task(self._prewarm_tts_live_session(client, voice_name, voice_accent))
 
-        # Proactive Startup Briefing Evaluation (skip when launching directly into a TTRPG DM session)
-        if not self.is_ttrpg_session_active():
+        # Proactive Startup Briefing Evaluation (skip when launching into TTRPG or Game Economy Mode)
+        if not self.is_ttrpg_session_active() and not self.is_game_economy_mode_active():
             try:
                 current_user_name = self.user_memory.get_random_user_name(default="User")
                 briefing_res = await self.proactive_engine.check_proactive_briefing(
@@ -5011,7 +5100,7 @@ class AetherEngine:
                 logger.warning(f"[PROACTIVE BRIEFING ERROR] {proactive_err}")
 
         turn_counter = 0
-        while self.is_running:
+        while self.is_running and not getattr(self, "_pipeline_switch_requested", False):
             try:
                 t_turn_start = time.perf_counter()
                 stt_ms = 0.0
@@ -5108,6 +5197,8 @@ class AetherEngine:
                     stt_prompt += f"\nCustom lexicon vocabulary & phonetic spelling reference:\n{lexicon_guide}"
 
                 if text_task in done:
+                    if getattr(self, "_pipeline_switch_requested", False):
+                        break
                     user_prompt = text_task.result().strip()
                     source = "text"
                     t_turn_start = time.perf_counter()
@@ -5445,6 +5536,23 @@ class AetherEngine:
                             res = await self.replay_service.trigger_clip()
                             intercept.tts_message = res.get("spoken_confirmation", "Captured.")
 
+                        # Fast-path resolution for Hybrid Game Telemetry Data Pops (tiny stateless Flash pop, 0 history):
+                        if intercept.handled and intercept.action_type == "game_telemetry_pop":
+                            details = intercept.details or {}
+                            pop_model = self._get_tier1_fast_model(prefer_fast=True)
+                            pop_res = await asyncio.to_thread(
+                                self.game_engine.answer_telemetry_data_pop,
+                                details.get("query") or user_prompt,
+                                details.get("pop_scope") or "status",
+                                client,
+                                pop_model,
+                            )
+                            if pop_res and pop_res.get("answer"):
+                                intercept.tts_message = pop_res["answer"]
+                                intercept.user_message = pop_res["answer"]
+                            else:
+                                intercept.skip_llm = False
+
                         # Fast-path resolution for Tabletop tools:
                         if intercept.handled and intercept.action_type.startswith("ttrpg_") and hasattr(self, "ttrpg_service"):
                             if intercept.action_type == "ttrpg_roll_dice":
@@ -5612,10 +5720,23 @@ class AetherEngine:
                 self.is_tool_executing = True
                 t_llm_0 = time.perf_counter()
                 turn_config = self._execute_turn_modular(user_prompt, temperature=temperature)
+                turn_payload = user_prompt
+                # Economy Mode Static-Prefix Preservation: attach fresh live telemetry to the END of the
+                # user turn so `system_instruction` stays 100% byte-identical and hits Google's 90% prefix cache!
+                if self.is_game_economy_mode_active():
+                    try:
+                        mgr = getattr(self, "game_mgr", None) or getattr(getattr(self, "game_engine", None), "manager", None)
+                        adp = getattr(mgr, "active_telemetry_adapter", None) if mgr else None
+                        if adp and hasattr(adp, "is_active") and adp.is_active():
+                            tel_tail = adp.get_summary_prompt_context()
+                            if tel_tail:
+                                turn_payload = f"{user_prompt}\n\n[LIVE SHIP/GAME TELEMETRY]:\n{tel_tail}"
+                    except Exception:
+                        pass
                 try:
                     response, ft_ms = await self._stream_chat_message_resilient(
                         chat,
-                        user_prompt,
+                        turn_payload,
                         config=turn_config,
                         on_text_chunk=_on_cortex_text_chunk,
                     )
@@ -6560,12 +6681,16 @@ class AetherEngine:
         Builds per-turn GenerateContentConfig using dynamically filtered tool declarations
         matched via BM25 semantic skill routing and workspace context fences.
         """
-        # 1. Fetch dynamically filtered tool declarations
-        raw_tools = self.dispatcher.get_routed_tool_declarations(
-            user_prompt=user_prompt,
-            max_dynamic_skills=3
-        )
-        active_tools = self._filter_tools_for_workspace(raw_tools)
+        # 1. Fetch tool declarations (use deterministic fixed list in Game Economy Mode so prefix cache never busts!)
+        econ_active = self.is_game_economy_mode_active()
+        if econ_active:
+            active_tools = self._filter_tools_for_workspace(get_all_tool_declarations())
+        else:
+            raw_tools = self.dispatcher.get_routed_tool_declarations(
+                user_prompt=user_prompt,
+                max_dynamic_skills=3
+            )
+            active_tools = self._filter_tools_for_workspace(raw_tools)
 
         if temperature is None:
             try:
@@ -6582,6 +6707,31 @@ class AetherEngine:
         except Exception:
             tier1_thinking_budget = 0
 
+        # Keep `system_instruction` 100% byte-identical across turns in Economy Mode (live telemetry
+        # is appended to the tail of each user turn instead), preserving Google's 90% prefix cache!
+        if econ_active:
+            mgr = getattr(self, "game_mgr", None) or getattr(getattr(self, "game_engine", None), "manager", None)
+            cur_gid = str((getattr(mgr, "data", None) or {}).get("active_profile") or "")
+            if (
+                not getattr(self, "_frozen_economy_sys_inst", "")
+                or getattr(self, "_frozen_economy_gid", "") != cur_gid
+                or getattr(self, "_reset_context_flag", False)
+            ):
+                hk_display = getattr(self, "hotkey_manager", None) and getattr(self.hotkey_manager, "game_mode_display", "Ctrl+Shift+G") or "Ctrl+Shift+G"
+                if hasattr(self, "game_engine") and self.game_engine:
+                    static_inst = self.game_engine.build_system_instruction(hotkey_display=hk_display, include_live_telemetry=False) or self._build_system_instruction()
+                else:
+                    static_inst = self._build_system_instruction()
+                custom_persona = self._get_user_personality_instruction() if hasattr(self, "_get_user_personality_instruction") else ""
+                if isinstance(custom_persona, str) and custom_persona.strip() and custom_persona.strip() not in static_inst:
+                    static_inst = static_inst.rstrip() + "\n\nUSER-CONFIGURED PERSONALITY & INSTRUCTIONS:\n" + custom_persona.strip() + "\n"
+                self._frozen_economy_sys_inst = static_inst
+                self._frozen_economy_gid = cur_gid
+            turn_sys_inst = self._frozen_economy_sys_inst
+        else:
+            self._frozen_economy_sys_inst = ""
+            turn_sys_inst = self._build_system_instruction()
+
         from core.model_discovery import build_thinking_config
         # 2. Build GenerationConfig with filtered tool set
         config = types.GenerateContentConfig(
@@ -6594,7 +6744,7 @@ class AetherEngine:
             ),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             safety_settings=get_permissive_safety_settings(),
-            system_instruction=self._build_system_instruction(),
+            system_instruction=turn_sys_inst,
             temperature=temperature,
             thinking_config=build_thinking_config(
                 active_primary,
@@ -7574,6 +7724,16 @@ class AetherEngine:
                     await asyncio.sleep(0.04)
         except Exception as e:
             logger.debug(f"[SPEAK_FEEDBACK] Feedback TTS error: {e}")
+        finally:
+            if self.is_running:
+                try:
+                    agent_name_fb = (self.config_getter().get("api", {}).get("agent_name", "Aether") if callable(self.config_getter) else "Aether") or "Aether"
+                    if self.is_on_demand_mode():
+                        self.notify("status", {"state": "standby", "message": f"{agent_name_fb} is ready (Push-to-Talk)."})
+                    else:
+                        self.notify("status", {"state": "listening", "message": f"{agent_name_fb} is listening..."})
+                except Exception:
+                    pass
 
     def _build_live_config(
         self,
@@ -8209,7 +8369,7 @@ class AetherEngine:
                     "content": f"Ready in On-Demand mode ({model_id}, Voice: {voice_name}{accent_info}). {agent_name} is in Standby."
                 })
 
-            while self.is_running:
+            while self.is_running and not getattr(self, "_pipeline_switch_requested", False):
                 await asyncio.sleep(0.5)
 
         except asyncio.CancelledError:
@@ -8229,12 +8389,9 @@ class AetherEngine:
         self._stop_requested = False
         self._loop = loop
         try:
-            cfg = self.config_getter() if callable(self.config_getter) else {}
-            api_cfg = cfg.get("api", {}) if isinstance(cfg, dict) else {}
-            pipeline_mode = str(api_cfg.get("pipeline_mode") or cfg.get("pipeline_mode") or "live").lower()
-            self._active_pipeline_mode = "modular" if (pipeline_mode == "modular" or self.is_ttrpg_session_active()) else "live"
+            self._active_pipeline_mode = self._desired_pipeline_mode()
         except Exception:
-            self._active_pipeline_mode = "modular" if self.is_ttrpg_session_active() else "live"
+            self._active_pipeline_mode = "modular" if (self.is_ttrpg_session_active() or self.is_game_economy_mode_active()) else "live"
         # Drain any stale empty sentinel items left over from a prior stop()
         if hasattr(self, "_text_queue") and self._text_queue is not None:
             requeue = []

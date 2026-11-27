@@ -20,10 +20,10 @@ from core.context_sanitizer import sanitize_turn_history
 
 logger = get_logger("SessionLifecycle")
 
-# Default rotation trigger thresholds
-DEFAULT_MAX_TURNS = 50                 # 50 turns (25 user / 25 assistant exchanges) to prevent mid-encounter rotations
-DEFAULT_MAX_DURATION_SECONDS = 450.0   # 7.5 minutes (preempts 9m / 540s Gemini Live server GoAway cutoff)
-DEFAULT_MAX_TOOL_CHARS = 50000         # 50k characters of tool stdout/tracebacks
+# Default rotation trigger thresholds (tuned to prevent uncached Live WebSocket context bloat)
+DEFAULT_MAX_TURNS = 16                 # Rotate after 16 turns so uncached Live context never balloons to 40k+ tokens
+DEFAULT_MAX_DURATION_SECONDS = 240.0   # 4 minutes (keeps rolling Live context lean & preempts GoAway cutoff)
+DEFAULT_MAX_TOOL_CHARS = 18000         # 18k characters of tool stdout/tracebacks
 
 COMPACTOR_PROMPT = """Summarize the active desktop context and conversation state into exactly 4-6 concise bullet points:
 - Active user tasks or pending desktop workflows.
@@ -67,6 +67,7 @@ class SessionLifecycleManager:
 
         self._lock = threading.RLock()
         self.session_id: str = f"session_{time.strftime('%Y%m%d_%H%M%S')}"
+        self.active_game_id: str = ""
         self.raw_transcript: List[Dict[str, Any]] = []
 
         self.turn_count: int = 0
@@ -422,6 +423,7 @@ class SessionLifecycleManager:
             "session_id": current_id,
             "start_time": start_t,
             "end_time": end_t,
+            "game_id": self.active_game_id or (prev_data.get("game_id", "") if os.path.isfile(filepath) and isinstance(locals().get("prev_data"), dict) else ""),
             "turns": merged_turns,
         }
 

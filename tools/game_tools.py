@@ -4,6 +4,7 @@ Provides game status/telemetry inspection, macro triggering, market lookup,
 co-pilot observations, scratchpad management, and visual map navigation/waypoint setting.
 """
 
+import re
 import time
 from typing import Optional, Dict, Any
 from tools.dispatcher import register_tool
@@ -808,19 +809,54 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         # Sort by newest timestamp first; on tie, explicit saved/voice POI wins over telemetry
         candidates.sort(key=lambda c: (float(c.get("updated_at") or 0.0), int(c.get("_priority") or 0)), reverse=True)
 
+        exact_matches: List[Dict[str, Any]] = []
+        fuzzy_matches: List[Dict[str, Any]] = []
+        seen_keys = set()
         for c in candidates:
             sys_target = str(c.get("system") or "").strip()
             if not sys_target or sys_target.lower() == "unknown":
                 continue
-            tokens = [
-                str(c.get("name") or "").strip().lower(),
-                str(c.get("callsign") or "").strip().lower(),
-                str(c.get("id") or "").strip().lower().replace("_", " "),
-            ] + [str(a).strip().lower() for a in (c.get("aliases") or []) if str(a).strip()]
-            tokens = [t for t in tokens if t]
-            if any(q == t or (len(q) >= 4 and (q in t or t in q)) for t in tokens):
-                label = str(c.get("name") or c.get("id") or raw_name)
-                return sys_target, label
+            dedup_key = (
+                str(c.get("entity_id") or "").strip()
+                or str(c.get("name") or c.get("id") or "").strip().lower()
+            )
+            if dedup_key in seen_keys:
+                continue
+            name_low = str(c.get("name") or "").strip().lower()
+            call_low = str(c.get("callsign") or "").strip().lower()
+            id_low = str(c.get("id") or "").strip().lower().replace("_", " ")
+            aliases_low = [str(a).strip().lower() for a in (c.get("aliases") or []) if str(a).strip()]
+            tokens = [t for t in ([name_low, call_low, id_low] + aliases_low) if t]
+
+            # Specific unique match (by exact site name, callsign, or numbered alias like "construction site #2")
+            specific_tokens = [t for t in (name_low, call_low) if t] + [
+                a for a in aliases_low if re.search(r"#?\d+$", a)
+            ]
+            if any(q == t or (len(q) >= 4 and (q in t or t in q)) for t in specific_tokens):
+                seen_keys.add(dedup_key)
+                exact_matches.append(c)
+            elif any(q == t or (len(q) >= 4 and (q in t or t in q)) for t in tokens):
+                seen_keys.add(dedup_key)
+                fuzzy_matches.append(c)
+
+        if len(exact_matches) == 1:
+            c = exact_matches[0]
+            return str(c.get("system") or "").strip(), str(c.get("name") or c.get("id") or raw_name)
+
+        all_hits = exact_matches if exact_matches else fuzzy_matches
+        if len(all_hits) == 1:
+            c = all_hits[0]
+            return str(c.get("system") or "").strip(), str(c.get("name") or c.get("id") or raw_name)
+        if len(all_hits) > 1:
+            # Ambiguous generic query (e.g., "our construction site" when 2+ active construction sites exist)
+            return "__AMBIGUOUS_POI__", [
+                {
+                    "number": c.get("site_number") or idx,
+                    "name": str(c.get("name") or c.get("id") or "Site"),
+                    "system": str(c.get("system") or ""),
+                }
+                for idx, c in enumerate(all_hits, 1)
+            ]
 
         # Fallback: scan recent copilot_log entries for matching POI name + recorded parent system
         if isinstance(profile, dict) and isinstance(profile.get("copilot_log"), list):
@@ -867,6 +903,18 @@ def register_game_tools(dispatcher, game_manager, engine=None):
         resolved_dest, matched_poi = _resolve_known_poi_destination(
             destination_name, profile, getattr(nav, "telemetry_adapter", None)
         )
+        if resolved_dest == "__AMBIGUOUS_POI__" and isinstance(matched_poi, list):
+            choices_str = ", ".join(
+                f"#{m['number']} {m['name']} ({m['system']})" for m in matched_poi
+            )
+            return {
+                "status": "needs_clarification",
+                "ambiguous_pois": matched_poi,
+                "message": (
+                    f"Multiple active POIs match '{destination_name}': {choices_str}. "
+                    f"Ask the player which one they would like to route to."
+                ),
+            }
         res = nav.search_and_route_destination(destination_name=resolved_dest)
         if matched_poi and isinstance(res, dict):
             res["resolved_from_poi"] = matched_poi
@@ -1182,6 +1230,22 @@ def register_game_tools(dispatcher, game_manager, engine=None):
             try:
                 profile.setdefault("learned_ui_recipes", {})[goal_key] = res["learned_recipe"]
                 game_manager._save_profiles(game_manager.data, target_game_id=save_gid)
+            except Exception:
+                pass
+        # Declarative Autodock post-action: if docking was requested via complete_game_ui_task
+        # and the user has `autodock_enabled` checked on this profile, zero throttle immediately!
+        if (
+            isinstance(res, dict)
+            and res.get("status") == "verified_done"
+            and "docking" in goal_key
+            and isinstance(profile, dict)
+            and bool(profile.get("autodock_enabled"))
+            and game_manager is not None
+        ):
+            try:
+                time.sleep(0.4)
+                stop_res = game_manager.trigger_action("all stop")
+                res["autodock_zero_throttle"] = stop_res.get("status") if isinstance(stop_res, dict) else "triggered"
             except Exception:
                 pass
         return res

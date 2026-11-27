@@ -97,12 +97,12 @@ class TestVRHudMathAndManager(unittest.TestCase):
         self.assertEqual(normalize_vr_hud_anchor(""), "cockpit")
         self.assertEqual(normalize_vr_hud_anchor("head_locked"), "hmd")
         self.assertEqual(normalize_vr_hud_anchor("left_wrist"), "wrist_left")
-        self.assertEqual(normalize_vr_hud_depth(0.1), 0.50)
-        self.assertEqual(normalize_vr_hud_depth(9.0), 3.00)
+        self.assertEqual(normalize_vr_hud_depth(0.1), 0.30)
+        self.assertEqual(normalize_vr_hud_depth(9.0), 5.00)
         self.assertEqual(normalize_vr_hud_scale(0.1), 0.40)
         self.assertEqual(normalize_vr_hud_scale(9.0), 2.50)
-        self.assertEqual(normalize_vr_hud_offset_x(-5.0), -1.50)
-        self.assertEqual(normalize_vr_hud_offset_y(5.0), 1.00)
+        self.assertEqual(normalize_vr_hud_offset_x(-5.0), -3.50)
+        self.assertEqual(normalize_vr_hud_offset_y(5.0), 2.50)
         self.assertEqual(normalize_vr_hud_curvature(-0.5), 0.0)
         self.assertEqual(normalize_vr_hud_curvature(0.9), 0.50)
 
@@ -191,20 +191,20 @@ class TestVRHudConfigAndBridge(unittest.TestCase):
             "ui": {
                 "vr_hud_enabled": True,
                 "vr_hud_anchor": "head",
-                "vr_hud_depth": 5.0,
+                "vr_hud_depth": 8.0,
                 "vr_hud_scale": 0.1,
-                "vr_hud_offset_x": 3.0,
-                "vr_hud_offset_y": -2.0,
+                "vr_hud_offset_x": 5.0,
+                "vr_hud_offset_y": -4.0,
                 "vr_hud_curvature": 0.9,
             }
         })
         ui = cfg["ui"]
         self.assertTrue(ui["vr_hud_enabled"])
         self.assertEqual(ui["vr_hud_anchor"], "hmd")
-        self.assertEqual(ui["vr_hud_depth"], 3.00)
+        self.assertEqual(ui["vr_hud_depth"], 5.00)
         self.assertEqual(ui["vr_hud_scale"], 0.40)
-        self.assertEqual(ui["vr_hud_offset_x"], 1.50)
-        self.assertEqual(ui["vr_hud_offset_y"], -1.00)
+        self.assertEqual(ui["vr_hud_offset_x"], 3.50)
+        self.assertEqual(ui["vr_hud_offset_y"], -2.50)
         self.assertEqual(ui["vr_hud_curvature"], 0.50)
 
     def test_gui_bridge_vr_hud_preview_recenter_and_hide(self):
@@ -726,6 +726,83 @@ class TestVRHudConfigAndBridge(unittest.TestCase):
         self.assertFalse(hk._is_key_down)
         self.assertFalse(hk._is_hud_key_down)
         self.assertFalse(hk._is_game_mode_key_down)
+
+    def test_vr_hud_position_persists_across_game_mode_toggle_and_re_show(self):
+        import json
+        import tempfile
+        from core.gui_bridge import GuiBridge
+
+        os.environ["AETHER_TESTING"] = "1"
+        backend = _FakeVRBackend()
+        backend.hmd_pose = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 1.2],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+        mgr = VROverlayManager(
+            backend=backend,
+            hud_capture_fn=lambda: (b"\xff" * (16 * 16 * 4), 16, 16),
+        )
+        # Configure far-left X = -2.80 m (requires expanded [-3.5, 3.5] range!)
+        mgr.configure_hud(
+            enabled=True,
+            anchor="cockpit",
+            offset_x=-2.80,
+            offset_y=0.40,
+            depth_m=2.20,
+        )
+        mgr.show_hud("normal")
+        mgr.step_once(now=1.0)
+        self.assertIn(VROverlayManager.HUD_KEY, backend.shown)
+        _, mat_before, _, _ = backend.transforms[VROverlayManager.HUD_KEY]
+        self.assertAlmostEqual(mat_before[0][3], -2.80, places=3)
+
+        # Simulate Game Mode hiding HUD and restarting it
+        mgr.hide_hud()
+        mgr.step_once(now=1.1)
+        self.assertNotIn(VROverlayManager.HUD_KEY, backend.shown)
+
+        # Re-show: must re-confirm transform + texture after show_overlay and restore exact X = -2.80 m
+        backend.transforms.pop(VROverlayManager.HUD_KEY, None)
+        mgr.show_hud("normal")
+        sleep_s = mgr.step_once(now=1.2)
+        self.assertAlmostEqual(sleep_s, 0.05, places=3)  # refresh burst active
+        self.assertIn(VROverlayManager.HUD_KEY, backend.shown)
+        _, mat_after, _, _ = backend.transforms[VROverlayManager.HUD_KEY]
+        self.assertAlmostEqual(mat_after[0][3], -2.80, places=3)
+        self.assertAlmostEqual(mat_after[1][3], 1.2 + 0.40, places=3)
+        self.assertAlmostEqual(mat_after[2][3], -2.20, places=3)
+        mgr.destroy()
+
+        # Verify preview_hud_settings persists VR X/Y/Z straight to config.json
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = os.path.join(tmpdir, "config.json")
+            bridge = GuiBridge.__new__(GuiBridge)
+            bridge._config_lock = threading.Lock()
+            bridge._config = sync_config_schema({"ui": {"hud_mode": "normal"}})
+            bridge._config_path = cfg_path
+            bridge._current_hud_mode = "normal"
+            bridge._overlay_visible = False
+            bridge._hud_bridge = None
+            bridge.get_raw_config = lambda: bridge._config
+
+            res = bridge.preview_hud_settings({
+                "vr_hud_offset_x": -2.80,
+                "vr_hud_offset_y": 1.60,
+                "vr_hud_depth": 4.20,
+                "vr_dot_x": -2.80,
+                "vr_dot_y": 1.60,
+                "vr_dot_depth": 4.20,
+            })
+            self.assertTrue(res["success"])
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                disk_ui = sync_config_schema(json.load(f))["ui"]
+            self.assertEqual(disk_ui["vr_hud_offset_x"], -2.80)
+            self.assertEqual(disk_ui["vr_hud_offset_y"], 1.60)
+            self.assertEqual(disk_ui["vr_hud_depth"], 4.20)
+            self.assertEqual(disk_ui["vr_dot_x"], -2.80)
+            self.assertEqual(disk_ui["vr_dot_y"], 1.60)
+            self.assertEqual(disk_ui["vr_dot_depth"], 4.20)
 
     def test_dot_direct_xyz_and_cockpit_auto_center(self):
         os.environ["AETHER_TESTING"] = "1"

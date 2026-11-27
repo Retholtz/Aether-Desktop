@@ -650,6 +650,8 @@ class DeclarativeFileTelemetryAdapter(BaseTelemetryAdapter):
                         elif isinstance(spec, dict):
                             val = _extract_path(data, spec.get("path"))
                             if val is None:
+                                if spec.get("allow_none"):
+                                    self.state[state_key] = spec.get("default", None)
                                 continue
                             if isinstance(val, list) and spec.get("list_scale") is not None:
                                 scale = float(spec["list_scale"])

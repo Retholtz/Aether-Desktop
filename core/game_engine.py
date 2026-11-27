@@ -45,15 +45,10 @@ class GameEngine:
         "update_game_scratchpad",
         "get_game_scratchpad",
         "search_copilot_log",
-        "pan_and_mark_map_location",
         "assist_game_navigation",
-        "spot_and_guide_map_landmark",
         "search_and_route_destination",
         "route_to_map_bookmark",
         "remember_game_poi",
-        "pan_game_map",
-        "place_map_marker",
-        "center_map_on_player",
         "inspect_screen_context",
         "calibrate_hud_bars",
         "click_game_ui_element",
@@ -69,31 +64,13 @@ class GameEngine:
         "navigate_browser",
         "move_window_to_monitor",
         "focus_window",
-        "tile_windows",
-        "snap_window",
         "close_window",
-        "close_application",
-        "delegate_moderate_task",
-        "paste_to_document",
-        "export_research_dossier",
         "get_steam_friends_activity",
-        "get_steam_friend_games",
-        "get_steam_owned_games",
-        "get_steam_game_achievements",
-        "get_steam_patch_notes",
         "trigger_instant_replay",
         "get_current_playing_media",
         "control_media_playback",
         "play_music",
         "get_hardware_telemetry",
-        "roll_dice",
-        "modify_character_vitals",
-        "advance_combat_turn",
-        "set_character_condition",
-        "list_campaign_documents",
-        "read_campaign_document",
-        "upsert_ttrpg_character",
-        "update_campaign_details",
     }
 
     def __init__(
@@ -440,6 +417,30 @@ class GameEngine:
                     details={"game_id": active_id, "navigation_mode": canonical_mode}
                 )
 
+        # 4.5. Hybrid Game-Agnostic "Data Pop" Fast-Path (Quick local telemetry / inventory / project / market queries)
+        # Bypasses the heavy conversational LLM/WebSocket history and answers from a tiny ~400-token stateless Flash pop.
+        active_game_for_pop = self.manager.data.get("active_profile")
+        if active_game_for_pop and self.is_game_mode_active():
+            adapter = getattr(self.manager, "active_telemetry_adapter", None)
+            if adapter is not None and hasattr(adapter, "get_live_state"):
+                pop_scope = self._classify_telemetry_data_pop(clean_voice_cmd)
+                if pop_scope:
+                    live_st = adapter.get_live_state() or {}
+                    if self._has_telemetry_for_pop_scope(live_st, pop_scope):
+                        return GameInterceptionResult(
+                            handled=True,
+                            action_type="game_telemetry_pop",
+                            user_message="",
+                            tts_message=None,
+                            requires_context_reset=False,
+                            skip_llm=True,
+                            details={
+                                "query": clean_voice_cmd,
+                                "pop_scope": pop_scope,
+                                "game_id": active_game_for_pop,
+                            },
+                        )
+
         # 5. Fast-Path DirectInput Macro & Sequence Dispatch
         active_game = self.manager.data.get("active_profile")
         if active_game:
@@ -485,9 +486,132 @@ class GameEngine:
         """Async-safe wrapper executing interception and macro dispatch off the main event loop thread."""
         return await asyncio.to_thread(self.intercept_voice_turn, raw_prompt, agent_name)
 
+    # --- Hybrid Game-Agnostic "Data Pop" Helpers ---
+
+    @staticmethod
+    def _classify_telemetry_data_pop(clean_cmd: str) -> Optional[str]:
+        """
+        Detects quick factual queries that can be answered directly from local declarative
+        telemetry JSON (project/construction progress, cargo/inventory, current station/vendor
+        stock matches, or current location/vessel vitals) without touching full chat history.
+        Returns a scope tag ('project', 'cargo', 'station_market', 'status') or None.
+        """
+        if not clean_cmd or len(clean_cmd) > 140:
+            return None
+        # Exclude multi-part conversational or external-search requests ("find a station", "trade route", "tell me about")
+        if re.search(r'\b(find\s+a\s+|where\s+can\s+(we|i)\s+(find|buy|get)|nearest\s+|closest\s+|trade\s+route|sell\s+for\s+profit|plot\s+|route\s+to|tell\s+me\s+(about|a\s+story)|explain|why\s+)\b', clean_cmd):
+            return None
+        if re.search(r'\b(what\s+(can|should)\s+(we|i)\s+(buy|pick\s+up|grab|load)\s+(here|at\s+this)|what\s+does\s+this\s+(station|market|vendor|shop|port)\s+(have|stock|sell)|station\s+market|buy\s+here)\b', clean_cmd):
+            return "station_market"
+        if re.search(r'\b(project|construction|build|depot|checklist)\b', clean_cmd) and re.search(r'\b(need|left|remain|status|progress|missing|still|how\s+much|what\s+do\s+we)\b', clean_cmd):
+            return "project"
+        if re.search(r'\b(cargo|inventory|hold|hauling|carrying|manifest|loadout)\b', clean_cmd) and re.search(r'\b(what|how\s+much|check|space|capacity|full|empty|in\s+(my|our|the))\b', clean_cmd):
+            return "cargo"
+        if re.search(r'\b(where\s+are\s+we|what\s+(system|station|zone|sector|area|planet)\s+(are\s+we|is\s+this)|how(\'s|\s+is)\s+(our|my|the)\s+(fuel|hull|health|shields?|ship|vessel))\b', clean_cmd):
+            return "status"
+        return None
+
+    @staticmethod
+    def _has_telemetry_for_pop_scope(live_state: Dict[str, Any], scope: str) -> bool:
+        """Verifies the active game's local telemetry JSON actually has data for the requested pop scope."""
+        if not isinstance(live_state, dict) or not live_state:
+            return False
+        if scope == "project":
+            return bool(live_state.get("project_still_to_buy") or live_state.get("project_trackers"))
+        if scope == "station_market":
+            return bool(live_state.get("station_project_matches") or live_state.get("market_available") or live_state.get("docked"))
+        if scope == "cargo":
+            return any(k in live_state for k in ("cargo_manifest", "cargo_used", "cargo_capacity", "inventory"))
+        if scope == "status":
+            return any(live_state.get(k) not in (None, "", {}) for k in ("location", "star_system", "station", "fuel", "hull", "health", "ship"))
+        return False
+
+    def answer_telemetry_data_pop(
+        self,
+        user_prompt: str,
+        pop_scope: str = "status",
+        genai_client: Any = None,
+        model_name: str = "gemini-3.8-flash",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Executes a lightweight, stateless ~400-token 'Data Pop' against local declarative
+        telemetry JSON (zero conversation history, zero tool schemas, thinking_budget=0).
+        100% game-agnostic — works for any game with a declarative telemetry adapter.
+        """
+        active_id = self.manager.data.get("active_profile", "")
+        adapter = getattr(self.manager, "active_telemetry_adapter", None)
+        if not active_id or adapter is None or not hasattr(adapter, "get_live_state"):
+            return None
+        live_st = adapter.get_live_state() or {}
+        if not self._has_telemetry_for_pop_scope(live_st, pop_scope):
+            return None
+
+        # Slice ONLY the relevant compact fields for this pop scope (keeps prompt tiny!)
+        scope_keys = {
+            "project": ("location", "station", "project_still_to_buy", "project_trackers", "cargo_used", "cargo_capacity", "cargo_manifest"),
+            "station_market": ("location", "station", "docked", "station_project_matches", "project_still_to_buy", "cargo_used", "cargo_capacity"),
+            "cargo": ("ship", "vessel", "cargo_used", "cargo_capacity", "cargo_manifest", "inventory"),
+            "status": ("location", "star_system", "station", "docked", "ship", "vessel", "fuel", "fuel_pct", "hull", "health", "shields", "credits"),
+        }
+        selected = {k: live_st[k] for k in scope_keys.get(pop_scope, ()) if k in live_st and live_st[k] not in (None, "", [], {})}
+        if not selected:
+            selected = {k: v for k, v in list(live_st.items())[:12]}
+
+        prof = self.manager.get_profile(active_id) or {}
+        game_name = prof.get("display_name") or active_id
+        callsign = self.manager.get_callsign(active_id) if hasattr(self.manager, "get_callsign") else ""
+        addr_hint = f" Address the player as {callsign} if natural." if callsign else ""
+
+        import json as _json
+        data_json = _json.dumps(selected, ensure_ascii=False, default=str)[:2400]
+        pop_prompt = (
+            f"You are the player's concise in-character co-pilot in {game_name}.{addr_hint} "
+            f"Answer the player's quick question in 1-3 short, spoken sentences using ONLY the live telemetry data below. "
+            f"No markdown bullets or code formatting — speak naturally.\n\n"
+            f"LIVE TELEMETRY ({pop_scope}):\n{data_json}\n\n"
+            f"PLAYER QUESTION: {user_prompt}"
+        )
+
+        cli = genai_client or getattr(self.manager, "vision_client", None)
+        if cli is None and self.engine is not None:
+            cli = getattr(self.engine, "client", None) or getattr(self.engine, "genai_client", None)
+        if cli is None:
+            return None
+
+        try:
+            from google.genai import types as genai_types
+            from core.api_telemetry import api_feature_context
+            cfg_kwargs: Dict[str, Any] = {
+                "temperature": 0.3,
+                "max_output_tokens": 160,
+            }
+            if hasattr(genai_types, "ThinkingConfig"):
+                try:
+                    cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
+                except Exception:
+                    pass
+            with api_feature_context("game_ptt_copilot", "telemetry_data_pop"):
+                resp = cli.models.generate_content(
+                    model=model_name,
+                    contents=pop_prompt,
+                    config=genai_types.GenerateContentConfig(**cfg_kwargs),
+                )
+            answer = (getattr(resp, "text", None) or "").strip()
+            if not answer:
+                return None
+            return {
+                "status": "success",
+                "scope": pop_scope,
+                "answer": answer,
+                "data_chars": len(data_json),
+            }
+        except Exception as e:
+            logger.debug("[GAME_ENGINE] Telemetry data pop error: %s", e)
+            return None
+
     # --- Immersion Prompt Generation ---
 
-    def build_system_instruction(self, hotkey_display: str = "Ctrl+Shift+G") -> Optional[str]:
+    def build_system_instruction(self, hotkey_display: str = "Ctrl+Shift+G", include_live_telemetry: bool = True) -> Optional[str]:
         """
         If Game Mode is active, returns the complete immersion system instruction
         including universe rules, out-of-universe deflection directives, and live telemetry context.
@@ -526,35 +650,22 @@ class GameEngine:
 
         vibe_block = self.manager.build_copilot_personality_directive(prof)
         immersion_banner = (
-            f"================================================================================\n"
-            f"IN-CHARACTER GAME MODE ENGAGED — {game_title.upper()} ({universe_name})\n"
-            f"================================================================================\n"
-            f"You are the player's live in-game co-pilot and companion inside {universe_name} ({game_title}).\n"
-            f"Leave desktop assistant habits behind — talk like a real companion riding shotgun.\n\n"
+            f"IN-CHARACTER GAME MODE — {game_title.upper()} ({universe_name})\n"
+            f"You are the player's live in-game co-pilot inside {universe_name} ({game_title}). Talk like a real wingman, not a desktop assistant.\n\n"
             f"{vibe_block}\n\n"
             f"GAME MODE DIRECTIVES:\n"
             f"{immersion_directive}\n"
-            f"2. STAY IN-UNIVERSE — ZERO TOLERANCE FOR OUT-OF-UNIVERSE DEVIATION (GAMING RIG TELEMETRY ALLOWED):\n"
-            f"   - Stay in-character and don't drift into unrelated real-world topics, politics, coding, or software troubleshooting.\n"
-            f"   - GAMING RIG & PERFORMANCE EXCEPTION: Rig thermals (CPU/GPU temps), system load, VRAM, and framerate (FPS) ARE allowed in Game Mode. When asked, call `get_hardware_telemetry` immediately and report the metrics directly.\n"
-            f"   - For unrelated real-world topics or code questions, deflect naturally in-character and let the player know they can say \"disable Game Mode\" (or press {hotkey_display}) to switch back.\n"
-            f"3. IN-GAME ACTIONS, LIVE INTEL & TWO-TIER MEMORY:\n"
-            f"   - Execute bound actions via `trigger_game_action` and check live state via `get_current_game_telemetry` / `get_current_game_status` (which pulls live cargo hold manifest, ship loadout/capacity, active project/construction resource totals, tracked POIs, and location straight from local game files — ALWAYS call `get_current_game_telemetry` before answering cargo, inventory, vessel, or project remaining questions!).\n"
-            f"   - LIVE DATABASE QUERIES & IN-GAME NEWS FEEDS: Use `query_game_intel(query=..., category=...)` for structured live database lookups (single commodity `category='market'`, multi-commodity or active-project one-stop station finder `category='shopping_list'` with `query='project'` or comma-separated items, profitable station-to-station trade runs `category='trade'` with `query='Destination Station'` and `location='Destination System'`, gear/outfitting, vendors, station/NPC services, routes) AND live in-game news feeds/bulletins (`category='news'`, query optional). STRICT NO-LOOP RULE: NEVER call `query_game_intel(category='market')` repeatedly in a loop for multiple items! To check what needed project items are stocked at the CURRENT docked station, read `station_project_matches` from `get_current_game_telemetry()` (instant local market file, 0 API calls); to find nearby stations stocking multiple project items, make ONE single `query_game_intel(category='shopping_list', query='project')` call. NEVER deflect by telling the player to 'look it up on a website or wiki' — YOU look it up and report exact results. For deeper lore, story, or open discussion, answer naturally on the Live WebSocket with full conversational depth — do NOT artificially truncate to 2 lines.\n"
-            f"   - COURSE PLOTTING, BOOKMARKS & POI RESOLUTION: When asked to plot a course to a numbered bookmark (e.g. 'Bookmark 2' or 'System Bookmark 3'), invoke `route_to_map_bookmark(bookmark_number=..., category=...)` (leave `category` blank to use the default/favorites category). When asked to navigate to a named NPC, vendor, character, mobile base, or POI (not a top-level map system/region), FIRST resolve its parent routable system/region (check live telemetry Tracked POIs / remembered POIs, then `query_game_intel`, or your game-scoped Google Search), and THEN call `search_and_route_destination` with the resolved routable system/region — NEVER paste a character's name into a top-level map search bar. Use `remember_game_poi` whenever the player asks you to save or update the location of a POI, home base, or mobile asset.\n"
-            f"   - IN-GAME MENUS, STATEFUL CURSORS & UI BUTTONS: NEVER call `close_window` for in-game screens, maps, or menus — close them with `trigger_game_action` (e.g. `'close menu'`, `'escape'`, or the map toggle). For stateful in-game menus, station/vendor services, panels, or icons where the highlight cursor could start in different positions (e.g. Refuel, Repair, Request Docking, equipping gear), prefer `complete_game_ui_task(goal=...)` — it sees where the highlight cursor is right now, adapts step-by-step, and visually confirms completion. For a single obvious static button, you can also inspect with `inspect_screen_context` and use `click_game_ui_element`. NEVER claim an in-game action succeeded unless a tool actually executed and confirmed it in this turn.\n"
-            f"   - AD-HOC KEY SEQUENCES & ON-THE-FLY MACRO CREATION: You HAVE full capability to both execute multi-key sequences immediately (`run_game_key_sequence`) AND save reusable custom macros (`save_game_macro`) — NEVER claim system limitations or say you cannot create macros. Both tools accept raw keyboard `press` steps (e.g. `{{\"action\": \"press\", \"key\": \"w\", \"repeat\": 3, \"interval_ms\": 150}}` followed by `{{\"action\": \"press\", \"key\": \"space\"}}`), synced keybinds (`trigger_bind`), visual UI clicks (`vision_click`), `type`, `paste`, and `wait` — even when no pre-existing named keybind exists for that action. When creating a macro involving unfamiliar on-screen menus/wheels, call `inspect_screen_context` first so you see exact labels, then call `save_game_macro` and concisely confirm the saved macro name and steps.\n"
-            f"   - Live Working Memory: Your system prompt maintains active immediate objectives, location, and sub-tasks across 10-minute session rotations.\n"
-            f"   - Deep Storage & Intel: Use `get_game_scratchpad` to view personal notes/quests, and `search_copilot_log` to query historical landmarks/intel.\n"
-            f"   - Record discoveries with `record_copilot_observation` and update player notes with `update_game_scratchpad`.\n"
-            f"4. AUXILIARY CONSOLES & COMPANION FLIGHT-DECK TOOLS:\n"
-            f"   - You have direct access to auxiliary displays and companion utilities: `launch_application`, `navigate_browser`, `move_window_to_monitor`, `focus_window`, `close_window`.\n"
-            f"   - Treat companion apps, tactical maps, database terminals, and market consoles as in-universe auxiliary flight-deck consoles, cockpit MFDs, or tactical datalinks.\n"
-            f"   - If the player asks to open or move a companion tool or database to a secondary monitor (e.g., 'Open companion map in Chrome on Monitor 2'), do so immediately using `navigate_browser` or `launch_application` with the target `monitor` parameter, while keeping your voice and persona fully in-character.\n"
-            f"   - Game Shield: You are strictly prevented from closing the active game itself, but you may manage auxiliary windows and companion consoles.\n"
-            f"================================================================================\n"
+            f"2. STAY IN-UNIVERSE (RIG TELEMETRY ALLOWED): Deflect unrelated real-world/coding topics in-character (remind user: \"disable Game Mode\" or {hotkey_display}). "
+            f"CPU/GPU temps, VRAM, and FPS ARE allowed — call `get_hardware_telemetry`.\n"
+            f"3. ACTIONS, LIVE INTEL & MEMORY:\n"
+            f"   - Call `get_current_game_telemetry` BEFORE answering cargo, vessel, location, or project-remaining questions (includes `station_project_matches` from local Market.json).\n"
+            f"   - Use `query_game_intel(query, category)` for live market (`market`), multi-item/project one-stop stations (`shopping_list`, `query='project'`), station-to-station profit runs (`trade`), outfitting, services, and news (`news`). NEVER loop `category='market'` for multiple items — use `station_project_matches` or one `shopping_list` call. Never tell the player to check a website.\n"
+            f"   - Navigation: use `route_to_map_bookmark` for numbered bookmarks, `remember_game_poi` to save POIs, and resolve named NPCs/bases/POIs to their parent routable system before calling `search_and_route_destination`.\n"
+            f"   - UI, In-Game Chat & Macros: NEVER call `close_window` for in-game menus (use `trigger_game_action`). Use `complete_game_ui_task(goal=...)` for stateful menus/panels/services (Refuel, Repair, Request Docking). You CAN send in-game text chat messages via `run_game_key_sequence` (open the chat/comms panel, type any channel prefix + message, press Enter, then close the panel) — NEVER claim you lack access to in-game chat/comms. You CAN run ad-hoc sequences (`run_game_key_sequence`) and save reusable macros (`save_game_macro`). Never claim an action succeeded unless a tool confirmed it.\n"
+            f"   - Use `get_game_scratchpad`, `update_game_scratchpad`, `record_copilot_observation`, and `search_copilot_log` for notes/intel. NEVER write vague placeholders like 'requirements logged' — when asked to note an on-screen manifest or start a new build/base, inspect the screen for actual item quantities (or tell the player if it's unreadable) and save the site via `remember_game_poi`.\n"
+            f"4. AUXILIARY CONSOLES: Open/move companion tools or databases to secondary monitors with `launch_application`, `navigate_browser`, `move_window_to_monitor`, `focus_window`, `close_window` (never close the game).\n"
         )
-        game_context = self.manager.get_active_game_context(include_personality=False)
+        game_context = self.manager.get_active_game_context(include_personality=False, include_live_telemetry=include_live_telemetry)
         return f"{immersion_banner}\n\n{game_context}"
 
     # --- Tool Fencing & Registration ---
@@ -596,6 +707,15 @@ class GameEngine:
     # --- Event Notification Hook ---
 
     def _on_game_mode_changed(self, enabled: bool, game_id: str, game_name: str, is_running: bool = False):
+        if enabled and game_id and self.engine is not None:
+            sl = getattr(self.engine, "session_lifecycle", None)
+            if sl is not None and hasattr(sl, "active_game_id"):
+                sl.active_game_id = str(game_id)
+        if self.engine is not None and hasattr(self.engine, "request_pipeline_sync"):
+            try:
+                self.engine.request_pipeline_sync(reason=f"Game Mode {'Enabled' if enabled else 'Disabled'}")
+            except Exception:
+                pass
         if callable(self.on_notify):
             prof = self.manager.get_profile(game_id) if game_id else None
             fps_mon = bool(prof.get("fps_monitoring", True)) if prof else True

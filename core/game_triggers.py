@@ -398,6 +398,7 @@ class GameTriggerEngine:
             target_proc = prof.get("process_name") or ""
             nav = UniversalGameNavigator(
                 client=client,
+                model_endpoint="gemini-3.8-flash",
                 target_process=target_proc,
                 map_controls=self.game_manager.get_map_controls(game_id) if hasattr(self.game_manager, "get_map_controls") else {},
                 game_name=prof.get("display_name") or game_id,
@@ -405,7 +406,10 @@ class GameTriggerEngine:
                 telemetry_adapter=getattr(self.game_manager, "active_telemetry_adapter", None),
             )
             goal_key = goal.lower().strip()
-            learned = (prof.get("learned_ui_recipes") or {}).get(goal_key) if isinstance(prof.get("learned_ui_recipes"), dict) else None
+            # Never blind-replay a cached recipe for station main menu dock services (cursor position
+            # varies between starports, carriers, and construction sites — always verify visually!).
+            skip_replay = ("refuel" in goal_key and "station" in goal_key) or str(rule.get("id") or "") == "auto_dock_services"
+            learned = None if skip_replay else ((prof.get("learned_ui_recipes") or {}).get(goal_key) if isinstance(prof.get("learned_ui_recipes"), dict) else None)
             # Background triggers use strict yield-to-player safety: max 3 steps, abort immediately
             # if the player moves the mouse, and NEVER fire Escape/Back cleanup_keys that close open menus.
             res = nav.complete_ui_task(
@@ -967,6 +971,14 @@ class CompanionChitChatManager:
             bits.append("Dangerous Anarchy/Lawless territory")
         if ev.get("TotalSale"):
             bits.append(f"Trade sale payout={ev.get('TotalSale')}")
+        if str(event_type).lower() == "repairall" and ev.get("Cost"):
+            bits.append(f"Ship repaired after minor hull/module damage (repair bill={ev.get('Cost')} credits — great moment to quip about auto-dock scraping the slot or a rough landing)")
+        if str(event_type).lower() == "hulldamage" and ev.get("Health") is not None:
+            try:
+                hp = round(float(ev.get("Health")) * 100)
+                bits.append(f"Hull integrity dropped to {hp}%")
+            except Exception:
+                pass
         if ev.get("Message_Localised") and ev.get("From"):
             bits.append(f"Incoming hail from {ev.get('From')}: {str(ev.get('Message_Localised'))[:90]}")
         return ", ".join(bits)
@@ -1006,29 +1018,101 @@ class CompanionChitChatManager:
                 return False
             if self._is_suppressed_by_companion(game_id):
                 return False
+            raw_msg_code = str(ev_dict.get("Message") or "").strip()
+            msg_txt = str(ev_dict.get("Message_Localised") or raw_msg_code or "").strip()[:240]
+            raw_sender = str(ev_dict.get("From_Localised") or ev_dict.get("From") or "").strip()
+            if not msg_txt:
+                return False
+
+            # Filter out system/channel-join & station-protocol boilerplate that games log on the NPC channel
+            # (prevents false callouts like "Someone entered the sector" or "Carrier left the no-fire zone").
+            msg_low = msg_txt.lower()
+            code_low = raw_msg_code.lower()
+            if (
+                code_low.startswith("$comms_entered:")
+                or msg_low.startswith("entered channel:")
+                or code_low.startswith("$station_docking_granted")
+                or code_low.startswith("$station_nofirezone_")
+                or "no fire zone entered" in msg_low
+                or "no fire zone exited" in msg_low
+                or (not raw_sender and ("entered channel" in msg_low or "channel:" in msg_low))
+            ):
+                return False
+
             now = time.time()
-            # Short 4s anti-burst gate for live Player/Squadron chat; normal cooldown for NPC/System/Local
-            min_gap = 4.0 if bucket in ("player", "squadron") else 25.0
+            # Anti-spam dedup for NPC chatter templates (20 min cooldown per repeated template/line)
+            if bucket == "npc":
+                tpl_key = (code_low if code_low.startswith("$") else msg_low)[:100]
+                with self._lock:
+                    seen_map = getattr(self, "_recent_npc_templates", None)
+                    if seen_map is None:
+                        seen_map = {}
+                        self._recent_npc_templates = seen_map
+                    last_tpl_ts = seen_map.get(tpl_key, 0.0)
+                    if (now - last_tpl_ts) < 1200.0:
+                        return False
+                    seen_map[tpl_key] = now
+                    if len(seen_map) > 120:
+                        # Prune oldest entries
+                        for k_old in sorted(seen_map, key=seen_map.get)[:40]:
+                            seen_map.pop(k_old, None)
+
+            # Short 4s anti-burst gate for live Player/Squadron chat; 60s for NPC commentary, 25s for System/Local
+            min_gap = 4.0 if bucket in ("player", "squadron") else (60.0 if bucket == "npc" else 25.0)
             with self._lock:
                 if (now - self._last_chat_relay_ts) < min_gap:
                     return False
                 self._last_chat_relay_ts = now
-            sender = str(ev_dict.get("From_Localised") or ev_dict.get("From") or "Someone").strip()
-            msg_txt = str(ev_dict.get("Message_Localised") or ev_dict.get("Message") or "").strip()[:240]
-            if not msg_txt:
-                return False
+            sender = raw_sender or "Comms"
             translate_rule = (
                 " If the message is in a foreign (non-English) language, translate it naturally into English "
                 "(e.g., \"[Sender] just said, '<English translation>'\")."
                 if settings.get("chat_translate", True)
                 else ""
             )
-            chat_prompt = (
-                f"[IN-GAME CHAT RELAY — {bucket.upper()} CHANNEL] "
-                f"Sender: {sender} | Raw message: \"{msg_txt}\". "
-                f"Briefly and naturally relay/summarize what {sender} said in the {bucket} chat to the player in 1 short sentence."
-                f"{translate_rule}"
-            )
+            if bucket == "npc":
+                # Attach live cargo/inventory facts so Aether NEVER hallucinates an "empty cargo hold" when hauling!
+                cargo_note = ""
+                st = dict(state_snapshot or {})
+                if not st and self.game_manager and getattr(self.game_manager, "active_telemetry_adapter", None):
+                    try:
+                        st = self.game_manager.active_telemetry_adapter.get_live_state() or {}
+                    except Exception:
+                        st = {}
+                c_items = st.get("cargo_items") or st.get("cargo_manifest")
+                c_count = st.get("cargo_count") if st.get("cargo_count") is not None else st.get("cargo_used")
+                if isinstance(c_items, list) and c_items:
+                    top_items = ", ".join(
+                        f"{it.get('name', '?')} x{it.get('count', 0)}"
+                        for it in c_items[:6]
+                        if isinstance(it, dict) and int(it.get("count") or 0) > 0
+                    )
+                    if top_items:
+                        cargo_note = f" Live cargo manifest ({c_count or 'loaded'}t): {top_items}."
+                elif isinstance(c_items, dict) and c_items:
+                    top_items = ", ".join(f"{k} x{v}" for k, v in list(c_items.items())[:6])
+                    cargo_note = f" Live cargo manifest ({c_count or 'loaded'}t): {top_items}."
+                elif c_count is not None:
+                    cargo_note = (
+                        f" Live cargo hold: {int(c_count)}t onboard."
+                        if int(c_count) > 0
+                        else " Live cargo hold: completely empty (0t)."
+                    )
+                chat_prompt = (
+                    f"[IN-GAME CHAT RELAY — NPC CHATTER] "
+                    f"Background NPC ({sender}) just broadcast: \"{msg_txt}\".{cargo_note} "
+                    f"Do NOT read their message verbatim! Instead, react with a quick, witty 1-sentence in-character "
+                    f"co-pilot comment or eye-roll riffing on what they said (e.g. mocking a cruise liner bragging about "
+                    f"being in the top 1%, or reacting casually to station traffic). "
+                    f"STRICT ACCURACY: If you mention cargo or ship state, it MUST match the Live cargo manifest above (NEVER say the hold is empty if cargo is onboard)."
+                )
+            else:
+                chat_prompt = (
+                    f"[IN-GAME CHAT RELAY — {bucket.upper()} CHANNEL] "
+                    f"Sender: {sender} | Raw message: \"{msg_txt}\". "
+                    f"Briefly and naturally relay/summarize what {sender} said in the {bucket} chat to the player in 1 short sentence."
+                    f"{translate_rule}"
+                )
             return _dispatch_engine_proactive_prompt(self.engine, chat_prompt)
 
         if not self._can_chitchat_now(game_id, settings):

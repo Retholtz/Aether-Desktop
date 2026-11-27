@@ -79,12 +79,12 @@ def normalize_vr_dot_inset(inset: Any) -> float:
 
 
 def normalize_vr_dot_depth(depth_m: Any) -> float:
-    """Clamps VR dot focal depth in meters to [0.50, 3.00] (default 1.20)."""
+    """Clamps VR dot focal depth in meters to [0.30, 5.00] (default 1.20)."""
     try:
         val = float(depth_m)
     except (TypeError, ValueError):
         val = 1.20
-    return round(max(0.50, min(3.00, val)), 2)
+    return round(max(0.30, min(5.00, val)), 2)
 
 
 def normalize_vr_dot_scale(scale: Any) -> float:
@@ -97,21 +97,21 @@ def normalize_vr_dot_scale(scale: Any) -> float:
 
 
 def normalize_vr_dot_x(offset_x: Any) -> float:
-    """Clamps VR dot horizontal X offset in meters to [-1.00, 1.00] (default +0.25 m)."""
+    """Clamps VR dot horizontal X offset in meters to [-3.50, 3.50] (default +0.25 m)."""
     try:
         val = float(offset_x)
     except (TypeError, ValueError):
         val = 0.25
-    return round(max(-1.00, min(1.00, val)), 2)
+    return round(max(-3.50, min(3.50, val)), 2)
 
 
 def normalize_vr_dot_y(offset_y: Any) -> float:
-    """Clamps VR dot vertical Y offset in meters to [-1.00, 1.00] (default +0.18 m)."""
+    """Clamps VR dot vertical Y offset in meters to [-2.50, 2.50] (default +0.18 m)."""
     try:
         val = float(offset_y)
     except (TypeError, ValueError):
         val = 0.18
-    return round(max(-1.00, min(1.00, val)), 2)
+    return round(max(-2.50, min(2.50, val)), 2)
 
 
 def compute_safe_fov_tangents(

@@ -445,12 +445,20 @@ class ReflexionEngine:
 
             turns_text = "\n".join([f"{t.get('role', 'USER').upper()}: {t.get('text') or t.get('content', '')}" for t in turns])
 
+            session_game_id = str(session_data.get("game_id") or "").strip()
+            game_fact_inst = (
+                f'3. "game_facts": Durable in-game facts, faction allegiances, rivalries, character stances, or playstyle preferences specific to the active game ({session_game_id}). '
+                f'Keep in-game faction/lore preferences in "game_facts" (NOT in global "facts").\n'
+                if session_game_id
+                else '3. "game_facts": If the session clearly discussed a specific video game\'s player faction allegiances, rivalries, or playstyle preferences, list them here (otherwise empty list).\n'
+            )
+
             # Tier 2 Reasoning Prompt
             prompt = f"""
-Analyze the following conversation session. Extract two things:
+Analyze the following conversation session. Extract three things:
 1. "manifest": High-level indexing card.
-2. "facts": Concrete new facts learned about the user, their workflows, system preferences, relationships, family, dates, or ongoing projects. Do not include transient requests (e.g., "what's the weather"), only durable facts.
-
+2. "facts": Concrete new real-world facts learned about the user, their workflows, system preferences, relationships, family, dates, or ongoing projects. Do not include transient requests (e.g., "what's the weather"), only durable facts.
+{game_fact_inst}
 Strict JSON format:
 {{
   "manifest": {{
@@ -461,6 +469,9 @@ Strict JSON format:
   }},
   "facts": [
     {{"category": "family|dates|relationship|preference|project|system|general", "fact": "string"}}
+  ],
+  "game_facts": [
+    {{"category": "allegiance|npc|preference|playstyle|rivalry|lore|asset|general", "fact": "string"}}
   ]
 }}
 
@@ -496,6 +507,25 @@ Conversation:
                     add_fact_batch(new_facts, source_session=manifest_card["session_id"], db_path=memory_db)
                     print(f"[INFO] [REFLEXION] Synthesized {len(new_facts)} facts from {manifest_card['session_id']}")
                     logger.info(f"[REFLEXION] Synthesized {len(new_facts)} facts from {manifest_card['session_id']}")
+
+                # Store Per-Game Cross-Session Memory Facts (Allegiances, NPCs, Rivalries, Playstyle)
+                game_facts = result.get("game_facts", [])
+                if game_facts and session_game_id:
+                    gm = getattr(self.engine, "game_mgr", None) or getattr(getattr(self.engine, "game_engine", None), "manager", None)
+                    if gm is not None and hasattr(gm, "add_game_memory") and (not hasattr(gm, "get_game_memory_enabled") or gm.get_game_memory_enabled(session_game_id)):
+                        added_gm = 0
+                        for gf in game_facts:
+                            if isinstance(gf, dict) and str(gf.get("fact") or "").strip():
+                                res_gm = gm.add_game_memory(
+                                    game_id=session_game_id,
+                                    fact=str(gf["fact"]).strip(),
+                                    category=str(gf.get("category") or "preference"),
+                                    source="reflexion",
+                                )
+                                if res_gm.get("success") and not res_gm.get("duplicate"):
+                                    added_gm += 1
+                        if added_gm:
+                            logger.info(f"[REFLEXION] Synthesized {added_gm} per-game memories for '{session_game_id}' from {manifest_card['session_id']}")
 
             except Exception as err:
                 print(f"[ERROR] [REFLEXION] Failed processing session {filepath}: {err}")

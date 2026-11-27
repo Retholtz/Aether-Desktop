@@ -365,6 +365,199 @@ class TestWorkOrderV2TelemetryAndScrubber(unittest.TestCase):
             self.assertIn("modal-live-video-cost-warning", app_js)
             self.assertIn("wiredCostWarning", app_js)
 
+    def test_hybrid_agnostic_telemetry_data_pop_fast_path(self):
+        """
+        Verifies the 100% game-agnostic Hybrid Data-Pop fast-path:
+        - Quick project/cargo/station-market/status questions intercept as `game_telemetry_pop`
+          and run a tiny stateless Flash pop (~400 tokens, zero chat history, thinking_budget=0).
+        - Conversational / open-ended questions pass through untouched (`handled=False`).
+        """
+        from core.game_engine import GameEngine
+
+        ge = GameEngine()
+        ge.manager.data["active_profile"] = "space_sim"
+        ge.manager.data.setdefault("profiles", {})["space_sim"] = {
+            "display_name": "Space Sim",
+            "callsign": "Commander",
+        }
+        ge.manager.game_mode_enabled = True
+        ge.manager.user_override_game_mode = True
+
+        fake_adapter = MagicMock()
+        fake_adapter.get_live_state.return_value = {
+            "location": "HIP 75521",
+            "station": "Harebell 4",
+            "docked": True,
+            "cargo_used": 120,
+            "cargo_capacity": 720,
+            "cargo_manifest": {"Silver": 120},
+            "project_still_to_buy": {"Steel": 400, "Titanium": 150},
+            "station_project_matches": [{"commodity": "Steel", "stock": 5000, "buy_price": 4200, "still_needed": 400}],
+        }
+        ge.manager.active_telemetry_adapter = fake_adapter
+
+        # 1) Project question -> intercepted as game_telemetry_pop
+        r_proj = ge.intercept_voice_turn("What do we need for our construction project?")
+        self.assertTrue(r_proj.handled)
+        self.assertEqual(r_proj.action_type, "game_telemetry_pop")
+        self.assertEqual(r_proj.details["pop_scope"], "project")
+
+        # 2) Station market question -> intercepted as game_telemetry_pop
+        r_mkt = ge.intercept_voice_turn("What can we buy at this station?")
+        self.assertTrue(r_mkt.handled)
+        self.assertEqual(r_mkt.action_type, "game_telemetry_pop")
+        self.assertEqual(r_mkt.details["pop_scope"], "station_market")
+
+        # 3) Conversational / external-search question -> NOT intercepted (stays in conversational memory!)
+        r_chat = ge.intercept_voice_turn("Tell me about the history of this sector")
+        self.assertFalse(r_chat.handled)
+        r_search = ge.intercept_voice_turn("Find a station nearby that sells Titanium")
+        self.assertFalse(r_search.handled)
+
+        # 4) Executing the Data Pop sends ONLY compact telemetry JSON (~300 chars), never chat history
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = _make_fake_response(
+            "You still need 400 Steel and 150 Titanium for the project, Commander."
+        )
+        res = ge.answer_telemetry_data_pop(
+            "What do we need for our construction project?",
+            pop_scope="project",
+            genai_client=mock_client,
+        )
+        self.assertIsNotNone(res)
+        self.assertIn("400 Steel", res["answer"])
+        self.assertLess(res["data_chars"], 600)
+        sent_contents = mock_client.models.generate_content.call_args.kwargs["contents"]
+        self.assertIn("project_still_to_buy", sent_contents)
+        self.assertNotIn("station_project_matches", sent_contents)  # Scoped strictly to project/cargo!
+
+    def test_per_game_cross_session_memory_isolation_and_injection(self):
+        """
+        Verifies per-game cross-session memory (4th 'Memory' sub-tab):
+        - Stores & deduplicates game-specific facts (allegiances, preferences, playstyle).
+        - Injects them into get_active_game_context() as a cross-session baseline for THAT game only.
+        - Never leaks facts from Game A into Game B.
+        """
+        import json
+        import os
+        import shutil
+        from core.game_manager import GameManager
+
+        tmp = tempfile.mkdtemp()
+        try:
+            prof_path = os.path.join(tmp, "game_profiles.json")
+            with open(prof_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "active_profile": "space_sim",
+                        "profiles": {
+                            "space_sim": {"display_name": "Space Sim", "process_name": "SpaceSim.exe"},
+                            "fantasy_rpg": {"display_name": "Fantasy RPG", "process_name": "FantasyRPG.exe"},
+                        },
+                    },
+                    f,
+                )
+            with patch.object(GameManager, "detect_foreground_game", return_value=None), \
+                 patch.object(GameManager, "detect_running_game", return_value=None), \
+                 patch.object(GameManager, "is_game_running", return_value=False):
+                gm = GameManager(profiles_path=prof_path)
+                r1 = gm.add_game_memory("space_sim", "Aligned with the Empire; strongly dislikes the Federation.", category="allegiance", source="reflexion")
+                self.assertTrue(r1["success"])
+                self.assertFalse(r1["duplicate"])
+                r_dup = gm.add_game_memory("space_sim", "aligned with the empire; strongly dislikes the federation.", category="allegiance")
+                self.assertTrue(r_dup["duplicate"])
+
+                gm.game_mode_enabled = True
+                gm.user_override_game_mode = True
+                gm.data["active_profile"] = "space_sim"
+                ctx_space = gm.get_active_game_context()
+                self.assertIn("GAME MEMORY & PLAYER PREFERENCES", ctx_space)
+                self.assertIn("Aligned with the Empire", ctx_space)
+
+                # Switch to Fantasy RPG -> Space Sim's Empire allegiance must NOT leak!
+                gm.data["active_profile"] = "fantasy_rpg"
+                ctx_rpg = gm.get_active_game_context()
+                self.assertNotIn("Aligned with the Empire", ctx_rpg)
+
+                # Verify NPC / Crew category & Enable Game Memory toggle
+                gm.data["active_profile"] = "space_sim"
+                r_npc = gm.add_game_memory("space_sim", "Hired SLF pilot is named Stark.", category="npc", source="user")
+                self.assertTrue(r_npc["success"])
+                self.assertEqual(r_npc["memory"]["category"], "npc")
+                self.assertIn("[NPC] Hired SLF pilot is named Stark.", gm.get_active_game_context())
+
+                gm.set_game_memory_enabled("space_sim", False)
+                self.assertFalse(gm.get_game_memory_enabled("space_sim"))
+                self.assertNotIn("GAME MEMORY & PLAYER PREFERENCES", gm.get_active_game_context())
+
+                # Delete & verify removal
+                mem_id = r1["memory"]["id"]
+                gm.delete_game_memory("space_sim", mem_id)
+                gm.delete_game_memory("space_sim", r_npc["memory"]["id"])
+                self.assertEqual(gm.get_game_memories("space_sim"), [])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_game_economy_mode_toggle_and_pipeline_routing(self):
+        """
+        Verifies per-game Economy Mode:
+        - Defaults False (Live WebSocket, lowest latency).
+        - When checked + Game Mode active -> routes to 'modular' pipeline using 'gemini-3.8-flash:instant'.
+        - When Game Mode turns off or unchecked -> returns cleanly to 'live' pipeline.
+        """
+        import json
+        import os
+        import shutil
+        from core.engine import AetherEngine
+        from core.game_manager import GameManager
+
+        tmp = tempfile.mkdtemp()
+        try:
+            prof_path = os.path.join(tmp, "game_profiles.json")
+            with open(prof_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "active_profile": "space_sim",
+                        "profiles": {
+                            "space_sim": {"display_name": "Space Sim", "process_name": "SpaceSim.exe"},
+                        },
+                    },
+                    f,
+                )
+            with patch.object(GameManager, "detect_foreground_game", return_value=None), \
+                 patch.object(GameManager, "detect_running_game", return_value=None), \
+                 patch.object(GameManager, "is_game_running", return_value=False):
+                gm = GameManager(profiles_path=prof_path)
+                self.assertFalse(gm.get_economy_mode("space_sim"))
+
+                with patch("core.engine.DesktopNotificationWatcher", return_value=MagicMock()), \
+                     patch("core.engine.LiveStreamService", return_value=MagicMock()), \
+                     patch("core.engine.SteamService", return_value=MagicMock()), \
+                     patch("core.engine.GameEngine", return_value=MagicMock()):
+                    eng = AetherEngine(config_getter=lambda: {"api": {"pipeline_mode": "live"}, "audio": {"mode": "ptt"}})
+                eng.game_mgr = gm
+                eng.game_engine.is_game_mode_active.return_value = False
+
+                # Unchecked -> Live pipeline
+                self.assertEqual(eng._desired_pipeline_mode(), "live")
+
+                # Checked, but Game Mode inactive -> still Live pipeline (desktop chat unaffected)
+                gm.set_economy_mode("space_sim", True)
+                self.assertTrue(gm.get_economy_mode("space_sim"))
+                self.assertEqual(eng._desired_pipeline_mode(), "live")
+
+                # Game Mode active + Economy Mode checked -> Modular pipeline with gemini-3.8-flash:instant!
+                eng.game_engine.is_game_mode_active.return_value = True
+                self.assertTrue(eng.is_game_economy_mode_active())
+                self.assertEqual(eng._desired_pipeline_mode(), "modular")
+                self.assertEqual(eng._get_active_cortex_profile(), "gemini-3.8-flash:instant")
+
+                # Uncheck Economy Mode -> back to Live pipeline
+                gm.set_economy_mode("space_sim", False)
+                self.assertEqual(eng._desired_pipeline_mode(), "live")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

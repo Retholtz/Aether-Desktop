@@ -267,16 +267,68 @@ class GameManager:
                 for old_k in list(tracked_projects.keys()):
                     if old_k != project_id and str((tracked_projects.get(old_k) or {}).get("entity_id") or "").strip() == new_eid:
                         tracked_projects.pop(old_k, None)
-            tracked_projects[project_id] = dict(project_data)
+
+            is_complete = bool(project_data.get("complete"))
+            if is_complete:
+                # Completed projects are automatically removed from active goals AND their active telemetry POI is cleared!
+                was_tracked = project_id in tracked_projects
+                tracked_projects.pop(project_id, None)
+                pname_done = str(project_data.get("name") or project_id).strip()
+                psys_done = str(project_data.get("system") or "").strip()
+                known = profile.get("known_pois")
+                if isinstance(known, dict):
+                    removed_poi = False
+                    for pk in list(known.keys()):
+                        pv = known.get(pk)
+                        if not isinstance(pv, dict) or pv.get("source") != "telemetry":
+                            continue
+                        pv_eid = str(pv.get("entity_id") or "").strip()
+                        pv_name = str(pv.get("name") or "").strip().lower()
+                        if (new_eid and pv_eid == new_eid) or (pname_done and pv_name == pname_done.lower()):
+                            known.pop(pk, None)
+                            removed_poi = True
+                    if removed_poi:
+                        self._renumber_multi_instance_pois(known)
+                if was_tracked:
+                    try:
+                        self.add_copilot_log_entry(
+                            game_id=game_id,
+                            summary=f"Completed {project_data.get('label') or 'Project'}: {pname_done}",
+                            category="milestone",
+                            location=psys_done,
+                        )
+                    except Exception:
+                        pass
+            else:
+                tracked_projects[project_id] = dict(project_data)
 
             start_marker = "--- LIVE PROJECT TRACKER (AUTO-UPDATED) ---"
             end_marker = "--- END LIVE PROJECT TRACKER ---"
 
-            # Sort: in-progress projects first (newest updated first), completed projects below
+            # Keep only active (non-completed) projects in the live Player Goals block
             ordered_projects = sorted(
-                [p for p in tracked_projects.values() if isinstance(p, dict) and p.get("sync_to_scratchpad")],
-                key=lambda p: (bool(p.get("complete")), -float(p.get("updated_at") or 0.0)),
+                [
+                    p for p in tracked_projects.values()
+                    if isinstance(p, dict) and p.get("sync_to_scratchpad") and not bool(p.get("complete"))
+                ],
+                key=lambda p: -float(p.get("updated_at") or 0.0),
             )
+
+            existing_raw = str(profile.get("scratchpad_raw") or "")
+            pattern = re.compile(
+                re.escape(start_marker) + r".*?" + re.escape(end_marker),
+                flags=re.DOTALL,
+            )
+
+            if not ordered_projects:
+                # All projects completed — remove the managed block cleanly while preserving user notes
+                new_raw = pattern.sub("", existing_raw).strip()
+                new_raw = re.sub(r"\n{3,}", "\n\n", new_raw)
+                if new_raw != existing_raw.strip() or is_complete:
+                    profile["scratchpad_raw"] = new_raw
+                    self._save_profiles(self.data, target_game_id=game_id)
+                    return True
+                return False
 
             block_lines = [start_marker]
             all_names_low = []
@@ -289,43 +341,47 @@ class GameManager:
                 psys = str(pdata.get("system") or "").strip()
                 sys_part = f" ({psys})" if psys and psys.lower() != "unknown" else ""
                 pct = pdata.get("progress_pct", 0.0)
-                complete = bool(pdata.get("complete"))
+                num_tag = f" #{idx + 1}" if len(ordered_projects) > 1 else ""
 
-                if complete:
-                    block_lines.append(f"{label}: {pname}{sys_part} — COMPLETE (100%)")
+                rem_items = [
+                    r for r in (pdata.get("resources") or [])
+                    if isinstance(r, dict) and int(r.get("remaining") or 0) > 0
+                ]
+                rem_items.sort(key=lambda r: int(r.get("remaining") or 0), reverse=True)
+                rem_total = int(pdata.get("remaining_total") or sum(int(r.get("remaining") or 0) for r in rem_items))
+                block_lines.append(f"{label}{num_tag}: {pname}{sys_part} — {pct}% complete")
+                if rem_items:
+                    items_str = ", ".join(f"{r['name']} ({r['remaining']})" for r in rem_items)
+                    block_lines.append(f"Remaining ({rem_total} total across {len(rem_items)} items): {items_str}")
                 else:
-                    rem_items = [
-                        r for r in (pdata.get("resources") or [])
-                        if isinstance(r, dict) and int(r.get("remaining") or 0) > 0
-                    ]
-                    rem_items.sort(key=lambda r: int(r.get("remaining") or 0), reverse=True)
-                    rem_total = int(pdata.get("remaining_total") or sum(int(r.get("remaining") or 0) for r in rem_items))
-                    block_lines.append(f"{label}: {pname}{sys_part} — {pct}% complete")
-                    if rem_items:
-                        items_str = ", ".join(f"{r['name']} ({r['remaining']})" for r in rem_items)
-                        block_lines.append(f"Remaining ({rem_total} total across {len(rem_items)} items): {items_str}")
-                    else:
-                        block_lines.append("Remaining: 0 (all required materials delivered!)")
-                    if pdata.get("last_delivery"):
-                        block_lines.append(f"Last delivery: {pdata['last_delivery']}")
+                    block_lines.append("Remaining: 0 (all required materials delivered!)")
+                if pdata.get("last_delivery"):
+                    block_lines.append(f"Last delivery: {pdata['last_delivery']}")
             block_lines.append(end_marker)
             managed_block = "\n".join(block_lines)
 
-            existing_raw = str(profile.get("scratchpad_raw") or "")
-            pattern = re.compile(
-                re.escape(start_marker) + r".*?" + re.escape(end_marker),
-                flags=re.DOTALL,
-            )
             if pattern.search(existing_raw):
-                new_raw = pattern.sub(lambda _m: managed_block, existing_raw).strip()
+                # Also strip any redundant static manifest lines outside the managed block for tracked projects
+                without_block = pattern.sub("__LIVE_TRACKER_PLACEHOLDER__", existing_raw)
+                cleaned_lines = []
+                for ln in without_block.splitlines():
+                    ln_low = ln.lower()
+                    if (
+                        ln.strip() != "__LIVE_TRACKER_PLACEHOLDER__"
+                        and any(len(pn) >= 5 and pn in ln_low for pn in all_names_low)
+                        and ln.count("(") >= 3
+                    ):
+                        continue
+                    cleaned_lines.append(ln)
+                rebuilt = "\n".join(cleaned_lines)
+                new_raw = rebuilt.replace("__LIVE_TRACKER_PLACEHOLDER__", managed_block).strip()
+                new_raw = re.sub(r"\n{3,}", "\n\n", new_raw)
             else:
-                # Strip any stale static one-line checklist for any tracked project name to avoid conflicting totals
                 kept_lines = []
                 for ln in existing_raw.splitlines():
                     ln_low = ln.lower()
                     if (
                         any(len(pn) >= 5 and pn in ln_low for pn in all_names_low)
-                        and "requirements for" in ln_low
                         and ln.count("(") >= 3
                     ):
                         continue
@@ -338,6 +394,36 @@ class GameManager:
             profile["scratchpad_raw"] = new_raw
             self._save_profiles(self.data, target_game_id=game_id)
             return True
+
+    @staticmethod
+    def _renumber_multi_instance_pois(known: Dict[str, Any]) -> None:
+        """
+        Assigns clean numbered aliases (`Construction Site #1`, `Construction Site #2`, etc.)
+        to concurrent multi-instance telemetry POIs sharing a tracker prefix (e.g. `construction_site_*`).
+        """
+        if not isinstance(known, dict):
+            return
+        groups: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+        for pk, pv in known.items():
+            if not isinstance(pv, dict) or pv.get("source") != "telemetry":
+                continue
+            eid = str(pv.get("entity_id") or "").strip()
+            if eid and pk.endswith(f"_{eid}"):
+                base_prefix = pk[: -(len(eid) + 1)]
+                groups.setdefault(base_prefix, []).append((pk, pv))
+        for base_prefix, items in groups.items():
+            human_base = base_prefix.replace("_", " ").strip()
+            items.sort(key=lambda pair: float(pair[1].get("updated_at") or 0.0))
+            for idx, (_pk, pv) in enumerate(items, 1):
+                raw_aliases = [str(a).strip() for a in (pv.get("aliases") or []) if str(a).strip()]
+                # Strip any previous auto-numbered aliases before re-assigning
+                cleaned = [
+                    a for a in raw_aliases
+                    if not re.fullmatch(rf"{re.escape(human_base)}\s*#?\d+", a, flags=re.IGNORECASE)
+                ]
+                numbered = [f"{human_base} #{idx}", f"{human_base} {idx}"]
+                pv["site_number"] = idx
+                pv["aliases"] = list(dict.fromkeys(numbered + cleaned))
 
     def sync_tracked_poi_to_profile(
         self,
@@ -400,6 +486,7 @@ class GameManager:
             ):
                 return False
             known[poi_id] = updated
+            self._renumber_multi_instance_pois(known)
             self._save_profiles(self.data, target_game_id=game_id)
             return True
 
@@ -1615,7 +1702,7 @@ class GameManager:
                 pass
             self._stop_foreground_watcher.wait(interval)
 
-    def get_active_game_context(self, include_personality: bool = True) -> str:
+    def get_active_game_context(self, include_personality: bool = True, include_live_telemetry: bool = True) -> str:
         """
         Gathers live context from the active game profile, including scratchpad
         notes and real-time telemetry if available.
@@ -1661,7 +1748,7 @@ class GameManager:
                 return (is_manual, has_curated, dev_rank, phrase_k)
 
             ordered = sorted(keybinds.items(), key=_bind_priority)
-            max_prompt_binds = 80
+            max_prompt_binds = 25
             shown = ordered[:max_prompt_binds]
             macro_lines = [f'- "{phrase}" -> {data.get("description", phrase)}' for phrase, data in shown]
             overflow = len(ordered) - len(shown)
@@ -1709,8 +1796,23 @@ class GameManager:
                     + "\n".join(seq_lines)
                 )
 
-        # 3. Live Telemetry
-        if self.active_telemetry_adapter and self.active_telemetry_adapter.is_active():
+        # Declarative In-Game Text Chat Channel Prefixes (if defined by game module)
+        try:
+            from core.game_modules import get_module_for_game
+            mod_cc = get_module_for_game(active_id, profile=profile)
+            chat_ch = (mod_cc or {}).get("chat_channels") if isinstance(mod_cc, dict) else None
+            if isinstance(chat_ch, dict) and isinstance(chat_ch.get("prefixes"), dict):
+                open_b = str(chat_ch.get("open_bind") or "comms panel")
+                close_k = str(chat_ch.get("close_key") or "escape")
+                pref_str = ", ".join(f"{k}='{v}'" for k, v in chat_ch["prefixes"].items())
+                parts.append(
+                    f"IN-GAME TEXT CHAT (`run_game_key_sequence`): open bind '{open_b}', type channel prefix + message ({pref_str}), press 'enter', then press '{close_k}'."
+                )
+        except Exception:
+            pass
+
+        # 3. Live Telemetry (omitted from static prefix in Economy Mode so 90% implicit caching hits every turn)
+        if include_live_telemetry and self.active_telemetry_adapter and self.active_telemetry_adapter.is_active():
             telemetry_ctx = self.active_telemetry_adapter.get_summary_prompt_context()
             if telemetry_ctx:
                 parts.append(telemetry_ctx)
@@ -1718,13 +1820,13 @@ class GameManager:
         # 4. Co-Pilot Intel & Observed Landmarks / Clues (Past Events & Points of Interest)
         copilot_entries = profile.get("copilot_log", [])
         if copilot_entries:
-            recent_entries = copilot_entries[-12:]
+            recent_entries = copilot_entries[-5:]
             log_lines = []
             for entry in recent_entries:
                 loc = f" (at {entry['location']})" if entry.get("location") else ""
                 cat = entry.get("category", "INTEL").upper()
                 log_lines.append(f"- [{cat}]{loc}: {entry.get('summary', '')}")
-            parts.append("CO-PILOT INTEL & OBSERVED LANDMARKS / CLUES (PAST DISCOVERIES):\n" + "\n".join(log_lines))
+            parts.append("RECENT CO-PILOT INTEL (older entries searchable via `search_copilot_log`):\n" + "\n".join(log_lines))
 
         # Linked 3rd-Party Companion Apps & Flight-Deck Tools (Live Running Status)
         companions = self.get_companion_apps_with_status(active_id)
@@ -1766,19 +1868,33 @@ class GameManager:
                 "- Provide read-only voice guidance, visual HUD/map spotting, and companion-app assistance only."
             )
 
-        # 3. Saved POIs / Remembered Assets (persisted across restarts)
+        # 3. Saved POIs / Remembered Assets (capped to 12 most recent to keep Live prompt lean)
         known_pois = profile.get("known_pois")
         if isinstance(known_pois, dict) and known_pois:
             poi_lines = []
-            for pk, pv in known_pois.items():
+            for pk, pv in list(known_pois.items())[-12:]:
                 if isinstance(pv, dict) and (pv.get("system") or pv.get("location")):
                     pname = pv.get("name") or pk
                     psys = pv.get("system") or pv.get("location")
                     aliases = pv.get("aliases") or []
-                    alias_str = f" (aliases: {', '.join(aliases)})" if aliases else ""
+                    alias_str = f" ({', '.join(aliases[:2])})" if aliases else ""
                     poi_lines.append(f"- {pname}{alias_str} -> {psys}")
             if poi_lines:
                 parts.append("REMEMBERED POIs & ASSETS (route to parent system/region):\n" + "\n".join(poi_lines))
+
+        # 4b. Per-Game Cross-Session Memory & Player Preferences (Allegiances, Rivalries, Playstyle, NPCs)
+        game_memories = profile.get("game_memories") if self.get_game_memory_enabled(active_id) else None
+        if isinstance(game_memories, list) and game_memories:
+            mem_lines = []
+            for m in game_memories[-20:]:
+                if isinstance(m, dict) and str(m.get("fact") or "").strip():
+                    cat = str(m.get("category") or "preference").upper()
+                    mem_lines.append(f"- [{cat}] {str(m['fact']).strip()}")
+            if mem_lines:
+                parts.append(
+                    "GAME MEMORY & PLAYER PREFERENCES (CROSS-SESSION BASELINE — remember & honor these in-character):\n"
+                    + "\n".join(mem_lines)
+                )
 
         # 5. Co-Pilot Role Directive
         parts.append(
@@ -1956,6 +2072,150 @@ class GameManager:
             self._save_profiles(self.data)
             return True
         return False
+
+    # --- Per-Game Cross-Session Memory (Allegiances, Preferences, Playstyle, NPCs) ---
+
+    def get_game_memory_enabled(self, game_id: str) -> bool:
+        """Returns whether cross-session Game Memory is enabled for `game_id` (defaults to True)."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return False
+        val = profile.get("game_memory_enabled")
+        return True if val is None else bool(val)
+
+    def get_economy_mode(self, game_id: Optional[str] = None) -> bool:
+        """Returns whether Economy Mode (Modular cached Flash PTT) is enabled for `game_id` (defaults to False)."""
+        gid = game_id or self.data.get("active_profile", "")
+        profile = self.get_profile(gid) if gid else None
+        if not profile:
+            return False
+        return bool(profile.get("economy_mode", False))
+
+    def set_economy_mode(self, game_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enables or disables per-game Economy Mode (Modular cached Flash PTT vs Live WebSocket)."""
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return {"success": False, "error": f"Game profile '{game_id}' not found."}
+            profile["economy_mode"] = bool(enabled)
+            self._save_profiles(self.data, target_game_id=game_id)
+            return {"success": True, "game_id": game_id, "economy_mode": bool(enabled)}
+
+    def set_game_memory_enabled(self, game_id: str, enabled: bool) -> Dict[str, Any]:
+        """Enables or disables cross-session Game Memory persistence & injection for `game_id`."""
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return {"success": False, "error": f"Game profile '{game_id}' not found."}
+            profile["game_memory_enabled"] = bool(enabled)
+            self._save_profiles(self.data, target_game_id=game_id)
+            return {"success": True, "game_id": game_id, "game_memory_enabled": bool(enabled)}
+
+    def get_module_profile_toggles(self, game_id: str) -> List[Dict[str, Any]]:
+        """Returns any declarative `profile_toggles` declared by the game's module along with current values."""
+        profile = self.get_profile(game_id) or {}
+        toggles: List[Dict[str, Any]] = []
+        try:
+            from core.game_modules import get_module_for_game
+            mod = get_module_for_game(game_id, profile=profile)
+            raw = (mod or {}).get("profile_toggles") if isinstance(mod, dict) else None
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict) and item.get("key"):
+                        k = str(item["key"]).strip()
+                        toggles.append({
+                            "key": k,
+                            "label": str(item.get("label") or k),
+                            "tooltip": str(item.get("tooltip") or ""),
+                            "enabled": bool(profile.get(k, False)),
+                        })
+        except Exception:
+            pass
+        return toggles
+
+    def set_game_profile_flag(self, game_id: str, flag_key: str, enabled: bool) -> Dict[str, Any]:
+        """Persists a declarative boolean profile toggle (e.g., `autodock_enabled`) on `game_id`."""
+        clean_key = re.sub(r"[^a-zA-Z0-9_]", "", str(flag_key or "").strip())
+        if not clean_key:
+            return {"success": False, "error": "Invalid profile flag key."}
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return {"success": False, "error": f"Game profile '{game_id}' not found."}
+            profile[clean_key] = bool(enabled)
+            self._save_profiles(self.data, target_game_id=game_id)
+            return {"success": True, "game_id": game_id, "key": clean_key, "enabled": bool(enabled)}
+
+    def get_game_memories(self, game_id: str) -> List[Dict[str, Any]]:
+        """Returns the persisted cross-session memory facts for `game_id`."""
+        profile = self.get_profile(game_id)
+        if not profile:
+            return []
+        mems = profile.get("game_memories")
+        return list(mems) if isinstance(mems, list) else []
+
+    def add_game_memory(
+        self,
+        game_id: str,
+        fact: str,
+        category: str = "preference",
+        source: str = "user",
+    ) -> Dict[str, Any]:
+        """Adds a deduplicated per-game cross-session memory fact to `game_id`."""
+        clean_fact = str(fact or "").strip()
+        if not clean_fact:
+            return {"success": False, "error": "Memory fact cannot be empty."}
+        valid_cats = ("allegiance", "npc", "preference", "playstyle", "rivalry", "lore", "asset", "general")
+        norm_cat = str(category or "preference").strip().lower()
+        if norm_cat not in valid_cats:
+            norm_cat = "general"
+        norm_src = str(source or "user").strip().lower()
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return {"success": False, "error": f"Game profile '{game_id}' not found."}
+            mems = profile.setdefault("game_memories", [])
+            if not isinstance(mems, list):
+                mems = []
+                profile["game_memories"] = mems
+            norm_key = clean_fact.lower()
+            for existing in mems:
+                if isinstance(existing, dict) and str(existing.get("fact") or "").strip().lower() == norm_key:
+                    return {"success": True, "duplicate": True, "memory": existing, "total": len(mems)}
+            entry = {
+                "id": f"gm_{int(time.time() * 1000)}_{len(mems)}",
+                "category": norm_cat,
+                "fact": clean_fact[:280],
+                "source": norm_src,
+                "timestamp": time.time(),
+            }
+            mems.append(entry)
+            if len(mems) > 40:
+                profile["game_memories"] = mems[-40:]
+            self._save_profiles(self.data, target_game_id=game_id)
+            return {"success": True, "duplicate": False, "memory": entry, "total": len(profile["game_memories"])}
+
+    def delete_game_memory(self, game_id: str, memory_id: str) -> Dict[str, Any]:
+        """Deletes a single per-game memory entry by id."""
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return {"success": False, "error": f"Game profile '{game_id}' not found."}
+            mems = profile.get("game_memories") or []
+            new_mems = [m for m in mems if not (isinstance(m, dict) and str(m.get("id")) == str(memory_id))]
+            profile["game_memories"] = new_mems
+            self._save_profiles(self.data, target_game_id=game_id)
+            return {"success": True, "remaining": len(new_mems)}
+
+    def clear_game_memories(self, game_id: str) -> Dict[str, Any]:
+        """Clears all per-game memory entries for `game_id`."""
+        with self._lock:
+            profile = self.get_profile(game_id)
+            if not profile:
+                return {"success": False, "error": f"Game profile '{game_id}' not found."}
+            profile["game_memories"] = []
+            self._save_profiles(self.data, target_game_id=game_id)
+            return {"success": True, "remaining": 0}
 
     def append_to_scratchpad(self, game_id: str, note: str) -> str:
         """Appends a new note or checklist item to the player's personal scratchpad."""

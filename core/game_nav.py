@@ -102,9 +102,11 @@ class UniversalGameNavigator:
             cfg_kwargs: Dict[str, Any] = {
                 "response_mime_type": "application/json",
                 "temperature": 0.0,
-                "max_output_tokens": 350,
+                "max_output_tokens": 900,
             }
-            think_cfg = build_thinking_config(self.model_endpoint, thinking_level="none" if fast_mode else "low")
+            # Always disable thinking on structured UI vision JSON steps so thinking tokens
+            # never truncate the JSON response (and keep vision steps fast & cheap).
+            think_cfg = build_thinking_config(self.model_endpoint, thinking_level="none")
             if think_cfg is not None:
                 cfg_kwargs["thinking_config"] = think_cfg
             return types.GenerateContentConfig(**cfg_kwargs)

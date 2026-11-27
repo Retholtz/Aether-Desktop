@@ -83,12 +83,12 @@ def normalize_vr_hud_anchor(anchor: Any) -> str:
 
 
 def normalize_vr_hud_depth(depth_m: Any) -> float:
-    """Clamps VR HUD focal depth in meters to [0.50, 3.00] (default 1.35 m)."""
+    """Clamps VR HUD focal depth in meters to [0.30, 5.00] (default 1.35 m)."""
     try:
         val = float(depth_m)
     except (TypeError, ValueError):
         val = 1.35
-    return round(max(0.50, min(3.00, val)), 2)
+    return round(max(0.30, min(5.00, val)), 2)
 
 
 def normalize_vr_hud_scale(scale: Any) -> float:
@@ -101,21 +101,21 @@ def normalize_vr_hud_scale(scale: Any) -> float:
 
 
 def normalize_vr_hud_offset_x(offset_x: Any) -> float:
-    """Clamps VR HUD horizontal offset in meters to [-1.50, 1.50] (default 0.00 m)."""
+    """Clamps VR HUD horizontal offset in meters to [-3.50, 3.50] (default 0.00 m)."""
     try:
         val = float(offset_x)
     except (TypeError, ValueError):
         val = 0.0
-    return round(max(-1.50, min(1.50, val)), 2)
+    return round(max(-3.50, min(3.50, val)), 2)
 
 
 def normalize_vr_hud_offset_y(offset_y: Any) -> float:
-    """Clamps VR HUD vertical offset in meters to [-1.00, 1.00] (default -0.18 m)."""
+    """Clamps VR HUD vertical offset in meters to [-2.50, 2.50] (default -0.18 m)."""
     try:
         val = float(offset_y)
     except (TypeError, ValueError):
         val = -0.18
-    return round(max(-1.00, min(1.00, val)), 2)
+    return round(max(-2.50, min(2.50, val)), 2)
 
 
 def normalize_vr_hud_curvature(curvature: Any) -> float:
@@ -1469,6 +1469,7 @@ class VROverlayManager:
         self._smoothed_hmd_pose: Optional[List[List[float]]] = None
         self._last_step_t: Optional[float] = None
         self._dot_refresh_ticks: int = 0
+        self._hud_refresh_ticks: int = 0
 
         # Runtime state
         self._connected = False
@@ -2054,8 +2055,25 @@ class VROverlayManager:
                     if need_initial_hud_show:
                         self._backend.show_overlay(self.HUD_KEY)
                         self._hud_shown_in_vr = True
+                        self._hud_refresh_ticks = 3
 
-                    if capture_fn is not None and (need_initial_hud_show or (now_t - self._last_hud_frame_t >= 0.08)):
+                    # Re-confirm transform + texture for 3 ticks after show_overlay (startup or
+                    # Game Mode hide/re-show) so SteamVR latches the exact saved VR position reliably.
+                    if self._hud_refresh_ticks > 0:
+                        self._hud_refresh_ticks -= 1
+                        if (
+                            not (hud_anchor in ("wrist_left", "wrist_right") and wrist_smoothing > 0.0)
+                            and not hud_uses_smoothed_hmd
+                            and self._last_hud_local_mat is not None
+                        ):
+                            self._backend.set_overlay_transform(
+                                self.HUD_KEY, hud_anchor, self._last_hud_local_mat, self._last_hud_width_m, curvature=eff_curv
+                            )
+                        force_hud_frame = True
+                    else:
+                        force_hud_frame = False
+
+                    if capture_fn is not None and (need_initial_hud_show or force_hud_frame or (now_t - self._last_hud_frame_t >= 0.08)):
                         frame = capture_fn()
                         if frame is not None:
                             rgba_bytes, fw, fh = frame
@@ -2090,7 +2108,7 @@ class VROverlayManager:
             (want_dot and dot_anchor in ("wrist_left", "wrist_right") and wrist_auto_hide)
             or (want_hud and hud_anchor in ("wrist_left", "wrist_right") and wrist_auto_hide)
         )
-        if self._dot_refresh_ticks > 0:
+        if self._dot_refresh_ticks > 0 or self._hud_refresh_ticks > 0:
             return 0.05
         return 0.06 if (want_hud or wrist_active or (want_dot and resolve_status_bucket(dot_state) != "standby")) else 0.15
 
